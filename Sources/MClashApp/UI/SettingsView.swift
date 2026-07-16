@@ -31,7 +31,10 @@ struct SettingsView: View {
                     "Close existing connections after changing mode or node",
                     isOn: $model.closeConnectionsOnRoutingChange
                 )
-                Text("MClash uses the profile's HTTP and SOCKS5 ports, falling back to mixed-port when available.")
+                Text(
+                    "MClash automatically connects to the active profile at launch. "
+                        + "It uses the profile's HTTP and SOCKS5 ports, falling back to mixed-port when available."
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

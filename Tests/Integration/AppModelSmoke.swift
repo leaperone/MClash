@@ -29,18 +29,28 @@ struct AppModelSmoke {
         defaults.set(false, forKey: AppModel.autoEnableSystemProxyKey)
         defer { defaults.removePersistentDomain(forName: preferencesSuiteName) }
 
+        let profileStore = try ProfileStore(layout: layout)
+        let startupProfile = try await profileStore.importProfile(
+            from: repository.appending(path: "Tests/Fixtures/minimal.yaml"),
+            name: "Startup profile"
+        )
+        _ = try await profileStore.activateProfile(
+            startupProfile.id,
+            validator: AcceptingProfileValidator()
+        )
+
         let systemProxyBackend = try IsolatedSystemProxyBackend()
         let model = AppModel(
             binaryLocator: locator,
             secretStore: StaticSecretProvider(),
             systemProxyManager: SystemProxyManager(backend: systemProxyBackend),
             profileDirectoryLayout: layout,
+            profileStoreOverride: profileStore,
             preferenceDefaults: defaults
         )
-        model.activeConfigURL = repository.appending(path: "Tests/Fixtures/minimal.yaml")
 
         do {
-            await model.connect()
+            await model.prepare()
 
             for _ in 0..<30 where !model.isConnected || model.runtimeConfig == nil {
                 try await Task.sleep(for: .milliseconds(100))

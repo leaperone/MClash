@@ -9,6 +9,11 @@ struct MClashApp: App {
         Window("MClash", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 780, minHeight: 560)
+                .background {
+                    MainWindowRegistrationView { window in
+                        applicationDelegate.registerMainWindow(window)
+                    }
+                }
                 .task {
                     await prepareApplication()
                 }
@@ -71,5 +76,26 @@ struct MClashApp: App {
             await model?.forceShutdown()
         }
         await model.prepare()
+    }
+}
+
+private struct MainWindowRegistrationView: NSViewRepresentable {
+    let register: @MainActor (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        resolveWindow(from: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        resolveWindow(from: nsView)
+    }
+
+    private func resolveWindow(from view: NSView) {
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            register(window)
+        }
     }
 }

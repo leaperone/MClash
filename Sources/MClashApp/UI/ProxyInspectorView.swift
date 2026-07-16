@@ -1,5 +1,11 @@
 import Observation
+import OSLog
 import SwiftUI
+
+private let proxyInspectorPerformanceLogger = Logger(
+    subsystem: "one.leaper.mclash",
+    category: "ProxyInspectorPerformance"
+)
 
 struct ProxyInspectorView: View {
     @Bindable var model: AppModel
@@ -223,11 +229,12 @@ private struct ProxyInspectorTrafficObserver: View {
     let scopeName: String?
     let presentation: ProxyInspectorTrafficPresentation
     @State private var accumulator = ProxyInspectorTrafficAccumulator()
-    @State private var pendingRefreshTask: Task<Void, Never>?
+    @State private var refreshRevision: UInt64 = 0
+    @State private var refreshTask: Task<Void, Never>?
+    @State private var refreshRequestedWhileRunning = false
 
     var body: some View {
-        let connectionSnapshot = model.connections
-        let routeTrafficEntries = model.routeTrafficEntries
+        let trafficRevision = model.proxyInspectorTrafficRevision
         let connectionMetricsStale = model.degradedStreams.contains(.connections)
         let scope = ProxyInspectorTrafficScope(groupName: groupName, scopeName: scopeName)
 
@@ -237,10 +244,7 @@ private struct ProxyInspectorTrafficObserver: View {
             .onAppear {
                 refreshImmediately()
             }
-            .onChange(of: connectionSnapshot) { _, _ in
-                scheduleRefresh()
-            }
-            .onChange(of: routeTrafficEntries) { _, _ in
+            .onChange(of: trafficRevision) { _, _ in
                 scheduleRefresh()
             }
             .onChange(of: connectionMetricsStale) { _, stale in
@@ -255,50 +259,165 @@ private struct ProxyInspectorTrafficObserver: View {
     }
 
     private func scheduleRefresh() {
-        guard pendingRefreshTask == nil else { return }
-        pendingRefreshTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: .milliseconds(120))
-            } catch {
-                return
-            }
-            publishLatestSnapshot()
-            pendingRefreshTask = nil
+        guard refreshTask == nil else {
+            refreshRequestedWhileRunning = true
+            return
         }
+        requestRefresh(debounce: .milliseconds(120))
     }
 
     private func refreshImmediately() {
-        cancelPendingRefresh()
-        publishLatestSnapshot()
+        refreshRequestedWhileRunning = false
+        requestRefresh(debounce: nil)
     }
 
     private func cancelPendingRefresh() {
-        pendingRefreshTask?.cancel()
-        pendingRefreshTask = nil
+        refreshRevision &+= 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        refreshRequestedWhileRunning = false
     }
 
-    private func publishLatestSnapshot() {
-        let snapshot = accumulator.snapshot(
-            connections: model.connections?.connections ?? [],
-            entries: model.routeTrafficEntries,
-            groupName: groupName,
-            scopeName: scopeName
-        )
-        presentation.publish(
-            snapshot,
-            stale: model.degradedStreams.contains(.connections)
-        )
+    private func requestRefresh(debounce: Duration?) {
+        refreshRevision &+= 1
+        let revision = refreshRevision
+
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor in
+            if let debounce {
+                do {
+                    try await Task.sleep(for: debounce)
+                } catch {
+                    return
+                }
+            }
+
+            guard !Task.isCancelled, revision == refreshRevision else { return }
+
+            // Copy value-semantic, Sendable inputs while isolated to the model's MainActor.
+            // The detached worker never reads observable model state directly.
+            let input = ProxyInspectorTrafficInput(
+                connections: model.connections?.connections ?? [],
+                entries: model.routeTrafficEntries,
+                groupName: groupName,
+                scopeName: scopeName
+            )
+            // Any changes received during the debounce are represented in this
+            // snapshot. Only changes that arrive after this point need a follow-up.
+            refreshRequestedWhileRunning = false
+            let seedAccumulator = accumulator
+            let worker = Task.detached(priority: .userInitiated) {
+                ProxyInspectorTrafficComputation.compute(
+                    revision: revision,
+                    input: input,
+                    seedAccumulator: seedAccumulator
+                )
+            }
+            let result = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+
+            guard !Task.isCancelled,
+                  revision == refreshRevision,
+                  let result else {
+                if revision == refreshRevision {
+                    finishRefresh()
+                }
+                return
+            }
+
+            accumulator = result.accumulator
+            presentation.publish(
+                result.snapshot,
+                stale: model.degradedStreams.contains(.connections)
+            )
+            finishRefresh()
+        }
+    }
+
+    private func finishRefresh() {
+        refreshTask = nil
+        guard refreshRequestedWhileRunning else { return }
+        refreshRequestedWhileRunning = false
+
+        // Inputs changed while the detached worker was running. Recompute once
+        // immediately from the latest model snapshot instead of losing that edge
+        // or repeatedly pushing a debounce window forward under a busy stream.
+        requestRefresh(debounce: nil)
     }
 }
 
-private struct ProxyInspectorTrafficSnapshot: Equatable {
+private struct ProxyInspectorTrafficInput: Sendable {
+    let connections: [MihomoConnection]
+    let entries: [TrafficAttribution.Entry]
+    let groupName: String?
+    let scopeName: String?
+}
+
+private struct ProxyInspectorTrafficComputation: Sendable {
+    let accumulator: ProxyInspectorTrafficAccumulator
+    let snapshot: ProxyInspectorTrafficSnapshot
+
+    static func compute(
+        revision: UInt64,
+        input: ProxyInspectorTrafficInput,
+        seedAccumulator: ProxyInspectorTrafficAccumulator
+    ) -> Self? {
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        var accumulator = seedAccumulator
+
+        do {
+            let snapshot = try accumulator.snapshot(
+                connections: input.connections,
+                entries: input.entries,
+                groupName: input.groupName,
+                scopeName: input.scopeName
+            )
+            let elapsed = startedAt.duration(to: clock.now)
+            proxyInspectorPerformanceLogger.debug(
+                "snapshot completed revision=\(revision, privacy: .public) duration_ms=\(elapsed.milliseconds, privacy: .public) connections=\(input.connections.count, privacy: .public) entries=\(input.entries.count, privacy: .public) routes=\(snapshot.routes.count, privacy: .public)"
+            )
+            return Self(accumulator: accumulator, snapshot: snapshot)
+        } catch is CancellationError {
+            let elapsed = startedAt.duration(to: clock.now)
+            proxyInspectorPerformanceLogger.debug(
+                "snapshot cancelled revision=\(revision, privacy: .public) duration_ms=\(elapsed.milliseconds, privacy: .public) connections=\(input.connections.count, privacy: .public) entries=\(input.entries.count, privacy: .public)"
+            )
+            return nil
+        } catch {
+            assertionFailure("Proxy inspector aggregation only throws CancellationError")
+            return nil
+        }
+    }
+}
+
+private extension Duration {
+    var milliseconds: Int64 {
+        let components = self.components
+        let seconds = components.seconds.multipliedReportingOverflow(by: 1_000)
+        if seconds.overflow {
+            return components.seconds.signum() >= 0 ? .max : .min
+        }
+        let fractionalMilliseconds = components.attoseconds / 1_000_000_000_000_000
+        let total = seconds.partialValue.addingReportingOverflow(fractionalMilliseconds)
+        if total.overflow {
+            return seconds.partialValue.signum() >= 0 ? .max : .min
+        }
+        return total.partialValue
+    }
+}
+
+private struct ProxyInspectorTrafficSnapshot: Equatable, Sendable {
     let groupActiveConnections: Int
     let groupObservedBytes: Int64
     let routes: [ObservedRouteSummary]
 }
 
-private struct ProxyInspectorTrafficAccumulator {
-    private struct EntryIdentity: Equatable {
+private struct ProxyInspectorTrafficAccumulator: Sendable {
+    private struct EntryIdentity: Equatable, Sendable {
         let timestamp: Date
         let connectionID: String
 
@@ -308,7 +427,7 @@ private struct ProxyInspectorTrafficAccumulator {
         }
     }
 
-    private struct RouteAggregate {
+    private struct RouteAggregate: Sendable {
         let key: ObservedRouteSummary.Key
         var upload: Int64
         var download: Int64
@@ -338,28 +457,33 @@ private struct ProxyInspectorTrafficAccumulator {
         entries: [TrafficAttribution.Entry],
         groupName: String?,
         scopeName: String?
-    ) -> ProxyInspectorTrafficSnapshot {
+    ) throws -> ProxyInspectorTrafficSnapshot {
+        try Task.checkCancellation()
         if cachedGroupName != groupName || cachedScopeName != scopeName {
             reset(groupName: groupName, scopeName: scopeName)
-            append(contentsOf: entries)
+            try append(contentsOf: entries)
             sourceEntries = entries
         } else {
-            reconcile(entries)
+            try reconcile(entries)
         }
 
         let activeConnections: Int
         if let groupName {
-            activeConnections = connections.reduce(into: 0) { count, connection in
+            var count = 0
+            for (offset, connection) in connections.enumerated() {
+                if offset.isMultiple(of: 64) { try Task.checkCancellation() }
                 if connection.chains.contains(groupName) { count += 1 }
             }
+            activeConnections = count
         } else {
             activeConnections = 0
         }
 
+        try Task.checkCancellation()
         return ProxyInspectorTrafficSnapshot(
             groupActiveConnections: activeConnections,
             groupObservedBytes: groupObservedBytes,
-            routes: topRoutes()
+            routes: try topRoutes()
         )
     }
 
@@ -373,9 +497,9 @@ private struct ProxyInspectorTrafficAccumulator {
         routesDirty = false
     }
 
-    private mutating func reconcile(_ entries: [TrafficAttribution.Entry]) {
+    private mutating func reconcile(_ entries: [TrafficAttribution.Entry]) throws {
         guard !sourceEntries.isEmpty else {
-            append(contentsOf: entries)
+            try append(contentsOf: entries)
             sourceEntries = entries
             return
         }
@@ -385,43 +509,56 @@ private struct ProxyInspectorTrafficAccumulator {
         }
 
         let firstIdentity = EntryIdentity(firstEntry)
-        guard let overlapStart = sourceEntries.firstIndex(where: {
-            EntryIdentity($0) == firstIdentity
-        }) else {
-            rebuild(from: entries)
+        var overlapStart: Int?
+        for (offset, entry) in sourceEntries.enumerated() {
+            if offset.isMultiple(of: 64) { try Task.checkCancellation() }
+            if EntryIdentity(entry) == firstIdentity {
+                overlapStart = offset
+                break
+            }
+        }
+        guard let overlapStart else {
+            try rebuild(from: entries)
             return
         }
 
         let overlapCount = sourceEntries.count - overlapStart
-        guard overlapCount <= entries.count,
-              zip(sourceEntries[overlapStart...], entries.prefix(overlapCount)).allSatisfy({
-                  EntryIdentity($0.0) == EntryIdentity($0.1)
-              }) else {
-            rebuild(from: entries)
+        guard overlapCount <= entries.count else {
+            try rebuild(from: entries)
             return
         }
 
-        for entry in sourceEntries[..<overlapStart] {
-            guard remove(entry) else {
-                rebuild(from: entries)
+        for offset in 0..<overlapCount {
+            if offset.isMultiple(of: 64) { try Task.checkCancellation() }
+            if EntryIdentity(sourceEntries[overlapStart + offset]) != EntryIdentity(entries[offset]) {
+                try rebuild(from: entries)
                 return
             }
         }
-        append(contentsOf: entries.dropFirst(overlapCount))
+
+        for (offset, entry) in sourceEntries[..<overlapStart].enumerated() {
+            if offset.isMultiple(of: 64) { try Task.checkCancellation() }
+            guard remove(entry) else {
+                try rebuild(from: entries)
+                return
+            }
+        }
+        try append(contentsOf: entries.dropFirst(overlapCount))
         sourceEntries = entries
     }
 
-    private mutating func rebuild(from entries: [TrafficAttribution.Entry]) {
+    private mutating func rebuild(from entries: [TrafficAttribution.Entry]) throws {
         let groupName = cachedGroupName
         let scopeName = cachedScopeName
         reset(groupName: groupName, scopeName: scopeName)
-        append(contentsOf: entries)
+        try append(contentsOf: entries)
         sourceEntries = entries
     }
 
-    private mutating func append<S: Sequence>(contentsOf entries: S)
+    private mutating func append<S: Sequence>(contentsOf entries: S) throws
     where S.Element == TrafficAttribution.Entry {
-        for entry in entries {
+        for (offset, entry) in entries.enumerated() {
+            if offset.isMultiple(of: 64) { try Task.checkCancellation() }
             add(entry)
         }
     }
@@ -489,12 +626,13 @@ private struct ProxyInspectorTrafficAccumulator {
         )
     }
 
-    private mutating func topRoutes() -> [ObservedRouteSummary] {
+    private mutating func topRoutes() throws -> [ObservedRouteSummary] {
         guard routesDirty else { return cachedRoutes }
 
         var routes: [ObservedRouteSummary] = []
         routes.reserveCapacity(8)
-        for aggregate in routeAggregates.values {
+        for (offset, aggregate) in routeAggregates.values.enumerated() {
+            if offset.isMultiple(of: 64) { try Task.checkCancellation() }
             let summary = aggregate.summary
             let insertionIndex = routes.firstIndex {
                 routeRanksBefore(summary, $0)
@@ -744,8 +882,8 @@ private struct ObservedRouteRow: View {
     }
 }
 
-private struct ObservedRouteSummary: Equatable, Identifiable {
-    struct Key: Hashable {
+private struct ObservedRouteSummary: Equatable, Identifiable, Sendable {
+    struct Key: Hashable, Sendable {
         let destination: String
         let rule: String
         let rulePayload: String

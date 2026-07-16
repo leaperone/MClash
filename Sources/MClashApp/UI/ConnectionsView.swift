@@ -2,10 +2,13 @@ import SwiftUI
 
 struct ConnectionsView: View {
     @Bindable var model: AppModel
-    @State private var searchText = ""
+    @SceneStorage("mclash.connections.searchText") private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var selectedConnectionID: String?
     @State private var sortOrder: [KeyPathComparator<ConnectionTableRow>] = []
+    @SceneStorage("mclash.connections.sortField") private var storedSortField = ""
+    @SceneStorage("mclash.connections.sortDescending") private var storedSortDescending = false
+    @State private var hasRestoredSortOrder = false
     @State private var inspectorPresented = false
 
     var body: some View {
@@ -49,6 +52,12 @@ struct ConnectionsView: View {
             } catch {
                 return
             }
+        }
+        .onAppear {
+            restoreSortOrderIfNeeded()
+        }
+        .onChange(of: sortOrder) { _, order in
+            persistSortOrder(order)
         }
         .onChange(of: presentation.selectedConnectionIsVisible) { _, isVisible in
             guard selectedConnectionID != nil, !isVisible else { return }
@@ -192,6 +201,27 @@ struct ConnectionsView: View {
         .accessibilityLabel("Active connections")
     }
 
+    private func restoreSortOrderIfNeeded() {
+        guard !hasRestoredSortOrder else { return }
+        hasRestoredSortOrder = true
+        guard let field = ConnectionSortField(rawValue: storedSortField) else { return }
+        sortOrder = [
+            field.comparator(order: storedSortDescending ? .reverse : .forward)
+        ]
+    }
+
+    private func persistSortOrder(_ order: [KeyPathComparator<ConnectionTableRow>]) {
+        guard hasRestoredSortOrder else { return }
+        guard let comparator = order.first,
+              let field = ConnectionSortField(keyPath: comparator.keyPath) else {
+            storedSortField = ""
+            storedSortDescending = false
+            return
+        }
+        storedSortField = field.rawValue
+        storedSortDescending = comparator.order == .reverse
+    }
+
     @ViewBuilder
     private func connectionInspector(_ connection: MihomoConnection?) -> some View {
         if let connection {
@@ -202,6 +232,39 @@ struct ConnectionsView: View {
                 systemImage: "sidebar.right",
                 description: Text("Choose a row to inspect its route, process, addresses, and metadata.")
             )
+        }
+    }
+}
+
+private enum ConnectionSortField: String {
+    case destination
+    case process
+    case chain
+    case rule
+    case download
+    case upload
+
+    init?(keyPath: any PartialKeyPath<ConnectionTableRow> & Sendable) {
+        let keyPath = keyPath as AnyKeyPath
+        switch keyPath {
+        case \ConnectionTableRow.destination: self = .destination
+        case \ConnectionTableRow.process: self = .process
+        case \ConnectionTableRow.chain: self = .chain
+        case \ConnectionTableRow.rule: self = .rule
+        case \ConnectionTableRow.download: self = .download
+        case \ConnectionTableRow.upload: self = .upload
+        default: return nil
+        }
+    }
+
+    func comparator(order: SortOrder) -> KeyPathComparator<ConnectionTableRow> {
+        switch self {
+        case .destination: KeyPathComparator(\ConnectionTableRow.destination, order: order)
+        case .process: KeyPathComparator(\ConnectionTableRow.process, order: order)
+        case .chain: KeyPathComparator(\ConnectionTableRow.chain, order: order)
+        case .rule: KeyPathComparator(\ConnectionTableRow.rule, order: order)
+        case .download: KeyPathComparator(\ConnectionTableRow.download, order: order)
+        case .upload: KeyPathComparator(\ConnectionTableRow.upload, order: order)
         }
     }
 }

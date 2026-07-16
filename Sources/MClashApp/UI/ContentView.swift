@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var model: AppModel
+    @AppStorage("mclash.navigation.destination") private var restoredDestinationRawValue =
+        AppModel.Destination.overview.rawValue
+    @State private var hasRestoredDestination = false
 
     var body: some View {
         NavigationSplitView {
@@ -50,6 +53,13 @@ struct ContentView: View {
             }
             .mclashPageSurface()
         }
+        .onAppear {
+            restoreDestination()
+        }
+        .onChange(of: model.selection) { _, destination in
+            guard let destination else { return }
+            restoredDestinationRawValue = destination.rawValue
+        }
     }
 
     private func destinationRow(_ destination: AppModel.Destination) -> some View {
@@ -64,6 +74,24 @@ struct ContentView: View {
         return model.errorMessage
     }
 
+    private func restoreDestination() {
+        guard !hasRestoredDestination else { return }
+        hasRestoredDestination = true
+
+        if let currentDestination = model.selection, currentDestination != .overview {
+            restoredDestinationRawValue = currentDestination.rawValue
+            return
+        }
+
+        let destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .overview
+        if restoredDestinationRawValue != destination.rawValue {
+            restoredDestinationRawValue = destination.rawValue
+        }
+        if model.selection != destination {
+            model.selection = destination
+        }
+    }
+
     @ViewBuilder
     private var destinationView: some View {
         switch model.selection ?? .overview {
@@ -71,6 +99,7 @@ struct ContentView: View {
             OverviewView(model: model)
         case .proxies:
             ProxiesView(model: model)
+                .id(model.activeProfileID)
         case .profiles:
             ProfilesView(model: model)
         case .rules:

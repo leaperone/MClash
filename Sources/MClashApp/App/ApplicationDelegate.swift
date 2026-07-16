@@ -5,6 +5,24 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     var shutdownHandler: (@MainActor () async -> Bool)?
     var forceShutdownHandler: (@MainActor () async -> Void)?
     private var terminationInProgress = false
+    private var mainWindow: NSWindow?
+    private var shouldPresentInitialMainWindow = true
+
+    func registerMainWindow(_ window: NSWindow) {
+        window.identifier = NSUserInterfaceItemIdentifier("MClash.MainWindow")
+        mainWindow = window
+        guard shouldPresentInitialMainWindow else { return }
+        shouldPresentInitialMainWindow = false
+        showMainWindow()
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        showMainWindow()
+        return true
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminationInProgress else { return .terminateLater }
@@ -48,5 +66,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Quit Anyway")
         return alert
+    }
+
+    private func showMainWindow() {
+        guard let mainWindow else {
+            shouldPresentInitialMainWindow = true
+            return
+        }
+        mainWindow.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
     }
 }

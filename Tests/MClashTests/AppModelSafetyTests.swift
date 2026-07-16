@@ -43,6 +43,50 @@ struct AppModelSafetyTests {
     }
 
     @MainActor
+    @Test("Launch preparation does not loop on a failed system proxy restore")
+    func preparationDoesNotRepeatFailedProxyRestore() async throws {
+        let fixture = try Fixture(failsRestore: true)
+        defer { fixture.cleanup() }
+
+        await fixture.model.prepare()
+        await fixture.model.prepare()
+
+        #expect(fixture.backend.applyCount == 1)
+        #expect(fixture.model.systemProxyRecoveryRequired)
+        #expect(!fixture.model.isConnected)
+        if case let .failed(message) = fixture.model.systemProxyState {
+            #expect(fixture.model.errorMessage == message)
+            #expect(!message.contains("running core was left active"))
+        } else {
+            Issue.record("Expected the precise system proxy restoration failure")
+        }
+    }
+
+    @MainActor
+    @Test("Shutdown serializes with in-flight startup preparation")
+    func shutdownWaitsForStartupPreparation() async throws {
+        let fixture = try Fixture(failsRestore: false, restoreDelay: 0.1)
+        defer { fixture.cleanup() }
+
+        let preparation = Task { @MainActor in
+            await fixture.model.prepare()
+        }
+        for _ in 0..<100 where fixture.backend.applyCount == 0 {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(fixture.backend.applyCount == 1)
+
+        let canTerminate = await fixture.model.shutdown()
+        await preparation.value
+
+        #expect(canTerminate)
+        #expect(!fixture.model.isConnected)
+        #expect(fixture.model.systemProxyState == .off)
+        #expect(!FileManager.default.fileExists(atPath: fixture.snapshotURL.path))
+        #expect(fixture.backend.applyCount == 1)
+    }
+
+    @MainActor
     @Test("Successful shutdown restores and removes the persisted system proxy snapshot")
     func shutdownRestoresProxySnapshot() async throws {
         let fixture = try Fixture(failsRestore: false)
@@ -254,7 +298,7 @@ private struct Fixture {
     let backend: RestoreBackend
     let model: AppModel
 
-    init(failsRestore: Bool) throws {
+    init(failsRestore: Bool, restoreDelay: TimeInterval = 0) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "mclash-app-model-\(UUID().uuidString)", directoryHint: .isDirectory)
         let layout = ProfileDirectoryLayout(rootDirectory: root)
@@ -266,7 +310,7 @@ private struct Fixture {
             protocolExists: true,
             configuration: [SystemProxyKeys.httpEnable: .integer(0)]
         )
-        backend = RestoreBackend(failsRestore: failsRestore)
+        backend = RestoreBackend(failsRestore: failsRestore, restoreDelay: restoreDelay)
         let manager = SystemProxyManager(backend: backend)
         snapshotURL = layout.stateDirectory.appending(path: "system-proxy-snapshot.json")
         try JSONEncoder().encode(SystemProxySnapshot(services: [state]))
@@ -287,10 +331,12 @@ private struct Fixture {
 private final class RestoreBackend: SystemProxyBackend, @unchecked Sendable {
     private let lock = NSLock()
     private let failsRestore: Bool
+    private let restoreDelay: TimeInterval
     private var storedApplyCount = 0
 
-    init(failsRestore: Bool) {
+    init(failsRestore: Bool, restoreDelay: TimeInterval = 0) {
         self.failsRestore = failsRestore
+        self.restoreDelay = restoreDelay
     }
 
     var applyCount: Int {
@@ -306,7 +352,10 @@ private final class RestoreBackend: SystemProxyBackend, @unchecked Sendable {
     }
 
     func applyProxyStates(_ states: [SystemProxyServiceState]) throws {
-        if failsRestore { throw SystemProxyError.applyFailed }
         lock.withLock { storedApplyCount += 1 }
+        if restoreDelay > 0 {
+            Thread.sleep(forTimeInterval: restoreDelay)
+        }
+        if failsRestore { throw SystemProxyError.applyFailed }
     }
 }

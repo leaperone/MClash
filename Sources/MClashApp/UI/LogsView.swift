@@ -4,9 +4,9 @@ import UniformTypeIdentifiers
 
 struct LogsView: View {
     @Bindable var model: AppModel
-    @State private var searchText = ""
-    @State private var sourceFilter: LogSourceFilter = .all
-    @State private var followsLatest = true
+    @SceneStorage("mclash.logs.searchText") private var searchText = ""
+    @SceneStorage("mclash.logs.sourceFilter") private var sourceFilter: LogSourceFilter = .all
+    @SceneStorage("mclash.logs.followsLatest") private var followsLatest = true
     @State private var exportError: String?
     @State private var layout: LogsLayout = .wide
     @State private var pendingPresentationTask: Task<Void, Never>?

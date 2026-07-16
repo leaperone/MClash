@@ -1,17 +1,42 @@
+import Foundation
 import SwiftUI
 
 struct ProxiesView: View {
     @Bindable var model: AppModel
-    @State private var selectedGroupName: String?
-    @State private var focusedNodeName: String?
-    @State private var workspaceMode: ProxyWorkspaceMode = .list
+    private let stateScope: String
+    @SceneStorage private var selectedGroupName: String?
+    @SceneStorage private var focusedNodeName: String?
+    @SceneStorage private var workspaceMode: ProxyWorkspaceMode
     @State private var sortModesByGroup: [String: ProxyNodeSortMode] = [:]
     @State private var searchTextByGroup: [String: String] = [:]
-    @State private var inspectorPresented = false
+    @SceneStorage private var serializedSearchTextByGroup: String
+    @State private var hasRestoredSearchState = false
+    @SceneStorage private var inspectorPresented: Bool
     @State private var groupNavigatorPresented = false
     @State private var workspaceLayout: ProxyWorkspaceLayout = .compact
     @State private var inspectorPresentation: ProxyInspectorPresentation = .popover
+    @State private var workspaceLayoutIsResolved = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(model: AppModel) {
+        self.model = model
+        let stateScope = model.activeProfileID?.description ?? "runtime"
+        self.stateScope = stateScope
+        _selectedGroupName = SceneStorage("mclash.proxies.\(stateScope).selectedGroup")
+        _focusedNodeName = SceneStorage("mclash.proxies.\(stateScope).focusedNode")
+        _workspaceMode = SceneStorage(
+            wrappedValue: .list,
+            "mclash.proxies.\(stateScope).workspaceMode"
+        )
+        _serializedSearchTextByGroup = SceneStorage(
+            wrappedValue: "",
+            "mclash.proxies.\(stateScope).searches"
+        )
+        _inspectorPresented = SceneStorage(
+            wrappedValue: false,
+            "mclash.proxies.\(stateScope).inspectorPresented"
+        )
+    }
 
     var body: some View {
         let groups = ProxyGroupPartitionSnapshot(model: model, routingMode: routingMode)
@@ -80,7 +105,13 @@ struct ProxiesView: View {
                 .overlay(alignment: .top) { Divider() }
             }
         }
-        .onAppear { normalizeSelection(groups: groups) }
+        .onAppear {
+            restoreSearchStateIfNeeded()
+            normalizeSelection(groups: groups)
+        }
+        .onChange(of: searchTextByGroup) { _, searches in
+            persistSearchState(searches)
+        }
         .onChange(of: model.proxyTopology.groupOrder) { _, _ in
             normalizeSelection(groups: groups)
         }
@@ -88,7 +119,8 @@ struct ProxiesView: View {
             normalizeSelection(groups: groups)
         }
         .onChange(of: selectedGroupName) { _, name in
-            focusedNodeName = name.flatMap { model.proxiesByName[$0]?.now }
+            guard let name, let group = model.proxiesByName[name] else { return }
+            focusedNodeName = group.now ?? group.all.first
         }
         .toolbar {
             if model.controllerIsReady,
@@ -403,6 +435,7 @@ struct ProxiesView: View {
                         rootGroup: group.name,
                         selectedPath: model.proxySelectionPaths[group.name],
                         delays: model.proxyDelayMap(for: group.name),
+                        stateScope: stateScope,
                         focusedNodeName: $focusedNodeName,
                         openGroup: openGroup,
                         showGroupList: { name in
@@ -648,6 +681,31 @@ struct ProxiesView: View {
         searchTextByGroup[group] ?? ""
     }
 
+    private func restoreSearchStateIfNeeded() {
+        guard !hasRestoredSearchState else { return }
+        hasRestoredSearchState = true
+        guard !serializedSearchTextByGroup.isEmpty,
+              let data = serializedSearchTextByGroup.data(using: .utf8),
+              let searches = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return
+        }
+        searchTextByGroup = searches.filter { !$0.value.isEmpty }
+    }
+
+    private func persistSearchState(_ searches: [String: String]) {
+        guard hasRestoredSearchState else { return }
+        let nonemptySearches = searches.filter { !$0.value.isEmpty }
+        guard !nonemptySearches.isEmpty else {
+            serializedSearchTextByGroup = ""
+            return
+        }
+        guard let data = try? JSONEncoder().encode(nonemptySearches),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return
+        }
+        serializedSearchTextByGroup = encoded
+    }
+
     private func persistedSortMode(for group: String) -> ProxyNodeSortMode {
         guard let rawValue = UserDefaults.standard.string(forKey: sortPreferenceKey(for: group)),
               let mode = ProxyNodeSortMode(rawValue: rawValue) else {
@@ -663,17 +721,26 @@ struct ProxiesView: View {
 
     private func normalizeSelection(groups: ProxyGroupPartitionSnapshot) {
         if routingMode == "direct" {
-            selectedGroupName = nil
-            focusedNodeName = nil
             return
         }
 
-        let names = Set(groups.available.map(\.name))
-        if let selectedGroupName, names.contains(selectedGroupName) {
+        guard !groups.available.isEmpty else { return }
+
+        if let selectedGroupName,
+           let selectedGroup = groups.available.first(where: { $0.name == selectedGroupName }) {
+            if focusedNodeName.map({ selectedGroup.all.contains($0) }) != true
+                || focusedNodeName.flatMap({ model.proxiesByName[$0] }) == nil {
+                focusedNodeName = selectedGroup.now ?? selectedGroup.all.first
+            }
             return
         }
-        selectedGroupName = groups.roots.first?.name ?? groups.available.first?.name
-        focusedNodeName = selectedGroupName.flatMap { model.proxiesByName[$0]?.now }
+
+        let defaultGroup = groups.nested.first
+            ?? groups.roots.first
+            ?? groups.special.first
+            ?? groups.available.first
+        selectedGroupName = defaultGroup?.name
+        focusedNodeName = defaultGroup?.now ?? defaultGroup?.all.first
     }
 
     private func openGroup(_ name: String) {
@@ -683,19 +750,24 @@ struct ProxiesView: View {
     }
 
     private func updateWorkspaceLayout(_ width: CGFloat) {
-        if inspectorPresented, inspectorPresentation == .attached {
-            if width < 660 {
-                inspectorPresented = false
-                inspectorPresentation = .popover
-            }
-            return
-        }
+        guard width > 0 else { return }
+
         let next = ProxyWorkspaceLayout(width: width)
         let nextInspectorPresentation = ProxyInspectorPresentation(width: width)
-        if workspaceLayout != next || inspectorPresentation != nextInspectorPresentation {
-            inspectorPresented = false
+        if !workspaceLayoutIsResolved {
             workspaceLayout = next
             inspectorPresentation = nextInspectorPresentation
+            workspaceLayoutIsResolved = true
+            return
+        }
+
+        if workspaceLayout != next || inspectorPresentation != nextInspectorPresentation {
+            let presentationChanged = inspectorPresentation != nextInspectorPresentation
+            workspaceLayout = next
+            inspectorPresentation = nextInspectorPresentation
+            if inspectorPresented, presentationChanged {
+                inspectorPresented = false
+            }
         }
     }
 

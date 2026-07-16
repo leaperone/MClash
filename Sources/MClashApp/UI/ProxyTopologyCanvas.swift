@@ -5,6 +5,7 @@ struct ProxyTopologyCanvas: View {
     let rootGroup: String
     let selectedPath: ProxySelectionPath?
     let delays: [String: Int]
+    let stateScope: String
     @Binding var focusedNodeName: String?
     let openGroup: (String) -> Void
     let showGroupList: (String) -> Void
@@ -15,6 +16,7 @@ struct ProxyTopologyCanvas: View {
             rootGroup: rootGroup,
             selectedPath: selectedPath,
             delays: delays,
+            stateScope: stateScope,
             focusedNodeName: $focusedNodeName,
             openGroup: openGroup,
             showGroupList: showGroupList
@@ -29,6 +31,7 @@ private struct ProxyTopologyResolvedView: View, Equatable {
     let rootGroup: String
     let selectedPath: ProxySelectionPath?
     let delays: [String: Int]
+    let stateScope: String
     @Binding var focusedNodeName: String?
     let openGroup: (String) -> Void
     let showGroupList: (String) -> Void
@@ -42,6 +45,7 @@ private struct ProxyTopologyResolvedView: View, Equatable {
                 delays: delays
             ),
             rootGroup: rootGroup,
+            stateScope: stateScope,
             focusedNodeName: $focusedNodeName,
             openGroup: openGroup,
             showGroupList: showGroupList
@@ -53,6 +57,7 @@ private struct ProxyTopologyResolvedView: View, Equatable {
             && lhs.rootGroup == rhs.rootGroup
             && lhs.selectedPath == rhs.selectedPath
             && lhs.delays == rhs.delays
+            && lhs.stateScope == rhs.stateScope
     }
 }
 
@@ -127,13 +132,38 @@ private struct ProxyTopologyRenderModel {
 private struct ProxyTopologyInteractiveView: View {
     let renderModel: ProxyTopologyRenderModel
     let rootGroup: String
+    let stateScope: String
     @Binding var focusedNodeName: String?
     let openGroup: (String) -> Void
     let showGroupList: (String) -> Void
 
-    @State private var zoom = 1.0
-    @State private var relationshipsExpanded = false
+    @SceneStorage private var zoom: Double
+    @SceneStorage private var relationshipsExpanded: Bool
     @GestureState private var magnification = 1.0
+
+    init(
+        renderModel: ProxyTopologyRenderModel,
+        rootGroup: String,
+        stateScope: String,
+        focusedNodeName: Binding<String?>,
+        openGroup: @escaping (String) -> Void,
+        showGroupList: @escaping (String) -> Void
+    ) {
+        self.renderModel = renderModel
+        self.rootGroup = rootGroup
+        self.stateScope = stateScope
+        _focusedNodeName = focusedNodeName
+        self.openGroup = openGroup
+        self.showGroupList = showGroupList
+        _zoom = SceneStorage(
+            wrappedValue: 1.0,
+            "mclash.proxies.\(stateScope).topologyZoom"
+        )
+        _relationshipsExpanded = SceneStorage(
+            wrappedValue: false,
+            "mclash.proxies.\(stateScope).topologyRelationshipsExpanded"
+        )
+    }
 
     var body: some View {
         let projection = renderModel.projection

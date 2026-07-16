@@ -130,13 +130,19 @@ final class AppModel {
     var trafficHistory: [TrafficSample] = []
     var connections: MihomoConnectionSnapshot? {
         didSet {
+            proxyInspectorTrafficRevision &+= 1
             connectionsUseGlobalProxy = connections?.connections.contains {
                 $0.chains.contains("GLOBAL")
             } == true
             updateGlobalProxyGroupRelevance()
         }
     }
-    var routeTrafficEntries: [TrafficAttribution.Entry] = []
+    var routeTrafficEntries: [TrafficAttribution.Entry] = [] {
+        didSet {
+            proxyInspectorTrafficRevision &+= 1
+        }
+    }
+    private(set) var proxyInspectorTrafficRevision: UInt64 = 0
     private(set) var globalProxyGroupIsRelevant = false
     var systemProxyState: SystemProxyState = .off
     var controllerState: ControllerState = .idle
@@ -186,7 +192,10 @@ final class AppModel {
     private var proxyProfileStructure: ProfileStructure = .empty
     private var trafficAttribution = TrafficAttribution()
     private var prepared = false
+    private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
     private(set) var preparationInProgress = false
+    private var shutdownInProgress = false
+    private var startupPreparationErrorMessage: String?
 
     init(
         supervisor: CoreSupervisor = CoreSupervisor(),
@@ -234,11 +243,32 @@ final class AppModel {
     }
 
     func prepare() async {
-        guard !prepared, !preparationInProgress else { return }
+        guard !prepared, !shutdownInProgress else { return }
+        if let preparationOperation {
+            await preparationOperation.task.value
+            return
+        }
+
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performStartupPreparation()
+        }
+        preparationOperation = (id, task)
+        await task.value
+        if preparationOperation?.id == id {
+            preparationOperation = nil
+        }
+    }
+
+    private func performStartupPreparation() async {
+        guard !prepared else { return }
         preparationInProgress = true
         defer { preparationInProgress = false }
 
         do {
+            try Task.checkCancellation()
+            guard !shutdownInProgress else { return }
             if let profileStore, let profileLayout {
                 profiles = try await profileStore.profiles()
                 activeProfileID = try await profileStore.activeProfileID()
@@ -247,20 +277,58 @@ final class AppModel {
                     activeConfigURL = profileLayout.runtimeConfigurationURL
                 }
 
+                try Task.checkCancellation()
+                guard !shutdownInProgress else { return }
                 let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
                 if FileManager.default.fileExists(atPath: snapshotURL.path) {
                     guard await performDisableSystemProxy() else {
-                        throw AppModelError.systemProxyRestoreFailed
+                        // The restore operation already published the precise backend
+                        // failure. Keep it visible and do not retry automatically in
+                        // this launch, which could create an authorization loop.
+                        startupPreparationErrorMessage = nil
+                        prepared = true
+                        return
                     }
                     appendSupervisorLog("Recovered system proxy settings left by an interrupted session.")
                 }
             }
-            prepared = true
-        } catch {
-            if hasSystemProxySnapshot {
-                systemProxyState = .failed(error.localizedDescription)
+            try Task.checkCancellation()
+            guard !shutdownInProgress else { return }
+            if errorMessage == startupPreparationErrorMessage {
+                errorMessage = nil
             }
-            errorMessage = error.localizedDescription
+            startupPreparationErrorMessage = nil
+            await connectActiveProfileAtLaunchIfAvailable()
+            try Task.checkCancellation()
+            guard !shutdownInProgress else { return }
+            prepared = true
+        } catch is CancellationError {
+            return
+        } catch {
+            let message = error.localizedDescription
+            startupPreparationErrorMessage = message
+            errorMessage = message
+            appendSupervisorLog("Startup preparation failed: \(message)")
+        }
+    }
+
+    private func connectActiveProfileAtLaunchIfAvailable() async {
+        guard let activeProfileID,
+              profiles.contains(where: { $0.id == activeProfileID }),
+              let activeConfigURL,
+              FileManager.default.fileExists(atPath: activeConfigURL.path),
+              !systemProxyRecoveryRequired,
+              !shutdownInProgress,
+              !Task.isCancelled,
+              !isConnected,
+              !isBusy else {
+            return
+        }
+
+        let connected = await performConnect()
+        guard !shutdownInProgress, !Task.isCancelled else { return }
+        if connected, autoEnableSystemProxy {
+            await enableSystemProxyAfterConnect()
         }
     }
 
@@ -1143,12 +1211,20 @@ final class AppModel {
 
     @discardableResult
     func shutdown() async -> Bool {
+        shutdownInProgress = true
+        await cancelStartupPreparation()
         shouldReenableSystemProxyAfterCrash = false
         if let operation = systemProxyEnableOperation {
             await operation.task.value
         }
         if systemProxyEnabled || hasSystemProxySnapshot {
-            guard await performDisableSystemProxy() else { return false }
+            guard await performDisableSystemProxy() else {
+                // Keep the failure user-recoverable without allowing another Scene
+                // task to begin an automatic restore/authorization loop.
+                if hasSystemProxySnapshot { prepared = true }
+                shutdownInProgress = false
+                return false
+            }
         }
         trafficTask?.cancel()
         connectionsTask?.cancel()
@@ -1159,6 +1235,8 @@ final class AppModel {
     }
 
     func forceShutdown() async {
+        shutdownInProgress = true
+        await cancelStartupPreparation()
         shouldReenableSystemProxyAfterCrash = false
         if let operation = systemProxyEnableOperation {
             await operation.task.value
@@ -1168,6 +1246,15 @@ final class AppModel {
         apiLogTask?.cancel()
         await supervisor.stop()
         stopControllerStreams()
+    }
+
+    private func cancelStartupPreparation() async {
+        guard let operation = preparationOperation else { return }
+        operation.task.cancel()
+        await operation.task.value
+        if preparationOperation?.id == operation.id {
+            preparationOperation = nil
+        }
     }
 
     func clearLogs() {

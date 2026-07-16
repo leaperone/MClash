@@ -1,9 +1,15 @@
 import Observation
+import OSLog
 import SwiftUI
+
+private let rulesPerformanceLogger = Logger(
+    subsystem: "one.leaper.mclash",
+    category: "RulesPerformance"
+)
 
 struct RulesView: View {
     @Bindable var model: AppModel
-    @State private var searchText = ""
+    @SceneStorage("mclash.rules.searchText") private var searchText = ""
     @State private var presentation = RulePresentationStore()
 
     var body: some View {
@@ -31,6 +37,14 @@ struct RulesView: View {
                     .padding(.vertical, 8)
                     .background(.bar)
                     .overlay(alignment: .bottom) { Divider() }
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if model.isConnected,
+                   !model.rules.isEmpty,
+                   !presentation.isPreparingRows,
+                   presentation.totalMatches > 0 || presentation.isFiltering {
+                    RuleResultsStatusBar(presentation: presentation)
                 }
             }
             .task(id: model.controllerIsReady) {
@@ -120,13 +134,48 @@ struct RulesView: View {
                 if presentation.rows.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                 } else {
-                    ruleTable(presentation.rows)
+                    RuleTableSurface(
+                        rows: presentation.rows,
+                        revision: presentation.presentationRevision
+                    )
+                    .equatable()
                 }
             }
         }
     }
 
-    private func ruleTable(_ rows: [RuleTableRow]) -> some View {
+    private func loadRulesWhenAvailable() async {
+        guard model.controllerIsReady, model.rules.isEmpty, model.rulesErrorMessage == nil else {
+            return
+        }
+        while model.controllerIsReady,
+              model.rules.isEmpty,
+              model.rulesErrorMessage == nil,
+              !model.canPerform(.refreshRules) {
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                return
+            }
+        }
+        if model.controllerIsReady,
+           model.rules.isEmpty,
+           model.rulesErrorMessage == nil,
+           model.canPerform(.refreshRules) {
+            await model.refreshRules()
+        }
+    }
+}
+
+private struct RuleTableSurface: Equatable, View {
+    let rows: [RuleTableRow]
+    let revision: UInt64
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.revision == rhs.revision
+    }
+
+    var body: some View {
         Table(rows) {
             TableColumn("#") { row in
                 Text("\(row.rule.index + 1)")
@@ -190,37 +239,56 @@ struct RulesView: View {
         }
         .accessibilityLabel("Runtime rules")
     }
+}
 
-    private func loadRulesWhenAvailable() async {
-        guard model.controllerIsReady, model.rules.isEmpty, model.rulesErrorMessage == nil else {
-            return
-        }
-        while model.controllerIsReady,
-              model.rules.isEmpty,
-              model.rulesErrorMessage == nil,
-              !model.canPerform(.refreshRules) {
-            do {
-                try await Task.sleep(for: .milliseconds(100))
-            } catch {
-                return
+private struct RuleResultsStatusBar: View {
+    let presentation: RulePresentationStore
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if presentation.isFiltering {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Searching rules…")
+            } else {
+                Text(presentation.resultSummary)
+                    .monospacedDigit()
+            }
+
+            Spacer(minLength: 12)
+
+            if presentation.canLoadMore {
+                Button("Load 500 More") {
+                    presentation.loadMore()
+                }
+                .controlSize(.small)
+                .help("Show the next 500 matching rules")
             }
         }
-        if model.controllerIsReady,
-           model.rules.isEmpty,
-           model.rulesErrorMessage == nil,
-           model.canPerform(.refreshRules) {
-            await model.refreshRules()
-        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .contain)
     }
 }
 
 @MainActor
 @Observable
-private final class RulePresentationStore {
+final class RulePresentationStore {
+    private static let pageSize = 500
+
     private(set) var rows: [RuleTableRow] = []
     private(set) var isPreparingRows = false
+    private(set) var isFiltering = false
+    private(set) var totalMatches = 0
+    private(set) var presentationRevision: UInt64 = 0
 
     private var allRows: [RuleTableRow] = []
+    private var matchingRows: [RuleTableRow] = []
+    private var visibleLimit = pageSize
     private var activeQuery = ""
     private var requestedQuery = ""
     private var rulesRevision: UInt64 = 0
@@ -229,6 +297,15 @@ private final class RulePresentationStore {
     private var buildTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     private var filterTask: Task<Void, Never>?
+
+    var canLoadMore: Bool {
+        rows.count < totalMatches
+    }
+
+    var resultSummary: String {
+        let noun = activeQuery.isEmpty ? "rules" : "matches"
+        return "Showing \(formattedCount(rows.count)) of \(formattedCount(totalMatches)) \(noun)"
+    }
 
     func updateRules(_ rules: [MihomoRule]) {
         rulesRevision &+= 1
@@ -241,7 +318,12 @@ private final class RulePresentationStore {
         filterTask = nil
 
         allRows = []
+        matchingRows = []
         rows = []
+        totalMatches = 0
+        visibleLimit = Self.pageSize
+        isFiltering = false
+        presentationRevision &+= 1
         guard !rules.isEmpty else {
             isPreparingRows = false
             return
@@ -289,6 +371,7 @@ private final class RulePresentationStore {
         searchTask = nil
         filterTask?.cancel()
         filterTask = nil
+        isFiltering = true
 
         searchTask = Task { [weak self] in
             do {
@@ -305,9 +388,18 @@ private final class RulePresentationStore {
 
             activeQuery = query
             searchTask = nil
-            guard !allRows.isEmpty else { return }
+            guard !allRows.isEmpty else {
+                isFiltering = isPreparingRows
+                return
+            }
             scheduleFilter(query: query)
         }
+    }
+
+    func loadMore() {
+        guard canLoadMore else { return }
+        visibleLimit = min(visibleLimit + Self.pageSize, totalMatches)
+        publishVisibleRows(reason: "load-more")
     }
 
     func cancelPendingWork() {
@@ -317,6 +409,8 @@ private final class RulePresentationStore {
         searchTask = nil
         filterTask?.cancel()
         filterTask = nil
+        isPreparingRows = false
+        isFiltering = false
 
         // Make an initial onChange reschedule a debounce if the view disappeared
         // before the most recently requested query became active.
@@ -331,11 +425,17 @@ private final class RulePresentationStore {
 
         filterTask?.cancel()
         filterTask = nil
+        visibleLimit = Self.pageSize
 
         guard !query.isEmpty else {
-            rows = allRows
+            matchingRows = allRows
+            totalMatches = matchingRows.count
+            isFiltering = false
+            publishVisibleRows(reason: "empty-query")
             return
         }
+
+        isFiltering = true
 
         let sourceRows = allRows
         let worker = Task.detached(priority: .userInitiated) {
@@ -357,14 +457,41 @@ private final class RulePresentationStore {
                 return
             }
 
-            rows = filteredRows
+            matchingRows = filteredRows
+            totalMatches = filteredRows.count
+            isFiltering = false
             filterTask = nil
+            publishVisibleRows(reason: "search")
+        }
+    }
+
+    private func publishVisibleRows(reason: String) {
+        let publishStarted = DispatchTime.now().uptimeNanoseconds
+        rows = Array(matchingRows.prefix(visibleLimit))
+        presentationRevision &+= 1
+        let visibleCount = rows.count
+        let totalCount = totalMatches
+        let revision = presentationRevision
+        rulesPerformanceLogger.info(
+            "publish reason=\(reason, privacy: .public) visible=\(visibleCount, privacy: .public) total=\(totalCount, privacy: .public) revision=\(revision, privacy: .public)"
+        )
+
+        // This callback cannot run while SwiftUI/AppKit is monopolizing the main
+        // run loop. Its delay makes a large table reconciliation visible in logs
+        // without recording any rule or query content.
+        DispatchQueue.main.async {
+            let readyDelayMilliseconds =
+                (DispatchTime.now().uptimeNanoseconds - publishStarted) / 1_000_000
+            rulesPerformanceLogger.info(
+                "main-ready visible=\(visibleCount, privacy: .public) total=\(totalCount, privacy: .public) revision=\(revision, privacy: .public) delayMs=\(readyDelayMilliseconds, privacy: .public)"
+            )
         }
     }
 }
 
-private enum RulePresentationComputation {
+enum RulePresentationComputation {
     static func buildRows(from rules: [MihomoRule]) -> [RuleTableRow]? {
+        let started = DispatchTime.now().uptimeNanoseconds
         var rows: [RuleTableRow] = []
         rows.reserveCapacity(rules.count)
 
@@ -372,10 +499,15 @@ private enum RulePresentationComputation {
             if offset.isMultiple(of: 256), Task.isCancelled { return nil }
             rows.append(RuleTableRow(rule: rule))
         }
+        let elapsedMilliseconds = (DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        rulesPerformanceLogger.info(
+            "build source=\(rules.count, privacy: .public) durationMs=\(elapsedMilliseconds, privacy: .public)"
+        )
         return rows
     }
 
     static func filter(_ rows: [RuleTableRow], query: String) -> [RuleTableRow]? {
+        let started = DispatchTime.now().uptimeNanoseconds
         var matches: [RuleTableRow] = []
         matches.reserveCapacity(min(rows.count, 512))
 
@@ -385,11 +517,15 @@ private enum RulePresentationComputation {
                 matches.append(row)
             }
         }
+        let elapsedMilliseconds = (DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        rulesPerformanceLogger.info(
+            "filter queryLength=\(query.count, privacy: .public) source=\(rows.count, privacy: .public) matches=\(matches.count, privacy: .public) durationMs=\(elapsedMilliseconds, privacy: .public)"
+        )
         return matches
     }
 }
 
-private struct RuleTableRow: Identifiable, Sendable {
+struct RuleTableRow: Identifiable, Sendable {
     let rule: MihomoRule
     let payload: String
 
