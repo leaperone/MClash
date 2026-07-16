@@ -1,0 +1,9 @@
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+
+proxies: []
+proxy-groups: []
+rules:
+  - MATCH,DIRECT

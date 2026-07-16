@@ -26,7 +26,7 @@ struct MenuBarContent: View {
                 }
                 .padding(16)
             }
-            .frame(maxHeight: 560)
+            .frame(maxHeight: .infinity)
 
             Divider()
 
@@ -34,7 +34,9 @@ struct MenuBarContent: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
         }
-        .frame(width: 340)
+        // MenuBarExtra windows cannot infer a useful intrinsic height from ScrollView content.
+        // An explicit popover size keeps the entire quick-control surface visible on every launch.
+        .frame(width: 360, height: 600)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("MClash quick controls")
     }
@@ -128,7 +130,10 @@ struct MenuBarContent: View {
                                 Text(profile.name)
                             }
                         }
-                        .disabled(profile.id == model.activeProfileID)
+                        .disabled(
+                            profile.id == model.activeProfileID
+                                || !model.canPerform(.activateProfile(profile.id))
+                        )
                     }
                 }
 
@@ -148,7 +153,6 @@ struct MenuBarContent: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize(horizontal: false, vertical: true)
-            .disabled(model.networkStateTransitionInProgress)
         }
     }
 
@@ -163,7 +167,17 @@ struct MenuBarContent: View {
                     set: { enabled in Task { await model.setSystemProxyEnabled(enabled) } }
                 )
             )
-            .disabled(!model.controllerIsReady || model.networkStateTransitionInProgress)
+            .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
+
+            if !model.systemProxyEnabled {
+                Label(
+                    "Core is running; other apps will use MClash after System Proxy is enabled.",
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("Routing Mode")
@@ -179,9 +193,12 @@ struct MenuBarContent: View {
                 .pickerStyle(.segmented)
                 .disabled(
                     !model.controllerIsReady
-                        || model.networkStateTransitionInProgress
-                        || model.isPerforming(.changeMode)
+                        || !model.canPerform(.changeMode)
                 )
+            }
+
+            if model.controllerIsReady {
+                proxyEndpointSummary
             }
 
             if model.controllerState == .loading {
@@ -219,6 +236,56 @@ struct MenuBarContent: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
+
+            HStack(spacing: 12) {
+                Button("Connections") {
+                    showMainWindow(destination: .connections)
+                }
+                .buttonStyle(.link)
+
+                Text("\(model.connections?.connections.count ?? 0) active")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button {
+                    Task { await model.restartConnection() }
+                } label: {
+                    Label("Restart", systemImage: "arrow.clockwise")
+                }
+                .controlSize(.small)
+                .disabled(model.networkStateTransitionInProgress)
+
+                if model.connections?.connections.isEmpty == false {
+                    Button("Close All") {
+                        Task { await model.closeAllConnections() }
+                    }
+                    .controlSize(.small)
+                    .disabled(
+                        !model.canPerform(.closeAllConnections)
+                    )
+                }
+            }
+        }
+    }
+
+    private var proxyEndpointSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Local Proxy")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ProxyEndpointRow(
+                label: "HTTP",
+                address: model.localHTTPProxyAddress,
+                symbol: "globe"
+            )
+            ProxyEndpointRow(
+                label: "SOCKS5",
+                address: model.localSOCKSProxyAddress,
+                symbol: "point.3.connected.trianglepath.dotted"
+            )
         }
     }
 
@@ -366,6 +433,35 @@ struct MenuBarContent: View {
     }
 }
 
+private struct ProxyEndpointRow: View {
+    let label: String
+    let address: String?
+    let symbol: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Label(label, systemImage: symbol)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(address ?? "Unavailable")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(address == nil ? .secondary : .primary)
+            if let address {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(address, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy \(label) proxy address")
+                .accessibilityLabel("Copy \(label) proxy address")
+            }
+        }
+        .font(.caption)
+    }
+}
+
 private struct ProxyGroupQuickControl: View {
     @Bindable var model: AppModel
     let group: MihomoProxy
@@ -411,8 +507,7 @@ private struct ProxyGroupQuickControl: View {
                 .help("Test selected node latency")
                 .accessibilityLabel("Test \(selected) latency")
                 .disabled(
-                    model.networkStateTransitionInProgress
-                        || model.isPerforming(.measureDelay(selected))
+                    !model.canPerform(.measureDelay(selected))
                 )
             }
 
@@ -430,8 +525,7 @@ private struct ProxyGroupQuickControl: View {
             .help("Choose node for \(group.name)")
             .accessibilityLabel("Choose node for \(group.name)")
             .disabled(
-                model.networkStateTransitionInProgress
-                    || model.isPerforming(.selectProxy(group.name))
+                !model.canPerform(.selectProxy(group.name))
             )
             .popover(isPresented: $showingNodePicker, arrowEdge: .trailing) {
                 ProxyNodePicker(

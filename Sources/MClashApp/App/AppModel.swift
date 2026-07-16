@@ -5,6 +5,13 @@ import Observation
 @MainActor
 @Observable
 final class AppModel {
+    struct TrafficSample: Identifiable, Equatable {
+        let id = UUID()
+        let timestamp: Date
+        let download: Int64
+        let upload: Int64
+    }
+
     private struct StoredProfileSnapshot {
         let metadata: ProfileMetadata
         let configurationData: Data
@@ -108,9 +115,23 @@ final class AppModel {
     var rulesErrorMessage: String?
     var providersErrorMessage: String?
     var traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
+    var trafficHistory: [TrafficSample] = []
     var connections: MihomoConnectionSnapshot?
     var systemProxyState: SystemProxyState = .off
     var controllerState: ControllerState = .idle
+    var autoEnableSystemProxy: Bool {
+        didSet {
+            preferenceDefaults.set(autoEnableSystemProxy, forKey: Self.autoEnableSystemProxyKey)
+        }
+    }
+    var closeConnectionsOnRoutingChange: Bool {
+        didSet {
+            preferenceDefaults.set(
+                closeConnectionsOnRoutingChange,
+                forKey: Self.closeConnectionsOnRoutingChangeKey
+            )
+        }
+    }
     private(set) var degradedStreams: Set<LiveStream> = []
     private(set) var operations: Set<Operation> = []
 
@@ -120,29 +141,52 @@ final class AppModel {
     private let profileStore: ProfileStore?
     private let profileLayout: ProfileDirectoryLayout?
     private let systemProxyManager: SystemProxyManager
+    private let localPortProbe: LocalPortProbe
+    private let preferenceDefaults: UserDefaults
+    private var managedMixedPort: Int?
     private var apiClient: MihomoAPIClient?
     private var activeControllerEndpoint: URL?
+    private var controllerSetupOperation: (id: UUID, endpoint: URL, task: Task<Void, Never>)?
     private var eventTask: Task<Void, Never>?
     private var trafficTask: Task<Void, Never>?
     private var connectionsTask: Task<Void, Never>?
     private var apiLogTask: Task<Void, Never>?
     private var controllerGeneration = 0
+    private var systemProxyEnableOperation: (id: UUID, task: Task<Void, Never>)?
     private var systemProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
+    private var crashProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
+    private var shouldReenableSystemProxyAfterCrash = false
     private var prepared = false
     private(set) var preparationInProgress = false
 
     init(
         supervisor: CoreSupervisor = CoreSupervisor(),
         binaryLocator: CoreBinaryLocator = CoreBinaryLocator(),
-        secretStore: any CoreSecretProviding = CoreSecretStore(),
+        secretStore: any CoreSecretProviding = EphemeralCoreSecretProvider(),
         systemProxyManager: SystemProxyManager = SystemProxyManager(),
+        localPortProbe: LocalPortProbe = LocalPortProbe(),
         profileDirectoryLayout: ProfileDirectoryLayout? = nil,
-        profileStoreOverride: ProfileStore? = nil
+        profileStoreOverride: ProfileStore? = nil,
+        preferenceDefaults: UserDefaults = .standard
     ) {
         self.supervisor = supervisor
         self.binaryLocator = binaryLocator
         self.secretStore = secretStore
         self.systemProxyManager = systemProxyManager
+        self.localPortProbe = localPortProbe
+        self.preferenceDefaults = preferenceDefaults
+        if preferenceDefaults.object(forKey: Self.autoEnableSystemProxyKey) == nil {
+            autoEnableSystemProxy = true
+        } else {
+            autoEnableSystemProxy = preferenceDefaults.bool(forKey: Self.autoEnableSystemProxyKey)
+        }
+        if preferenceDefaults.object(forKey: Self.closeConnectionsOnRoutingChangeKey) == nil {
+            closeConnectionsOnRoutingChange = true
+        } else {
+            closeConnectionsOnRoutingChange = preferenceDefaults.bool(
+                forKey: Self.closeConnectionsOnRoutingChangeKey
+            )
+        }
 
         if let layout = profileDirectoryLayout ?? (try? ProfileDirectoryLayout.applicationSupport()) {
             profileLayout = layout
@@ -252,6 +296,28 @@ final class AppModel {
         return false
     }
 
+    var localHTTPProxyPort: Int? {
+        guard let runtimeConfig else { return nil }
+        return managedMixedPort
+            ?? positivePort(runtimeConfig.port)
+            ?? positivePort(runtimeConfig.mixedPort)
+    }
+
+    var localSOCKSProxyPort: Int? {
+        guard let runtimeConfig else { return nil }
+        return managedMixedPort
+            ?? positivePort(runtimeConfig.socksPort)
+            ?? positivePort(runtimeConfig.mixedPort)
+    }
+
+    var localHTTPProxyAddress: String? {
+        localHTTPProxyPort.map { "127.0.0.1:\($0)" }
+    }
+
+    var localSOCKSProxyAddress: String? {
+        localSOCKSProxyPort.map { "127.0.0.1:\($0)" }
+    }
+
     var networkStateTransitionInProgress: Bool {
         if preparationInProgress { return true }
         if systemProxyRecoveryRequired { return true }
@@ -331,7 +397,10 @@ final class AppModel {
             profiles = try await profileStore.profiles()
             try await performActivateProfile(profile.id)
         } catch {
-            appendSupervisorLog("Subscription add failed: \(error.localizedDescription)")
+            appendSupervisorLog(
+                "Subscription add failed: "
+                    + redactedSubscriptionMessage(error.localizedDescription, url: url)
+            )
             throw error
         }
     }
@@ -449,6 +518,10 @@ final class AppModel {
         defer { end(.refreshProfile(id)) }
 
         guard let profileStore else { return }
+        let subscriptionURL = profiles.first(where: { $0.id == id }).flatMap { profile -> URL? in
+            guard case let .remote(remote) = profile.origin else { return nil }
+            return remote.url
+        }
         let rollbackSnapshot: StoredProfileSnapshot?
         if activeProfileID == id {
             do {
@@ -491,7 +564,12 @@ final class AppModel {
                     )
                 }
             }
-            recordOperationFailure(error, context: "Subscription refresh")
+            let message = redactedSubscriptionMessage(
+                error.localizedDescription,
+                url: subscriptionURL
+            )
+            errorMessage = message
+            appendSupervisorLog("Subscription refresh failed: \(message)")
         }
     }
 
@@ -516,14 +594,20 @@ final class AppModel {
         if isConnected || isBusy {
             _ = await performDisconnect()
         } else {
-            _ = await performConnect()
+            let connected = await performConnect()
+            if connected, autoEnableSystemProxy {
+                await enableSystemProxyAfterConnect()
+            }
         }
     }
 
     func connect() async {
         guard begin(.connection) else { return }
         defer { end(.connection) }
-        _ = await performConnect()
+        let connected = await performConnect()
+        if connected, autoEnableSystemProxy {
+            await enableSystemProxyAfterConnect()
+        }
     }
 
     func disconnect() async {
@@ -536,8 +620,12 @@ final class AppModel {
         guard begin(.connection) else { return }
         defer { end(.connection) }
 
+        let shouldEnableSystemProxy = isConnected ? systemProxyEnabled : autoEnableSystemProxy
         guard await performDisconnect() else { return }
-        _ = await performConnect()
+        let connected = await performConnect()
+        if connected, shouldEnableSystemProxy {
+            await enableSystemProxyAfterConnect()
+        }
     }
 
     @discardableResult
@@ -553,11 +641,12 @@ final class AppModel {
             let binaryURL = try binaryLocator.locate()
             let secret = try secretStore.loadOrCreate()
             let homeDirectory = try coreHomeDirectory()
+            let controllerPort = try localPortProbe.availableTCPPort()
             let configuration = CoreLaunchConfiguration(
                 binaryURL: binaryURL,
                 homeDirectory: homeDirectory,
                 configURL: activeConfigURL,
-                controllerPort: 19_090,
+                controllerPort: UInt16(controllerPort),
                 secret: secret
             )
             try await supervisor.start(configuration)
@@ -578,6 +667,7 @@ final class AppModel {
 
     @discardableResult
     private func performDisconnect() async -> Bool {
+        shouldReenableSystemProxyAfterCrash = false
         if systemProxyEnabled || hasSystemProxySnapshot {
             guard await performDisableSystemProxy() else { return false }
         }
@@ -598,6 +688,7 @@ final class AppModel {
             let config = try await apiClient.fetchConfig()
             guard generation == controllerGeneration, isConnected else { return }
             runtimeConfig = config
+            await closeConnectionsAfterRoutingChange(using: apiClient, generation: generation)
         } catch {
             guard generation == controllerGeneration else { return }
             recordOperationFailure(error, context: "Routing mode change")
@@ -613,6 +704,8 @@ final class AppModel {
         do {
             try await apiClient.selectProxy(group: group, proxy: proxy)
             await refreshProxyGroups(generation: generation)
+            guard generation == controllerGeneration, isConnected else { return false }
+            await closeConnectionsAfterRoutingChange(using: apiClient, generation: generation)
             return generation == controllerGeneration && isConnected
         } catch {
             guard generation == controllerGeneration else { return false }
@@ -787,6 +880,7 @@ final class AppModel {
         defer { end(.changeSystemProxy) }
 
         if systemProxyEnabled {
+            shouldReenableSystemProxyAfterCrash = false
             await performDisableSystemProxy()
         } else {
             await performEnableSystemProxy()
@@ -801,6 +895,7 @@ final class AppModel {
         if enabled {
             await performEnableSystemProxy()
         } else {
+            shouldReenableSystemProxyAfterCrash = false
             await performDisableSystemProxy()
         }
     }
@@ -812,8 +907,28 @@ final class AppModel {
     }
 
     private func performEnableSystemProxy() async {
-        guard isConnected, let mixedPort = runtimeConfig?.mixedPort, mixedPort > 0 else {
-            errorMessage = "Connect the core with a configuration that exposes a mixed port first."
+        if let operation = systemProxyEnableOperation {
+            await operation.task.value
+            return
+        }
+
+        let id = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performSystemProxyActivation()
+        }
+        systemProxyEnableOperation = (id, task)
+        await task.value
+        if systemProxyEnableOperation?.id == id {
+            systemProxyEnableOperation = nil
+        }
+    }
+
+    private func performSystemProxyActivation() async {
+        if case .on = systemProxyState { return }
+        if case .enabling = systemProxyState { return }
+        guard isConnected, runtimeConfig != nil else {
+            errorMessage = "Connect the core before enabling the macOS system proxy."
             return
         }
         guard let profileLayout else {
@@ -824,7 +939,14 @@ final class AppModel {
         let generation = controllerGeneration
         systemProxyState = .enabling
         do {
-            let endpoints = try LocalSystemProxyEndpoints(mixedPort: mixedPort)
+            guard let httpPort = localHTTPProxyPort, let socksPort = localSOCKSProxyPort else {
+                throw AppModelError.localProxyPortsUnavailable
+            }
+            let endpoints = try LocalSystemProxyEndpoints(
+                http: SystemProxyEndpoint(port: httpPort),
+                https: SystemProxyEndpoint(port: httpPort),
+                socks: SystemProxyEndpoint(port: socksPort)
+            )
             let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
             try await systemProxyManager.activate(
                 endpoints: endpoints,
@@ -835,7 +957,9 @@ final class AppModel {
                 return
             }
             systemProxyState = .on
-            appendSupervisorLog("System proxy enabled on 127.0.0.1:\(mixedPort).")
+            appendSupervisorLog(
+                "System proxy enabled: HTTP 127.0.0.1:\(httpPort), SOCKS5 127.0.0.1:\(socksPort)."
+            )
         } catch {
             let message = error.localizedDescription
             systemProxyState = .failed(message)
@@ -850,6 +974,7 @@ final class AppModel {
     func disableSystemProxy() async {
         guard begin(.changeSystemProxy) else { return }
         defer { end(.changeSystemProxy) }
+        shouldReenableSystemProxyAfterCrash = false
         await performDisableSystemProxy()
     }
 
@@ -905,6 +1030,10 @@ final class AppModel {
 
     @discardableResult
     func shutdown() async -> Bool {
+        shouldReenableSystemProxyAfterCrash = false
+        if let operation = systemProxyEnableOperation {
+            await operation.task.value
+        }
         if systemProxyEnabled || hasSystemProxySnapshot {
             guard await performDisableSystemProxy() else { return false }
         }
@@ -937,19 +1066,21 @@ final class AppModel {
             coreState = state
             if case let .failed(message) = state {
                 errorMessage = message
+                let shouldReenable = systemProxyEnabled
                 stopControllerStreams()
-                if systemProxyEnabled || hasSystemProxySnapshot {
-                    Task { [weak self] in await self?.performDisableSystemProxy() }
+                if shouldReenable || hasSystemProxySnapshot {
+                    beginCrashSystemProxyRestore(reenableAfterRestart: shouldReenable)
                 }
             }
             if case .stopped = state {
+                shouldReenableSystemProxyAfterCrash = false
                 stopControllerStreams()
                 if systemProxyEnabled || hasSystemProxySnapshot {
                     Task { [weak self] in await self?.performDisableSystemProxy() }
                 }
             }
             if case let .running(session) = state {
-                Task { [weak self] in await self?.controllerDidStart(session) }
+                Task { [weak self] in await self?.handleRunningSession(session) }
             }
         case let .log(line):
             logs.append(line)
@@ -957,6 +1088,50 @@ final class AppModel {
                 logs.removeFirst(logs.count - 1_500)
             }
         }
+    }
+
+    private func handleRunningSession(_ session: CoreSession) async {
+        await controllerDidStart(session)
+        guard shouldReenableSystemProxyAfterCrash,
+              controllerIsReady,
+              isConnected else { return }
+        await enableSystemProxyAfterConnect(requiresCrashIntent: true)
+    }
+
+    private func enableSystemProxyAfterConnect(requiresCrashIntent: Bool = false) async {
+        guard await completeCrashProxyRestoreIfNeeded() else { return }
+        if requiresCrashIntent, !shouldReenableSystemProxyAfterCrash { return }
+        shouldReenableSystemProxyAfterCrash = false
+        guard isConnected, controllerIsReady else { return }
+        await performEnableSystemProxy()
+    }
+
+    private func beginCrashSystemProxyRestore(reenableAfterRestart: Bool) {
+        if reenableAfterRestart {
+            shouldReenableSystemProxyAfterCrash = true
+        }
+        guard crashProxyRestoreOperation == nil else { return }
+
+        let id = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return false }
+            return await self.performDisableSystemProxy()
+        }
+        crashProxyRestoreOperation = (id, task)
+    }
+
+    private func completeCrashProxyRestoreIfNeeded() async -> Bool {
+        guard let operation = crashProxyRestoreOperation else {
+            return !systemProxyRecoveryRequired
+        }
+        let restored = await operation.task.value
+        if crashProxyRestoreOperation?.id == operation.id {
+            crashProxyRestoreOperation = nil
+        }
+        if !restored {
+            shouldReenableSystemProxyAfterCrash = false
+        }
+        return restored
     }
 
     private func coreHomeDirectory() throws -> URL {
@@ -976,7 +1151,6 @@ final class AppModel {
     private func makeProfileValidator() throws -> ClosureProfileValidator {
         let binaryURL = try binaryLocator.locate()
         let homeDirectory = try validationHomeDirectory()
-        let secret = try secretStore.loadOrCreate()
 
         return ClosureProfileValidator { [supervisor] configurationURL in
             try await supervisor.validateWithoutStateChanges(
@@ -984,8 +1158,8 @@ final class AppModel {
                     binaryURL: binaryURL,
                     homeDirectory: homeDirectory,
                     configURL: configurationURL,
-                    controllerPort: 19_090,
-                    secret: secret
+                    controllerPort: 0,
+                    secret: ""
                 )
             )
         }
@@ -1006,18 +1180,40 @@ final class AppModel {
     }
 
     private func controllerDidStart(_ session: CoreSession) async {
-        if activeControllerEndpoint == session.endpoint,
-           controllerState == .loading || controllerState == .ready {
+        if activeControllerEndpoint == session.endpoint, controllerState == .ready {
             return
         }
 
+        if let operation = controllerSetupOperation, operation.endpoint == session.endpoint {
+            await operation.task.value
+            return
+        }
+
+        controllerSetupOperation?.task.cancel()
+        let id = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performControllerSetup(session)
+        }
+        controllerSetupOperation = (id, session.endpoint, task)
+        await task.value
+        if controllerSetupOperation?.id == id {
+            controllerSetupOperation = nil
+        }
+    }
+
+    private func performControllerSetup(_ session: CoreSession) async {
         controllerState = .loading
         activeControllerEndpoint = session.endpoint
         controllerGeneration &+= 1
         let generation = controllerGeneration
         do {
             let client = try MihomoAPIClient(baseURL: session.endpoint, secret: session.secret)
-            let config = try await client.fetchConfig()
+            let initialConfig = try await client.fetchConfig()
+            let config = try await ensureLocalProxyListeners(
+                initialConfig,
+                using: client
+            )
             let proxies = try await client.fetchProxies()
             guard generation == controllerGeneration,
                   activeControllerEndpoint == session.endpoint,
@@ -1038,6 +1234,59 @@ final class AppModel {
         }
     }
 
+    private func ensureLocalProxyListeners(
+        _ initialConfig: MihomoConfig,
+        using client: MihomoAPIClient
+    ) async throws -> MihomoConfig {
+        managedMixedPort = nil
+        if let ports = resolvedProxyPorts(in: initialConfig) {
+            do {
+                try await localPortProbe.waitUntilListening(ports: Set([ports.http, ports.socks]))
+                return initialConfig
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                appendSupervisorLog(
+                    "Configured proxy listeners were unavailable; applying a temporary MClash mixed port."
+                )
+            }
+        } else {
+            appendSupervisorLog(
+                "The profile has no complete local HTTP/SOCKS listener; applying a temporary MClash mixed port."
+            )
+        }
+
+        var lastError: Error?
+        for _ in 0..<3 {
+            let port = try localPortProbe.availableTCPPort()
+            do {
+                try await client.patchConfig(MihomoConfigPatch(mixedPort: port))
+                let config = try await client.fetchConfig()
+                guard config.mixedPort == port else {
+                    throw AppModelError.localProxyOverrideRejected(port)
+                }
+                try await localPortProbe.waitUntilListening(ports: [port])
+                managedMixedPort = port
+                appendSupervisorLog("MClash local HTTP/SOCKS5 listener is ready on 127.0.0.1:\(port).")
+                return config
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? AppModelError.localProxyPortsUnavailable
+    }
+
+    private func resolvedProxyPorts(in config: MihomoConfig) -> (http: Int, socks: Int)? {
+        guard let http = positivePort(config.port) ?? positivePort(config.mixedPort),
+              let socks = positivePort(config.socksPort) ?? positivePort(config.mixedPort) else {
+            return nil
+        }
+        return (http, socks)
+    }
+
     private func refreshProxyGroups(generation: Int) async {
         guard let apiClient else { return }
         do {
@@ -1047,6 +1296,23 @@ final class AppModel {
         } catch {
             guard generation == controllerGeneration, isConnected else { return }
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func closeConnectionsAfterRoutingChange(
+        using client: MihomoAPIClient,
+        generation: Int
+    ) async {
+        guard closeConnectionsOnRoutingChange else { return }
+        do {
+            try await client.closeAllConnections()
+            guard generation == controllerGeneration, isConnected else { return }
+            appendSupervisorLog("Closed existing connections after the routing selection changed.")
+        } catch {
+            guard generation == controllerGeneration, isConnected else { return }
+            let message = "Routing changed, but existing connections could not be closed: \(error.localizedDescription)"
+            errorMessage = message
+            appendSupervisorLog(message)
         }
     }
 
@@ -1122,6 +1388,16 @@ final class AppModel {
                 for try await sample in stream {
                     guard streamShouldContinue(generation) else { return }
                     traffic = sample
+                    trafficHistory.append(
+                        TrafficSample(
+                            timestamp: Date(),
+                            download: sample.download,
+                            upload: sample.upload
+                        )
+                    )
+                    if trafficHistory.count > 60 {
+                        trafficHistory.removeFirst(trafficHistory.count - 60)
+                    }
                     degradedStreams.remove(.traffic)
                     attempt = 0
                 }
@@ -1217,12 +1493,15 @@ final class AppModel {
     }
 
     private func stopControllerStreams() {
+        controllerSetupOperation?.task.cancel()
+        controllerSetupOperation = nil
         cancelControllerStreamTasks()
         controllerGeneration &+= 1
         apiClient = nil
         activeControllerEndpoint = nil
         controllerState = .idle
         runtimeConfig = nil
+        managedMixedPort = nil
         proxyGroups = []
         proxiesByName = [:]
         proxyDelays = [:]
@@ -1234,6 +1513,7 @@ final class AppModel {
         degradedStreams = []
         connections = nil
         traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
+        trafficHistory = []
     }
 
     private func cancelControllerStreamTasks() {
@@ -1319,6 +1599,23 @@ final class AppModel {
         appendSupervisorLog("\(context) failed: \(message)")
     }
 
+    private func redactedSubscriptionMessage(_ message: String, url: URL?) -> String {
+        guard let url else { return message }
+        var redacted = message.replacingOccurrences(
+            of: url.absoluteString,
+            with: "the subscription endpoint",
+            options: .caseInsensitive
+        )
+        if let host = url.host, !host.isEmpty {
+            redacted = redacted.replacingOccurrences(
+                of: host,
+                with: "the subscription host",
+                options: .caseInsensitive
+            )
+        }
+        return redacted
+    }
+
     private func appendCoreLog(_ line: CoreLogLine) {
         logs.append(line)
         if logs.count > 1_500 {
@@ -1340,12 +1637,19 @@ final class AppModel {
         layout.stateDirectory.appending(path: "system-proxy-snapshot.json")
     }
 
+    private func positivePort(_ port: Int) -> Int? {
+        port > 0 ? port : nil
+    }
+
     private var hasSystemProxySnapshot: Bool {
         guard let profileLayout else { return false }
         return FileManager.default.fileExists(
             atPath: systemProxySnapshotURL(layout: profileLayout).path
         )
     }
+
+    static let autoEnableSystemProxyKey = "network.autoEnableSystemProxy"
+    static let closeConnectionsOnRoutingChangeKey = "network.closeConnectionsOnRoutingChange"
 }
 
 private extension AppModel.Operation {
@@ -1406,6 +1710,8 @@ private enum AppModelError: LocalizedError {
     case streamEnded(String)
     case systemProxyRestoreFailed
     case profileActivationFailed(String)
+    case localProxyPortsUnavailable
+    case localProxyOverrideRejected(Int)
 
     var errorDescription: String? {
         switch self {
@@ -1419,6 +1725,10 @@ private enum AppModelError: LocalizedError {
             "MClash could not restore the previous macOS proxy settings, so the running core was left active."
         case let .profileActivationFailed(message):
             message
+        case .localProxyPortsUnavailable:
+            "The active profile does not expose both an HTTP and a SOCKS5 local proxy port. Add port/socks-port or mixed-port to the profile."
+        case let .localProxyOverrideRejected(port):
+            "mihomo did not accept MClash's temporary local proxy port \(port)."
         }
     }
 }

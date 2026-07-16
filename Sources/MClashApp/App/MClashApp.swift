@@ -8,12 +8,12 @@ struct MClashApp: App {
     var body: some Scene {
         Window("MClash", id: "main") {
             ContentView(model: model)
-                .frame(minWidth: 860, minHeight: 560)
+                .frame(minWidth: 1_080, minHeight: 640)
                 .task {
                     await prepareApplication()
                 }
         }
-        .defaultSize(width: 980, height: 680)
+        .defaultSize(width: 1_180, height: 760)
 
         MenuBarExtra {
             MenuBarContent(model: model)
@@ -25,7 +25,7 @@ struct MClashApp: App {
 
         Settings {
             SettingsView(model: model)
-                .frame(width: 520, height: 320)
+                .frame(width: 560, height: 460)
         }
     }
 

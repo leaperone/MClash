@@ -11,13 +11,16 @@ WebSocket API.
 - Native window and dedicated menu bar quick-control popup
 - Alpha core discovery, configuration validation, lifecycle supervision, and
   bounded crash recovery
-- Keychain-backed local controller secret
+- Per-launch in-memory local controller secret (no connection-time Keychain prompt)
 - Local and remote profile storage with transactional activation and rollback
 - Rule / Global / Direct routing, policy groups, searchable node selection, and
   latency testing
 - Rules, proxy providers, rule providers, live connections, logs, and traffic
 - REST/WebSocket API models, authenticated client, and stream reconnection
 - Lossless macOS system proxy snapshot, activation, persistence, and restore
+- Runtime-managed local listener fallback for subscriptions that omit HTTP/SOCKS ports
+- Dynamic loopback controller port to avoid conflicts with other Clash/mihomo clients
+- Optional automatic connection reset after routing mode or node changes
 
 TUN mode will be implemented behind a signed, narrow XPC privileged helper. It
 is intentionally not handled through arbitrary shell commands or a root-owned
@@ -56,8 +59,9 @@ it in the application. End users never select or download a core.
 
 ## Bundled mihomo Alpha artifact
 
-MClash currently pins `alpha-a70af27` from the upstream `Prerelease-Alpha`
-channel. Release metadata lives in `Support/mihomo-alpha.env`; SHA-256 values for
+MClash currently pins `alpha-a70af27` at commit
+`a70af27451ac6837bcbbd3c542d8207304096e2f` from the upstream
+`Prerelease-Alpha` channel. Release metadata lives in `Support/mihomo-alpha.env`; SHA-256 values for
 the unpacked, executable artifacts live in `Support/mihomo-alpha.sha256`.
 
 Both Apple Silicon and Intel use the same artifact-selection code. The first
@@ -103,8 +107,11 @@ stored in this repository.
 ## Safety invariants
 
 - A profile is checked with `mihomo -t` before activation.
-- The control API binds only to `127.0.0.1` and uses a random secret stored in
-  Keychain.
+- The control API binds only to `127.0.0.1` and uses a random secret retained
+  only for the current MClash process lifetime.
+- Connection readiness requires live local HTTP and SOCKS5 listeners. When a
+  subscription omits them, MClash applies an in-memory mixed-port override
+  without rewriting the stored subscription.
 - The app owns runtime configuration persistence; API patches are not treated
   as durable state.
 - Existing system proxy dictionaries are captured and restored exactly.

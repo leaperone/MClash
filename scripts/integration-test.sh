@@ -7,11 +7,17 @@ source "${repo_root}/scripts/mihomo-alpha-common.sh"
 build_dir="${repo_root}/.build/integration"
 architecture="$(uname -m)"
 core_pid=""
+origin_pid=""
+origin_port="$((20000 + RANDOM % 20000))"
 
 cleanup() {
   if [[ -n "${core_pid}" ]] && kill -0 "${core_pid}" 2>/dev/null; then
     kill -TERM "${core_pid}" 2>/dev/null || true
     wait "${core_pid}" 2>/dev/null || true
+  fi
+  if [[ -n "${origin_pid}" ]] && kill -0 "${origin_pid}" 2>/dev/null; then
+    kill -TERM "${origin_pid}" 2>/dev/null || true
+    wait "${origin_pid}" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
@@ -24,6 +30,24 @@ if [[ ! -f "${core}" ]]; then
   "${repo_root}/scripts/fetch-mihomo-alpha.sh" --architecture "${architecture}"
 fi
 mihomo_alpha_verify_selected_artifact
+
+/usr/bin/python3 -m http.server "${origin_port}" \
+  --bind 127.0.0.1 \
+  --directory "${repo_root}/Tests/Fixtures" \
+  > "${build_dir}/origin-server.log" 2>&1 &
+origin_pid="$!"
+origin_ready="false"
+for _ in {1..30}; do
+  if curl -fs "http://127.0.0.1:${origin_port}/minimal.yaml" >/dev/null; then
+    origin_ready="true"
+    break
+  fi
+  sleep 0.1
+done
+if [[ "${origin_ready}" != "true" ]]; then
+  print -u2 "Local integration origin did not become ready on port ${origin_port}."
+  exit 1
+fi
 
 swiftc -swift-version 6 \
   "${repo_root}/Sources/MClashApp/Core/CoreModels.swift" \
@@ -48,7 +72,8 @@ swiftc -parse-as-library -swift-version 6 \
   -o "${build_dir}/app-model-smoke"
 (
   cd "${repo_root}"
-  "${build_dir}/app-model-smoke"
+  MCLASH_PROXY_SMOKE_URL="http://127.0.0.1:${origin_port}/minimal.yaml" \
+    "${build_dir}/app-model-smoke"
 )
 
 swiftc -swift-version 6 -framework SystemConfiguration \
@@ -66,13 +91,19 @@ mkdir -p "${build_dir}/api-core-home"
   > "${build_dir}/api-core.log" 2>&1 &
 core_pid="$!"
 
+api_ready="false"
 for _ in {1..60}; do
-  if curl -fsS -H 'Authorization: Bearer integration-secret' \
+  if curl -fs -H 'Authorization: Bearer integration-secret' \
     http://127.0.0.1:19090/version >/dev/null; then
+    api_ready="true"
     break
   fi
   sleep 0.1
 done
+if [[ "${api_ready}" != "true" ]]; then
+  print -u2 "mihomo API integration core did not become ready."
+  exit 1
+fi
 
 swiftc -swift-version 6 \
   "${repo_root}"/Sources/MClashApp/MihomoAPI/*.swift \

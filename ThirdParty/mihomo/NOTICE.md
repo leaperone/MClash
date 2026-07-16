@@ -2,7 +2,7 @@
 
 MClash controls the MetaCubeX mihomo Alpha core as a separate process.
 
-- Source: https://github.com/MetaCubeX/mihomo/tree/a70af27451ac44f94ff5bd5db0bd9d4965460181
+- Source: https://github.com/MetaCubeX/mihomo/tree/a70af27451ac6837bcbbd3c542d8207304096e2f
 - Release channel: `Prerelease-Alpha`
 - License: GPL-3.0
 
