@@ -9,6 +9,8 @@ WebSocket API.
 ## Current scope
 
 - Native window and dedicated menu bar quick-control popup
+- Responsive native layouts with wide-screen dashboard composition, compact
+  fallbacks, and consistent system backgrounds across every destination
 - Alpha core discovery, configuration validation, lifecycle supervision, and
   bounded crash recovery
 - Per-launch in-memory local controller secret (no connection-time Keychain prompt)
@@ -19,6 +21,7 @@ WebSocket API.
 - Session-scoped routing explanations that connect observed domains and rules
   to the actual group-to-node chain reported by mihomo
 - Rules, proxy providers, rule providers, live connections, logs, and traffic
+- Shared numeric formatting for rates, byte totals, memory, and localized counts
 - REST/WebSocket API models, authenticated client, and stream reconnection
 - Complete macOS proxy snapshots with `networksetup` activation and rollback
 - Runtime-managed local listener fallback for subscriptions that omit HTTP/SOCKS ports

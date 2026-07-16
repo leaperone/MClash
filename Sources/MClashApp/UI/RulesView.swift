@@ -51,12 +51,17 @@ struct RulesView: View {
                 List(filteredRules, id: \.index) { rule in
                     RuleRow(rule: rule)
                 }
+                .listStyle(.inset)
+                .mclashListSurface()
             }
         }
         .navigationTitle("Rules")
+        .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Type, payload, or policy")
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let message = model.rulesErrorMessage, !model.rules.isEmpty {
+            if model.errorMessage == nil,
+               let message = model.rulesErrorMessage,
+               !model.rules.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -70,7 +75,7 @@ struct RulesView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.bar)
                 .overlay(alignment: .bottom) { Divider() }
             }
         }
@@ -87,7 +92,7 @@ struct RulesView: View {
         }
         .toolbar {
             ToolbarItem {
-                Text("\(model.rules.count) rules")
+                Text("\(formattedCount(model.rules.count)) rules")
                     .foregroundStyle(.secondary)
             }
             ToolbarItem {

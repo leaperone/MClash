@@ -32,6 +32,7 @@ struct LogsView: View {
                             .id(line.id)
                     }
                     .listStyle(.inset)
+                    .mclashListSurface()
                 }
             }
             .navigationTitle("Logs")
@@ -47,7 +48,7 @@ struct LogsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 330)
+                    .frame(minWidth: 180, idealWidth: 260, maxWidth: 330)
                     .accessibilityLabel("Filter logs by source")
                 }
 
@@ -106,6 +107,7 @@ struct LogsView: View {
                 scrollToLatest(using: proxy)
             }
         }
+        .mclashPageSurface()
         .alert(
             "Couldn’t Export Logs",
             isPresented: Binding(
@@ -123,7 +125,10 @@ struct LogsView: View {
 
     private var statusBar: some View {
         HStack(spacing: 10) {
-            Text("\(filteredLogs.count) of \(model.logs.count) entries")
+            Text(
+                "\(formattedCount(filteredLogs.count)) of "
+                    + "\(formattedCount(model.logs.count)) entries"
+            )
                 .monospacedDigit()
 
             Spacer()
@@ -137,7 +142,7 @@ struct LogsView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.bar)
         .overlay(alignment: .top) { Divider() }
         .accessibilityElement(children: .combine)
     }

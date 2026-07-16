@@ -64,6 +64,7 @@ struct ProxiesView: View {
             }
         }
         .navigationTitle("Proxies")
+        .mclashPageSurface()
         .searchable(text: searchBinding, prompt: "Search nodes in the current group")
         .onAppear(perform: normalizeSelection)
         .onChange(of: model.proxyTopology.groupOrder) { _, _ in normalizeSelection() }
@@ -103,18 +104,19 @@ struct ProxiesView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.bar)
             }
             Divider()
 
             HSplitView {
                 groupSidebar
-                    .frame(minWidth: 190, idealWidth: 220, maxWidth: 260)
+                    .frame(minWidth: 160, idealWidth: 210, maxWidth: 250)
 
                 groupDetail
-                    .frame(minWidth: 360, maxWidth: .infinity)
+                    .frame(minWidth: 300, maxWidth: .infinity)
             }
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         .inspector(isPresented: $inspectorPresented) {
             ProxyInspectorView(
                 model: model,
@@ -122,7 +124,7 @@ struct ProxiesView: View {
                 focusedNodeName: focusedNodeName,
                 openGroup: openGroup
             )
-            .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
+            .inspectorColumnWidth(min: 220, ideal: 280, max: 340)
         }
     }
 
@@ -144,10 +146,16 @@ struct ProxiesView: View {
                 Spacer()
                 systemProxyToggle
             }
+
+            VStack(alignment: .leading, spacing: 10) {
+                routingModePicker
+                    .frame(maxWidth: .infinity)
+                systemProxyToggle
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.bar)
     }
 
     private var routingModePicker: some View {
@@ -157,7 +165,7 @@ struct ProxiesView: View {
             Text("Direct").tag("direct")
         }
         .pickerStyle(.segmented)
-        .frame(width: 250)
+        .frame(minWidth: 190, idealWidth: 250, maxWidth: 250)
         .disabled(!model.canPerform(.changeMode))
     }
 
@@ -182,9 +190,9 @@ struct ProxiesView: View {
 
     private var groupSidebar: some View {
         List(selection: $selectedGroupName) {
-            if !rootGroups.isEmpty {
-                Section("Entry Groups") {
-                    ForEach(rootGroups, id: \.name) { group in
+            if !nestedGroups.isEmpty {
+                Section("Nested Groups") {
+                    ForEach(nestedGroups, id: \.name) { group in
                         ProxyGroupSidebarRow(
                             group: group,
                             path: model.proxySelectionPaths[group.name]
@@ -194,9 +202,9 @@ struct ProxiesView: View {
                 }
             }
 
-            if !nestedGroups.isEmpty {
-                Section("Nested Groups") {
-                    ForEach(nestedGroups, id: \.name) { group in
+            if !rootGroups.isEmpty {
+                Section("Entry Groups") {
+                    ForEach(rootGroups, id: \.name) { group in
                         ProxyGroupSidebarRow(
                             group: group,
                             path: model.proxySelectionPaths[group.name]
@@ -219,7 +227,10 @@ struct ProxiesView: View {
             }
         }
         .listStyle(.sidebar)
-        .accessibilityLabel("Proxy groups in profile order")
+        .scrollContentBackground(.hidden)
+        .contentMargins(.vertical, 8, for: .scrollContent)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .accessibilityLabel("Proxy groups with nested groups first")
     }
 
     @ViewBuilder
@@ -259,6 +270,7 @@ struct ProxiesView: View {
                 reduceMotion ? nil : .easeOut(duration: 0.18),
                 value: workspaceMode
             )
+            .background(Color(nsColor: .windowBackgroundColor))
         } else {
             ContentUnavailableView(
                 "Choose a proxy group",
@@ -274,12 +286,12 @@ struct ProxiesView: View {
                 HStack(alignment: .center, spacing: 12) {
                     groupTitle(group)
                     Spacer(minLength: 16)
-                    groupControls(group, compact: false)
+                    groupControls(group)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
                     groupTitle(group)
-                    groupControls(group, compact: true)
+                    groupControls(group)
                 }
             }
 
@@ -293,58 +305,115 @@ struct ProxiesView: View {
 
     private func groupTitle(_ group: MihomoProxy) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 7) {
-                Text(group.name)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                Text(groupBehaviorTitle(group))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 7) {
+                    Text(group.name)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(1)
+                    Text(groupBehaviorTitle(group))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.name)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(2)
+                    Text(groupBehaviorTitle(group))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Text(groupStatusText(group))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .lineLimit(2)
         }
     }
 
-    private func groupControls(_ group: MihomoProxy, compact: Bool) -> some View {
-        HStack(spacing: compact ? 8 : 10) {
-            Picker("View", selection: $workspaceMode) {
-                Label("List", systemImage: "list.bullet").tag(ProxyWorkspaceMode.list)
-                Label("Topology", systemImage: "point.3.connected.trianglepath.dotted")
-                    .tag(ProxyWorkspaceMode.topology)
+    private func groupControls(_ group: MihomoProxy) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                workspacePicker(width: 190)
+                if workspaceMode == .list {
+                    sortPicker(group: group, width: 132)
+                }
+                testAllButton(group: group, compact: false)
             }
-            .pickerStyle(.segmented)
-            .frame(width: compact ? 170 : 190)
 
-            if workspaceMode == .list {
-                Picker("Node order", selection: sortBinding(for: group.name)) {
-                    ForEach(ProxyNodeSortMode.allCases, id: \.rawValue) { mode in
-                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+            HStack(spacing: 8) {
+                workspacePicker(width: 160)
+                if workspaceMode == .list {
+                    sortPicker(group: group, width: 104)
+                }
+                testAllButton(group: group, compact: true)
+            }
+
+            HStack(spacing: 8) {
+                workspacePicker(width: 142)
+                Menu {
+                    if workspaceMode == .list {
+                        Picker("Node order", selection: sortBinding(for: group.name)) {
+                            ForEach(ProxyNodeSortMode.allCases, id: \.rawValue) { mode in
+                                Label(mode.title, systemImage: mode.symbol).tag(mode)
+                            }
+                        }
+                    }
+                    Button("Test All") {
+                        Task { await model.measureGroupDelays(group: group.name) }
+                    }
+                    .disabled(!model.canPerform(.measureGroupDelay(group.name)))
+                } label: {
+                    if model.isPerforming(.measureGroupDelay(group.name)) {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("More group actions", systemImage: "ellipsis.circle")
                     }
                 }
-                .pickerStyle(.menu)
-                .frame(width: compact ? 104 : 132)
+                .menuStyle(.borderlessButton)
+                .labelStyle(.iconOnly)
             }
-
-            Button {
-                Task { await model.measureGroupDelays(group: group.name) }
-            } label: {
-                if model.isPerforming(.measureGroupDelay(group.name)) {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if compact {
-                    Image(systemName: "speedometer")
-                } else {
-                    Label("Test All", systemImage: "speedometer")
-                }
-            }
-            .disabled(!model.canPerform(.measureGroupDelay(group.name)))
-            .help("Test every member in \(group.name)")
         }
+    }
+
+    private func workspacePicker(width: CGFloat) -> some View {
+        Picker("View", selection: $workspaceMode) {
+            Label("List", systemImage: "list.bullet").tag(ProxyWorkspaceMode.list)
+            Label("Topology", systemImage: "point.3.connected.trianglepath.dotted")
+                .tag(ProxyWorkspaceMode.topology)
+        }
+        .pickerStyle(.segmented)
+        .frame(width: width)
+    }
+
+    private func sortPicker(group: MihomoProxy, width: CGFloat) -> some View {
+        Picker("Node order", selection: sortBinding(for: group.name)) {
+            ForEach(ProxyNodeSortMode.allCases, id: \.rawValue) { mode in
+                Label(mode.title, systemImage: mode.symbol).tag(mode)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(width: width)
+    }
+
+    private func testAllButton(group: MihomoProxy, compact: Bool) -> some View {
+        Button {
+            Task { await model.measureGroupDelays(group: group.name) }
+        } label: {
+            if model.isPerforming(.measureGroupDelay(group.name)) {
+                ProgressView()
+                    .controlSize(.small)
+            } else if compact {
+                Image(systemName: "speedometer")
+            } else {
+                Label("Test All", systemImage: "speedometer")
+            }
+        }
+        .disabled(!model.canPerform(.measureGroupDelay(group.name)))
+        .help("Test every member in \(group.name)")
     }
 
     private func automaticOverrideBanner(group: MihomoProxy, fixed: String) -> some View {
@@ -404,6 +473,7 @@ struct ProxiesView: View {
                 )
             }
             .listStyle(.inset)
+            .mclashListSurface(horizontalMargin: 10, verticalMargin: 8)
             .accessibilityLabel("Nodes in \(group.name)")
         }
     }
@@ -575,6 +645,7 @@ struct ProxiesView: View {
     }
 
     private var proxyDataWarningMessages: [String] {
+        guard model.errorMessage == nil else { return [] }
         var messages: [String] = []
         if model.degradedStreams.contains(.proxies) {
             messages.append("Proxy choices may be stale while MClash reconnects to the Alpha API.")
@@ -608,13 +679,14 @@ private struct ProxyGroupSidebarRow: View {
                     .accessibilityHidden(true)
                 Text(group.name)
                     .lineLimit(1)
+                    .help(group.name)
                 Spacer(minLength: 4)
                 if group.fixedOverride != nil {
                     Image(systemName: "pin.fill")
                         .foregroundStyle(.orange)
                         .accessibilityLabel("Pinned automatic selection")
                 }
-                Text("\(group.all.count)")
+                Text(formattedCount(group.all.count))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -624,12 +696,13 @@ private struct ProxyGroupSidebarRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .padding(.leading, 22)
+                .help(routeSummary)
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(group.name), \(group.type), \(group.alive ? "available" : "unavailable"), "
-                + "\(group.all.count) members, \(routeSummary)"
+                + "\(formattedCount(group.all.count)) members, \(routeSummary)"
         )
     }
 
@@ -675,87 +748,24 @@ private struct ProxyNodeListRow: View {
     let onTest: () -> Void
 
     var body: some View {
-        HStack(spacing: 11) {
-            Button(action: onSelect) {
-                if selectionInProgress, isSelected {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 18, height: 18)
-                } else {
-                    Image(systemName: selectionSymbol)
-                        .foregroundStyle(selectionColor)
-                        .frame(width: 18, height: 18)
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 11) {
+                selectionButton
+                nodeInformationButton
+                    .layoutPriority(1)
+                Spacer(minLength: 12)
+                activityIndicators
+                delayIndicator
+                openGroupButton
             }
-            .buttonStyle(.plain)
-            .disabled(!supportsSelection || !canSelect || selectionInProgress)
-            .help(selectionHelp)
-            .accessibilityLabel(selectionHelp)
+            .frame(minWidth: 520)
 
-            Button(action: onFocus) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 7) {
-                        Text(nodeName)
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        if isFixed {
-                            Label("Pinned", systemImage: "pin.fill")
-                                .labelStyle(.iconOnly)
-                                .foregroundStyle(.orange)
-                                .help("Pinned automatic preference")
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Text(node?.type ?? "Unresolved")
-                        Text(statusText)
-                        if node?.udp == true { Text("UDP") }
-                        if node?.tcpFastOpen == true { Text("TFO") }
-                        if let provider = normalized(node?.providerName) { Text(provider) }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(isAlive == false ? Color.red : Color.secondary)
-                    .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Inspect \(nodeName), \(statusText), \(delayText)")
-
-            Spacer(minLength: 12)
-
-            if activeConnections > 0 {
-                Label("\(activeConnections)", systemImage: "bolt.horizontal.fill")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .help("\(activeConnections) active connections")
-            }
-
-            if observedBytes > 0 {
-                Text(proxyByteCount(observedBytes))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .help("Observed traffic during the last five minutes")
-            }
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
-                Text(delayText)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(delayColor)
-                    .frame(minWidth: 58, alignment: .trailing)
-            }
-
-            if let onOpenGroup {
-                Button(action: onOpenGroup) {
-                    Image(systemName: "chevron.right")
-                }
-                .buttonStyle(.borderless)
-                .help("Open nested group")
-                .accessibilityLabel("Open nested group \(nodeName)")
+            HStack(spacing: 9) {
+                selectionButton
+                nodeInformationButton
+                    .layoutPriority(1)
+                delayIndicator
+                openGroupButton
             }
         }
         .padding(.vertical, 4)
@@ -771,6 +781,100 @@ private struct ProxyNodeListRow: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var selectionButton: some View {
+        Button(action: onSelect) {
+            if selectionInProgress, isSelected {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 18, height: 18)
+            } else {
+                Image(systemName: selectionSymbol)
+                    .foregroundStyle(selectionColor)
+                    .frame(width: 18, height: 18)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!supportsSelection || !canSelect || selectionInProgress)
+        .help(selectionHelp)
+        .accessibilityLabel(selectionHelp)
+    }
+
+    private var nodeInformationButton: some View {
+        Button(action: onFocus) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(nodeName)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if isFixed {
+                        Label("Pinned", systemImage: "pin.fill")
+                            .labelStyle(.iconOnly)
+                            .foregroundStyle(.orange)
+                            .help("Pinned automatic preference")
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Text(node?.type ?? "Unresolved")
+                    Text(statusText)
+                    if node?.udp == true { Text("UDP") }
+                    if node?.tcpFastOpen == true { Text("TFO") }
+                    if let provider = normalized(node?.providerName) { Text(provider) }
+                }
+                .font(.caption)
+                .foregroundStyle(isAlive == false ? Color.red : Color.secondary)
+                .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(nodeName)
+        .accessibilityLabel("Inspect \(nodeName), \(statusText), \(delayText)")
+    }
+
+    @ViewBuilder
+    private var activityIndicators: some View {
+        if activeConnections > 0 {
+            Label(formattedCount(activeConnections), systemImage: "bolt.horizontal.fill")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .help("\(formattedCount(activeConnections)) active connections")
+        }
+
+        if observedBytes > 0 {
+            Text(formattedByteCount(observedBytes))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .help("Observed traffic during the last five minutes")
+        }
+    }
+
+    private var delayIndicator: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+            Text(delayText)
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(delayColor)
+                .frame(minWidth: 58, alignment: .trailing)
+        }
+    }
+
+    @ViewBuilder
+    private var openGroupButton: some View {
+        if let onOpenGroup {
+            Button(action: onOpenGroup) {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(.borderless)
+            .help("Open nested group \(nodeName)")
+            .accessibilityLabel("Open nested group \(nodeName)")
+        }
     }
 
     private var selectionSymbol: String {
@@ -875,8 +979,4 @@ func normalized(_ value: String?) -> String? {
         return nil
     }
     return value
-}
-
-func proxyByteCount(_ value: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: max(0, value), countStyle: .file)
 }

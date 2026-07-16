@@ -62,15 +62,15 @@ struct MenuBarContent: View {
 
             if model.isConnected {
                 VStack(alignment: .trailing, spacing: 2) {
-                    Label(rate(model.traffic.download), systemImage: "arrow.down")
-                    Label(rate(model.traffic.upload), systemImage: "arrow.up")
+                    Label(formattedByteRate(model.traffic.download), systemImage: "arrow.down")
+                    Label(formattedByteRate(model.traffic.upload), systemImage: "arrow.up")
                 }
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .labelStyle(.titleAndIcon)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(
-                    "Download \(rate(model.traffic.download)), upload \(rate(model.traffic.upload))"
+                    "Download \(formattedByteRate(model.traffic.download)), upload \(formattedByteRate(model.traffic.upload))"
                 )
             }
         }
@@ -243,7 +243,7 @@ struct MenuBarContent: View {
                 }
                 .buttonStyle(.link)
 
-                Text("\(model.connections?.connections.count ?? 0) active")
+                Text("\(formattedCount(model.connections?.connections.count ?? 0)) active")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
 
@@ -431,10 +431,6 @@ struct MenuBarContent: View {
         case .stopped:
             .secondary
         }
-    }
-
-    private func rate(_ bytes: Int64) -> String {
-        "\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))/s"
     }
 
     private func showMainWindow(destination: AppModel.Destination) {

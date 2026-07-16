@@ -31,6 +31,7 @@ struct ContentView: View {
                 }
                 destinationView
             }
+            .mclashPageSurface()
         }
     }
 
@@ -102,7 +103,7 @@ private struct ErrorBanner: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("MClash could not complete the operation")

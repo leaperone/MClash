@@ -13,9 +13,11 @@ struct ProfilesView: View {
                     ProfileRow(model: model, profile: profile)
                 }
                 .listStyle(.inset)
+                .mclashListSurface()
             }
         }
         .navigationTitle("Profiles")
+        .mclashPageSurface()
         .toolbar {
             ToolbarItemGroup {
                 Button {

@@ -91,6 +91,9 @@ before testing failure scenarios.
 - Proxies: confirm Rule groups follow the subscription YAML order rather than
   alphabetical order. Global must show only GLOBAL, and Direct must show a
   clear bypass state instead of irrelevant node controls.
+- Proxies: confirm **Nested Groups** is the first Sidebar section. Resize the
+  detail area until node rows and group controls enter their compact layouts;
+  long names must remain distinguishable and available in help text.
 - Proxies: switch between **List** and **Topology**. Confirm nested groups appear
   once, the highlighted route follows `group → child group → final node`,
   dialer dependencies use a distinct dashed connection, and large groups use a
@@ -125,7 +128,14 @@ before testing failure scenarios.
   work and the list remains responsive under load.
 - Overview: verify traffic chart/rates, total traffic, routing mode, current
   proxy, connection count, memory, HTTP/SOCKS addresses, system proxy state, and
-  core version.
+  core version. At a normal wide window, Traffic and Configuration must appear
+  side by side; at a narrow width they must return to one readable column.
+- Across every tab, switch between light and dark appearance and between empty
+  and populated states. Confirm the page background stays continuous, lists
+  keep consistent outer margins, and banners do not stack or change the page
+  surface unexpectedly.
+- With no traffic, confirm download and upload show `0 B/s`, totals show `0 B`,
+  and no surface spells the value as `Zero`.
 
 ## 6. Accessibility and edge cases
 

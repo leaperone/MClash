@@ -37,7 +37,7 @@ spacing:
   control: "12px"
   group: "20px"
   section: "24px"
-  page: "32px"
+  page: "28px"
 ---
 
 # Design System: MClash
@@ -56,6 +56,7 @@ The product explicitly rejects cross-platform WebView dashboards, consumer VPN s
 - System-managed light, dark, contrast, accent, and accessibility behavior
 - Clear connected, transitional, recoverable, and failed states
 - Compact operational data with generous page-level breathing room
+- Wide-screen composition that uses horizontal space before adding vertical depth
 - No decorative branding competing with network status
 
 ## Colors
@@ -126,7 +127,14 @@ MClash is flat by default. Depth comes from native window chrome, sidebar/conten
 - **Corner Style:** Native lists, forms, sections, and popovers before custom rounded containers.
 - **Background:** Semantic window and control backgrounds.
 - **Shadow Strategy:** None inside normal content.
-- **Internal Padding:** 12px controls, 20–24px groups, and 32px page edges.
+- **Internal Padding:** 12px controls, 20–24px groups, and 28px page edges.
+- **Page Surface:** Every destination fills the detail column with the system
+  window background. Dense lists use 18px horizontal and 12px vertical scroll
+  margins; content dashboards use the shared 28px page gutter.
+- **Responsive Structure:** Overview-style dashboards use a main/secondary
+  column on wide windows and return to one column when either side would become
+  unreadable. Controls hide or consolidate secondary metadata before truncating
+  the primary label.
 
 ### Inputs / Fields
 

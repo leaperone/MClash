@@ -61,11 +61,16 @@ struct ProvidersView: View {
                         }
                     }
                 }
+                .listStyle(.inset)
+                .mclashListSurface()
             }
         }
         .navigationTitle("Providers")
+        .mclashPageSurface()
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let message = model.providersErrorMessage, !allProvidersAreEmpty {
+            if model.errorMessage == nil,
+               let message = model.providersErrorMessage,
+               !allProvidersAreEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -79,7 +84,7 @@ struct ProvidersView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.bar)
                 .overlay(alignment: .bottom) { Divider() }
             }
         }
@@ -184,9 +189,11 @@ private struct ProxyProviderRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: usageFraction(subscription))
                     HStack {
-                        Text("Used \(bytes(subscription.upload + subscription.download))")
+                        Text(
+                            "Used \(formattedByteCount(saturatingByteSum(subscription.upload, subscription.download)))"
+                        )
                         Spacer()
-                        Text("Total \(bytes(subscription.total))")
+                        Text("Total \(formattedByteCount(subscription.total))")
                         if subscription.expire > 0 {
                             Text("· Expires \(expiration(subscription))")
                         }
@@ -208,8 +215,8 @@ private struct ProxyProviderRow: View {
         let alive = provider.proxies.count { $0.alive }
         var parts = [
             provider.vehicleType,
-            "\(provider.proxies.count) nodes",
-            "\(alive) available",
+            "\(formattedCount(provider.proxies.count)) nodes",
+            "\(formattedCount(alive)) available",
         ]
         if let updatedAt = provider.updatedAt, let date = providerDate(updatedAt) {
             parts.append("updated \(date.formatted(.relative(presentation: .named)))")
@@ -218,11 +225,8 @@ private struct ProxyProviderRow: View {
     }
 
     private func usageFraction(_ subscription: MihomoSubscriptionInfo) -> Double {
-        min(max(Double(subscription.upload + subscription.download) / Double(subscription.total), 0), 1)
-    }
-
-    private func bytes(_ value: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+        let used = saturatingByteSum(subscription.upload, subscription.download)
+        return min(max(Double(used) / Double(subscription.total), 0), 1)
     }
 
     private func expiration(_ subscription: MihomoSubscriptionInfo) -> String {

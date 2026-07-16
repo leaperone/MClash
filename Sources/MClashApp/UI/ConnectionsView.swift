@@ -26,14 +26,15 @@ struct ConnectionsView: View {
             } else {
                 HSplitView {
                     connectionTable
-                        .frame(minWidth: 560, maxWidth: .infinity)
+                        .frame(minWidth: 420, maxWidth: .infinity)
 
                     connectionDetail
-                        .frame(minWidth: 280, idealWidth: 330, maxWidth: 420)
+                        .frame(minWidth: 240, idealWidth: 320, maxWidth: 400)
                 }
             }
         }
         .navigationTitle("Connections")
+        .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
         .task(id: searchText) {
             do {
@@ -53,7 +54,8 @@ struct ConnectionsView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if model.degradedStreams.contains(.connections) {
+            if model.errorMessage == nil,
+               model.degradedStreams.contains(.connections) {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.clockwise")
                         .foregroundStyle(.orange)
@@ -64,7 +66,7 @@ struct ConnectionsView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.bar)
                 .overlay(alignment: .bottom) { Divider() }
             }
         }
@@ -74,11 +76,11 @@ struct ConnectionsView: View {
                     .foregroundStyle(.secondary)
 
                 if let snapshot = model.connections {
-                    Label(bytes(snapshot.downloadTotal), systemImage: "arrow.down")
+                    Label(formattedByteCount(snapshot.downloadTotal), systemImage: "arrow.down")
                         .font(.callout.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .help("Session download")
-                    Label(bytes(snapshot.uploadTotal), systemImage: "arrow.up")
+                    Label(formattedByteCount(snapshot.uploadTotal), systemImage: "arrow.up")
                         .font(.callout.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .help("Session upload")
@@ -136,14 +138,14 @@ struct ConnectionsView: View {
             .width(min: 90, ideal: 140, max: 240)
 
             TableColumn("Download", value: \.download) { row in
-                Text(bytes(row.download))
+                Text(formattedByteCount(row.download))
                     .monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .width(min: 82, ideal: 92, max: 120)
 
             TableColumn("Upload", value: \.upload) { row in
-                Text(bytes(row.upload))
+                Text(formattedByteCount(row.upload))
                     .monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -223,9 +225,9 @@ struct ConnectionsView: View {
         let total = model.connections?.connections.count ?? 0
         let visible = filteredConnections.count
         if debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "\(total) active"
+            return "\(formattedCount(total)) active"
         }
-        return "\(visible) of \(total) active"
+        return "\(formattedCount(visible)) of \(formattedCount(total)) active"
     }
 }
 
@@ -307,11 +309,19 @@ private struct ConnectionDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     ConnectionDetailSection("Traffic") {
-                        ConnectionDetailRow("Download", value: bytes(connection.download), monospaced: true)
-                        ConnectionDetailRow("Upload", value: bytes(connection.upload), monospaced: true)
+                        ConnectionDetailRow(
+                            "Download",
+                            value: formattedByteCount(connection.download),
+                            monospaced: true
+                        )
+                        ConnectionDetailRow(
+                            "Upload",
+                            value: formattedByteCount(connection.upload),
+                            monospaced: true
+                        )
                         ConnectionDetailRow(
                             "Total",
-                            value: bytes(totalTraffic),
+                            value: formattedByteCount(totalTraffic),
                             monospaced: true
                         )
                     }
@@ -517,10 +527,6 @@ private func nonEmpty(_ value: String?) -> String? {
 private func joined(_ values: [String]?, separator: String) -> String? {
     guard let values else { return nil }
     return nonEmpty(values.compactMap(nonEmpty).joined(separator: separator))
-}
-
-private func bytes(_ value: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
 }
 
 private func formattedConnectionStart(_ value: String) -> String {

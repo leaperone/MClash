@@ -42,8 +42,11 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .padding()
+        .scrollContentBackground(.hidden)
+        .contentMargins(.horizontal, MClashLayout.pagePadding, for: .scrollContent)
+        .contentMargins(.vertical, 20, for: .scrollContent)
         .navigationTitle("Settings")
+        .mclashPageSurface()
     }
 
     private var activeProfileName: String {

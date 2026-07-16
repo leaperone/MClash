@@ -22,49 +22,55 @@ struct ProxyInspectorView: View {
                     }
 
                     InspectorSection("Group") {
-                        LabeledContent("Type", value: group.type)
-                        LabeledContent("Members", value: "\(group.all.count)")
-                        LabeledContent(
+                        InspectorValueRow("Type", value: group.type)
+                        InspectorValueRow("Members", value: formattedCount(group.all.count))
+                        InspectorValueRow(
                             "Active Connections",
-                            value: connectionMetricsStale ? "Stale" : "\(groupActiveConnections)"
+                            value: connectionMetricsStale
+                                ? "Stale"
+                                : formattedCount(groupActiveConnections)
                         )
-                        LabeledContent(
+                        InspectorValueRow(
                             "Observed Traffic",
                             value: connectionMetricsStale
                                 ? "Stale"
-                                : proxyByteCount(groupObservedBytes)
+                                : formattedByteCount(groupObservedBytes)
                         )
                         if let fixed = group.fixedOverride {
-                            LabeledContent("Pinned Preference", value: fixed)
+                            InspectorValueRow("Pinned Preference", value: fixed)
                         }
                     }
                 }
 
                 if let node = focusedNode {
                     InspectorSection("Focused Node") {
-                        LabeledContent("Name", value: node.name)
-                        LabeledContent("Type", value: node.type)
+                        InspectorValueRow("Name", value: node.name)
+                        InspectorValueRow("Type", value: node.type)
                         if let provider = normalized(node.providerName) {
-                            LabeledContent("Provider", value: provider)
+                            InspectorValueRow("Provider", value: provider)
                         }
                         if let group {
-                            LabeledContent(
+                            InspectorValueRow(
                                 "Latency",
                                 value: model.proxyDelay(for: node.name, in: group.name)
                                     .map { "\($0) ms" } ?? "Not tested"
                             )
                         }
-                        LabeledContent(
+                        InspectorValueRow(
                             "Status",
                             value: model.proxyAlive(for: node.name, in: group?.name) == false
                                 ? "Unavailable"
                                 : "Available"
                         )
                         if let dialer = normalized(node.dialerProxy) {
-                            LabeledContent("Dialer Dependency", value: dialer)
+                            InspectorValueRow("Dialer Dependency", value: dialer)
                         }
 
-                        HStack(spacing: 8) {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 52), spacing: 6)],
+                            alignment: .leading,
+                            spacing: 6
+                        ) {
                             if node.udp { capability("UDP") }
                             if node.tcpFastOpen { capability("TFO") }
                             if node.multipathTCP { capability("MPTCP") }
@@ -77,7 +83,7 @@ struct ProxyInspectorView: View {
                     }
                 }
 
-                InspectorSection("Observed Traffic") {
+                InspectorSection("Observed Traffic", showsDivider: false) {
                     if connectionMetricsStale {
                         Label(
                             "Connection data is stale while the live stream reconnects.",
@@ -194,12 +200,48 @@ struct ProxyInspectorView: View {
     }
 }
 
+private struct InspectorValueRow: View {
+    let title: String
+    let value: String
+
+    init(_ title: String, value: String) {
+        self.title = title
+        self.value = value
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            LabeledContent(title) {
+                Text(value)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .lineLimit(3)
+            }
+        }
+        .help(value)
+        .textSelection(.enabled)
+    }
+}
+
 private struct InspectorSection<Content: View>: View {
     let title: String
+    let showsDivider: Bool
     @ViewBuilder let content: Content
 
-    init(_ title: String, @ViewBuilder content: () -> Content) {
+    init(
+        _ title: String,
+        showsDivider: Bool = true,
+        @ViewBuilder content: () -> Content
+    ) {
         self.title = title
+        self.showsDivider = showsDivider
         self.content = content()
     }
 
@@ -213,8 +255,10 @@ private struct InspectorSection<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .overlay(alignment: .bottom) {
-            Divider()
-                .offset(y: 10)
+            if showsDivider {
+                Divider()
+                    .offset(y: 10)
+            }
         }
     }
 }
@@ -251,6 +295,7 @@ private struct ProxyPathDetail: View {
                         Text(name)
                             .font(.callout.weight(index == 0 ? .semibold : .regular))
                             .lineLimit(1)
+                            .help(name)
                         Text(stepDescription(after: index))
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -342,7 +387,7 @@ private struct ObservedRouteRow: View {
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
                 Spacer()
-                Text(proxyByteCount(route.totalBytes))
+                Text(formattedByteCount(route.totalBytes))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -371,8 +416,8 @@ private struct ObservedRouteRow: View {
             .frame(height: 3)
 
             HStack {
-                Label(proxyByteCount(route.download), systemImage: "arrow.down")
-                Label(proxyByteCount(route.upload), systemImage: "arrow.up")
+                Label(formattedByteCount(route.download), systemImage: "arrow.down")
+                Label(formattedByteCount(route.upload), systemImage: "arrow.up")
                 Spacer()
                 Text(route.lastSeen, style: .relative)
             }
@@ -383,7 +428,7 @@ private struct ObservedRouteRow: View {
         .accessibilityLabel(
             "\(route.destination), \(route.ruleDescription), route "
                 + "\(route.chains.joined(separator: ", then ")), "
-                + "\(proxyByteCount(route.totalBytes)) observed"
+                + "\(formattedByteCount(route.totalBytes)) observed"
         )
     }
 }

@@ -6,7 +6,7 @@ struct OverviewView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: MClashLayout.sectionSpacing) {
                 networkStateSection
 
                 if model.liveMetricsAreDegraded {
@@ -14,14 +14,28 @@ struct OverviewView: View {
                 }
 
                 liveSessionSection
-                trafficChartSection
-                sessionDetailsSection
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: MClashLayout.sectionSpacing) {
+                        trafficChartSection
+                            .frame(minWidth: 520, maxWidth: .infinity)
+                        sessionDetailsSection
+                            .frame(minWidth: 310, idealWidth: 350, maxWidth: 390)
+                    }
+
+                    VStack(alignment: .leading, spacing: MClashLayout.sectionSpacing) {
+                        trafficChartSection
+                        sessionDetailsSection
+                    }
+                }
             }
-            .padding(32)
-            .frame(maxWidth: 920, alignment: .leading)
+            .padding(.horizontal, MClashLayout.pagePadding)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 1_320, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .navigationTitle("Overview")
-        .background(Color(nsColor: .controlBackgroundColor))
+        .mclashPageSurface()
     }
 
     private var networkStateSection: some View {
@@ -117,46 +131,80 @@ struct OverviewView: View {
 
     private var liveSessionSection: some View {
         GroupBox {
-            HStack(alignment: .top, spacing: 16) {
-                MetricCell(
-                    title: "Download",
-                    value: rate(model.traffic.download),
-                    symbol: "arrow.down",
-                    color: .blue
-                )
-                metricDivider
-                MetricCell(
-                    title: "Upload",
-                    value: rate(model.traffic.upload),
-                    symbol: "arrow.up",
-                    color: .orange
-                )
-                metricDivider
-                MetricCell(
-                    title: "Connections",
-                    value: "\(model.connections?.connections.count ?? 0)",
-                    symbol: "arrow.left.arrow.right",
-                    color: .primary
-                )
-                metricDivider
-                MetricCell(
-                    title: "Session Traffic",
-                    value: totalTraffic,
-                    symbol: "sum",
-                    color: .primary
-                )
-                metricDivider
-                MetricCell(
-                    title: "Memory",
-                    value: memoryUsage,
-                    symbol: "memorychip",
-                    color: .primary
-                )
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    downloadMetric
+                    metricDivider
+                    uploadMetric
+                    metricDivider
+                    connectionMetric
+                    metricDivider
+                    trafficMetric
+                    metricDivider
+                    memoryMetric
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 140), spacing: 16)],
+                    alignment: .leading,
+                    spacing: 14
+                ) {
+                    downloadMetric
+                    uploadMetric
+                    connectionMetric
+                    trafficMetric
+                    memoryMetric
+                }
             }
             .padding(.vertical, 6)
         } label: {
             Label("Live Session", systemImage: "waveform.path.ecg")
         }
+    }
+
+    private var downloadMetric: some View {
+        MetricCell(
+            title: "Download",
+            value: formattedByteRate(model.traffic.download),
+            symbol: "arrow.down",
+            color: .blue
+        )
+    }
+
+    private var uploadMetric: some View {
+        MetricCell(
+            title: "Upload",
+            value: formattedByteRate(model.traffic.upload),
+            symbol: "arrow.up",
+            color: .orange
+        )
+    }
+
+    private var connectionMetric: some View {
+        MetricCell(
+            title: "Connections",
+            value: formattedCount(model.connections?.connections.count ?? 0),
+            symbol: "arrow.left.arrow.right",
+            color: .primary
+        )
+    }
+
+    private var trafficMetric: some View {
+        MetricCell(
+            title: "Session Traffic",
+            value: totalTraffic,
+            symbol: "sum",
+            color: .primary
+        )
+    }
+
+    private var memoryMetric: some View {
+        MetricCell(
+            title: "Memory",
+            value: memoryUsage,
+            symbol: "memorychip",
+            color: .primary
+        )
     }
 
     private var metricDivider: some View {
@@ -170,12 +218,12 @@ struct OverviewView: View {
                 HStack(spacing: 18) {
                     TrafficLegendItem(
                         title: "Download",
-                        value: rate(model.traffic.download),
+                        value: formattedByteRate(model.traffic.download),
                         color: .blue
                     )
                     TrafficLegendItem(
                         title: "Upload",
-                        value: rate(model.traffic.upload),
+                        value: formattedByteRate(model.traffic.upload),
                         color: .orange
                     )
                     Spacer()
@@ -255,7 +303,7 @@ struct OverviewView: View {
                             AxisTick()
                             AxisValueLabel {
                                 if let bytes = value.as(Int64.self) {
-                                    Text(compactRate(bytes))
+                                    Text(formattedByteRate(bytes))
                                 }
                             }
                         }
@@ -263,7 +311,8 @@ struct OverviewView: View {
                     .frame(height: 220)
                     .accessibilityLabel("Recent network traffic")
                     .accessibilityValue(
-                        "Download \(rate(model.traffic.download)), upload \(rate(model.traffic.upload))"
+                        "Download \(formattedByteRate(model.traffic.download)), "
+                            + "upload \(formattedByteRate(model.traffic.upload))"
                     )
                 }
             }
@@ -299,6 +348,7 @@ struct OverviewView: View {
                     HStack(spacing: 10) {
                         Text(primaryGroupSelection)
                             .lineLimit(1)
+                            .help(primaryGroupSelection)
                         Button("Choose…") { model.selection = .proxies }
                             .controlSize(.small)
                             .disabled(!model.controllerIsReady)
@@ -491,33 +541,14 @@ struct OverviewView: View {
     }
 
     private var totalTraffic: String {
-        let (total, overflow) = model.traffic.uploadTotal.addingReportingOverflow(
-            model.traffic.downloadTotal
+        formattedByteCount(
+            saturatingByteSum(model.traffic.uploadTotal, model.traffic.downloadTotal)
         )
-        return byteCount(overflow ? Int64.max : total, style: .file)
     }
 
     private var memoryUsage: String {
         guard let memory = model.connections?.memory else { return "—" }
-        return byteCount(Int64(clamping: memory), style: .memory)
-    }
-
-    private func rate(_ bytes: Int64) -> String {
-        "\(byteCount(bytes, style: .file))/s"
-    }
-
-    private func compactRate(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = [.useBytes, .useKB, .useMB, .useGB]
-        formatter.isAdaptive = true
-        formatter.includesUnit = true
-        formatter.includesCount = true
-        return "\(formatter.string(fromByteCount: max(0, bytes)))/s"
-    }
-
-    private func byteCount(_ bytes: Int64, style: ByteCountFormatter.CountStyle) -> String {
-        ByteCountFormatter.string(fromByteCount: max(0, bytes), countStyle: style)
+        return formattedByteCount(Int64(clamping: memory), style: .memory)
     }
 }
 
@@ -546,33 +577,60 @@ private struct StateRow<Action: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: symbol)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(color)
-                .frame(width: 30)
-                .accessibilityHidden(true)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 12) {
+                stateIcon
+                stateDescription
+                Spacer(minLength: 16)
+                action()
+            }
+            .frame(minWidth: 560)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(.headline)
-                    Text(status)
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(color)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
+                    stateIcon
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.headline)
+                        Text(status)
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(color)
+                    }
+                    Spacer(minLength: 8)
+                    action()
                 }
-
                 Text(description)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            Spacer(minLength: 16)
-            action()
         }
         .padding(.vertical, 12)
         .accessibilityElement(children: .contain)
+    }
+
+    private var stateIcon: some View {
+        Image(systemName: symbol)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(color)
+            .frame(width: 30)
+            .accessibilityHidden(true)
+    }
+
+    private var stateDescription: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.headline)
+                Text(status)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(color)
+            }
+            Text(description)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -616,7 +674,7 @@ private struct MetricCell: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 }
@@ -648,12 +706,21 @@ private struct DetailRow<Value: View>: View {
     @ViewBuilder let value: () -> Value
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 20) {
-            Text(title)
-                .foregroundStyle(.secondary)
-                .frame(width: 118, alignment: .leading)
-            value()
-            Spacer(minLength: 0)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 20) {
+                Text(title)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 118, alignment: .leading)
+                value()
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                value()
+            }
         }
         .padding(.vertical, 9)
     }

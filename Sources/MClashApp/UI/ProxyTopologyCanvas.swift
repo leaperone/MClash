@@ -43,7 +43,7 @@ struct ProxyTopologyCanvas: View {
             .controlSize(.small)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(.bar)
 
             if relationshipsExpanded {
                 ScrollView {
@@ -64,7 +64,7 @@ struct ProxyTopologyCanvas: View {
                     .padding(.vertical, 9)
                 }
                 .frame(maxHeight: 140)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(Color(nsColor: .windowBackgroundColor))
                 .accessibilityLabel("Topology relationships")
             }
 
@@ -348,7 +348,7 @@ private struct ProxyTopologyNodeView: View {
                     Text(node.title)
                         .font(.callout.weight(node.isSelectedPath ? .semibold : .regular))
                         .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Text(node.subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -388,7 +388,11 @@ private struct ProxyTopologyNodeView: View {
                 Button("Open Group", action: onOpenGroup)
             }
         }
-        .help(node.opensGroup ? "Click to inspect; double-click to open group" : node.subtitle)
+        .help(
+            node.opensGroup
+                ? "\(node.title) — click to inspect; double-click to open group"
+                : "\(node.title) — \(node.subtitle)"
+        )
         .accessibilityLabel(accessibilityDescription)
     }
 }
@@ -722,7 +726,7 @@ struct ProxyTopologyDisplayEdge: Hashable {
 }
 
 private struct ProxyTopologyLayout {
-    static let nodeSize = CGSize(width: 194, height: 64)
+    static let nodeSize = CGSize(width: 194, height: 72)
     private static let horizontalGap: CGFloat = 72
     private static let verticalGap: CGFloat = 18
     private static let inset: CGFloat = 24
