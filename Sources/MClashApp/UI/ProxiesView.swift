@@ -7,10 +7,13 @@ struct ProxiesView: View {
     @State private var workspaceMode: ProxyWorkspaceMode = .list
     @State private var sortModesByGroup: [String: ProxyNodeSortMode] = [:]
     @State private var searchTextByGroup: [String: String] = [:]
-    @State private var inspectorPresented = true
+    @State private var inspectorPresented = false
+    @State private var groupDetailWidth: CGFloat = 600
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        let groups = ProxyGroupPartitionSnapshot(model: model, routingMode: routingMode)
+
         Group {
             if !model.isConnected {
                 ContentUnavailableView(
@@ -45,7 +48,7 @@ struct ProxiesView: View {
                         )
                     )
                 }
-            } else if availableGroups.isEmpty {
+            } else if groups.available.isEmpty {
                 VStack(spacing: 0) {
                     routingToolbar
                     Divider()
@@ -60,15 +63,19 @@ struct ProxiesView: View {
                     )
                 }
             } else {
-                proxyWorkspace
+                proxyWorkspace(groups: groups)
             }
         }
         .navigationTitle("Proxies")
         .mclashPageSurface()
         .searchable(text: searchBinding, prompt: "Search nodes in the current group")
-        .onAppear(perform: normalizeSelection)
-        .onChange(of: model.proxyTopology.groupOrder) { _, _ in normalizeSelection() }
-        .onChange(of: model.runtimeConfig?.mode) { _, _ in normalizeSelection() }
+        .onAppear { normalizeSelection(groups: groups) }
+        .onChange(of: model.proxyTopology.groupOrder) { _, _ in
+            normalizeSelection(groups: groups)
+        }
+        .onChange(of: model.runtimeConfig?.mode) { _, _ in
+            normalizeSelection(groups: groups)
+        }
         .onChange(of: selectedGroupName) { _, name in
             focusedNodeName = name.flatMap { model.proxiesByName[$0]?.now }
         }
@@ -86,7 +93,7 @@ struct ProxiesView: View {
         }
     }
 
-    private var proxyWorkspace: some View {
+    private func proxyWorkspace(groups: ProxyGroupPartitionSnapshot) -> some View {
         VStack(spacing: 0) {
             routingToolbar
             if !proxyDataWarningMessages.isEmpty {
@@ -109,10 +116,10 @@ struct ProxiesView: View {
             Divider()
 
             HSplitView {
-                groupSidebar
+                groupSidebar(groups: groups)
                     .frame(minWidth: 160, idealWidth: 210, maxWidth: 250)
 
-                groupDetail
+                groupDetail(groups: groups)
                     .frame(minWidth: 300, maxWidth: .infinity)
             }
         }
@@ -120,7 +127,7 @@ struct ProxiesView: View {
         .inspector(isPresented: $inspectorPresented) {
             ProxyInspectorView(
                 model: model,
-                group: selectedGroup,
+                group: selectedGroup(in: groups),
                 focusedNodeName: focusedNodeName,
                 openGroup: openGroup
             )
@@ -188,11 +195,11 @@ struct ProxiesView: View {
         .foregroundStyle(.secondary)
     }
 
-    private var groupSidebar: some View {
+    private func groupSidebar(groups: ProxyGroupPartitionSnapshot) -> some View {
         List(selection: $selectedGroupName) {
-            if !nestedGroups.isEmpty {
+            if !groups.nested.isEmpty {
                 Section("Nested Groups") {
-                    ForEach(nestedGroups, id: \.name) { group in
+                    ForEach(groups.nested, id: \.name) { group in
                         ProxyGroupSidebarRow(
                             group: group,
                             path: model.proxySelectionPaths[group.name]
@@ -202,9 +209,9 @@ struct ProxiesView: View {
                 }
             }
 
-            if !rootGroups.isEmpty {
+            if !groups.roots.isEmpty {
                 Section("Entry Groups") {
-                    ForEach(rootGroups, id: \.name) { group in
+                    ForEach(groups.roots, id: \.name) { group in
                         ProxyGroupSidebarRow(
                             group: group,
                             path: model.proxySelectionPaths[group.name]
@@ -214,9 +221,9 @@ struct ProxiesView: View {
                 }
             }
 
-            if !specialGroups.isEmpty {
+            if !groups.special.isEmpty {
                 Section("Special Groups") {
-                    ForEach(specialGroups, id: \.name) { group in
+                    ForEach(groups.special, id: \.name) { group in
                         ProxyGroupSidebarRow(
                             group: group,
                             path: model.proxySelectionPaths[group.name]
@@ -234,10 +241,10 @@ struct ProxiesView: View {
     }
 
     @ViewBuilder
-    private var groupDetail: some View {
-        if let group = selectedGroup {
+    private func groupDetail(groups: ProxyGroupPartitionSnapshot) -> some View {
+        if let group = selectedGroup(in: groups) {
             VStack(spacing: 0) {
-                groupHeader(group)
+                groupHeader(group, availableWidth: groupDetailWidth)
 
                 if let fixed = group.fixedOverride,
                    group.groupBehavior?.supportsClearingOverride == true {
@@ -271,6 +278,15 @@ struct ProxiesView: View {
                 value: workspaceMode
             )
             .background(Color(nsColor: .windowBackgroundColor))
+            .background {
+                GeometryReader { geometry in
+                    Color.clear
+                        .onAppear { updateGroupDetailWidth(geometry.size.width) }
+                        .onChange(of: geometry.size.width) { _, width in
+                            updateGroupDetailWidth(width)
+                        }
+                }
+            }
         } else {
             ContentUnavailableView(
                 "Choose a proxy group",
@@ -280,18 +296,18 @@ struct ProxiesView: View {
         }
     }
 
-    private func groupHeader(_ group: MihomoProxy) -> some View {
+    private func groupHeader(_ group: MihomoProxy, availableWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            ViewThatFits(in: .horizontal) {
+            if availableWidth >= 720 {
                 HStack(alignment: .center, spacing: 12) {
-                    groupTitle(group)
+                    groupTitle(group, stacked: false)
                     Spacer(minLength: 16)
-                    groupControls(group)
+                    groupControls(group, availableWidth: availableWidth)
                 }
-
+            } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    groupTitle(group)
-                    groupControls(group)
+                    groupTitle(group, stacked: availableWidth < 440)
+                    groupControls(group, availableWidth: availableWidth)
                 }
             }
 
@@ -303,9 +319,18 @@ struct ProxiesView: View {
         .padding(.vertical, 14)
     }
 
-    private func groupTitle(_ group: MihomoProxy) -> some View {
+    private func groupTitle(_ group: MihomoProxy, stacked: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            ViewThatFits(in: .horizontal) {
+            if stacked {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.name)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(2)
+                    Text(groupBehaviorTitle(group))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
                 HStack(spacing: 7) {
                     Text(group.name)
                         .font(.title3.weight(.semibold))
@@ -314,15 +339,6 @@ struct ProxiesView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(group.name)
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(2)
-                    Text(groupBehaviorTitle(group))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -333,8 +349,9 @@ struct ProxiesView: View {
         }
     }
 
-    private func groupControls(_ group: MihomoProxy) -> some View {
-        ViewThatFits(in: .horizontal) {
+    @ViewBuilder
+    private func groupControls(_ group: MihomoProxy, availableWidth: CGFloat) -> some View {
+        if availableWidth >= 520 {
             HStack(spacing: 10) {
                 workspacePicker(width: 190)
                 if workspaceMode == .list {
@@ -342,7 +359,7 @@ struct ProxiesView: View {
                 }
                 testAllButton(group: group, compact: false)
             }
-
+        } else if availableWidth >= 360 {
             HStack(spacing: 8) {
                 workspacePicker(width: 160)
                 if workspaceMode == .list {
@@ -350,7 +367,7 @@ struct ProxiesView: View {
                 }
                 testAllButton(group: group, compact: true)
             }
-
+        } else {
             HStack(spacing: 8) {
                 workspacePicker(width: 142)
                 Menu {
@@ -442,72 +459,55 @@ struct ProxiesView: View {
 
     @ViewBuilder
     private func proxyNodeList(_ group: MihomoProxy) -> some View {
-        if displayedNodeNames(in: group).isEmpty {
+        let nodeNames = displayedNodeNames(in: group)
+        let activity = ProxyNodeActivitySnapshot(model: model)
+
+        if nodeNames.isEmpty {
             ContentUnavailableView.search(text: searchText(for: group.name))
         } else {
-            List(displayedNodeNames(in: group), id: \.self) { nodeName in
-                ProxyNodeListRow(
-                    node: model.proxiesByName[nodeName],
-                    nodeName: nodeName,
-                    isSelected: group.now == nodeName,
-                    isFixed: group.fixedOverride == nodeName,
-                    isFocused: focusedNodeName == nodeName,
-                    isAlive: model.proxyAlive(for: nodeName, in: group.name),
-                    delay: model.proxyDelay(for: nodeName, in: group.name),
-                    activeConnections: activeConnectionCount(through: nodeName),
-                    observedBytes: observedTraffic(through: nodeName),
-                    supportsSelection: group.groupBehavior?.supportsSelectionUpdate == true,
-                    canSelect: model.canPerform(.selectProxy(group.name)),
-                    selectionInProgress: model.isPerforming(.selectProxy(group.name)),
-                    onFocus: { focusedNodeName = nodeName },
-                    onSelect: {
-                        focusedNodeName = nodeName
-                        Task { _ = await model.selectProxy(group: group.name, proxy: nodeName) }
-                    },
-                    onOpenGroup: model.proxyTopology.vertices[nodeName]?.isGroup == true
-                        ? { openGroup(nodeName) }
-                        : nil,
-                    onTest: {
-                        Task { _ = await model.measureDelay(proxy: nodeName, group: group.name) }
-                    }
-                )
-            }
-            .listStyle(.inset)
-            .mclashListSurface(horizontalMargin: 10, verticalMargin: 8)
-            .accessibilityLabel("Nodes in \(group.name)")
-        }
-    }
-
-    private var selectedGroup: MihomoProxy? {
-        guard let selectedGroupName else { return availableGroups.first }
-        return model.proxiesByName[selectedGroupName] ?? availableGroups.first
-    }
-
-    private var availableGroups: [MihomoProxy] {
-        model.proxyGroups(forRoutingMode: routingMode)
-    }
-
-    private var rootGroups: [MihomoProxy] {
-        if routingMode == "global" { return availableGroups }
-        return availableGroups.filter { group in
-            guard group.name != "GLOBAL" else { return false }
-            return !model.proxyTopology.edges.contains { edge in
-                edge.kind == .member
-                    && edge.target == group.name
-                    && edge.source != "GLOBAL"
-                    && model.proxyTopology.vertices[edge.source]?.isGroup == true
+            GeometryReader { geometry in
+                List(nodeNames, id: \.self) { nodeName in
+                    ProxyNodeListRow(
+                        node: model.proxiesByName[nodeName],
+                        nodeName: nodeName,
+                        isSelected: group.now == nodeName,
+                        isFixed: group.fixedOverride == nodeName,
+                        isFocused: focusedNodeName == nodeName,
+                        isAlive: model.proxyAlive(for: nodeName, in: group.name),
+                        delay: model.proxyDelay(for: nodeName, in: group.name),
+                        activeConnections: activity.activeConnections[nodeName, default: 0],
+                        observedBytes: activity.observedBytes[nodeName, default: 0],
+                        compact: geometry.size.width < 560,
+                        supportsSelection: group.groupBehavior?.supportsSelectionUpdate == true,
+                        canSelect: model.canPerform(.selectProxy(group.name)),
+                        selectionInProgress: model.isPerforming(.selectProxy(group.name)),
+                        onFocus: { focusedNodeName = nodeName },
+                        onSelect: {
+                            focusedNodeName = nodeName
+                            Task {
+                                _ = await model.selectProxy(group: group.name, proxy: nodeName)
+                            }
+                        },
+                        onOpenGroup: model.proxyTopology.vertices[nodeName]?.isGroup == true
+                            ? { openGroup(nodeName) }
+                            : nil,
+                        onTest: {
+                            Task {
+                                _ = await model.measureDelay(proxy: nodeName, group: group.name)
+                            }
+                        }
+                    )
+                }
+                .listStyle(.inset)
+                .mclashListSurface(horizontalMargin: 10, verticalMargin: 8)
+                .accessibilityLabel("Nodes in \(group.name)")
             }
         }
     }
 
-    private var nestedGroups: [MihomoProxy] {
-        if routingMode == "global" { return [] }
-        let roots = Set(rootGroups.map(\.name))
-        return availableGroups.filter { $0.name != "GLOBAL" && !roots.contains($0.name) }
-    }
-
-    private var specialGroups: [MihomoProxy] {
-        routingMode == "rule" ? availableGroups.filter { $0.name == "GLOBAL" } : []
+    private func selectedGroup(in groups: ProxyGroupPartitionSnapshot) -> MihomoProxy? {
+        guard let selectedGroupName else { return groups.available.first }
+        return model.proxiesByName[selectedGroupName] ?? groups.available.first
     }
 
     private var routingMode: String {
@@ -556,12 +556,15 @@ struct ProxiesView: View {
                     || proxy.providerName?.localizedCaseInsensitiveContains(query) == true
             }
 
+        let mode = sortModesByGroup[group.name] ?? persistedSortMode(for: group.name)
+        if mode == .profile { return filtered }
+
         return ProxyNodeSorter().sortedNodeNames(
             filtered,
             in: group.name,
             topology: model.proxyTopology,
-            delays: model.proxyDelayMap(for: group.name),
-            mode: sortModesByGroup[group.name] ?? persistedSortMode(for: group.name)
+            delays: mode == .latency ? model.proxyDelayMap(for: group.name) : [:],
+            mode: mode
         )
     }
 
@@ -582,18 +585,18 @@ struct ProxiesView: View {
         return "proxies.sort.\(profile).\(group)"
     }
 
-    private func normalizeSelection() {
+    private func normalizeSelection(groups: ProxyGroupPartitionSnapshot) {
         if routingMode == "direct" {
             selectedGroupName = nil
             focusedNodeName = nil
             return
         }
 
-        let names = Set(availableGroups.map(\.name))
+        let names = Set(groups.available.map(\.name))
         if let selectedGroupName, names.contains(selectedGroupName) {
             return
         }
-        selectedGroupName = rootGroups.first?.name ?? availableGroups.first?.name
+        selectedGroupName = groups.roots.first?.name ?? groups.available.first?.name
         focusedNodeName = selectedGroupName.flatMap { model.proxiesByName[$0]?.now }
     }
 
@@ -601,6 +604,11 @@ struct ProxiesView: View {
         guard model.proxyTopology.vertices[name]?.isGroup == true else { return }
         selectedGroupName = name
         focusedNodeName = model.proxiesByName[name]?.now
+    }
+
+    private func updateGroupDetailWidth(_ width: CGFloat) {
+        guard abs(groupDetailWidth - width) >= 1 else { return }
+        groupDetailWidth = width
     }
 
     private func groupBehaviorTitle(_ group: MihomoProxy) -> String {
@@ -628,22 +636,6 @@ struct ProxiesView: View {
         }
     }
 
-    private func activeConnectionCount(through node: String) -> Int {
-        guard !model.degradedStreams.contains(.connections) else { return 0 }
-        return model.connections?.connections.reduce(into: 0) { count, connection in
-            if connection.chains.contains(node) { count += 1 }
-        } ?? 0
-    }
-
-    private func observedTraffic(through node: String) -> Int64 {
-        guard !model.degradedStreams.contains(.connections) else { return 0 }
-        return model.routeTrafficEntries.reduce(into: Int64(0)) { total, entry in
-            guard entry.routing.chains.contains(node) else { return }
-            let (next, overflow) = total.addingReportingOverflow(entry.totalDelta)
-            total = overflow ? Int64.max : next
-        }
-    }
-
     private var proxyDataWarningMessages: [String] {
         guard model.errorMessage == nil else { return [] }
         var messages: [String] = []
@@ -662,6 +654,78 @@ private enum ProxyWorkspaceMode: String, CaseIterable, Identifiable {
     case topology
 
     var id: Self { self }
+}
+
+private struct ProxyGroupPartitionSnapshot {
+    let available: [MihomoProxy]
+    let roots: [MihomoProxy]
+    let nested: [MihomoProxy]
+    let special: [MihomoProxy]
+
+    @MainActor
+    init(model: AppModel, routingMode: String) {
+        let available = model.proxyGroups(forRoutingMode: routingMode)
+        self.available = available
+
+        if routingMode == "global" {
+            roots = available
+            nested = []
+            special = []
+            return
+        }
+
+        var nestedNames = Set<String>()
+        for edge in model.proxyTopology.edges
+        where edge.kind == .member
+            && edge.source != "GLOBAL"
+            && model.proxyTopology.vertices[edge.source]?.isGroup == true {
+            nestedNames.insert(edge.target)
+        }
+
+        roots = available.filter { group in
+            group.name != "GLOBAL" && !nestedNames.contains(group.name)
+        }
+        nested = available.filter { group in
+            group.name != "GLOBAL" && nestedNames.contains(group.name)
+        }
+        special = routingMode == "rule"
+            ? available.filter { $0.name == "GLOBAL" }
+            : []
+    }
+}
+
+private struct ProxyNodeActivitySnapshot {
+    let activeConnections: [String: Int]
+    let observedBytes: [String: Int64]
+
+    @MainActor
+    init(model: AppModel) {
+        guard !model.degradedStreams.contains(.connections) else {
+            activeConnections = [:]
+            observedBytes = [:]
+            return
+        }
+
+        var activeConnections: [String: Int] = [:]
+        for connection in model.connections?.connections ?? [] {
+            for node in Set(connection.chains) {
+                activeConnections[node, default: 0] += 1
+            }
+        }
+
+        var observedBytes: [String: Int64] = [:]
+        for entry in model.routeTrafficEntries {
+            for node in Set(entry.routing.chains) {
+                observedBytes[node] = saturatingByteSum(
+                    observedBytes[node, default: 0],
+                    entry.totalDelta
+                )
+            }
+        }
+
+        self.activeConnections = activeConnections
+        self.observedBytes = observedBytes
+    }
 }
 
 private struct ProxyGroupSidebarRow: View {
@@ -739,6 +803,7 @@ private struct ProxyNodeListRow: View {
     let delay: Int?
     let activeConnections: Int
     let observedBytes: Int64
+    let compact: Bool
     let supportsSelection: Bool
     let canSelect: Bool
     let selectionInProgress: Bool
@@ -748,7 +813,16 @@ private struct ProxyNodeListRow: View {
     let onTest: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
+        Group {
+            if compact {
+                HStack(spacing: 9) {
+                    selectionButton
+                    nodeInformationButton
+                        .layoutPriority(1)
+                    delayIndicator
+                    openGroupButton
+                }
+            } else {
             HStack(spacing: 11) {
                 selectionButton
                 nodeInformationButton
@@ -758,14 +832,6 @@ private struct ProxyNodeListRow: View {
                 delayIndicator
                 openGroupButton
             }
-            .frame(minWidth: 520)
-
-            HStack(spacing: 9) {
-                selectionButton
-                nodeInformationButton
-                    .layoutPriority(1)
-                delayIndicator
-                openGroupButton
             }
         }
         .padding(.vertical, 4)

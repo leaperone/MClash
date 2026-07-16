@@ -182,6 +182,45 @@ struct AppModelSafetyTests {
         #expect(model.proxyAlive(for: "Node", in: "Group B") == false)
     }
 
+    @MainActor
+    @Test("Status-only proxy refreshes reuse the stable topology")
+    func statusRefreshReusesTopology() throws {
+        let model = AppModel()
+        let initial = try makeProxyCollection([
+            ProxyTestSpec(name: "Group", type: "Selector", all: ["Node"], now: "Node"),
+            ProxyTestSpec(name: "Node", type: "Shadowsocks", alive: true),
+        ])
+        model.applyProxyCollection(initial)
+        let initialTopology = model.proxyTopology
+
+        let refreshed = try JSONDecoder().decode(
+            MihomoProxyCollection.self,
+            from: Data(
+                #"{"proxies":{"Group":{"name":"Group","type":"Selector","all":["Node"],"now":"Node","alive":true},"Node":{"name":"Node","type":"Shadowsocks","alive":false,"history":[{"time":"now","delay":42}]}}}"#.utf8
+            )
+        )
+        model.applyProxyCollection(refreshed, profileStructure: .empty)
+
+        #expect(model.proxyTopology == initialTopology)
+        #expect(model.proxiesByName["Node"]?.alive == false)
+        #expect(model.proxyDelay(for: "Node", in: nil) == 42)
+
+        let selectionChanged = try makeProxyCollection([
+            ProxyTestSpec(
+                name: "Group",
+                type: "Selector",
+                all: ["Node", "Backup"],
+                now: "Backup"
+            ),
+            ProxyTestSpec(name: "Node", type: "Shadowsocks", alive: false),
+            ProxyTestSpec(name: "Backup", type: "Direct"),
+        ])
+        model.applyProxyCollection(selectionChanged, profileStructure: .empty)
+
+        #expect(model.proxySelectionPaths["Group"]?.terminal == "Backup")
+        #expect(model.proxyTopology != initialTopology)
+    }
+
     private func connectionSnapshot(upload: Int64, download: Int64) throws -> MihomoConnectionSnapshot {
         let object: [String: Any] = [
             "downloadTotal": download,

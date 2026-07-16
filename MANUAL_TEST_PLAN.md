@@ -94,6 +94,11 @@ before testing failure scenarios.
 - Proxies: confirm **Nested Groups** is the first Sidebar section. Resize the
   detail area until node rows and group controls enter their compact layouts;
   long names must remain distinguishable and available in help text.
+- Proxies: with a large subscription and live connections, enter and leave the
+  tab repeatedly, scroll the node list, and remain on the page for at least
+  three five-second proxy refresh cycles. The window, spinner, scrolling, and
+  sidebar selection must remain responsive. Inspector should start closed and
+  opening it must not stall live updates.
 - Proxies: switch between **List** and **Topology**. Confirm nested groups appear
   once, the highlighted route follows `group → child group → final node`,
   dialer dependencies use a distinct dashed connection, and large groups use a

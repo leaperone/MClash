@@ -165,6 +165,7 @@ final class AppModel {
     private var proxyRefreshTask: Task<Void, Never>?
     private var controllerGeneration = 0
     private var proxyRefreshRevision = 0
+    private var proxyTopologyInput: ProxyTopologyInput?
     private var systemProxyEnableOperation: (id: UUID, task: Task<Void, Never>)?
     private var systemProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
     private var crashProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
@@ -1413,7 +1414,9 @@ final class AppModel {
                   isConnected else { return }
             applyProxyCollection(proxies, profileStructure: proxyProfileStructure)
         } catch {
-            guard generation == controllerGeneration, isConnected else { return }
+            guard generation == controllerGeneration,
+                  revision == proxyRefreshRevision,
+                  isConnected else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -1506,10 +1509,12 @@ final class AppModel {
     private func monitorProxyState(_ client: MihomoAPIClient, generation: Int) async {
         var consecutiveFailures = 0
         while streamShouldContinue(generation) {
+            var requestRevision: Int?
             do {
                 try await Task.sleep(for: .seconds(5))
                 guard streamShouldContinue(generation) else { return }
                 let revision = nextProxyRefreshRevision()
+                requestRevision = revision
                 let proxies = try await client.fetchProxies()
                 guard streamShouldContinue(generation),
                       revision == proxyRefreshRevision else { continue }
@@ -1520,6 +1525,7 @@ final class AppModel {
                 return
             } catch {
                 guard streamShouldContinue(generation) else { return }
+                guard requestRevision == proxyRefreshRevision else { continue }
                 degradedStreams.insert(.proxies)
                 if consecutiveFailures == 0 {
                     appendSupervisorLog(
@@ -1658,6 +1664,7 @@ final class AppModel {
         proxyGroups = []
         proxiesByName = [:]
         proxyTopology = .empty
+        proxyTopologyInput = nil
         proxySelectionPaths = [:]
         proxyDelays = [:]
         contextualProxyDelays = [:]
@@ -1694,42 +1701,70 @@ final class AppModel {
         _ collection: MihomoProxyCollection,
         profileStructure providedProfileStructure: ProfileStructure? = nil
     ) {
-        proxiesByName = collection.proxies
         let profileStructure = providedProfileStructure ?? loadProxyProfileStructure()
-        proxyProfileStructure = profileStructure
-        let topology = ProxyTopologyBuilder().build(
+        let topologyInput = ProxyTopologyInput(
             collection: collection,
             profileStructure: profileStructure
         )
-        proxyTopology = topology
-        proxySelectionPaths = Dictionary(
-            uniqueKeysWithValues: topology.groupOrder.map { groupName in
-                (
-                    groupName,
-                    ProxySelectionPathResolver().resolve(from: groupName, topology: topology)
-                )
+
+        if proxiesByName != collection.proxies {
+            proxiesByName = collection.proxies
+        }
+        if proxyProfileStructure != profileStructure {
+            proxyProfileStructure = profileStructure
+        }
+
+        if proxyTopologyInput != topologyInput {
+            let topology = ProxyTopologyBuilder().build(
+                collection: collection,
+                profileStructure: profileStructure
+            )
+            let selectionPaths = Dictionary(
+                uniqueKeysWithValues: topology.groupOrder.map { groupName in
+                    (
+                        groupName,
+                        ProxySelectionPathResolver().resolve(from: groupName, topology: topology)
+                    )
+                }
+            )
+            if proxyTopology != topology {
+                proxyTopology = topology
             }
-        )
+            if proxySelectionPaths != selectionPaths {
+                proxySelectionPaths = selectionPaths
+            }
+            proxyTopologyInput = topologyInput
+        }
+
         let currentNames = Set(collection.proxies.keys)
-        proxyDelays = proxyDelays.filter { currentNames.contains($0.key) }
-        contextualProxyDelays = contextualProxyDelays.filter { key, _ in
+        var nextProxyDelays = proxyDelays.filter { currentNames.contains($0.key) }
+        let nextContextualProxyDelays = contextualProxyDelays.filter { key, _ in
             currentNames.contains(key.group)
                 && currentNames.contains(key.proxy)
                 && collection.proxies[key.proxy]?
                     .extraDelayHistories[key.targetURL.absoluteString] == nil
         }
-        proxyGroups = topology.visibleGroupOrder.compactMap { name in
+        let nextProxyGroups: [MihomoProxy] = proxyTopology.visibleGroupOrder.compactMap { name in
             guard name != "GLOBAL" else { return nil }
             return collection.proxies[name]
         }
         for proxy in collection.proxies.values {
             if let delay = proxy.history.last?.delay {
                 if delay > 0 {
-                    proxyDelays[proxy.name] = delay
+                    nextProxyDelays[proxy.name] = delay
                 } else {
-                    proxyDelays[proxy.name] = nil
+                    nextProxyDelays[proxy.name] = nil
                 }
             }
+        }
+        if proxyDelays != nextProxyDelays {
+            proxyDelays = nextProxyDelays
+        }
+        if contextualProxyDelays != nextContextualProxyDelays {
+            contextualProxyDelays = nextContextualProxyDelays
+        }
+        if proxyGroups != nextProxyGroups {
+            proxyGroups = nextProxyGroups
         }
     }
 
@@ -1971,6 +2006,42 @@ private extension AppModel.Operation {
              .changeSystemProxy:
             false
         }
+    }
+}
+
+private struct ProxyTopologyInput: Equatable, Sendable {
+    let profileStructure: ProfileStructure
+    let proxies: [String: ProxyTopologyInputProxy]
+
+    init(collection: MihomoProxyCollection, profileStructure: ProfileStructure) {
+        self.profileStructure = profileStructure
+        proxies = collection.proxies.mapValues(ProxyTopologyInputProxy.init)
+    }
+}
+
+private struct ProxyTopologyInputProxy: Equatable, Sendable {
+    let type: String
+    let members: [String]
+    let selected: String?
+    let fixed: String?
+    let dialerProxy: String?
+    let providerName: String?
+    let hidden: Bool
+
+    init(proxy: MihomoProxy) {
+        type = proxy.type
+        members = proxy.all
+        selected = Self.nonEmpty(proxy.now)
+        fixed = proxy.fixedOverride
+        dialerProxy = Self.nonEmpty(proxy.dialerProxy)
+        providerName = Self.nonEmpty(proxy.providerName)
+        hidden = proxy.hidden
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        return value
     }
 }
 

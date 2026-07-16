@@ -34,8 +34,7 @@ struct ProxyTopologyBuilder: Sendable {
                     fixed: nonEmpty(proxy.fixed),
                     dialerProxy: nonEmpty(proxy.dialerProxy),
                     providerName: nonEmpty(proxy.providerName),
-                    hidden: proxy.hidden,
-                    alive: proxy.alive
+                    hidden: proxy.hidden
                 )
             )
         })
@@ -61,8 +60,7 @@ struct ProxyTopologyBuilder: Sendable {
                     fixed: nil,
                     dialerProxy: nil,
                     providerName: nil,
-                    hidden: false,
-                    alive: false
+                    hidden: false
                 )
             }
         }

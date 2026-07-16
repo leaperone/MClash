@@ -7,6 +7,8 @@ struct ProxyInspectorView: View {
     let openGroup: (String) -> Void
 
     var body: some View {
+        let routes = observedRoutes
+
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 inspectorHeader
@@ -99,18 +101,18 @@ struct ProxyInspectorView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    if observedRoutes.isEmpty {
+                    if routes.isEmpty {
                         Text("No matching traffic has been observed yet.")
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 4)
                     } else {
                         VStack(spacing: 0) {
-                            ForEach(observedRoutes) { route in
+                            ForEach(routes) { route in
                                 ObservedRouteRow(
                                     route: route,
-                                    maximumBytes: observedRoutes.first?.totalBytes ?? route.totalBytes
+                                    maximumBytes: routes.first?.totalBytes ?? route.totalBytes
                                 )
-                                if route.id != observedRoutes.last?.id {
+                                if route.id != routes.last?.id {
                                     Divider()
                                         .padding(.vertical, 9)
                                 }

@@ -55,7 +55,6 @@ struct ProxyTopologyVertex: Equatable, Sendable, Identifiable {
     let dialerProxy: String?
     let providerName: String?
     let hidden: Bool
-    let alive: Bool
 
     var isGroup: Bool {
         if case .group = kind { return true }
