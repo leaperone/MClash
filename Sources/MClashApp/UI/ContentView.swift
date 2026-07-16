@@ -11,26 +11,25 @@ struct ContentView: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 240)
         } detail: {
-            destinationView
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let errorMessage = model.errorMessage {
-                ErrorBanner(
-                    message: errorMessage,
-                    retryNetworkRestore: model.systemProxyRecoveryRequired ? {
-                        Task { await model.disableSystemProxy() }
-                    } : nil,
-                    showLogs: {
-                        model.selection = .logs
-                        if !model.systemProxyRecoveryRequired {
+            VStack(spacing: 0) {
+                if let errorMessage = model.errorMessage {
+                    ErrorBanner(
+                        message: errorMessage,
+                        retryNetworkRestore: model.systemProxyRecoveryRequired ? {
+                            Task { await model.disableSystemProxy() }
+                        } : nil,
+                        isRestoringNetwork: model.isPerforming(.changeSystemProxy),
+                        showLogs: {
+                            model.selection = .logs
+                            model.errorMessage = nil
+                        },
+                        dismiss: {
                             model.errorMessage = nil
                         }
-                    },
-                    dismiss: model.systemProxyRecoveryRequired ? nil : {
-                        model.errorMessage = nil
-                    }
-                )
-                .transition(.opacity)
+                    )
+                    .transition(.opacity)
+                }
+                destinationView
             }
         }
     }
@@ -61,6 +60,7 @@ struct ContentView: View {
 private struct ErrorBanner: View {
     let message: String
     let retryNetworkRestore: (() -> Void)?
+    let isRestoringNetwork: Bool
     let showLogs: () -> Void
     let dismiss: (() -> Void)?
 
@@ -77,7 +77,18 @@ private struct ErrorBanner: View {
             Spacer(minLength: 12)
 
             if let retryNetworkRestore {
-                Button("Restore Network Settings", action: retryNetworkRestore)
+                Button(action: retryNetworkRestore) {
+                    if isRestoringNetwork {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Restoring…")
+                        }
+                    } else {
+                        Text("Try Restore Again")
+                    }
+                }
+                .disabled(isRestoringNetwork)
             }
             Button("View Logs", action: showLogs)
             if let dismiss {

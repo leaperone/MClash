@@ -5,6 +5,28 @@ import Testing
 @Suite("App model network safety")
 struct AppModelSafetyTests {
     @MainActor
+    @Test("A failed proxy activation without a snapshot does not lock the application")
+    func failedActivationWithoutSnapshotIsDismissible() throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "mclash-no-recovery-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        try layout.createDirectories()
+        let model = AppModel(
+            systemProxyManager: SystemProxyManager(backend: RestoreBackend(failsRestore: false)),
+            profileDirectoryLayout: layout
+        )
+        model.systemProxyState = .failed("Permission was not granted.")
+        model.errorMessage = "Permission was not granted."
+
+        #expect(!model.systemProxyRecoveryRequired)
+        #expect(!model.systemProxyEnabled)
+        #expect(model.canPerform(.connection))
+    }
+
+    @MainActor
     @Test("Shutdown is cancelled when the previous system proxy cannot be restored")
     func shutdownStopsWhenProxyRestoreFails() async throws {
         let fixture = try Fixture(failsRestore: true)

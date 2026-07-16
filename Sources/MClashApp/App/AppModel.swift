@@ -284,14 +284,17 @@ final class AppModel {
 
     var systemProxyEnabled: Bool {
         switch systemProxyState {
-        case .on, .enabling, .disabling, .failed:
+        case .on, .enabling, .disabling:
             true
+        case .failed:
+            hasSystemProxySnapshot
         case .off:
             false
         }
     }
 
     var systemProxyRecoveryRequired: Bool {
+        guard hasSystemProxySnapshot else { return false }
         if case .failed = systemProxyState { return true }
         return false
     }
@@ -320,7 +323,6 @@ final class AppModel {
 
     var networkStateTransitionInProgress: Bool {
         if preparationInProgress { return true }
-        if systemProxyRecoveryRequired { return true }
         if case .enabling = systemProxyState { return true }
         if case .disabling = systemProxyState { return true }
         return operations.contains { $0.serializesNetworkState || $0.isCoreBound }
@@ -332,7 +334,6 @@ final class AppModel {
 
     func canPerform(_ operation: Operation) -> Bool {
         if preparationInProgress { return false }
-        if systemProxyRecoveryRequired, operation != .changeSystemProxy { return false }
         if case .enabling = systemProxyState, operation != .changeSystemProxy { return false }
         if case .disabling = systemProxyState, operation != .changeSystemProxy { return false }
         if operations.contains(operation) { return false }
@@ -962,9 +963,15 @@ final class AppModel {
             )
         } catch {
             let message = error.localizedDescription
-            systemProxyState = .failed(message)
+            if let proxyError = error as? SystemProxyError,
+               proxyError.isAuthorizationFailure {
+                autoEnableSystemProxy = false
+            }
             if hasSystemProxySnapshot {
+                systemProxyState = .failed(message)
                 _ = await performDisableSystemProxy()
+            } else {
+                systemProxyState = .off
             }
             errorMessage = message
             appendSupervisorLog("System proxy could not be enabled: \(message)")
@@ -1043,6 +1050,18 @@ final class AppModel {
         await supervisor.stop()
         stopControllerStreams()
         return true
+    }
+
+    func forceShutdown() async {
+        shouldReenableSystemProxyAfterCrash = false
+        if let operation = systemProxyEnableOperation {
+            await operation.task.value
+        }
+        trafficTask?.cancel()
+        connectionsTask?.cancel()
+        apiLogTask?.cancel()
+        await supervisor.stop()
+        stopControllerStreams()
     }
 
     func clearLogs() {

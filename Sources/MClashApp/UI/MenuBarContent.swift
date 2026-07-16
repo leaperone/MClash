@@ -303,19 +303,26 @@ struct MenuBarContent: View {
 
             HStack {
                 if model.systemProxyRecoveryRequired {
-                    Button("Restore Network Settings") {
+                    Button {
                         Task { await model.disableSystemProxy() }
+                    } label: {
+                        if model.isPerforming(.changeSystemProxy) {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Restoring…")
+                            }
+                        } else {
+                            Text("Try Restore Again")
+                        }
                     }
+                    .disabled(model.isPerforming(.changeSystemProxy))
                 }
                 Button("View Logs") {
-                    if !model.systemProxyRecoveryRequired {
-                        model.errorMessage = nil
-                    }
+                    model.errorMessage = nil
                     showMainWindow(destination: .logs)
                 }
-                if !model.systemProxyRecoveryRequired {
-                    Button("Dismiss") { model.errorMessage = nil }
-                }
+                Button("Dismiss") { model.errorMessage = nil }
             }
             .controlSize(.small)
         }

@@ -175,6 +175,7 @@ public enum SystemProxyKeys {
     public static let pacEnable = "ProxyAutoConfigEnable"
     public static let pacURL = "ProxyAutoConfigURLString"
     public static let autoDiscoveryEnable = "ProxyAutoDiscoveryEnable"
+    public static let exceptionsList = "ExceptionsList"
 }
 
 public struct SystemProxyEndpoint: Codable, Equatable, Sendable {
@@ -282,6 +283,7 @@ public enum SystemProxyError: Error, Equatable, LocalizedError, Sendable {
     case lockFailed
     case commitFailed
     case applyFailed
+    case networkSetupFailed(String)
     case unsupportedSnapshotVersion(Int)
     case persistenceFailed(path: String, reason: String)
 
@@ -306,15 +308,32 @@ public enum SystemProxyError: Error, Equatable, LocalizedError, Sendable {
         case .noEnabledNetworkServices:
             return "No enabled macOS network service is available for system proxy settings."
         case .lockFailed:
-            return "Unable to lock macOS network preferences for an atomic proxy update."
+            return "macOS did not grant MClash permission to update network proxy settings. The local HTTP and SOCKS5 proxies are still available."
         case .commitFailed:
             return "macOS rejected the proxy preference changes while committing them."
         case .applyFailed:
             return "macOS could not apply the committed proxy preference changes."
+        case let .networkSetupFailed(details):
+            return "macOS could not update one or more proxy settings: \(details)"
         case let .unsupportedSnapshotVersion(version):
             return "Unsupported system proxy snapshot version \(version)."
         case let .persistenceFailed(path, reason):
             return "Unable to persist system proxy state at '\(path)': \(reason)"
         }
+    }
+
+    /// Whether a failed activation may have committed proxy changes and therefore needs rollback.
+    var requiresRecoveryAfterFailedActivation: Bool {
+        switch self {
+        case .applyFailed, .networkSetupFailed:
+            true
+        default:
+            false
+        }
+    }
+
+    var isAuthorizationFailure: Bool {
+        if case .lockFailed = self { return true }
+        return false
     }
 }

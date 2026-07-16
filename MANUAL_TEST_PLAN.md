@@ -60,6 +60,12 @@ before testing failure scenarios.
   normal networking continues afterward.
 - Enable the proxy, force-terminate MClash, then relaunch. Confirm startup detects
   and restores the persisted snapshot before normal controls become available.
+- Simulate or trigger a System Proxy permission failure. Confirm the error can be
+  dismissed, the Sidebar remains clickable, and a failed activation that made no
+  changes does not leave a recovery snapshot or block Quit.
+- If a genuine restore failure is present, Quit must show **Try Again**,
+  **Cancel**, and **Quit Anyway**. Confirm Quit Anyway stops the bundled core but
+  preserves the snapshot for the next recovery attempt.
 
 ## 4. Daily menu bar workflow
 

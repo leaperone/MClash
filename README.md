@@ -17,7 +17,7 @@ WebSocket API.
   latency testing
 - Rules, proxy providers, rule providers, live connections, logs, and traffic
 - REST/WebSocket API models, authenticated client, and stream reconnection
-- Lossless macOS system proxy snapshot, activation, persistence, and restore
+- Complete macOS proxy snapshots with `networksetup` activation and rollback
 - Runtime-managed local listener fallback for subscriptions that omit HTTP/SOCKS ports
 - Dynamic loopback controller port to avoid conflicts with other Clash/mihomo clients
 - Optional automatic connection reset after routing mode or node changes
@@ -114,7 +114,9 @@ stored in this repository.
   without rewriting the stored subscription.
 - The app owns runtime configuration persistence; API patches are not treated
   as durable state.
-- Existing system proxy dictionaries are captured and restored exactly.
+- Existing proxy dictionaries are captured before changes; HTTP, HTTPS, SOCKS,
+  PAC, auto-discovery, and bypass settings are restored through Apple’s
+  `/usr/sbin/networksetup` utility.
 - Core updates are delivered with a signed MClash release rather than through
   mihomo's in-place `/upgrade` endpoint.
 - Production discovery accepts only the signed bundled core. Developers can

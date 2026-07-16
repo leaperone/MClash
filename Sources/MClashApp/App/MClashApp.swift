@@ -67,6 +67,9 @@ struct MClashApp: App {
             guard let model else { return true }
             return await model.shutdown()
         }
+        applicationDelegate.forceShutdownHandler = { [weak model] in
+            await model?.forceShutdown()
+        }
         await model.prepare()
     }
 }

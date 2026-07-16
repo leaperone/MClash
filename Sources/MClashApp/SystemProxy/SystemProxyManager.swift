@@ -10,7 +10,7 @@ public actor SystemProxyManager {
 
     #if os(macOS)
     public init() {
-        self.backend = SystemConfigurationProxyBackend()
+        self.backend = NetworkSetupProxyBackend()
     }
     #endif
 
@@ -34,7 +34,16 @@ public actor SystemProxyManager {
         if let snapshotURL {
             try save(snapshot: snapshot, to: snapshotURL)
         }
-        try apply(endpoints: endpoints, to: snapshot.services)
+        do {
+            try apply(endpoints: endpoints, to: snapshot.services)
+        } catch {
+            if let snapshotURL,
+               let proxyError = error as? SystemProxyError,
+               !proxyError.requiresRecoveryAfterFailedActivation {
+                try? FileManager.default.removeItem(at: snapshotURL)
+            }
+            throw error
+        }
         return snapshot
     }
 
