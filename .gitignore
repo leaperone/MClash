@@ -1,0 +1,14 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Downloaded upstream core binaries are reproducible via scripts/fetch-mihomo-alpha.sh.
+Sources/MClashApp/Resources/Core/mihomo-alpha-*
+Sources/MClashApp/Resources/ThirdParty/mihomo-LICENSE.txt
+
+# Local diagnostics and scratch files.
+.tmp-*/
+*.log
