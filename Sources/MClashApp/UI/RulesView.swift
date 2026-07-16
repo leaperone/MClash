@@ -1,9 +1,10 @@
+import Observation
 import SwiftUI
 
 struct RulesView: View {
     @Bindable var model: AppModel
     @State private var searchText = ""
-    @State private var debouncedSearchText = ""
+    @State private var presentation = RulePresentationStore()
 
     var body: some View {
         ruleContent
@@ -35,13 +36,14 @@ struct RulesView: View {
             .task(id: model.controllerIsReady) {
                 await loadRulesWhenAvailable()
             }
-            .task(id: searchText) {
-                do {
-                    try await Task.sleep(for: .milliseconds(180))
-                    debouncedSearchText = searchText
-                } catch {
-                    return
-                }
+            .onChange(of: model.rules, initial: true) { _, rules in
+                presentation.updateRules(rules)
+            }
+            .onChange(of: searchText, initial: true) { _, query in
+                presentation.updateSearch(query)
+            }
+            .onDisappear {
+                presentation.cancelPendingWork()
             }
             .toolbar {
                 ToolbarItem {
@@ -108,12 +110,17 @@ struct RulesView: View {
                     systemImage: "list.bullet.rectangle",
                     description: Text("The active runtime configuration did not expose any rules.")
                 )
+            } else if presentation.isPreparingRows, presentation.rows.isEmpty {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Preparing rules…")
+                        .foregroundStyle(.secondary)
+                }
             } else {
-                let rows = filteredRuleRows
-                if rows.isEmpty {
+                if presentation.rows.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                 } else {
-                    ruleTable(rows)
+                    ruleTable(presentation.rows)
                 }
             }
         }
@@ -184,19 +191,6 @@ struct RulesView: View {
         .accessibilityLabel("Runtime rules")
     }
 
-    private var filteredRuleRows: [RuleTableRow] {
-        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return model.rules.compactMap { rule in
-            guard query.isEmpty
-                    || rule.type.localizedCaseInsensitiveContains(query)
-                    || rule.payload.localizedCaseInsensitiveContains(query)
-                    || rule.proxy.localizedCaseInsensitiveContains(query) else {
-                return nil
-            }
-            return RuleTableRow(rule: rule)
-        }
-    }
-
     private func loadRulesWhenAvailable() async {
         guard model.controllerIsReady, model.rules.isEmpty, model.rulesErrorMessage == nil else {
             return
@@ -220,9 +214,195 @@ struct RulesView: View {
     }
 }
 
-private struct RuleTableRow: Identifiable {
+@MainActor
+@Observable
+private final class RulePresentationStore {
+    private(set) var rows: [RuleTableRow] = []
+    private(set) var isPreparingRows = false
+
+    private var allRows: [RuleTableRow] = []
+    private var activeQuery = ""
+    private var requestedQuery = ""
+    private var rulesRevision: UInt64 = 0
+    private var searchRevision: UInt64 = 0
+    private var filterRevision: UInt64 = 0
+    private var buildTask: Task<Void, Never>?
+    private var searchTask: Task<Void, Never>?
+    private var filterTask: Task<Void, Never>?
+
+    func updateRules(_ rules: [MihomoRule]) {
+        rulesRevision &+= 1
+        filterRevision &+= 1
+        let revision = rulesRevision
+
+        buildTask?.cancel()
+        buildTask = nil
+        filterTask?.cancel()
+        filterTask = nil
+
+        allRows = []
+        rows = []
+        guard !rules.isEmpty else {
+            isPreparingRows = false
+            return
+        }
+
+        isPreparingRows = true
+        let worker = Task.detached(priority: .userInitiated) {
+            RulePresentationComputation.buildRows(from: rules)
+        }
+        buildTask = Task { [weak self] in
+            let builtRows = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+
+            guard let self,
+                  !Task.isCancelled,
+                  revision == rulesRevision,
+                  let builtRows else {
+                return
+            }
+
+            allRows = builtRows
+            isPreparingRows = false
+            buildTask = nil
+
+            // A pending debounce owns the next presentation. Publishing the previous
+            // query here would briefly flash stale results while the user is typing.
+            guard searchTask == nil else { return }
+            scheduleFilter(query: activeQuery)
+        }
+    }
+
+    func updateSearch(_ searchText: String) {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query != requestedQuery else { return }
+
+        requestedQuery = query
+        searchRevision &+= 1
+        filterRevision &+= 1
+        let revision = searchRevision
+
+        searchTask?.cancel()
+        searchTask = nil
+        filterTask?.cancel()
+        filterTask = nil
+
+        searchTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+            } catch {
+                return
+            }
+
+            guard let self,
+                  !Task.isCancelled,
+                  revision == searchRevision else {
+                return
+            }
+
+            activeQuery = query
+            searchTask = nil
+            guard !allRows.isEmpty else { return }
+            scheduleFilter(query: query)
+        }
+    }
+
+    func cancelPendingWork() {
+        buildTask?.cancel()
+        buildTask = nil
+        searchTask?.cancel()
+        searchTask = nil
+        filterTask?.cancel()
+        filterTask = nil
+
+        // Make an initial onChange reschedule a debounce if the view disappeared
+        // before the most recently requested query became active.
+        requestedQuery = activeQuery
+    }
+
+    private func scheduleFilter(query: String) {
+        filterRevision &+= 1
+        let revision = filterRevision
+        let expectedRulesRevision = rulesRevision
+        let expectedSearchRevision = searchRevision
+
+        filterTask?.cancel()
+        filterTask = nil
+
+        guard !query.isEmpty else {
+            rows = allRows
+            return
+        }
+
+        let sourceRows = allRows
+        let worker = Task.detached(priority: .userInitiated) {
+            RulePresentationComputation.filter(sourceRows, query: query)
+        }
+        filterTask = Task { [weak self] in
+            let filteredRows = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+
+            guard let self,
+                  !Task.isCancelled,
+                  revision == filterRevision,
+                  expectedRulesRevision == rulesRevision,
+                  expectedSearchRevision == searchRevision,
+                  let filteredRows else {
+                return
+            }
+
+            rows = filteredRows
+            filterTask = nil
+        }
+    }
+}
+
+private enum RulePresentationComputation {
+    static func buildRows(from rules: [MihomoRule]) -> [RuleTableRow]? {
+        var rows: [RuleTableRow] = []
+        rows.reserveCapacity(rules.count)
+
+        for (offset, rule) in rules.enumerated() {
+            if offset.isMultiple(of: 256), Task.isCancelled { return nil }
+            rows.append(RuleTableRow(rule: rule))
+        }
+        return rows
+    }
+
+    static func filter(_ rows: [RuleTableRow], query: String) -> [RuleTableRow]? {
+        var matches: [RuleTableRow] = []
+        matches.reserveCapacity(min(rows.count, 512))
+
+        for (offset, row) in rows.enumerated() {
+            if offset.isMultiple(of: 256), Task.isCancelled { return nil }
+            if row.matches(query) {
+                matches.append(row)
+            }
+        }
+        return matches
+    }
+}
+
+private struct RuleTableRow: Identifiable, Sendable {
     let rule: MihomoRule
+    let payload: String
+
+    init(rule: MihomoRule) {
+        self.rule = rule
+        payload = rule.payload.isEmpty ? "Any" : rule.payload
+    }
 
     var id: Int { rule.index }
-    var payload: String { rule.payload.isEmpty ? "Any" : rule.payload }
+
+    func matches(_ query: String) -> Bool {
+        rule.type.localizedCaseInsensitiveContains(query)
+            || rule.payload.localizedCaseInsensitiveContains(query)
+            || rule.proxy.localizedCaseInsensitiveContains(query)
+    }
 }

@@ -10,7 +10,7 @@ struct ProxiesView: View {
     @State private var inspectorPresented = false
     @State private var groupNavigatorPresented = false
     @State private var workspaceLayout: ProxyWorkspaceLayout = .compact
-    @State private var detailLayout: ProxyDetailLayout = .wide
+    @State private var inspectorPresentation: ProxyInspectorPresentation = .popover
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -67,7 +67,11 @@ struct ProxiesView: View {
             if model.controllerIsReady,
                model.localHTTPProxyAddress != nil || model.localSOCKSProxyAddress != nil {
                 HStack(spacing: 14) {
-                    localEndpointLabels
+                    if workspaceLayout == .compact {
+                        compactEndpointLabel
+                    } else {
+                        localEndpointLabels
+                    }
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 14)
@@ -87,18 +91,19 @@ struct ProxiesView: View {
             focusedNodeName = name.flatMap { model.proxiesByName[$0]?.now }
         }
         .toolbar {
-            if model.controllerIsReady {
+            if model.controllerIsReady,
+               workspaceLayout == .split || routingMode == "direct" || groups.available.isEmpty {
                 ToolbarItemGroup {
-                    routingModePicker
+                    routingModePicker(width: 190)
                     systemProxyToggle
                 }
             }
 
             if model.controllerIsReady,
                routingMode != "direct",
-               let group = selectedGroup(in: groups) {
+                let group = selectedGroup(in: groups) {
                 ToolbarItemGroup {
-                    if workspaceLayout == .compact {
+                    if inspectorPresentation == .popover {
                         compactProxyActions(group: group)
                     } else {
                         workspacePicker(width: 154)
@@ -107,12 +112,7 @@ struct ProxiesView: View {
                         }
                         testAllButton(group: group, compact: true)
                     }
-                    Button {
-                        inspectorPresented.toggle()
-                    } label: {
-                        Label("Inspector", systemImage: "sidebar.right")
-                    }
-                    .help(inspectorPresented ? "Hide Inspector" : "Show Inspector")
+                    inspectorButton(group: group)
                 }
             }
         }
@@ -120,23 +120,12 @@ struct ProxiesView: View {
 
     private func proxyWorkspace(groups: ProxyGroupPartitionSnapshot) -> some View {
         VStack(spacing: 0) {
-            if !proxyDataWarningMessages.isEmpty {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "arrow.clockwise")
-                        .foregroundStyle(.orange)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(proxyDataWarningMessages, id: \.self) { message in
-                            Text(message)
-                                .font(.callout)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.bar)
+            if workspaceLayout == .compact {
+                compactRoutingControls
+                Divider()
             }
+
+            ProxyDataWarningBanner(model: model)
             Divider()
 
             if workspaceLayout == .compact {
@@ -165,7 +154,7 @@ struct ProxiesView: View {
                     }
             }
         }
-        .inspector(isPresented: $inspectorPresented) {
+        .inspector(isPresented: attachedInspectorBinding) {
             ProxyInspectorView(
                 model: model,
                 group: selectedGroup(in: groups),
@@ -176,15 +165,26 @@ struct ProxiesView: View {
         }
     }
 
-    private var routingModePicker: some View {
+    private func routingModePicker(width: CGFloat) -> some View {
         Picker("Routing mode", selection: modeBinding) {
             Text("Rule").tag("rule")
             Text("Global").tag("global")
             Text("Direct").tag("direct")
         }
         .pickerStyle(.segmented)
-        .frame(width: 190)
+        .frame(width: width)
         .disabled(!model.canPerform(.changeMode))
+    }
+
+    private var compactRoutingControls: some View {
+        HStack(spacing: 12) {
+            routingModePicker(width: 210)
+            Spacer(minLength: 8)
+            systemProxyToggle
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(.bar)
     }
 
     private var systemProxyToggle: some View {
@@ -206,6 +206,67 @@ struct ProxiesView: View {
         .foregroundStyle(.secondary)
     }
 
+    private var compactEndpointLabel: some View {
+        Label(compactEndpointTitle, systemImage: "network")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .help(endpointHelp)
+    }
+
+    private var compactEndpointTitle: String {
+        switch (model.localHTTPProxyAddress, model.localSOCKSProxyAddress) {
+        case (.some, .some): "HTTP and SOCKS5 listeners ready"
+        case (.some, .none): "HTTP listener ready"
+        case (.none, .some): "SOCKS5 listener ready"
+        case (.none, .none): "Local listeners unavailable"
+        }
+    }
+
+    private var endpointHelp: String {
+        [
+            model.localHTTPProxyAddress.map { "HTTP \($0)" },
+            model.localSOCKSProxyAddress.map { "SOCKS5 \($0)" },
+        ]
+        .compactMap { $0 }
+        .joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func inspectorButton(group: MihomoProxy) -> some View {
+        if inspectorPresentation == .popover {
+            Button {
+                inspectorPresented.toggle()
+            } label: {
+                Label("Inspector", systemImage: "sidebar.right")
+            }
+            .help(inspectorPresented ? "Hide Inspector" : "Show Inspector")
+            .popover(isPresented: $inspectorPresented, arrowEdge: .top) {
+                ProxyInspectorView(
+                    model: model,
+                    group: group,
+                    focusedNodeName: focusedNodeName,
+                    openGroup: openGroup
+                )
+                .frame(width: 360, height: 480)
+            }
+        } else {
+            Button {
+                inspectorPresented.toggle()
+            } label: {
+                Label("Inspector", systemImage: "sidebar.right")
+            }
+            .help(inspectorPresented ? "Hide Inspector" : "Show Inspector")
+        }
+    }
+
+    private var attachedInspectorBinding: Binding<Bool> {
+        Binding(
+            get: { inspectorPresented && inspectorPresentation == .attached },
+            set: { inspectorPresented = $0 }
+        )
+    }
+
     private func groupSidebar(groups: ProxyGroupPartitionSnapshot) -> some View {
         List(selection: $selectedGroupName) {
             groupSections(groups: groups)
@@ -220,45 +281,54 @@ struct ProxiesView: View {
     private func compactGroupPicker(groups: ProxyGroupPartitionSnapshot) -> some View {
         let current = selectedGroup(in: groups)
 
-        return HStack(spacing: 12) {
-            Label("Proxy Group", systemImage: "point.3.connected.trianglepath.dotted")
-                .foregroundStyle(.secondary)
+        return Button {
+            groupNavigatorPresented.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
 
-            Button {
-                groupNavigatorPresented.toggle()
-            } label: {
-                HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(current?.name ?? "Choose a group")
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
                     if let current {
-                        Text(formattedCount(current.all.count))
-                            .font(.caption.monospacedDigit())
+                        Text(groupBehaviorTitle(current))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                 }
-            }
-            .buttonStyle(.bordered)
-            .frame(maxWidth: 420, alignment: .leading)
-            .help(current?.name ?? "Choose a proxy group")
-            .popover(isPresented: $groupNavigatorPresented, arrowEdge: .bottom) {
-                List(selection: compactGroupSelectionBinding) {
-                    groupSections(groups: groups)
-                }
-                .listStyle(.sidebar)
-                .frame(width: 320, height: 430)
-                .accessibilityLabel("Choose a proxy group")
-            }
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 8)
+
+                if let current {
+                    Text(formattedCount(current.all.count))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .buttonStyle(.bordered)
         .controlSize(.regular)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
         .background(.bar)
-        .accessibilityElement(children: .contain)
+        .help(current?.name ?? "Choose a proxy group")
+        .popover(isPresented: $groupNavigatorPresented, arrowEdge: .bottom) {
+            List(selection: compactGroupSelectionBinding) {
+                groupSections(groups: groups)
+            }
+            .listStyle(.sidebar)
+            .frame(width: 320, height: 430)
+            .accessibilityLabel("Choose a proxy group")
+        }
     }
 
     @ViewBuilder
@@ -314,7 +384,7 @@ struct ProxiesView: View {
     private func groupDetail(groups: ProxyGroupPartitionSnapshot) -> some View {
         if let group = selectedGroup(in: groups) {
             VStack(spacing: 0) {
-                groupHeader(group, layout: detailLayout)
+                groupHeader(group)
 
                 if let fixed = group.fixedOverride,
                    group.groupBehavior?.supportsClearingOverride == true {
@@ -348,15 +418,6 @@ struct ProxiesView: View {
                 value: workspaceMode
             )
             .background(Color(nsColor: .windowBackgroundColor))
-            .background {
-                GeometryReader { geometry in
-                    Color.clear
-                        .onAppear { updateDetailLayout(geometry.size.width) }
-                        .onChange(of: geometry.size.width) { _, width in
-                            updateDetailLayout(width)
-                        }
-                }
-            }
         } else {
             ContentUnavailableView(
                 "Choose a proxy group",
@@ -366,16 +427,16 @@ struct ProxiesView: View {
         }
     }
 
-    private func groupHeader(_ group: MihomoProxy, layout: ProxyDetailLayout) -> some View {
+    private func groupHeader(_ group: MihomoProxy) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            groupTitle(group, stacked: layout.stacksTitle)
+            groupTitle(group, stacked: true)
 
             if let path = model.proxySelectionPaths[group.name] {
                 ProxyPathStrip(path: path)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     private func groupTitle(_ group: MihomoProxy, stacked: Bool) -> some View {
@@ -474,7 +535,21 @@ struct ProxiesView: View {
     }
 
     private func automaticOverrideBanner(group: MihomoProxy, fixed: String) -> some View {
-        HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            automaticOverrideMessage(fixed: fixed)
+            Button("Resume Automatic") {
+                Task { _ = await model.clearProxyOverride(group: group.name) }
+            }
+            .disabled(!model.canPerform(.clearProxyOverride(group.name)))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.09))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func automaticOverrideMessage(fixed: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: "pin.fill")
                 .foregroundStyle(.orange)
                 .accessibilityHidden(true)
@@ -484,17 +559,9 @@ struct ProxiesView: View {
                 Text("Preferred node: \(fixed). The active node still follows mihomo health checks.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            Button("Resume Automatic") {
-                Task { _ = await model.clearProxyOverride(group: group.name) }
-            }
-            .disabled(!model.canPerform(.clearProxyOverride(group.name)))
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(Color.orange.opacity(0.09))
-        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
@@ -508,7 +575,6 @@ struct ProxiesView: View {
                 model: model,
                 group: group,
                 nodeNames: nodeNames,
-                compact: detailLayout.usesCompactRows,
                 focusedNodeName: $focusedNodeName,
                 openGroup: openGroup
             )
@@ -617,13 +683,20 @@ struct ProxiesView: View {
     }
 
     private func updateWorkspaceLayout(_ width: CGFloat) {
+        if inspectorPresented, inspectorPresentation == .attached {
+            if width < 660 {
+                inspectorPresented = false
+                inspectorPresentation = .popover
+            }
+            return
+        }
         let next = ProxyWorkspaceLayout(width: width)
-        if workspaceLayout != next { workspaceLayout = next }
-    }
-
-    private func updateDetailLayout(_ width: CGFloat) {
-        let next = ProxyDetailLayout(width: width)
-        if detailLayout != next { detailLayout = next }
+        let nextInspectorPresentation = ProxyInspectorPresentation(width: width)
+        if workspaceLayout != next || inspectorPresentation != nextInspectorPresentation {
+            inspectorPresented = false
+            workspaceLayout = next
+            inspectorPresentation = nextInspectorPresentation
+        }
     }
 
     private func groupBehaviorTitle(_ group: MihomoProxy) -> String {
@@ -651,17 +724,6 @@ struct ProxiesView: View {
         }
     }
 
-    private var proxyDataWarningMessages: [String] {
-        guard model.errorMessage == nil else { return [] }
-        var messages: [String] = []
-        if model.degradedStreams.contains(.proxies) {
-            messages.append("Proxy choices may be stale while MClash reconnects to the Alpha API.")
-        }
-        if model.degradedStreams.contains(.connections) {
-            messages.append("Connection counts and observed route traffic are temporarily stale.")
-        }
-        return messages
-    }
 }
 
 private enum ProxyWorkspaceLayout: Equatable {
@@ -669,38 +731,16 @@ private enum ProxyWorkspaceLayout: Equatable {
     case split
 
     init(width: CGFloat) {
-        self = width < 820 ? .compact : .split
+        self = width < 860 ? .compact : .split
     }
 }
 
-private enum ProxyDetailLayout: Equatable {
-    case ultraCompact
-    case compact
-    case narrow
-    case regular
-    case spacious
-    case wide
+private enum ProxyInspectorPresentation: Equatable {
+    case popover
+    case attached
 
     init(width: CGFloat) {
-        switch width {
-        case ..<360: self = .ultraCompact
-        case ..<440: self = .compact
-        case ..<520: self = .narrow
-        case ..<560: self = .regular
-        case ..<720: self = .spacious
-        default: self = .wide
-        }
-    }
-
-    var stacksTitle: Bool {
-        self == .ultraCompact || self == .compact
-    }
-
-    var usesCompactRows: Bool {
-        switch self {
-        case .ultraCompact, .compact, .narrow, .regular: true
-        case .spacious, .wide: false
-        }
+        self = width < 940 ? .popover : .attached
     }
 }
 
@@ -749,40 +789,41 @@ private struct ProxyGroupPartitionSnapshot {
     }
 }
 
-private struct ProxyNodeActivitySnapshot {
-    let activeConnections: [String: Int]
-    let observedBytes: [String: Int64]
+private struct ProxyDataWarningBanner: View {
+    @Bindable var model: AppModel
 
-    @MainActor
-    init(model: AppModel) {
-        guard !model.degradedStreams.contains(.connections) else {
-            activeConnections = [:]
-            observedBytes = [:]
-            return
-        }
+    var body: some View {
+        let messages = warningMessages
 
-        var activeConnections: [String: Int] = [:]
-        var visitedNodes = Set<String>()
-        for connection in model.connections?.connections ?? [] {
-            visitedNodes.removeAll(keepingCapacity: true)
-            for node in connection.chains where visitedNodes.insert(node).inserted {
-                activeConnections[node, default: 0] += 1
+        if !messages.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "arrow.clockwise")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(messages, id: \.self) { message in
+                        Text(message)
+                            .font(.callout)
+                    }
+                }
+                Spacer()
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.bar)
         }
+    }
 
-        var observedBytes: [String: Int64] = [:]
-        for entry in model.routeTrafficEntries {
-            visitedNodes.removeAll(keepingCapacity: true)
-            for node in entry.routing.chains where visitedNodes.insert(node).inserted {
-                observedBytes[node] = saturatingByteSum(
-                    observedBytes[node, default: 0],
-                    entry.totalDelta
-                )
-            }
+    private var warningMessages: [String] {
+        guard model.errorMessage == nil else { return [] }
+        var messages: [String] = []
+        if model.degradedStreams.contains(.proxies) {
+            messages.append("Proxy choices may be stale while MClash reconnects to the Alpha API.")
         }
-
-        self.activeConnections = activeConnections
-        self.observedBytes = observedBytes
+        if model.degradedStreams.contains(.connections) {
+            messages.append("Connection counts and observed route traffic are temporarily stale.")
+        }
+        return messages
     }
 }
 
@@ -855,13 +896,10 @@ private struct ProxyNodeListContent: View {
     @Bindable var model: AppModel
     let group: MihomoProxy
     let nodeNames: [String]
-    let compact: Bool
     @Binding var focusedNodeName: String?
     let openGroup: (String) -> Void
 
     var body: some View {
-        let activity = ProxyNodeActivitySnapshot(model: model)
-
         List(nodeNames, id: \.self, selection: $focusedNodeName) { nodeName in
             ProxyNodeListRow(
                 node: model.proxiesByName[nodeName],
@@ -870,9 +908,6 @@ private struct ProxyNodeListContent: View {
                 isFixed: group.fixedOverride == nodeName,
                 isAlive: model.proxyAlive(for: nodeName, in: group.name),
                 delay: model.proxyDelay(for: nodeName, in: group.name),
-                activeConnections: activity.activeConnections[nodeName, default: 0],
-                observedBytes: activity.observedBytes[nodeName, default: 0],
-                compact: compact,
                 supportsSelection: group.groupBehavior?.supportsSelectionUpdate == true,
                 canSelect: model.canPerform(.selectProxy(group.name)),
                 selectionInProgress: model.isPerforming(.selectProxy(group.name)),
@@ -906,9 +941,6 @@ private struct ProxyNodeListRow: View {
     let isFixed: Bool
     let isAlive: Bool?
     let delay: Int?
-    let activeConnections: Int
-    let observedBytes: Int64
-    let compact: Bool
     let supportsSelection: Bool
     let canSelect: Bool
     let selectionInProgress: Bool
@@ -917,26 +949,12 @@ private struct ProxyNodeListRow: View {
     let onTest: () -> Void
 
     var body: some View {
-        Group {
-            if compact {
-                HStack(spacing: 9) {
-                    selectionButton
-                    nodeInformation
-                        .layoutPriority(1)
-                    delayIndicator
-                    openGroupButton
-                }
-            } else {
-            HStack(spacing: 11) {
-                selectionButton
-                nodeInformation
-                    .layoutPriority(1)
-                Spacer(minLength: 12)
-                activityIndicators
-                delayIndicator
-                openGroupButton
-            }
-            }
+        HStack(spacing: 9) {
+            selectionButton
+            nodeInformation
+                .layoutPriority(1)
+            delayIndicator
+            openGroupButton
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 4)
@@ -1002,23 +1020,6 @@ private struct ProxyNodeListRow: View {
         .contentShape(Rectangle())
         .help(nodeName)
         .accessibilityLabel("\(nodeName), \(statusText), \(delayText)")
-    }
-
-    @ViewBuilder
-    private var activityIndicators: some View {
-        if activeConnections > 0 {
-            Label(formattedCount(activeConnections), systemImage: "bolt.horizontal.fill")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .help("\(formattedCount(activeConnections)) active connections")
-        }
-
-        if observedBytes > 0 {
-            Text(formattedByteCount(observedBytes))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .help("Observed traffic during the last five minutes")
-        }
     }
 
     private var delayIndicator: some View {

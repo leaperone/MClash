@@ -1528,14 +1528,14 @@ final class AppModel {
                 guard streamShouldContinue(generation),
                       revision == proxyRefreshRevision else { continue }
                 applyProxyCollection(proxies, profileStructure: proxyProfileStructure)
-                degradedStreams.remove(.proxies)
+                markStreamHealthy(.proxies)
                 consecutiveFailures = 0
             } catch is CancellationError {
                 return
             } catch {
                 guard streamShouldContinue(generation) else { return }
                 guard requestRevision == proxyRefreshRevision else { continue }
-                degradedStreams.insert(.proxies)
+                markStreamDegraded(.proxies)
                 if consecutiveFailures == 0 {
                     appendSupervisorLog(
                         "Proxy state refresh interrupted: \(error.localizedDescription)"
@@ -1564,7 +1564,7 @@ final class AppModel {
                     if trafficHistory.count > 60 {
                         trafficHistory.removeFirst(trafficHistory.count - 60)
                     }
-                    degradedStreams.remove(.traffic)
+                    markStreamHealthy(.traffic)
                     attempt = 0
                 }
                 guard streamShouldContinue(generation) else { return }
@@ -1573,7 +1573,7 @@ final class AppModel {
                 return
             } catch {
                 guard streamShouldContinue(generation) else { return }
-                degradedStreams.insert(.traffic)
+                markStreamDegraded(.traffic)
                 appendSupervisorLog("Traffic stream interrupted: \(error.localizedDescription)")
                 attempt += 1
                 if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
@@ -1589,7 +1589,7 @@ final class AppModel {
                 for try await snapshot in stream {
                     guard streamShouldContinue(generation) else { return }
                     applyConnectionSnapshot(snapshot, generation: generation)
-                    degradedStreams.remove(.connections)
+                    markStreamHealthy(.connections)
                     attempt = 0
                 }
                 guard streamShouldContinue(generation) else { return }
@@ -1598,7 +1598,7 @@ final class AppModel {
                 return
             } catch {
                 guard streamShouldContinue(generation) else { return }
-                degradedStreams.insert(.connections)
+                markStreamDegraded(.connections)
                 appendSupervisorLog("Connection stream interrupted: \(error.localizedDescription)")
                 attempt += 1
                 if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
@@ -1613,7 +1613,7 @@ final class AppModel {
                 let stream = try await client.logStream(minimumLevel: .info)
                 for try await entry in stream {
                     guard streamShouldContinue(generation) else { return }
-                    degradedStreams.remove(.logs)
+                    markStreamHealthy(.logs)
                     attempt = 0
                     appendCoreLog(
                         CoreLogLine(
@@ -1628,7 +1628,7 @@ final class AppModel {
                 return
             } catch {
                 guard streamShouldContinue(generation) else { return }
-                degradedStreams.insert(.logs)
+                markStreamDegraded(.logs)
                 appendSupervisorLog("Log stream interrupted: \(error.localizedDescription)")
                 attempt += 1
                 if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
@@ -1638,6 +1638,16 @@ final class AppModel {
 
     private func streamShouldContinue(_ generation: Int) -> Bool {
         !Task.isCancelled && generation == controllerGeneration && isConnected
+    }
+
+    private func markStreamHealthy(_ stream: LiveStream) {
+        guard degradedStreams.contains(stream) else { return }
+        degradedStreams.remove(stream)
+    }
+
+    private func markStreamDegraded(_ stream: LiveStream) {
+        guard !degradedStreams.contains(stream) else { return }
+        degradedStreams.insert(stream)
     }
 
     private func nextProxyRefreshRevision() -> Int {

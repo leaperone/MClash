@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 
 struct ProxyInspectorView: View {
@@ -5,15 +6,9 @@ struct ProxyInspectorView: View {
     let group: MihomoProxy?
     let focusedNodeName: String?
     let openGroup: (String) -> Void
+    @State private var trafficPresentation = ProxyInspectorTrafficPresentation()
 
     var body: some View {
-        let traffic = ProxyInspectorTrafficSnapshot(
-            model: model,
-            groupName: group?.name,
-            scopeName: trafficScopeName
-        )
-        let routes = traffic.routes
-
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 inspectorHeader
@@ -31,18 +26,7 @@ struct ProxyInspectorView: View {
                     InspectorSection("Group") {
                         InspectorValueRow("Type", value: group.type)
                         InspectorValueRow("Members", value: formattedCount(group.all.count))
-                        InspectorValueRow(
-                            "Active Connections",
-                            value: connectionMetricsStale
-                                ? "Stale"
-                                : formattedCount(traffic.groupActiveConnections)
-                        )
-                        InspectorValueRow(
-                            "Observed Traffic",
-                            value: connectionMetricsStale
-                                ? "Stale"
-                                : formattedByteCount(traffic.groupObservedBytes)
-                        )
+                        ProxyInspectorGroupTrafficRows(presentation: trafficPresentation)
                         if let fixed = group.fixedOverride {
                             InspectorValueRow("Pinned Preference", value: fixed)
                         }
@@ -90,45 +74,19 @@ struct ProxyInspectorView: View {
                     }
                 }
 
-                InspectorSection("Observed Traffic", showsDivider: false) {
-                    if connectionMetricsStale {
-                        Label(
-                            "Connection data is stale while the live stream reconnects.",
-                            systemImage: "arrow.clockwise"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    }
-                    Text(
-                        "Actual routes observed during the last five minutes. "
-                            + "Showing up to eight routes with the most traffic."
-                    )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if routes.isEmpty {
-                        Text("No matching traffic has been observed yet.")
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 4)
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(routes) { route in
-                                ObservedRouteRow(
-                                    route: route,
-                                    maximumBytes: routes.first?.totalBytes ?? route.totalBytes
-                                )
-                                if route.id != routes.last?.id {
-                                    Divider()
-                                        .padding(.vertical, 9)
-                                }
-                            }
-                        }
-                    }
-                }
+                ProxyInspectorObservedTrafficSection(presentation: trafficPresentation)
             }
             .padding(18)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .background {
+            ProxyInspectorTrafficObserver(
+                model: model,
+                groupName: group?.name,
+                scopeName: trafficScopeName,
+                presentation: trafficPresentation
+            )
+        }
         .accessibilityLabel("Proxy inspector")
     }
 
@@ -152,10 +110,6 @@ struct ProxyInspectorView: View {
         focusedNodeName ?? group?.name
     }
 
-    private var connectionMetricsStale: Bool {
-        model.degradedStreams.contains(.connections)
-    }
-
     private func capability(_ text: String) -> some View {
         Text(text)
             .font(.caption2.weight(.medium))
@@ -165,50 +119,395 @@ struct ProxyInspectorView: View {
     }
 }
 
-private struct ProxyInspectorTrafficSnapshot {
+@MainActor
+@Observable
+private final class ProxyInspectorTrafficPresentation {
+    private(set) var groupActiveConnections = 0
+    private(set) var groupObservedBytes: Int64 = 0
+    private(set) var routes: [ObservedRouteSummary] = []
+    private(set) var connectionMetricsStale = false
+
+    func publish(_ snapshot: ProxyInspectorTrafficSnapshot, stale: Bool) {
+        if groupActiveConnections != snapshot.groupActiveConnections {
+            groupActiveConnections = snapshot.groupActiveConnections
+        }
+        if groupObservedBytes != snapshot.groupObservedBytes {
+            groupObservedBytes = snapshot.groupObservedBytes
+        }
+        if routes != snapshot.routes {
+            routes = snapshot.routes
+        }
+        if connectionMetricsStale != stale {
+            connectionMetricsStale = stale
+        }
+    }
+
+    func publishStaleState(_ stale: Bool) {
+        if connectionMetricsStale != stale {
+            connectionMetricsStale = stale
+        }
+    }
+}
+
+private struct ProxyInspectorGroupTrafficRows: View {
+    let presentation: ProxyInspectorTrafficPresentation
+
+    var body: some View {
+        InspectorValueRow(
+            "Active Connections",
+            value: presentation.connectionMetricsStale
+                ? "Stale"
+                : formattedCount(presentation.groupActiveConnections)
+        )
+        InspectorValueRow(
+            "Observed Traffic",
+            value: presentation.connectionMetricsStale
+                ? "Stale"
+                : formattedByteCount(presentation.groupObservedBytes)
+        )
+    }
+}
+
+private struct ProxyInspectorObservedTrafficSection: View {
+    let presentation: ProxyInspectorTrafficPresentation
+
+    var body: some View {
+        let routes = presentation.routes
+
+        InspectorSection("Observed Traffic", showsDivider: false) {
+            if presentation.connectionMetricsStale {
+                Label(
+                    "Connection data is stale while the live stream reconnects.",
+                    systemImage: "arrow.clockwise"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+            Text(
+                "Actual routes observed during the last five minutes. "
+                    + "Showing up to eight routes with the most traffic."
+            )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if routes.isEmpty {
+                Text("No matching traffic has been observed yet.")
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(routes) { route in
+                        ObservedRouteRow(
+                            route: route,
+                            maximumBytes: routes.first?.totalBytes ?? route.totalBytes
+                        )
+                        if route.id != routes.last?.id {
+                            Divider()
+                                .padding(.vertical, 9)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ProxyInspectorTrafficScope: Equatable {
+    let groupName: String?
+    let scopeName: String?
+}
+
+private struct ProxyInspectorTrafficObserver: View {
+    @Bindable var model: AppModel
+    let groupName: String?
+    let scopeName: String?
+    let presentation: ProxyInspectorTrafficPresentation
+    @State private var accumulator = ProxyInspectorTrafficAccumulator()
+    @State private var pendingRefreshTask: Task<Void, Never>?
+
+    var body: some View {
+        let connectionSnapshot = model.connections
+        let routeTrafficEntries = model.routeTrafficEntries
+        let connectionMetricsStale = model.degradedStreams.contains(.connections)
+        let scope = ProxyInspectorTrafficScope(groupName: groupName, scopeName: scopeName)
+
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onAppear {
+                refreshImmediately()
+            }
+            .onChange(of: connectionSnapshot) { _, _ in
+                scheduleRefresh()
+            }
+            .onChange(of: routeTrafficEntries) { _, _ in
+                scheduleRefresh()
+            }
+            .onChange(of: connectionMetricsStale) { _, stale in
+                presentation.publishStaleState(stale)
+            }
+            .onChange(of: scope) { _, _ in
+                refreshImmediately()
+            }
+            .onDisappear {
+                cancelPendingRefresh()
+            }
+    }
+
+    private func scheduleRefresh() {
+        guard pendingRefreshTask == nil else { return }
+        pendingRefreshTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(120))
+            } catch {
+                return
+            }
+            publishLatestSnapshot()
+            pendingRefreshTask = nil
+        }
+    }
+
+    private func refreshImmediately() {
+        cancelPendingRefresh()
+        publishLatestSnapshot()
+    }
+
+    private func cancelPendingRefresh() {
+        pendingRefreshTask?.cancel()
+        pendingRefreshTask = nil
+    }
+
+    private func publishLatestSnapshot() {
+        let snapshot = accumulator.snapshot(
+            connections: model.connections?.connections ?? [],
+            entries: model.routeTrafficEntries,
+            groupName: groupName,
+            scopeName: scopeName
+        )
+        presentation.publish(
+            snapshot,
+            stale: model.degradedStreams.contains(.connections)
+        )
+    }
+}
+
+private struct ProxyInspectorTrafficSnapshot: Equatable {
     let groupActiveConnections: Int
     let groupObservedBytes: Int64
     let routes: [ObservedRouteSummary]
+}
 
-    @MainActor
-    init(model: AppModel, groupName: String?, scopeName: String?) {
-        if let groupName {
-            groupActiveConnections = model.connections?.connections.reduce(into: 0) { count, connection in
-                if connection.chains.contains(groupName) { count += 1 }
-            } ?? 0
-        } else {
-            groupActiveConnections = 0
+private struct ProxyInspectorTrafficAccumulator {
+    private struct EntryIdentity: Equatable {
+        let timestamp: Date
+        let connectionID: String
+
+        init(_ entry: TrafficAttribution.Entry) {
+            timestamp = entry.timestamp
+            connectionID = entry.connectionID
         }
+    }
 
-        var groupObservedBytes: Int64 = 0
-        var summaries: [ObservedRouteSummary.Key: ObservedRouteSummary] = [:]
-        for entry in model.routeTrafficEntries {
-            if let groupName, entry.routing.chains.contains(groupName) {
-                groupObservedBytes = addingTraffic(groupObservedBytes, entry.totalDelta)
-            }
+    private struct RouteAggregate {
+        let key: ObservedRouteSummary.Key
+        var upload: Int64
+        var download: Int64
+        var lastSeen: Date
+        var entryCount: Int
 
-            guard let scopeName, entry.routing.chains.contains(scopeName) else { continue }
-            let key = ObservedRouteSummary.Key(
-                destination: entry.routing.destination,
-                rule: entry.routing.rule,
-                rulePayload: entry.routing.rulePayload,
-                chains: entry.routing.chains
+        var summary: ObservedRouteSummary {
+            ObservedRouteSummary(
+                key: key,
+                upload: upload,
+                download: download,
+                lastSeen: lastSeen
             )
-            var summary = summaries[key] ?? ObservedRouteSummary(key: key)
-            summary.upload = addingTraffic(summary.upload, entry.uploadDelta)
-            summary.download = addingTraffic(summary.download, entry.downloadDelta)
-            summary.lastSeen = max(summary.lastSeen, entry.timestamp)
-            summaries[key] = summary
         }
-        self.groupObservedBytes = groupObservedBytes
-        routes = summaries.values
-            .sorted { lhs, rhs in
-                if lhs.totalBytes != rhs.totalBytes { return lhs.totalBytes > rhs.totalBytes }
-                if lhs.lastSeen != rhs.lastSeen { return lhs.lastSeen > rhs.lastSeen }
-                return lhs.destination.localizedStandardCompare(rhs.destination) == .orderedAscending
+    }
+
+    private var cachedGroupName: String?
+    private var cachedScopeName: String?
+    private var sourceEntries: [TrafficAttribution.Entry] = []
+    private var groupObservedBytes: Int64 = 0
+    private var routeAggregates: [ObservedRouteSummary.Key: RouteAggregate] = [:]
+    private var cachedRoutes: [ObservedRouteSummary] = []
+    private var routesDirty = false
+
+    mutating func snapshot(
+        connections: [MihomoConnection],
+        entries: [TrafficAttribution.Entry],
+        groupName: String?,
+        scopeName: String?
+    ) -> ProxyInspectorTrafficSnapshot {
+        if cachedGroupName != groupName || cachedScopeName != scopeName {
+            reset(groupName: groupName, scopeName: scopeName)
+            append(contentsOf: entries)
+            sourceEntries = entries
+        } else {
+            reconcile(entries)
+        }
+
+        let activeConnections: Int
+        if let groupName {
+            activeConnections = connections.reduce(into: 0) { count, connection in
+                if connection.chains.contains(groupName) { count += 1 }
             }
-            .prefix(8)
-            .map { $0 }
+        } else {
+            activeConnections = 0
+        }
+
+        return ProxyInspectorTrafficSnapshot(
+            groupActiveConnections: activeConnections,
+            groupObservedBytes: groupObservedBytes,
+            routes: topRoutes()
+        )
+    }
+
+    private mutating func reset(groupName: String?, scopeName: String?) {
+        cachedGroupName = groupName
+        cachedScopeName = scopeName
+        sourceEntries.removeAll(keepingCapacity: true)
+        groupObservedBytes = 0
+        routeAggregates.removeAll(keepingCapacity: true)
+        cachedRoutes.removeAll(keepingCapacity: true)
+        routesDirty = false
+    }
+
+    private mutating func reconcile(_ entries: [TrafficAttribution.Entry]) {
+        guard !sourceEntries.isEmpty else {
+            append(contentsOf: entries)
+            sourceEntries = entries
+            return
+        }
+        guard let firstEntry = entries.first else {
+            reset(groupName: cachedGroupName, scopeName: cachedScopeName)
+            return
+        }
+
+        let firstIdentity = EntryIdentity(firstEntry)
+        guard let overlapStart = sourceEntries.firstIndex(where: {
+            EntryIdentity($0) == firstIdentity
+        }) else {
+            rebuild(from: entries)
+            return
+        }
+
+        let overlapCount = sourceEntries.count - overlapStart
+        guard overlapCount <= entries.count,
+              zip(sourceEntries[overlapStart...], entries.prefix(overlapCount)).allSatisfy({
+                  EntryIdentity($0.0) == EntryIdentity($0.1)
+              }) else {
+            rebuild(from: entries)
+            return
+        }
+
+        for entry in sourceEntries[..<overlapStart] {
+            guard remove(entry) else {
+                rebuild(from: entries)
+                return
+            }
+        }
+        append(contentsOf: entries.dropFirst(overlapCount))
+        sourceEntries = entries
+    }
+
+    private mutating func rebuild(from entries: [TrafficAttribution.Entry]) {
+        let groupName = cachedGroupName
+        let scopeName = cachedScopeName
+        reset(groupName: groupName, scopeName: scopeName)
+        append(contentsOf: entries)
+        sourceEntries = entries
+    }
+
+    private mutating func append<S: Sequence>(contentsOf entries: S)
+    where S.Element == TrafficAttribution.Entry {
+        for entry in entries {
+            add(entry)
+        }
+    }
+
+    private mutating func add(_ entry: TrafficAttribution.Entry) {
+        if let cachedGroupName, entry.routing.chains.contains(cachedGroupName) {
+            groupObservedBytes = addingTraffic(groupObservedBytes, entry.totalDelta)
+        }
+
+        guard let cachedScopeName, entry.routing.chains.contains(cachedScopeName) else {
+            return
+        }
+
+        let key = routeKey(for: entry)
+        if var aggregate = routeAggregates[key] {
+            aggregate.upload = addingTraffic(aggregate.upload, entry.uploadDelta)
+            aggregate.download = addingTraffic(aggregate.download, entry.downloadDelta)
+            aggregate.lastSeen = max(aggregate.lastSeen, entry.timestamp)
+            aggregate.entryCount += 1
+            routeAggregates[key] = aggregate
+        } else {
+            routeAggregates[key] = RouteAggregate(
+                key: key,
+                upload: max(0, entry.uploadDelta),
+                download: max(0, entry.downloadDelta),
+                lastSeen: entry.timestamp,
+                entryCount: 1
+            )
+        }
+        routesDirty = true
+    }
+
+    @discardableResult
+    private mutating func remove(_ entry: TrafficAttribution.Entry) -> Bool {
+        if let cachedGroupName, entry.routing.chains.contains(cachedGroupName) {
+            groupObservedBytes = subtractingTraffic(groupObservedBytes, entry.totalDelta)
+        }
+
+        guard let cachedScopeName, entry.routing.chains.contains(cachedScopeName) else {
+            return true
+        }
+
+        let key = routeKey(for: entry)
+        guard var aggregate = routeAggregates[key] else {
+            return false
+        }
+        if aggregate.entryCount <= 1 {
+            routeAggregates.removeValue(forKey: key)
+        } else {
+            aggregate.upload = subtractingTraffic(aggregate.upload, entry.uploadDelta)
+            aggregate.download = subtractingTraffic(aggregate.download, entry.downloadDelta)
+            aggregate.entryCount -= 1
+            routeAggregates[key] = aggregate
+        }
+        routesDirty = true
+        return true
+    }
+
+    private func routeKey(for entry: TrafficAttribution.Entry) -> ObservedRouteSummary.Key {
+        ObservedRouteSummary.Key(
+            destination: entry.routing.destination,
+            rule: entry.routing.rule,
+            rulePayload: entry.routing.rulePayload,
+            chains: entry.routing.chains
+        )
+    }
+
+    private mutating func topRoutes() -> [ObservedRouteSummary] {
+        guard routesDirty else { return cachedRoutes }
+
+        var routes: [ObservedRouteSummary] = []
+        routes.reserveCapacity(8)
+        for aggregate in routeAggregates.values {
+            let summary = aggregate.summary
+            let insertionIndex = routes.firstIndex {
+                routeRanksBefore(summary, $0)
+            } ?? routes.endIndex
+            guard insertionIndex < 8 else { continue }
+            routes.insert(summary, at: insertionIndex)
+            if routes.count > 8 {
+                routes.removeLast()
+            }
+        }
+        cachedRoutes = routes
+        routesDirty = false
+        return routes
     }
 }
 
@@ -445,7 +744,7 @@ private struct ObservedRouteRow: View {
     }
 }
 
-private struct ObservedRouteSummary: Identifiable {
+private struct ObservedRouteSummary: Equatable, Identifiable {
     struct Key: Hashable {
         let destination: String
         let rule: String
@@ -506,4 +805,25 @@ private func issueDescription(_ issue: ProxySelectionPathIssue) -> String {
 private func addingTraffic(_ lhs: Int64, _ rhs: Int64) -> Int64 {
     let (value, overflow) = lhs.addingReportingOverflow(rhs)
     return overflow ? Int64.max : max(0, value)
+}
+
+private func subtractingTraffic(_ lhs: Int64, _ rhs: Int64) -> Int64 {
+    let normalizedRHS = max(0, rhs)
+    guard lhs >= normalizedRHS else { return 0 }
+    return lhs - normalizedRHS
+}
+
+private func routeRanksBefore(
+    _ lhs: ObservedRouteSummary,
+    _ rhs: ObservedRouteSummary
+) -> Bool {
+    if lhs.totalBytes != rhs.totalBytes { return lhs.totalBytes > rhs.totalBytes }
+    if lhs.lastSeen != rhs.lastSeen { return lhs.lastSeen > rhs.lastSeen }
+    let destinationOrder = lhs.destination.localizedStandardCompare(rhs.destination)
+    if destinationOrder != .orderedSame { return destinationOrder == .orderedAscending }
+    let ruleOrder = lhs.key.rule.localizedStandardCompare(rhs.key.rule)
+    if ruleOrder != .orderedSame { return ruleOrder == .orderedAscending }
+    let payloadOrder = lhs.key.rulePayload.localizedStandardCompare(rhs.key.rulePayload)
+    if payloadOrder != .orderedSame { return payloadOrder == .orderedAscending }
+    return lhs.chains.lexicographicallyPrecedes(rhs.chains)
 }
