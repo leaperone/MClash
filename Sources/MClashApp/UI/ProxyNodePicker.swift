@@ -12,7 +12,9 @@ struct ProxyNodePicker: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(group.name)
                         .font(.headline)
-                    Text("Choose a proxy node")
+                    Text(group.groupBehavior == .selector
+                        ? "Choose a proxy node"
+                        : "Pin the automatic group to a preferred node")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -51,7 +53,7 @@ struct ProxyNodePicker: View {
                             .lineLimit(1)
                             .help(proxy)
                         Spacer()
-                        if let delay = model.proxyDelays[proxy] {
+                        if let delay = model.proxyDelay(for: proxy, in: group.name) {
                             Text("\(delay) ms")
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(delayColor(delay))
@@ -61,7 +63,8 @@ struct ProxyNodePicker: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(
-                    proxy == group.now
+                    isAlreadyChosen(proxy)
+                        || group.groupBehavior?.supportsSelectionUpdate != true
                         || model.networkStateTransitionInProgress
                         || model.isPerforming(.selectProxy(group.name))
                 )
@@ -88,22 +91,36 @@ struct ProxyNodePicker: View {
     }
 
     private func nodeSymbol(_ proxy: String) -> String {
+        if proxy == group.fixedOverride { return "pin.circle.fill" }
         if proxy == group.now { return "checkmark.circle.fill" }
-        if model.proxiesByName[proxy]?.alive == false { return "exclamationmark.circle" }
+        if model.proxyAlive(for: proxy, in: group.name) == false {
+            return "exclamationmark.circle"
+        }
         return "circle"
     }
 
     private func nodeColor(_ proxy: String) -> Color {
+        if proxy == group.fixedOverride { return .orange }
         if proxy == group.now { return .accentColor }
-        if model.proxiesByName[proxy]?.alive == false { return .red }
+        if model.proxyAlive(for: proxy, in: group.name) == false { return .red }
         return .secondary
     }
 
     private func accessibilityLabel(_ proxy: String) -> String {
         var parts = [proxy]
+        if proxy == group.fixedOverride { parts.append("pinned preference") }
         if proxy == group.now { parts.append("selected") }
-        if model.proxiesByName[proxy]?.alive == false { parts.append("unavailable") }
-        if let delay = model.proxyDelays[proxy] { parts.append("\(delay) milliseconds") }
+        if model.proxyAlive(for: proxy, in: group.name) == false {
+            parts.append("unavailable")
+        }
+        if let delay = model.proxyDelay(for: proxy, in: group.name) {
+            parts.append("\(delay) milliseconds")
+        }
         return parts.joined(separator: ", ")
+    }
+
+    private func isAlreadyChosen(_ proxy: String) -> Bool {
+        if group.groupBehavior == .selector { return proxy == group.now }
+        return proxy == group.fixedOverride
     }
 }

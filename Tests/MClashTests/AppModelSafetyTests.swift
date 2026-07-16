@@ -55,6 +55,157 @@ struct AppModelSafetyTests {
         #expect(fixture.model.systemProxyState == .off)
         #expect(fixture.backend.applyCount == 1)
     }
+
+    @MainActor
+    @Test("Proxy presentation follows runtime YAML order and resolves nested selections")
+    func proxyPresentationUsesProfileOrder() throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "mclash-proxy-presentation-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        try layout.createDirectories()
+        try Data(
+            """
+            proxy-groups:
+              - name: Group B
+                type: select
+                proxies: [Group A]
+              - name: Group A
+                type: select
+                proxies: [Node]
+            """.utf8
+        ).write(to: layout.runtimeConfigurationURL)
+        let model = AppModel(profileDirectoryLayout: layout)
+        model.activeConfigURL = layout.runtimeConfigurationURL
+        let collection = try JSONDecoder().decode(
+            MihomoProxyCollection.self,
+            from: Data(
+                #"{"proxies":{"Node":{"name":"Node","type":"Shadowsocks"},"Group A":{"name":"Group A","type":"Selector","all":["Node"],"now":"Node"},"GLOBAL":{"name":"GLOBAL","type":"Selector","all":["Group B"],"now":"Group B"},"Group B":{"name":"Group B","type":"Selector","all":["Group A"],"now":"Group A"}}}"#.utf8
+            )
+        )
+
+        model.applyProxyCollection(collection)
+
+        #expect(model.proxyGroups.map(\.name) == ["Group B", "Group A"])
+        #expect(model.proxySelectionPaths["Group B"]?.route == ["Group B", "Group A", "Node"])
+        #expect(model.proxySelectionPaths["Group B"]?.terminal == "Node")
+        #expect(model.proxyGroups(forRoutingMode: "rule").map(\.name) == ["Group B", "Group A"])
+        #expect(model.proxyGroups(forRoutingMode: "global").map(\.name) == ["GLOBAL"])
+        #expect(model.proxyGroups(forRoutingMode: "direct").isEmpty)
+
+        model.rules = try JSONDecoder().decode(
+            [MihomoRule].self,
+            from: Data(
+                #"[{"index":0,"type":"MATCH","payload":"","proxy":"GLOBAL","size":0}]"#.utf8
+            )
+        )
+        #expect(
+            model.proxyGroups(forRoutingMode: "rule").map(\.name)
+                == ["Group B", "Group A", "GLOBAL"]
+        )
+    }
+
+    @MainActor
+    @Test("Connection snapshots feed bounded observed route traffic")
+    func connectionSnapshotsFeedTrafficAttribution() throws {
+        let model = AppModel()
+        model.applyConnectionSnapshot(
+            try connectionSnapshot(upload: 10, download: 20),
+            generation: 7
+        )
+        model.applyConnectionSnapshot(
+            try connectionSnapshot(upload: 16, download: 29),
+            generation: 7
+        )
+
+        let entry = try #require(model.routeTrafficEntries.first)
+        #expect(entry.uploadDelta == 6)
+        #expect(entry.downloadDelta == 9)
+        #expect(entry.routing.destination == "example.com")
+        #expect(entry.routing.chains == ["Proxy", "Node"])
+    }
+
+    @MainActor
+    @Test("Group-specific delay histories never leak across test URLs")
+    func groupSpecificDelaysStayIsolated() throws {
+        let model = AppModel()
+        let collection = try JSONDecoder().decode(
+            MihomoProxyCollection.self,
+            from: Data(
+                #"""
+                {
+                  "proxies": {
+                    "Node": {
+                      "name": "Node",
+                      "type": "Shadowsocks",
+                      "history": [{"time":"now","delay":15}],
+                      "extra": {
+                        "https://a.example/test": {
+                          "alive": true,
+                          "history": [{"time":"now","delay":100}]
+                        },
+                        "https://b.example/test": {
+                          "alive": false,
+                          "history": [{"time":"now","delay":320}]
+                        }
+                      }
+                    },
+                    "Group A": {
+                      "name": "Group A",
+                      "type": "URLTest",
+                      "all": ["Node"],
+                      "now": "Node",
+                      "testUrl": "https://a.example/test"
+                    },
+                    "Group B": {
+                      "name": "Group B",
+                      "type": "URLTest",
+                      "all": ["Node"],
+                      "now": "Node",
+                      "testUrl": "https://b.example/test"
+                    }
+                  }
+                }
+                """#.utf8
+            )
+        )
+
+        model.applyProxyCollection(collection)
+
+        #expect(model.proxyDelay(for: "Node", in: "Group A") == 100)
+        #expect(model.proxyDelay(for: "Node", in: "Group B") == nil)
+        #expect(model.proxyDelayMap(for: "Group A") == ["Node": 100])
+        #expect(model.proxyDelayMap(for: "Group B").isEmpty)
+        #expect(model.proxyAlive(for: "Node", in: "Group A") == true)
+        #expect(model.proxyAlive(for: "Node", in: "Group B") == false)
+    }
+
+    private func connectionSnapshot(upload: Int64, download: Int64) throws -> MihomoConnectionSnapshot {
+        let object: [String: Any] = [
+            "downloadTotal": download,
+            "uploadTotal": upload,
+            "memory": 0,
+            "connections": [
+                [
+                    "id": "connection-1",
+                    "metadata": ["host": "example.com", "destinationIP": "1.1.1.1"],
+                    "upload": upload,
+                    "download": download,
+                    "start": "2026-07-16T08:00:00+08:00",
+                    "chains": ["Node", "Proxy"],
+                    "providerChains": [],
+                    "rule": "DomainSuffix",
+                    "rulePayload": "example.com"
+                ]
+            ]
+        ]
+        return try JSONDecoder().decode(
+            MihomoConnectionSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+    }
 }
 
 @MainActor

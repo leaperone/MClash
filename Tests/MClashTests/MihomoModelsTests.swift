@@ -124,6 +124,41 @@ struct MihomoModelsTests {
     }
 
     @Test
+    func classifiesProxyGroupBehaviorsAndOverrideCapabilities() throws {
+        let data = Data(
+            #"""
+            {
+              "proxies": {
+                "Manual": {"name":"Manual","type":"Selector"},
+                "Auto": {"name":"Auto","type":"URLTest","fixed":""},
+                "Fallback": {"name":"Fallback","type":"Fallback"},
+                "Balanced": {"name":"Balanced","type":"LoadBalance"},
+                "Node": {"name":"Node","type":"Shadowsocks"}
+              }
+            }
+            """#.utf8
+        )
+
+        let response = try JSONDecoder().decode(MihomoProxyCollection.self, from: data)
+
+        #expect(response.proxies["Manual"]?.groupBehavior == .selector)
+        #expect(response.proxies["Auto"]?.groupBehavior == .urlTest)
+        #expect(response.proxies["Auto"]?.fixedOverride == nil)
+        #expect(response.proxies["Fallback"]?.groupBehavior == .fallback)
+        #expect(response.proxies["Balanced"]?.groupBehavior == .loadBalance)
+        #expect(response.proxies["Node"]?.groupBehavior == nil)
+
+        #expect(ProxyGroupBehavior.selector.supportsSelectionUpdate)
+        #expect(!ProxyGroupBehavior.selector.supportsClearingOverride)
+        #expect(ProxyGroupBehavior.urlTest.supportsSelectionUpdate)
+        #expect(ProxyGroupBehavior.urlTest.supportsClearingOverride)
+        #expect(ProxyGroupBehavior.fallback.supportsSelectionUpdate)
+        #expect(ProxyGroupBehavior.fallback.supportsClearingOverride)
+        #expect(!ProxyGroupBehavior.loadBalance.supportsSelectionUpdate)
+        #expect(!ProxyGroupBehavior.loadBalance.supportsClearingOverride)
+    }
+
+    @Test
     func decodesRulesIncludingAlphaExtraMetadata() throws {
         let data = Data(
             #"""

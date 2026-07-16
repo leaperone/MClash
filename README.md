@@ -13,8 +13,11 @@ WebSocket API.
   bounded crash recovery
 - Per-launch in-memory local controller secret (no connection-time Keychain prompt)
 - Local and remote profile storage with transactional activation and rollback
-- Rule / Global / Direct routing, policy groups, searchable node selection, and
-  latency testing
+- Rule / Global / Direct routing with YAML-stable policy-group ordering,
+  searchable node selection, latency testing, nested dependency topology, and
+  current-path inspection
+- Session-scoped routing explanations that connect observed domains and rules
+  to the actual group-to-node chain reported by mihomo
 - Rules, proxy providers, rule providers, live connections, logs, and traffic
 - REST/WebSocket API models, authenticated client, and stream reconnection
 - Complete macOS proxy snapshots with `networksetup` activation and rollback

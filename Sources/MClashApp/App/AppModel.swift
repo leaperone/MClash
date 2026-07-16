@@ -5,6 +5,12 @@ import Observation
 @MainActor
 @Observable
 final class AppModel {
+    private struct ProxyDelayContextKey: Hashable {
+        let group: String
+        let proxy: String
+        let targetURL: URL
+    }
+
     struct TrafficSample: Identifiable, Equatable {
         let id = UUID()
         let timestamp: Date
@@ -28,6 +34,7 @@ final class AppModel {
         case traffic
         case connections
         case logs
+        case proxies
     }
 
     enum SystemProxyState: Equatable {
@@ -48,6 +55,7 @@ final class AppModel {
         case changeMode
         case changeSystemProxy
         case selectProxy(String)
+        case clearProxyOverride(String)
         case measureDelay(String)
         case measureGroupDelay(String)
         case refreshRules
@@ -108,6 +116,8 @@ final class AppModel {
     var runtimeConfig: MihomoConfig?
     var proxyGroups: [MihomoProxy] = []
     var proxiesByName: [String: MihomoProxy] = [:]
+    var proxyTopology: ProxyTopology = .empty
+    var proxySelectionPaths: [String: ProxySelectionPath] = [:]
     var proxyDelays: [String: Int] = [:]
     var rules: [MihomoRule] = []
     var proxyProviders: [MihomoProxyProvider] = []
@@ -117,6 +127,7 @@ final class AppModel {
     var traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
     var trafficHistory: [TrafficSample] = []
     var connections: MihomoConnectionSnapshot?
+    var routeTrafficEntries: [TrafficAttribution.Entry] = []
     var systemProxyState: SystemProxyState = .off
     var controllerState: ControllerState = .idle
     var autoEnableSystemProxy: Bool {
@@ -151,11 +162,16 @@ final class AppModel {
     private var trafficTask: Task<Void, Never>?
     private var connectionsTask: Task<Void, Never>?
     private var apiLogTask: Task<Void, Never>?
+    private var proxyRefreshTask: Task<Void, Never>?
     private var controllerGeneration = 0
+    private var proxyRefreshRevision = 0
     private var systemProxyEnableOperation: (id: UUID, task: Task<Void, Never>)?
     private var systemProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
     private var crashProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
     private var shouldReenableSystemProxyAfterCrash = false
+    private var contextualProxyDelays: [ProxyDelayContextKey: Int] = [:]
+    private var proxyProfileStructure: ProfileStructure = .empty
+    private var trafficAttribution = TrafficAttribution()
     private var prepared = false
     private(set) var preparationInProgress = false
 
@@ -684,6 +700,7 @@ final class AppModel {
 
         guard let apiClient else { return }
         let generation = controllerGeneration
+        invalidateProxyRefreshes()
         do {
             try await apiClient.patchConfig(MihomoConfigPatch(mode: mode))
             let config = try await apiClient.fetchConfig()
@@ -700,8 +717,14 @@ final class AppModel {
         guard begin(.selectProxy(group)) else { return false }
         defer { end(.selectProxy(group)) }
 
-        guard let apiClient else { return false }
+        guard let apiClient,
+              let groupModel = proxiesByName[group],
+              groupModel.groupBehavior?.supportsSelectionUpdate == true else {
+            errorMessage = "This proxy group is selected automatically for each connection."
+            return false
+        }
         let generation = controllerGeneration
+        invalidateProxyRefreshes()
         do {
             try await apiClient.selectProxy(group: group, proxy: proxy)
             await refreshProxyGroups(generation: generation)
@@ -711,6 +734,31 @@ final class AppModel {
         } catch {
             guard generation == controllerGeneration else { return false }
             recordOperationFailure(error, context: "Proxy selection")
+            return false
+        }
+    }
+
+    func clearProxyOverride(group: String) async -> Bool {
+        guard begin(.clearProxyOverride(group)) else { return false }
+        defer { end(.clearProxyOverride(group)) }
+
+        guard let apiClient,
+              let groupModel = proxiesByName[group],
+              groupModel.groupBehavior?.supportsClearingOverride == true else {
+            errorMessage = "This proxy group does not have an automatic override to clear."
+            return false
+        }
+        let generation = controllerGeneration
+        invalidateProxyRefreshes()
+        do {
+            try await apiClient.clearProxyOverride(group: group)
+            await refreshProxyGroups(generation: generation)
+            guard generation == controllerGeneration, isConnected else { return false }
+            await closeConnectionsAfterRoutingChange(using: apiClient, generation: generation)
+            return generation == controllerGeneration && isConnected
+        } catch {
+            guard generation == controllerGeneration else { return false }
+            recordOperationFailure(error, context: "Restore automatic proxy selection")
             return false
         }
     }
@@ -725,6 +773,7 @@ final class AppModel {
         }
         let expectedStatus = expectedDelayStatus(forProxy: proxy, group: group)
         let generation = controllerGeneration
+        invalidateProxyRefreshes()
         do {
             let delay = try await apiClient.measureDelay(
                 proxy: proxy,
@@ -732,7 +781,13 @@ final class AppModel {
                 expectedStatus: expectedStatus
             )
             guard generation == controllerGeneration, isConnected else { return nil }
+            invalidateProxyRefreshes()
             proxyDelays[proxy] = delay
+            if let group {
+                contextualProxyDelays[
+                    ProxyDelayContextKey(group: group, proxy: proxy, targetURL: target)
+                ] = delay
+            }
             return delay
         } catch {
             guard generation == controllerGeneration else { return nil }
@@ -746,23 +801,59 @@ final class AppModel {
         defer { end(.measureGroupDelay(group)) }
 
         guard let apiClient,
-              let groupModel = proxyGroups.first(where: { $0.name == group }) else {
+              let groupModel = proxiesByName[group] else {
             return
         }
         let target = delayTarget(for: groupModel) ?? defaultDelayTarget
         let expectedStatus = normalizedExpectedStatus(groupModel.expectedStatus)
         let generation = controllerGeneration
-        do {
-            let delays = try await apiClient.measureGroupDelays(
-                group: group,
-                targetURL: target,
-                expectedStatus: expectedStatus
-            )
-            guard generation == controllerGeneration, isConnected else { return }
-            proxyDelays.merge(delays) { _, new in new }
-        } catch {
-            guard generation == controllerGeneration else { return }
-            recordOperationFailure(error, context: "Group latency test")
+        var seen = Set<String>()
+        let members = groupModel.all.filter { seen.insert($0).inserted }
+        invalidateProxyRefreshes()
+
+        // Alpha's GET /group/{name}/delay endpoint clears fixed selections on
+        // URLTest and Fallback groups. Measure members directly so a read-only
+        // latency action never changes the user's routing preference.
+        var delays: [String: Int] = [:]
+        let maximumConcurrentRequests = 8
+        for batchStart in stride(from: 0, to: members.count, by: maximumConcurrentRequests) {
+            guard !Task.isCancelled else { return }
+            let batchEnd = min(batchStart + maximumConcurrentRequests, members.count)
+            let batch = Array(members[batchStart..<batchEnd])
+            let batchDelays = await withTaskGroup(
+                of: (String, Int?).self,
+                returning: [String: Int].self
+            ) { taskGroup in
+                for proxy in batch {
+                    taskGroup.addTask {
+                        let delay = try? await apiClient.measureDelay(
+                            proxy: proxy,
+                            targetURL: target,
+                            expectedStatus: expectedStatus
+                        )
+                        return (proxy, delay)
+                    }
+                }
+
+                var measured: [String: Int] = [:]
+                for await (proxy, delay) in taskGroup {
+                    if let delay { measured[proxy] = delay }
+                }
+                return measured
+            }
+            delays.merge(batchDelays) { _, new in new }
+        }
+
+        guard generation == controllerGeneration, isConnected else { return }
+        invalidateProxyRefreshes()
+        proxyDelays.merge(delays) { _, new in new }
+        for (proxy, delay) in delays {
+            contextualProxyDelays[
+                ProxyDelayContextKey(group: group, proxy: proxy, targetURL: target)
+            ] = delay
+        }
+        if delays.isEmpty, !members.isEmpty {
+            recordOperationFailure(MihomoAPIError.emptyResponse, context: "Group latency test")
         }
     }
 
@@ -788,6 +879,7 @@ final class AppModel {
 
         guard let apiClient else { return }
         let generation = controllerGeneration
+        invalidateProxyRefreshes()
         do {
             try await apiClient.updateProxyProvider(named: name)
             guard generation == controllerGeneration, isConnected else { return }
@@ -806,6 +898,7 @@ final class AppModel {
 
         guard let apiClient else { return }
         let generation = controllerGeneration
+        invalidateProxyRefreshes()
         do {
             try await apiClient.healthCheckProxyProvider(named: name)
             guard generation == controllerGeneration, isConnected else { return }
@@ -1239,11 +1332,15 @@ final class AppModel {
                   isConnected else { return }
             apiClient = client
             runtimeConfig = config
-            applyProxyCollection(proxies)
+            proxyProfileStructure = loadProxyProfileStructure()
+            applyProxyCollection(proxies, profileStructure: proxyProfileStructure)
             startControllerStreams(client, generation: generation)
             controllerState = .ready
             errorMessage = nil
             appendSupervisorLog("Connected to the local Alpha controller.")
+            Task { [weak self] in
+                await self?.loadRules(using: client, generation: generation)
+            }
         } catch {
             guard generation == controllerGeneration,
                   activeControllerEndpoint == session.endpoint,
@@ -1308,10 +1405,13 @@ final class AppModel {
 
     private func refreshProxyGroups(generation: Int) async {
         guard let apiClient else { return }
+        let revision = nextProxyRefreshRevision()
         do {
             let proxies = try await apiClient.fetchProxies()
-            guard generation == controllerGeneration, isConnected else { return }
-            applyProxyCollection(proxies)
+            guard generation == controllerGeneration,
+                  revision == proxyRefreshRevision,
+                  isConnected else { return }
+            applyProxyCollection(proxies, profileStructure: proxyProfileStructure)
         } catch {
             guard generation == controllerGeneration, isConnected else { return }
             errorMessage = error.localizedDescription
@@ -1397,6 +1497,38 @@ final class AppModel {
         apiLogTask = Task { [weak self] in
             await self?.monitorLogs(client, generation: generation)
         }
+
+        proxyRefreshTask = Task { [weak self] in
+            await self?.monitorProxyState(client, generation: generation)
+        }
+    }
+
+    private func monitorProxyState(_ client: MihomoAPIClient, generation: Int) async {
+        var consecutiveFailures = 0
+        while streamShouldContinue(generation) {
+            do {
+                try await Task.sleep(for: .seconds(5))
+                guard streamShouldContinue(generation) else { return }
+                let revision = nextProxyRefreshRevision()
+                let proxies = try await client.fetchProxies()
+                guard streamShouldContinue(generation),
+                      revision == proxyRefreshRevision else { continue }
+                applyProxyCollection(proxies, profileStructure: proxyProfileStructure)
+                degradedStreams.remove(.proxies)
+                consecutiveFailures = 0
+            } catch is CancellationError {
+                return
+            } catch {
+                guard streamShouldContinue(generation) else { return }
+                degradedStreams.insert(.proxies)
+                if consecutiveFailures == 0 {
+                    appendSupervisorLog(
+                        "Proxy state refresh interrupted: \(error.localizedDescription)"
+                    )
+                }
+                consecutiveFailures += 1
+            }
+        }
     }
 
     private func monitorTraffic(_ client: MihomoAPIClient, generation: Int) async {
@@ -1441,15 +1573,7 @@ final class AppModel {
                 let stream = try await client.connectionStream()
                 for try await snapshot in stream {
                     guard streamShouldContinue(generation) else { return }
-                    connections = MihomoConnectionSnapshot(
-                        downloadTotal: snapshot.downloadTotal,
-                        uploadTotal: snapshot.uploadTotal,
-                        connections: snapshot.connections.sorted {
-                            if $0.start == $1.start { return $0.id < $1.id }
-                            return $0.start > $1.start
-                        },
-                        memory: snapshot.memory
-                    )
+                    applyConnectionSnapshot(snapshot, generation: generation)
                     degradedStreams.remove(.connections)
                     attempt = 0
                 }
@@ -1501,6 +1625,15 @@ final class AppModel {
         !Task.isCancelled && generation == controllerGeneration && isConnected
     }
 
+    private func nextProxyRefreshRevision() -> Int {
+        proxyRefreshRevision &+= 1
+        return proxyRefreshRevision
+    }
+
+    private func invalidateProxyRefreshes() {
+        proxyRefreshRevision &+= 1
+    }
+
     private func waitBeforeStreamRetry(_ attempt: Int, generation: Int) async -> Bool {
         let seconds = min(1 << min(max(attempt - 1, 0), 3), 8)
         do {
@@ -1516,6 +1649,7 @@ final class AppModel {
         controllerSetupOperation = nil
         cancelControllerStreamTasks()
         controllerGeneration &+= 1
+        invalidateProxyRefreshes()
         apiClient = nil
         activeControllerEndpoint = nil
         controllerState = .idle
@@ -1523,7 +1657,11 @@ final class AppModel {
         managedMixedPort = nil
         proxyGroups = []
         proxiesByName = [:]
+        proxyTopology = .empty
+        proxySelectionPaths = [:]
         proxyDelays = [:]
+        contextualProxyDelays = [:]
+        proxyProfileStructure = .empty
         rules = []
         proxyProviders = []
         ruleProviders = []
@@ -1531,6 +1669,8 @@ final class AppModel {
         providersErrorMessage = nil
         degradedStreams = []
         connections = nil
+        trafficAttribution.reset()
+        routeTrafficEntries = []
         traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
         trafficHistory = []
     }
@@ -1539,36 +1679,145 @@ final class AppModel {
         trafficTask?.cancel()
         connectionsTask?.cancel()
         apiLogTask?.cancel()
+        proxyRefreshTask?.cancel()
         trafficTask = nil
         connectionsTask = nil
         apiLogTask = nil
+        proxyRefreshTask = nil
     }
 
     private func appendSupervisorLog(_ message: String) {
         appendCoreLog(CoreLogLine(stream: .supervisor, message: message))
     }
 
-    private func applyProxyCollection(_ collection: MihomoProxyCollection) {
+    func applyProxyCollection(
+        _ collection: MihomoProxyCollection,
+        profileStructure providedProfileStructure: ProfileStructure? = nil
+    ) {
         proxiesByName = collection.proxies
+        let profileStructure = providedProfileStructure ?? loadProxyProfileStructure()
+        proxyProfileStructure = profileStructure
+        let topology = ProxyTopologyBuilder().build(
+            collection: collection,
+            profileStructure: profileStructure
+        )
+        proxyTopology = topology
+        proxySelectionPaths = Dictionary(
+            uniqueKeysWithValues: topology.groupOrder.map { groupName in
+                (
+                    groupName,
+                    ProxySelectionPathResolver().resolve(from: groupName, topology: topology)
+                )
+            }
+        )
         let currentNames = Set(collection.proxies.keys)
         proxyDelays = proxyDelays.filter { currentNames.contains($0.key) }
-        proxyGroups = collection.proxies.values
-            .filter { !$0.all.isEmpty && !$0.hidden }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        contextualProxyDelays = contextualProxyDelays.filter { key, _ in
+            currentNames.contains(key.group)
+                && currentNames.contains(key.proxy)
+                && collection.proxies[key.proxy]?
+                    .extraDelayHistories[key.targetURL.absoluteString] == nil
+        }
+        proxyGroups = topology.visibleGroupOrder.compactMap { name in
+            guard name != "GLOBAL" else { return nil }
+            return collection.proxies[name]
+        }
         for proxy in collection.proxies.values {
-            if let delay = proxy.history.last?.delay, delay > 0 {
-                proxyDelays[proxy.name] = delay
+            if let delay = proxy.history.last?.delay {
+                if delay > 0 {
+                    proxyDelays[proxy.name] = delay
+                } else {
+                    proxyDelays[proxy.name] = nil
+                }
             }
         }
     }
 
+    func proxyGroups(forRoutingMode rawMode: String) -> [MihomoProxy] {
+        switch rawMode.lowercased() {
+        case "direct":
+            return []
+        case "global":
+            return proxiesByName["GLOBAL"].map { [$0] } ?? []
+        default:
+            let globalIsUsed = rules.contains(where: { $0.proxy == "GLOBAL" })
+                || connections?.connections.contains(where: { $0.chains.contains("GLOBAL") }) == true
+            guard globalIsUsed,
+                  let global = proxiesByName["GLOBAL"] else {
+                return proxyGroups
+            }
+            return proxyGroups + [global]
+        }
+    }
+
+    private func loadProxyProfileStructure() -> ProfileStructure {
+        guard let activeConfigURL,
+              let data = try? Data(contentsOf: activeConfigURL) else {
+            return .empty
+        }
+        return ProfileStructureReader().read(data: data)
+    }
+
+    func proxyDelay(for proxy: String, in group: String?) -> Int? {
+        if let group, let target = delayTarget(forProxy: proxy, group: group) {
+            if let delay = contextualProxyDelays[
+                ProxyDelayContextKey(group: group, proxy: proxy, targetURL: target)
+            ] {
+                return delay
+            }
+            if let state = proxiesByName[proxy]?.extraDelayHistories[target.absoluteString],
+               let latest = state.history?.last {
+                return state.alive && latest.delay > 0 ? latest.delay : nil
+            }
+            return nil
+        }
+        return proxyDelays[proxy]
+            ?? proxiesByName[proxy]?.history.last(where: { $0.delay > 0 })?.delay
+    }
+
+    func proxyDelayMap(for group: String) -> [String: Int] {
+        guard let groupModel = proxiesByName[group] else { return [:] }
+        return Dictionary(
+            uniqueKeysWithValues: groupModel.all.compactMap { proxy in
+                proxyDelay(for: proxy, in: group).map { (proxy, $0) }
+            }
+        )
+    }
+
+    func proxyAlive(for proxy: String, in group: String?) -> Bool? {
+        guard let proxyModel = proxiesByName[proxy] else { return nil }
+        if let group,
+           let target = delayTarget(forProxy: proxy, group: group),
+           let state = proxyModel.extraDelayHistories[target.absoluteString] {
+            return state.alive
+        }
+        return proxyModel.alive
+    }
+
+    func applyConnectionSnapshot(_ snapshot: MihomoConnectionSnapshot, generation: Int) {
+        _ = trafficAttribution.ingest(
+            connections: snapshot.connections,
+            generation: generation
+        )
+        routeTrafficEntries = trafficAttribution.entries
+        connections = MihomoConnectionSnapshot(
+            downloadTotal: snapshot.downloadTotal,
+            uploadTotal: snapshot.uploadTotal,
+            connections: snapshot.connections.sorted {
+                if $0.start == $1.start { return $0.id < $1.id }
+                return $0.start > $1.start
+            },
+            memory: snapshot.memory
+        )
+    }
+
     private func delayTarget(forProxy proxy: String, group groupName: String?) -> URL? {
-        if let proxyModel = proxiesByName[proxy], let target = delayTarget(for: proxyModel) {
+        if let groupName,
+           let group = proxiesByName[groupName],
+           let target = delayTarget(for: group) {
             return target
         }
-        if let groupName,
-           let group = proxyGroups.first(where: { $0.name == groupName }),
-           let target = delayTarget(for: group) {
+        if let proxyModel = proxiesByName[proxy], let target = delayTarget(for: proxyModel) {
             return target
         }
         if let group = proxyGroups.first(where: { $0.all.contains(proxy) }),
@@ -1579,12 +1828,12 @@ final class AppModel {
     }
 
     private func expectedDelayStatus(forProxy proxy: String, group groupName: String?) -> String? {
-        if let status = normalizedExpectedStatus(proxiesByName[proxy]?.expectedStatus) {
+        if let groupName,
+           let group = proxiesByName[groupName],
+           let status = normalizedExpectedStatus(group.expectedStatus) {
             return status
         }
-        if let groupName,
-           let group = proxyGroups.first(where: { $0.name == groupName }),
-           let status = normalizedExpectedStatus(group.expectedStatus) {
+        if let status = normalizedExpectedStatus(proxiesByName[proxy]?.expectedStatus) {
             return status
         }
         let group = proxyGroups.first { $0.all.contains(proxy) }
@@ -1684,6 +1933,7 @@ private extension AppModel.Operation {
             true
         case .changeMode,
              .selectProxy,
+             .clearProxyOverride,
              .measureDelay,
              .measureGroupDelay,
              .refreshRules,
@@ -1701,6 +1951,7 @@ private extension AppModel.Operation {
         switch self {
         case .changeMode,
              .selectProxy,
+             .clearProxyOverride,
              .measureDelay,
              .measureGroupDelay,
              .refreshRules,

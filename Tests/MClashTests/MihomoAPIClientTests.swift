@@ -52,6 +52,57 @@ struct MihomoAPIClientTests {
     }
 
     @Test
+    func clearProxyOverrideEscapesGroupNameAndUsesDelete() async throws {
+        resetStub()
+        defer { resetStub() }
+        StubURLProtocol.install { request in
+            (try Self.response(for: request, statusCode: 204), Data())
+        }
+        let client = try makeClient()
+
+        try await client.clearProxyOverride(group: "香港 / 自动")
+
+        let request = try #require(StubURLProtocol.recordedRequests.last)
+        let encodedPath = request.url.flatMap {
+            URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath
+        }
+        #expect(request.httpMethod == "DELETE")
+        #expect(encodedPath == "/api/proxies/%E9%A6%99%E6%B8%AF%20%2F%20%E8%87%AA%E5%8A%A8")
+        #expect(request.httpBody == nil)
+    }
+
+    @Test
+    func clearProxyOverrideSurfacesMihomoMessage() async throws {
+        resetStub()
+        defer { resetStub() }
+        StubURLProtocol.install { request in
+            (
+                try Self.response(for: request, statusCode: 400),
+                Data(#"{"message":"automatic override cannot be cleared"}"#.utf8)
+            )
+        }
+        let client = try makeClient()
+
+        do {
+            try await client.clearProxyOverride(group: "Load Balance")
+            Issue.record("Expected an HTTP error")
+        } catch let error as MihomoAPIError {
+            #expect(
+                error == .httpStatus(
+                    code: 400,
+                    message: "automatic override cannot be cleared"
+                )
+            )
+            #expect(
+                error.errorDescription ==
+                    "mihomo returned HTTP 400: automatic override cannot be cleared"
+            )
+        } catch {
+            Issue.record("Expected MihomoAPIError, got \(error)")
+        }
+    }
+
+    @Test
     func delayRequestAndPayloadConfigReloadMatchAlphaRoutes() async throws {
         resetStub()
         defer { resetStub() }

@@ -209,14 +209,14 @@ struct MenuBarContent: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-            } else if model.controllerIsReady, !model.proxyGroups.isEmpty {
+            } else if model.controllerIsReady, !quickProxyGroups.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Proxy Groups")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        if model.proxyGroups.count > 3 {
+                        if quickProxyGroups.count > 3 {
                             Button("Show All") {
                                 showMainWindow(destination: .proxies)
                             }
@@ -225,7 +225,7 @@ struct MenuBarContent: View {
                         }
                     }
 
-                    ForEach(Array(model.proxyGroups.prefix(3)), id: \.name) { group in
+                    ForEach(Array(quickProxyGroups.prefix(3)), id: \.name) { group in
                         ProxyGroupQuickControl(model: model, group: group)
                     }
                 }
@@ -351,6 +351,10 @@ struct MenuBarContent: View {
             get: { model.runtimeConfig?.mode ?? "rule" },
             set: { mode in Task { await model.setMode(mode) } }
         )
+    }
+
+    private var quickProxyGroups: [MihomoProxy] {
+        model.proxyGroups(forRoutingMode: model.runtimeConfig?.mode ?? "rule")
     }
 
     private var connectionOperationInProgress: Bool {
@@ -485,7 +489,14 @@ private struct ProxyGroupQuickControl: View {
                     Text(group.now ?? "Not selected")
                         .lineLimit(1)
                         .help(group.now ?? "Not selected")
-                    if let selected = group.now, let delay = model.proxyDelays[selected] ?? historyDelay(selected) {
+                    if group.fixedOverride != nil {
+                        Image(systemName: "pin.fill")
+                            .foregroundStyle(.orange)
+                            .help("Automatic selection is pinned")
+                    }
+                    if let selected = group.now,
+                       let delay = model.proxyDelay(for: selected, in: group.name)
+                            ?? historyDelay(selected) {
                         Text("· \(delay) ms")
                             .monospacedDigit()
                             .foregroundStyle(delayColor(delay))
@@ -532,7 +543,8 @@ private struct ProxyGroupQuickControl: View {
             .help("Choose node for \(group.name)")
             .accessibilityLabel("Choose node for \(group.name)")
             .disabled(
-                !model.canPerform(.selectProxy(group.name))
+                group.groupBehavior?.supportsSelectionUpdate != true
+                    || !model.canPerform(.selectProxy(group.name))
             )
             .popover(isPresented: $showingNodePicker, arrowEdge: .trailing) {
                 ProxyNodePicker(
@@ -540,6 +552,19 @@ private struct ProxyGroupQuickControl: View {
                     group: group,
                     isPresented: $showingNodePicker
                 )
+            }
+
+            if group.fixedOverride != nil,
+               group.groupBehavior?.supportsClearingOverride == true {
+                Button {
+                    Task { _ = await model.clearProxyOverride(group: group.name) }
+                } label: {
+                    Image(systemName: "pin.slash")
+                }
+                .buttonStyle(.borderless)
+                .help("Resume automatic selection")
+                .accessibilityLabel("Resume automatic selection for \(group.name)")
+                .disabled(!model.canPerform(.clearProxyOverride(group.name)))
             }
         }
         .accessibilityElement(children: .contain)

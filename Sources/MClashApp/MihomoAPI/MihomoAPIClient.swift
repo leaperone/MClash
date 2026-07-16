@@ -112,6 +112,14 @@ public actor MihomoAPIClient {
         )
     }
 
+    public func clearProxyOverride(group: String) async throws {
+        try requireNonEmpty(group, argument: "Proxy group name")
+        try await sendNoContent(
+            method: "DELETE",
+            pathComponents: ["proxies", group]
+        )
+    }
+
     public func fetchProxyProviders() async throws -> MihomoProxyProviderCollection {
         try await get(["providers", "proxies"])
     }
@@ -173,27 +181,6 @@ public actor MihomoAPIClient {
             queryItems: query
         )
         return result.delay
-    }
-
-    public func measureGroupDelays(
-        group: String,
-        targetURL: URL,
-        timeoutMilliseconds: Int = 5_000,
-        expectedStatus: String? = nil
-    ) async throws -> [String: Int] {
-        try requireNonEmpty(group, argument: "Proxy group name")
-        try validateDelayArguments(targetURL: targetURL, timeoutMilliseconds: timeoutMilliseconds)
-
-        var query = delayQuery(
-            targetURL: targetURL,
-            timeoutMilliseconds: timeoutMilliseconds,
-            expectedStatus: expectedStatus
-        )
-        if expectedStatus == nil {
-            query.append(URLQueryItem(name: "expected", value: ""))
-        }
-
-        return try await get(["group", group, "delay"], queryItems: query)
     }
 
     /// Reloads configuration from a path visible to the mihomo process.

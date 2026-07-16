@@ -292,6 +292,28 @@ public struct MihomoProxyCollection: Codable, Equatable, Sendable {
     }
 }
 
+public enum ProxyGroupBehavior: String, CaseIterable, Equatable, Sendable {
+    case selector = "Selector"
+    case urlTest = "URLTest"
+    case fallback = "Fallback"
+    case loadBalance = "LoadBalance"
+
+    /// Whether Alpha accepts `PUT /proxies/{group}` for this group type.
+    public var supportsSelectionUpdate: Bool {
+        switch self {
+        case .selector, .urlTest, .fallback:
+            true
+        case .loadBalance:
+            false
+        }
+    }
+
+    /// Whether Alpha accepts `DELETE /proxies/{group}` to resume automatic selection.
+    public var supportsClearingOverride: Bool {
+        self == .urlTest || self == .fallback
+    }
+}
+
 public struct MihomoProxy: Codable, Equatable, Sendable, Identifiable {
     public let id: String?
     public let name: String
@@ -317,6 +339,16 @@ public struct MihomoProxy: Codable, Equatable, Sendable, Identifiable {
     public let hidden: Bool
     public let icon: String?
     public let emptyFallback: String?
+
+    public var groupBehavior: ProxyGroupBehavior? {
+        ProxyGroupBehavior(rawValue: type)
+    }
+
+    public var fixedOverride: String? {
+        guard let fixed = fixed?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !fixed.isEmpty else { return nil }
+        return fixed
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, name, type, udp, xudp, smux, alive, history, all, now, fixed, hidden, icon, interface

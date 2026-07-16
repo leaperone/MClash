@@ -75,6 +75,8 @@ before testing failure scenarios.
   server-confirmed mode. With the default Settings option enabled, confirm old
   connections close so the new route takes effect immediately; disable the
   option and confirm existing connections are preserved.
+- In the menu bar popup, confirm Rule shows only relevant rule groups, Global
+  shows only GLOBAL, and Direct hides proxy-group controls entirely.
 - Switch among at least three profiles. When connected, confirm MClash validates
   before interruption, reconnects automatically, and restores system proxy only
   after the new controller is ready.
@@ -86,8 +88,34 @@ before testing failure scenarios.
 
 ## 5. Main feature coverage
 
-- Proxies: test Rule/Global/Direct, system proxy, group selection, searchable
-  node picker, selected-node display, and group latency testing.
+- Proxies: confirm Rule groups follow the subscription YAML order rather than
+  alphabetical order. Global must show only GLOBAL, and Direct must show a
+  clear bypass state instead of irrelevant node controls.
+- Proxies: switch between **List** and **Topology**. Confirm nested groups appear
+  once, the highlighted route follows `group → child group → final node`,
+  dialer dependencies use a distinct dashed connection, and large groups use a
+  “more nodes” summary instead of rendering every node at once.
+- Proxies: select a nested group from the Sidebar, from a list-row chevron, and
+  by double-clicking a topology group. Confirm the List, Topology, and Inspector
+  stay synchronized and the current route remains readable with long names.
+- Proxies: test Profile / Latency / Name sorting. Profile order must remain
+  stable, equal latency results must keep their profile order, and changing one
+  group's sort must not change another group's saved preference.
+- Proxies: for URLTest and Fallback groups, pin a preferred node and confirm the
+  UI distinguishes the pinned preference from the current healthy node. Run
+  **Test All** and confirm the fixed marker and preference remain unchanged.
+  Use **Resume Automatic** and confirm the fixed marker disappears.
+  LoadBalance groups must explain that the final node varies per connection and
+  must not present a misleading manual-selection action.
+- Proxies: create traffic through several domains. Confirm Inspector labels the
+  data as observed this session and shows the real domain, rule, root-to-leaf
+  chain, traffic deltas, active connection counts, and focused-node scope.
+- Proxies: verify topology zoom, scrolling, Inspector show/hide, node selection,
+  latency testing, keyboard focus, VoiceOver labels, and Reduce Motion behavior.
+  Resize the detail area to its minimum width and confirm the topology toolbar
+  switches to compact controls without clipping. With VoiceOver, confirm member
+  edges, current-path edges, and both active and inactive dialer dependencies
+  are announced with distinct relationships.
 - Rules: search by type, payload, and policy; verify result counts and hit counts.
 - Providers: refresh all, update proxy providers, run health checks, update rule
   providers, and verify subscription usage/expiry where supplied.
