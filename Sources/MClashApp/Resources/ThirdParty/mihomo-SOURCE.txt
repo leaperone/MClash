@@ -1,0 +1,10 @@
+MClash bundles the unmodified MetaCubeX mihomo Alpha executable built from:
+
+Version: alpha-a70af27
+Commit: a70af27451ac44f94ff5bd5db0bd9d4965460181
+Repository: https://github.com/MetaCubeX/mihomo
+Commit source: https://github.com/MetaCubeX/mihomo/tree/a70af27451ac44f94ff5bd5db0bd9d4965460181
+Source archive: https://github.com/MetaCubeX/mihomo/archive/a70af27451ac44f94ff5bd5db0bd9d4965460181.tar.gz
+
+mihomo is licensed under GPL-3.0. The complete license text and MClash's
+third-party notice are included alongside this file in the application bundle.

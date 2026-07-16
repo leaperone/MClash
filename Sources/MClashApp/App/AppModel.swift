@@ -5,10 +5,59 @@ import Observation
 @MainActor
 @Observable
 final class AppModel {
+    private struct StoredProfileSnapshot {
+        let metadata: ProfileMetadata
+        let configurationData: Data
+    }
+
+    enum ControllerState: Equatable {
+        case idle
+        case loading
+        case ready
+        case degraded(String)
+    }
+
+    enum LiveStream: Hashable {
+        case traffic
+        case connections
+        case logs
+    }
+
+    enum SystemProxyState: Equatable {
+        case off
+        case enabling
+        case on
+        case disabling
+        case failed(String)
+    }
+
+    enum Operation: Hashable {
+        case connection
+        case importProfile
+        case addRemoteProfile
+        case activateProfile(ProfileID)
+        case refreshProfile(ProfileID)
+        case removeProfile(ProfileID)
+        case changeMode
+        case changeSystemProxy
+        case selectProxy(String)
+        case measureDelay(String)
+        case measureGroupDelay(String)
+        case refreshRules
+        case refreshProviders
+        case updateProxyProvider(String)
+        case healthCheckProxyProvider(String)
+        case updateRuleProvider(String)
+        case closeConnection(String)
+        case closeAllConnections
+    }
+
     enum Destination: String, CaseIterable, Identifiable {
         case overview
         case proxies
         case profiles
+        case rules
+        case providers
         case connections
         case logs
         case settings
@@ -20,6 +69,8 @@ final class AppModel {
             case .overview: "Overview"
             case .proxies: "Proxies"
             case .profiles: "Profiles"
+            case .rules: "Rules"
+            case .providers: "Providers"
             case .connections: "Connections"
             case .logs: "Logs"
             case .settings: "Settings"
@@ -31,6 +82,8 @@ final class AppModel {
             case .overview: "gauge.with.dots.needle.50percent"
             case .proxies: "point.3.connected.trianglepath.dotted"
             case .profiles: "doc.text"
+            case .rules: "list.bullet.rectangle"
+            case .providers: "shippingbox"
             case .connections: "arrow.left.arrow.right"
             case .logs: "text.alignleft"
             case .settings: "gearshape"
@@ -41,16 +94,25 @@ final class AppModel {
     var selection: Destination? = .overview
     var coreState: CoreRunState = .stopped
     var activeConfigURL: URL?
-    var explicitCoreURL: URL?
     var logs: [CoreLogLine] = []
     var errorMessage: String?
     var profiles: [ProfileMetadata] = []
     var activeProfileID: ProfileID?
     var runtimeConfig: MihomoConfig?
     var proxyGroups: [MihomoProxy] = []
+    var proxiesByName: [String: MihomoProxy] = [:]
+    var proxyDelays: [String: Int] = [:]
+    var rules: [MihomoRule] = []
+    var proxyProviders: [MihomoProxyProvider] = []
+    var ruleProviders: [MihomoRuleProvider] = []
+    var rulesErrorMessage: String?
+    var providersErrorMessage: String?
     var traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
     var connections: MihomoConnectionSnapshot?
-    var systemProxyEnabled = false
+    var systemProxyState: SystemProxyState = .off
+    var controllerState: ControllerState = .idle
+    private(set) var degradedStreams: Set<LiveStream> = []
+    private(set) var operations: Set<Operation> = []
 
     private let supervisor: CoreSupervisor
     private let binaryLocator: CoreBinaryLocator
@@ -64,22 +126,27 @@ final class AppModel {
     private var trafficTask: Task<Void, Never>?
     private var connectionsTask: Task<Void, Never>?
     private var apiLogTask: Task<Void, Never>?
+    private var controllerGeneration = 0
+    private var systemProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
     private var prepared = false
+    private(set) var preparationInProgress = false
 
     init(
         supervisor: CoreSupervisor = CoreSupervisor(),
         binaryLocator: CoreBinaryLocator = CoreBinaryLocator(),
         secretStore: any CoreSecretProviding = CoreSecretStore(),
-        systemProxyManager: SystemProxyManager = SystemProxyManager()
+        systemProxyManager: SystemProxyManager = SystemProxyManager(),
+        profileDirectoryLayout: ProfileDirectoryLayout? = nil,
+        profileStoreOverride: ProfileStore? = nil
     ) {
         self.supervisor = supervisor
         self.binaryLocator = binaryLocator
         self.secretStore = secretStore
         self.systemProxyManager = systemProxyManager
 
-        if let layout = try? ProfileDirectoryLayout.applicationSupport() {
+        if let layout = profileDirectoryLayout ?? (try? ProfileDirectoryLayout.applicationSupport()) {
             profileLayout = layout
-            profileStore = try? ProfileStore(layout: layout)
+            profileStore = profileStoreOverride ?? (try? ProfileStore(layout: layout))
         } else {
             profileLayout = nil
             profileStore = nil
@@ -94,8 +161,9 @@ final class AppModel {
     }
 
     func prepare() async {
-        guard !prepared else { return }
-        prepared = true
+        guard !prepared, !preparationInProgress else { return }
+        preparationInProgress = true
+        defer { preparationInProgress = false }
 
         do {
             if let profileStore, let profileLayout {
@@ -108,12 +176,17 @@ final class AppModel {
 
                 let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
                 if FileManager.default.fileExists(atPath: snapshotURL.path) {
-                    try await systemProxyManager.restoreSnapshot(from: snapshotURL)
-                    try FileManager.default.removeItem(at: snapshotURL)
+                    guard await performDisableSystemProxy() else {
+                        throw AppModelError.systemProxyRestoreFailed
+                    }
                     appendSupervisorLog("Recovered system proxy settings left by an interrupted session.")
                 }
             }
+            prepared = true
         } catch {
+            if hasSystemProxySnapshot {
+                systemProxyState = .failed(error.localizedDescription)
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -148,21 +221,73 @@ final class AppModel {
         return nil
     }
 
-    func chooseConfiguration() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose a mihomo configuration"
-        panel.prompt = "Use Configuration"
-        panel.allowedContentTypes = [.yaml]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
+    var activeProfile: ProfileMetadata? {
+        guard let activeProfileID else { return nil }
+        return profiles.first { $0.id == activeProfileID }
+    }
 
-        if panel.runModal() == .OK {
-            activeConfigURL = panel.url
-            errorMessage = nil
+    var controllerIsReady: Bool {
+        controllerState == .ready
+    }
+
+    var liveDataIsDegraded: Bool {
+        !degradedStreams.isEmpty
+    }
+
+    var liveMetricsAreDegraded: Bool {
+        degradedStreams.contains(.traffic) || degradedStreams.contains(.connections)
+    }
+
+    var systemProxyEnabled: Bool {
+        switch systemProxyState {
+        case .on, .enabling, .disabling, .failed:
+            true
+        case .off:
+            false
         }
     }
 
+    var systemProxyRecoveryRequired: Bool {
+        if case .failed = systemProxyState { return true }
+        return false
+    }
+
+    var networkStateTransitionInProgress: Bool {
+        if preparationInProgress { return true }
+        if systemProxyRecoveryRequired { return true }
+        if case .enabling = systemProxyState { return true }
+        if case .disabling = systemProxyState { return true }
+        return operations.contains { $0.serializesNetworkState || $0.isCoreBound }
+    }
+
+    func isPerforming(_ operation: Operation) -> Bool {
+        operations.contains(operation)
+    }
+
+    func canPerform(_ operation: Operation) -> Bool {
+        if preparationInProgress { return false }
+        if systemProxyRecoveryRequired, operation != .changeSystemProxy { return false }
+        if case .enabling = systemProxyState, operation != .changeSystemProxy { return false }
+        if case .disabling = systemProxyState, operation != .changeSystemProxy { return false }
+        if operations.contains(operation) { return false }
+        if operation.serializesNetworkState {
+            if operation == .connection {
+                if operations.contains(where: \.serializesNetworkState) { return false }
+            } else if operations.contains(where: { $0.serializesNetworkState || $0.isCoreBound }) {
+                return false
+            }
+        }
+        if operation.isCoreBound,
+           operations.contains(where: \.serializesNetworkState) {
+            return false
+        }
+        return true
+    }
+
     func importProfile() async {
+        guard begin(.importProfile) else { return }
+        defer { end(.importProfile) }
+
         guard let profileStore else {
             errorMessage = "The profile store could not be initialized."
             return
@@ -180,16 +305,20 @@ final class AppModel {
         do {
             let profile = try await profileStore.importProfile(from: url)
             profiles = try await profileStore.profiles()
-            try await activateProfile(profile.id)
+            try await performActivateProfile(profile.id)
         } catch {
-            errorMessage = error.localizedDescription
+            recordOperationFailure(error, context: "Profile import")
         }
     }
 
-    func addRemoteProfile(name: String, url: URL) async {
+    func addRemoteProfile(name: String, url: URL) async throws {
+        guard begin(.addRemoteProfile) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.addRemoteProfile) }
+
         guard let profileStore else {
-            errorMessage = "The profile store could not be initialized."
-            return
+            throw AppModelError.profileStoreUnavailable
         }
 
         do {
@@ -200,79 +329,228 @@ final class AppModel {
                 validator: validator
             )
             profiles = try await profileStore.profiles()
-            try await activateProfile(profile.id)
+            try await performActivateProfile(profile.id)
         } catch {
-            errorMessage = error.localizedDescription
+            appendSupervisorLog("Subscription add failed: \(error.localizedDescription)")
+            throw error
         }
     }
 
-    func activateProfile(_ id: ProfileID) async throws {
-        guard let profileStore else {
+    func activateProfile(_ id: ProfileID, force: Bool = false) async throws {
+        guard begin(.activateProfile(id)) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.activateProfile(id)) }
+
+        do {
+            try await performActivateProfile(id, force: force)
+        } catch {
+            appendSupervisorLog("Profile activation failed: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    private func performActivateProfile(
+        _ id: ProfileID,
+        force: Bool = false,
+        rollbackSnapshot: StoredProfileSnapshot? = nil
+    ) async throws {
+        guard let profileStore, let profileLayout else {
             throw AppModelError.profileStoreUnavailable
         }
 
-        if isConnected || isBusy {
-            await disconnect()
+        if activeProfileID == id, activeConfigURL != nil, !force {
+            return
         }
 
-        let activation = try await profileStore.activateProfile(
-            id,
-            validator: try makeProfileValidator()
-        )
+        // Validate the target before interrupting a healthy current session.
+        let validator = try makeProfileValidator()
+        try await validator.validate(configurationAt: profileLayout.configurationURL(for: id))
+
+        let shouldReconnect = isConnected || isBusy
+        let shouldRestoreSystemProxy = systemProxyEnabled
+        if shouldReconnect {
+            guard await performDisconnect() else {
+                throw AppModelError.systemProxyRestoreFailed
+            }
+        }
+
+        let previousProfileID = activeProfileID
+        let activation: RuntimeConfigurationActivation
+        do {
+            activation = try await profileStore.activateProfile(
+                id,
+                validator: AcceptingProfileValidator()
+            )
+        } catch {
+            if shouldReconnect {
+                _ = await performConnect()
+                if isConnected, shouldRestoreSystemProxy {
+                    await performEnableSystemProxy()
+                }
+            }
+            throw error
+        }
         activeProfileID = activation.profileID
         activeConfigURL = activation.configurationURL
         profiles = try await profileStore.profiles()
         errorMessage = nil
+
+        if shouldReconnect {
+            if await performConnect() {
+                if shouldRestoreSystemProxy {
+                    await performEnableSystemProxy()
+                }
+                return
+            }
+
+            let activationFailure = errorMessage ?? "The new profile could not be started."
+            await supervisor.stop()
+            coreState = await supervisor.state()
+            stopControllerStreams()
+
+            if let previousProfileID {
+                do {
+                    if let rollbackSnapshot,
+                       rollbackSnapshot.metadata.id == previousProfileID {
+                        try await profileStore.restoreProfile(
+                            metadata: rollbackSnapshot.metadata,
+                            configurationData: rollbackSnapshot.configurationData
+                        )
+                    }
+                    let rollback = try await profileStore.activateProfile(
+                        previousProfileID,
+                        validator: try makeProfileValidator()
+                    )
+                    activeProfileID = rollback.profileID
+                    activeConfigURL = rollback.configurationURL
+                    profiles = try await profileStore.profiles()
+                    let restoredPreviousSession = await performConnect()
+                    if restoredPreviousSession, shouldRestoreSystemProxy {
+                        await performEnableSystemProxy()
+                    }
+                    let restoration = restoredPreviousSession
+                        ? "The previous profile was restored."
+                        : "The previous profile also could not be restarted."
+                    errorMessage = "\(activationFailure) \(restoration)"
+                } catch {
+                    errorMessage = "\(activationFailure) Restoring the previous profile failed: \(error.localizedDescription)"
+                }
+                appendSupervisorLog(errorMessage ?? activationFailure)
+            } else {
+                errorMessage = activationFailure
+            }
+            throw AppModelError.profileActivationFailed(errorMessage ?? activationFailure)
+        }
     }
 
     func refreshProfile(_ id: ProfileID) async {
+        guard begin(.refreshProfile(id)) else { return }
+        defer { end(.refreshProfile(id)) }
+
         guard let profileStore else { return }
+        let rollbackSnapshot: StoredProfileSnapshot?
+        if activeProfileID == id {
+            do {
+                rollbackSnapshot = StoredProfileSnapshot(
+                    metadata: try await profileStore.metadata(for: id),
+                    configurationData: try await profileStore.configurationData(for: id)
+                )
+            } catch {
+                recordOperationFailure(error, context: "Subscription snapshot")
+                return
+            }
+        } else {
+            rollbackSnapshot = nil
+        }
+
         do {
-            _ = try await profileStore.refreshRemoteProfile(
+            let result = try await profileStore.refreshRemoteProfile(
                 id,
                 validator: try makeProfileValidator()
             )
             profiles = try await profileStore.profiles()
-            if activeProfileID == id {
-                try await activateProfile(id)
+            if activeProfileID == id, case .updated = result {
+                try await performActivateProfile(
+                    id,
+                    force: true,
+                    rollbackSnapshot: rollbackSnapshot
+                )
             }
         } catch {
-            errorMessage = error.localizedDescription
+            if let rollbackSnapshot {
+                do {
+                    try await profileStore.restoreProfile(
+                        metadata: rollbackSnapshot.metadata,
+                        configurationData: rollbackSnapshot.configurationData
+                    )
+                    profiles = try await profileStore.profiles()
+                } catch {
+                    appendSupervisorLog(
+                        "Subscription rollback failed: \(error.localizedDescription)"
+                    )
+                }
+            }
+            recordOperationFailure(error, context: "Subscription refresh")
         }
     }
 
-    func chooseCoreBinary() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose the mihomo Alpha binary"
-        panel.prompt = "Use Core"
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
+    func removeProfile(_ id: ProfileID) async {
+        guard begin(.removeProfile(id)) else { return }
+        defer { end(.removeProfile(id)) }
 
-        if panel.runModal() == .OK {
-            explicitCoreURL = panel.url
+        guard let profileStore else { return }
+        do {
+            try await profileStore.removeProfile(id)
+            profiles = try await profileStore.profiles()
             errorMessage = nil
+        } catch {
+            recordOperationFailure(error, context: "Profile removal")
         }
     }
 
     func toggleConnection() async {
+        guard begin(.connection) else { return }
+        defer { end(.connection) }
+
         if isConnected || isBusy {
-            await supervisor.stop()
+            _ = await performDisconnect()
         } else {
-            await connect()
+            _ = await performConnect()
         }
     }
 
     func connect() async {
+        guard begin(.connection) else { return }
+        defer { end(.connection) }
+        _ = await performConnect()
+    }
+
+    func disconnect() async {
+        guard begin(.connection) else { return }
+        defer { end(.connection) }
+        _ = await performDisconnect()
+    }
+
+    func restartConnection() async {
+        guard begin(.connection) else { return }
+        defer { end(.connection) }
+
+        guard await performDisconnect() else { return }
+        _ = await performConnect()
+    }
+
+    @discardableResult
+    private func performConnect() async -> Bool {
         guard let activeConfigURL else {
-            chooseConfiguration()
-            guard self.activeConfigURL != nil else { return }
-            await connect()
-            return
+            selection = .profiles
+            errorMessage = "Add or select a profile before connecting."
+            return false
         }
 
         do {
             errorMessage = nil
-            let binaryURL = try binaryLocator.locate(explicitURL: explicitCoreURL)
+            let binaryURL = try binaryLocator.locate()
             let secret = try secretStore.loadOrCreate()
             let homeDirectory = try coreHomeDirectory()
             let configuration = CoreLaunchConfiguration(
@@ -288,80 +566,252 @@ final class AppModel {
             if case let .running(session) = state {
                 await controllerDidStart(session)
             }
+            return isConnected && controllerIsReady
+        } catch is CancellationError {
+            return false
         } catch {
             errorMessage = error.localizedDescription
+            appendSupervisorLog("Connection failed: \(error.localizedDescription)")
+            return false
         }
     }
 
-    func disconnect() async {
-        if systemProxyEnabled {
-            await disableSystemProxy()
+    @discardableResult
+    private func performDisconnect() async -> Bool {
+        if systemProxyEnabled || hasSystemProxySnapshot {
+            guard await performDisableSystemProxy() else { return false }
         }
         await supervisor.stop()
         coreState = await supervisor.state()
         stopControllerStreams()
+        return true
     }
 
     func setMode(_ mode: String) async {
+        guard begin(.changeMode) else { return }
+        defer { end(.changeMode) }
+
         guard let apiClient else { return }
+        let generation = controllerGeneration
         do {
             try await apiClient.patchConfig(MihomoConfigPatch(mode: mode))
-            runtimeConfig = try await apiClient.fetchConfig()
+            let config = try await apiClient.fetchConfig()
+            guard generation == controllerGeneration, isConnected else { return }
+            runtimeConfig = config
         } catch {
-            errorMessage = error.localizedDescription
+            guard generation == controllerGeneration else { return }
+            recordOperationFailure(error, context: "Routing mode change")
         }
     }
 
-    func selectProxy(group: String, proxy: String) async {
-        guard let apiClient else { return }
+    func selectProxy(group: String, proxy: String) async -> Bool {
+        guard begin(.selectProxy(group)) else { return false }
+        defer { end(.selectProxy(group)) }
+
+        guard let apiClient else { return false }
+        let generation = controllerGeneration
         do {
             try await apiClient.selectProxy(group: group, proxy: proxy)
-            await refreshProxyGroups()
+            await refreshProxyGroups(generation: generation)
+            return generation == controllerGeneration && isConnected
         } catch {
-            errorMessage = error.localizedDescription
+            guard generation == controllerGeneration else { return false }
+            recordOperationFailure(error, context: "Proxy selection")
+            return false
         }
     }
 
-    func measureDelay(proxy: String) async -> Int? {
+    func measureDelay(proxy: String, group: String? = nil) async -> Int? {
+        guard begin(.measureDelay(proxy)) else { return nil }
+        defer { end(.measureDelay(proxy)) }
+
         guard let apiClient,
-              let target = URL(string: "https://www.gstatic.com/generate_204") else {
+              let target = delayTarget(forProxy: proxy, group: group) else {
             return nil
         }
+        let expectedStatus = expectedDelayStatus(forProxy: proxy, group: group)
+        let generation = controllerGeneration
         do {
-            return try await apiClient.measureDelay(proxy: proxy, targetURL: target)
+            let delay = try await apiClient.measureDelay(
+                proxy: proxy,
+                targetURL: target,
+                expectedStatus: expectedStatus
+            )
+            guard generation == controllerGeneration, isConnected else { return nil }
+            proxyDelays[proxy] = delay
+            return delay
         } catch {
-            errorMessage = error.localizedDescription
+            guard generation == controllerGeneration else { return nil }
+            recordOperationFailure(error, context: "Latency test")
             return nil
+        }
+    }
+
+    func measureGroupDelays(group: String) async {
+        guard begin(.measureGroupDelay(group)) else { return }
+        defer { end(.measureGroupDelay(group)) }
+
+        guard let apiClient,
+              let groupModel = proxyGroups.first(where: { $0.name == group }) else {
+            return
+        }
+        let target = delayTarget(for: groupModel) ?? defaultDelayTarget
+        let expectedStatus = normalizedExpectedStatus(groupModel.expectedStatus)
+        let generation = controllerGeneration
+        do {
+            let delays = try await apiClient.measureGroupDelays(
+                group: group,
+                targetURL: target,
+                expectedStatus: expectedStatus
+            )
+            guard generation == controllerGeneration, isConnected else { return }
+            proxyDelays.merge(delays) { _, new in new }
+        } catch {
+            guard generation == controllerGeneration else { return }
+            recordOperationFailure(error, context: "Group latency test")
+        }
+    }
+
+    func refreshRules() async {
+        guard begin(.refreshRules) else { return }
+        defer { end(.refreshRules) }
+
+        guard let apiClient else { return }
+        await loadRules(using: apiClient, generation: controllerGeneration)
+    }
+
+    func refreshProviders() async {
+        guard begin(.refreshProviders) else { return }
+        defer { end(.refreshProviders) }
+
+        guard let apiClient else { return }
+        await loadProviders(using: apiClient, generation: controllerGeneration)
+    }
+
+    func updateProxyProvider(_ name: String) async {
+        guard begin(.updateProxyProvider(name)) else { return }
+        defer { end(.updateProxyProvider(name)) }
+
+        guard let apiClient else { return }
+        let generation = controllerGeneration
+        do {
+            try await apiClient.updateProxyProvider(named: name)
+            guard generation == controllerGeneration, isConnected else { return }
+            await loadProviders(using: apiClient, generation: generation)
+            await refreshProxyGroups(generation: generation)
+        } catch {
+            guard generation == controllerGeneration else { return }
+            providersErrorMessage = error.localizedDescription
+            recordOperationFailure(error, context: "Proxy provider update")
+        }
+    }
+
+    func healthCheckProxyProvider(_ name: String) async {
+        guard begin(.healthCheckProxyProvider(name)) else { return }
+        defer { end(.healthCheckProxyProvider(name)) }
+
+        guard let apiClient else { return }
+        let generation = controllerGeneration
+        do {
+            try await apiClient.healthCheckProxyProvider(named: name)
+            guard generation == controllerGeneration, isConnected else { return }
+            await loadProviders(using: apiClient, generation: generation)
+            await refreshProxyGroups(generation: generation)
+        } catch {
+            guard generation == controllerGeneration else { return }
+            providersErrorMessage = error.localizedDescription
+            recordOperationFailure(error, context: "Proxy provider health check")
+        }
+    }
+
+    func updateRuleProvider(_ name: String) async {
+        guard begin(.updateRuleProvider(name)) else { return }
+        defer { end(.updateRuleProvider(name)) }
+
+        guard let apiClient else { return }
+        let generation = controllerGeneration
+        do {
+            try await apiClient.updateRuleProvider(named: name)
+            guard generation == controllerGeneration, isConnected else { return }
+            await loadProviders(using: apiClient, generation: generation)
+            await loadRules(using: apiClient, generation: generation)
+        } catch {
+            guard generation == controllerGeneration else { return }
+            providersErrorMessage = error.localizedDescription
+            recordOperationFailure(error, context: "Rule provider update")
         }
     }
 
     func closeConnection(_ id: String) async {
+        guard begin(.closeConnection(id)) else { return }
+        defer { end(.closeConnection(id)) }
+
         guard let apiClient else { return }
+        let generation = controllerGeneration
         do {
             try await apiClient.closeConnection(id: id)
+            guard generation == controllerGeneration else { return }
+            for _ in 0..<20
+            where generation == controllerGeneration
+                && connections?.connections.contains(where: { $0.id == id }) == true {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            guard generation == controllerGeneration else { return }
+            recordOperationFailure(error, context: "Close connection")
         }
     }
 
     func closeAllConnections() async {
+        guard begin(.closeAllConnections) else { return }
+        defer { end(.closeAllConnections) }
+
         guard let apiClient else { return }
+        let generation = controllerGeneration
         do {
             try await apiClient.closeAllConnections()
+            guard generation == controllerGeneration else { return }
+            for _ in 0..<20
+            where generation == controllerGeneration
+                && connections?.connections.isEmpty == false {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            guard generation == controllerGeneration else { return }
+            recordOperationFailure(error, context: "Close all connections")
         }
     }
 
     func toggleSystemProxy() async {
+        guard begin(.changeSystemProxy) else { return }
+        defer { end(.changeSystemProxy) }
+
         if systemProxyEnabled {
-            await disableSystemProxy()
+            await performDisableSystemProxy()
         } else {
-            await enableSystemProxy()
+            await performEnableSystemProxy()
+        }
+    }
+
+    func setSystemProxyEnabled(_ enabled: Bool) async {
+        guard enabled != systemProxyEnabled else { return }
+        guard begin(.changeSystemProxy) else { return }
+        defer { end(.changeSystemProxy) }
+
+        if enabled {
+            await performEnableSystemProxy()
+        } else {
+            await performDisableSystemProxy()
         }
     }
 
     func enableSystemProxy() async {
+        guard begin(.changeSystemProxy) else { return }
+        defer { end(.changeSystemProxy) }
+        await performEnableSystemProxy()
+    }
+
+    private func performEnableSystemProxy() async {
         guard isConnected, let mixedPort = runtimeConfig?.mixedPort, mixedPort > 0 else {
             errorMessage = "Connect the core with a configuration that exposes a mixed port first."
             return
@@ -371,6 +821,8 @@ final class AppModel {
             return
         }
 
+        let generation = controllerGeneration
+        systemProxyState = .enabling
         do {
             let endpoints = try LocalSystemProxyEndpoints(mixedPort: mixedPort)
             let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
@@ -378,43 +830,90 @@ final class AppModel {
                 endpoints: endpoints,
                 savingSnapshotTo: snapshotURL
             )
-            systemProxyEnabled = true
+            guard generation == controllerGeneration, isConnected else {
+                _ = await performDisableSystemProxy()
+                return
+            }
+            systemProxyState = .on
             appendSupervisorLog("System proxy enabled on 127.0.0.1:\(mixedPort).")
         } catch {
-            let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
-            if FileManager.default.fileExists(atPath: snapshotURL.path) {
-                try? await systemProxyManager.restoreSnapshot(from: snapshotURL)
-                try? FileManager.default.removeItem(at: snapshotURL)
+            let message = error.localizedDescription
+            systemProxyState = .failed(message)
+            if hasSystemProxySnapshot {
+                _ = await performDisableSystemProxy()
             }
-            systemProxyEnabled = false
-            errorMessage = error.localizedDescription
+            errorMessage = message
+            appendSupervisorLog("System proxy could not be enabled: \(message)")
         }
     }
 
     func disableSystemProxy() async {
-        guard let profileLayout else { return }
+        guard begin(.changeSystemProxy) else { return }
+        defer { end(.changeSystemProxy) }
+        await performDisableSystemProxy()
+    }
+
+    @discardableResult
+    private func performDisableSystemProxy() async -> Bool {
+        if let operation = systemProxyRestoreOperation {
+            return await operation.task.value
+        }
+
+        let id = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return false }
+            return await self.performSystemProxyRestore()
+        }
+        systemProxyRestoreOperation = (id, task)
+        let result = await task.value
+        if systemProxyRestoreOperation?.id == id {
+            systemProxyRestoreOperation = nil
+        }
+        return result
+    }
+
+    @discardableResult
+    private func performSystemProxyRestore() async -> Bool {
+        guard let profileLayout else {
+            let message = "The application state directory is unavailable."
+            systemProxyState = .failed(message)
+            errorMessage = message
+            return false
+        }
         let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
 
+        let wasRecovering = systemProxyRecoveryRequired
+        systemProxyState = .disabling
         do {
             if FileManager.default.fileExists(atPath: snapshotURL.path) {
-                try await systemProxyManager.restoreSnapshot(from: snapshotURL)
-                try FileManager.default.removeItem(at: snapshotURL)
+                try await systemProxyManager.restoreSnapshotAndRemove(from: snapshotURL)
             }
-            systemProxyEnabled = false
+            systemProxyState = .off
+            if wasRecovering {
+                errorMessage = nil
+            }
             appendSupervisorLog("System proxy restored to its previous state.")
+            return true
         } catch {
-            errorMessage = error.localizedDescription
+            let message = error.localizedDescription
+            systemProxyState = .failed(message)
+            errorMessage = message
+            appendSupervisorLog("System proxy restoration failed: \(message)")
+            return false
         }
     }
 
-    func shutdown() async {
+    @discardableResult
+    func shutdown() async -> Bool {
+        if systemProxyEnabled || hasSystemProxySnapshot {
+            guard await performDisableSystemProxy() else { return false }
+        }
         trafficTask?.cancel()
         connectionsTask?.cancel()
         apiLogTask?.cancel()
-        if systemProxyEnabled {
-            await disableSystemProxy()
-        }
         await supervisor.stop()
+        stopControllerStreams()
+        return true
     }
 
     func clearLogs() {
@@ -439,8 +938,14 @@ final class AppModel {
             if case let .failed(message) = state {
                 errorMessage = message
                 stopControllerStreams()
-                if systemProxyEnabled {
-                    Task { [weak self] in await self?.disableSystemProxy() }
+                if systemProxyEnabled || hasSystemProxySnapshot {
+                    Task { [weak self] in await self?.performDisableSystemProxy() }
+                }
+            }
+            if case .stopped = state {
+                stopControllerStreams()
+                if systemProxyEnabled || hasSystemProxySnapshot {
+                    Task { [weak self] in await self?.performDisableSystemProxy() }
                 }
             }
             if case let .running(session) = state {
@@ -455,8 +960,10 @@ final class AppModel {
     }
 
     private func coreHomeDirectory() throws -> URL {
-        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "MClash", directoryHint: .isDirectory)
+        let applicationRoot = profileLayout?.rootDirectory
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appending(path: "MClash", directoryHint: .isDirectory)
+        let root = applicationRoot
             .appending(path: "CoreHome", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(
             at: root,
@@ -467,12 +974,12 @@ final class AppModel {
     }
 
     private func makeProfileValidator() throws -> ClosureProfileValidator {
-        let binaryURL = try binaryLocator.locate(explicitURL: explicitCoreURL)
-        let homeDirectory = try coreHomeDirectory()
+        let binaryURL = try binaryLocator.locate()
+        let homeDirectory = try validationHomeDirectory()
         let secret = try secretStore.loadOrCreate()
 
         return ClosureProfileValidator { [supervisor] configurationURL in
-            try await supervisor.validate(
+            try await supervisor.validateWithoutStateChanges(
                 CoreLaunchConfiguration(
                     binaryURL: binaryURL,
                     homeDirectory: homeDirectory,
@@ -484,86 +991,247 @@ final class AppModel {
         }
     }
 
+    private func validationHomeDirectory() throws -> URL {
+        let applicationRoot = profileLayout?.rootDirectory
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appending(path: "MClash", directoryHint: .isDirectory)
+        let root = applicationRoot
+            .appending(path: "ValidationHome", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        return root
+    }
+
     private func controllerDidStart(_ session: CoreSession) async {
+        if activeControllerEndpoint == session.endpoint,
+           controllerState == .loading || controllerState == .ready {
+            return
+        }
+
+        controllerState = .loading
+        activeControllerEndpoint = session.endpoint
+        controllerGeneration &+= 1
+        let generation = controllerGeneration
         do {
             let client = try MihomoAPIClient(baseURL: session.endpoint, secret: session.secret)
-            apiClient = client
-            activeControllerEndpoint = session.endpoint
-            runtimeConfig = try await client.fetchConfig()
+            let config = try await client.fetchConfig()
             let proxies = try await client.fetchProxies()
-            proxyGroups = proxies.proxies.values
-                .filter { !$0.all.isEmpty && !$0.hidden }
-                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            startControllerStreams(client)
+            guard generation == controllerGeneration,
+                  activeControllerEndpoint == session.endpoint,
+                  isConnected else { return }
+            apiClient = client
+            runtimeConfig = config
+            applyProxyCollection(proxies)
+            startControllerStreams(client, generation: generation)
+            controllerState = .ready
+            errorMessage = nil
             appendSupervisorLog("Connected to the local Alpha controller.")
         } catch {
+            guard generation == controllerGeneration,
+                  activeControllerEndpoint == session.endpoint,
+                  isConnected else { return }
+            controllerState = .degraded(error.localizedDescription)
             errorMessage = error.localizedDescription
         }
     }
 
-    private func refreshProxyGroups() async {
+    private func refreshProxyGroups(generation: Int) async {
         guard let apiClient else { return }
         do {
             let proxies = try await apiClient.fetchProxies()
-            proxyGroups = proxies.proxies.values
-                .filter { !$0.all.isEmpty && !$0.hidden }
-                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            guard generation == controllerGeneration, isConnected else { return }
+            applyProxyCollection(proxies)
         } catch {
+            guard generation == controllerGeneration, isConnected else { return }
             errorMessage = error.localizedDescription
         }
     }
 
-    private func startControllerStreams(_ client: MihomoAPIClient) {
+    private func loadRules(using client: MihomoAPIClient, generation: Int) async {
+        do {
+            let collection = try await client.fetchRules()
+            guard generation == controllerGeneration, isConnected else { return }
+            rules = collection.rules
+            rulesErrorMessage = nil
+        } catch {
+            guard generation == controllerGeneration, isConnected else { return }
+            rulesErrorMessage = error.localizedDescription
+            appendSupervisorLog("Rules could not be loaded: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadProviders(using client: MihomoAPIClient, generation: Int) async {
+        var failures: [String] = []
+
+        do {
+            let proxyCollection = try await client.fetchProxyProviders()
+            guard generation == controllerGeneration, isConnected else { return }
+            proxyProviders = proxyCollection.providers.values.sorted {
+                $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+        } catch {
+            guard generation == controllerGeneration, isConnected else { return }
+            failures.append("Proxy providers: \(error.localizedDescription)")
+        }
+
+        do {
+            let ruleCollection = try await client.fetchRuleProviders()
+            guard generation == controllerGeneration, isConnected else { return }
+            ruleProviders = ruleCollection.providers.values.sorted {
+                $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+        } catch {
+            guard generation == controllerGeneration, isConnected else { return }
+            failures.append("Rule providers: \(error.localizedDescription)")
+        }
+
+        if failures.isEmpty {
+            providersErrorMessage = nil
+        } else {
+            let message = failures.joined(separator: "\n")
+            providersErrorMessage = message
+            appendSupervisorLog("Providers could not be fully loaded: \(message)")
+        }
+    }
+
+    private func startControllerStreams(_ client: MihomoAPIClient, generation: Int) {
         cancelControllerStreamTasks()
+        degradedStreams = []
 
         trafficTask = Task { [weak self] in
-            do {
-                let stream = try await client.trafficStream()
-                for try await sample in stream where !Task.isCancelled {
-                    self?.traffic = sample
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                self?.appendSupervisorLog("Traffic stream ended: \(error.localizedDescription)")
-            }
+            await self?.monitorTraffic(client, generation: generation)
         }
 
         connectionsTask = Task { [weak self] in
-            do {
-                let stream = try await client.connectionStream()
-                for try await snapshot in stream where !Task.isCancelled {
-                    self?.connections = snapshot
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                self?.appendSupervisorLog("Connection stream ended: \(error.localizedDescription)")
-            }
+            await self?.monitorConnections(client, generation: generation)
         }
 
         apiLogTask = Task { [weak self] in
+            await self?.monitorLogs(client, generation: generation)
+        }
+    }
+
+    private func monitorTraffic(_ client: MihomoAPIClient, generation: Int) async {
+        var attempt = 0
+        while streamShouldContinue(generation) {
             do {
-                let stream = try await client.logStream(minimumLevel: .info)
-                for try await entry in stream where !Task.isCancelled {
-                    self?.logs.append(
-                        CoreLogLine(stream: .standardOutput, message: "[\(entry.type)] \(entry.payload)")
-                    )
+                let stream = try await client.trafficStream()
+                for try await sample in stream {
+                    guard streamShouldContinue(generation) else { return }
+                    traffic = sample
+                    degradedStreams.remove(.traffic)
+                    attempt = 0
                 }
+                guard streamShouldContinue(generation) else { return }
+                throw AppModelError.streamEnded("Traffic")
             } catch is CancellationError {
                 return
             } catch {
-                self?.appendSupervisorLog("Log stream ended: \(error.localizedDescription)")
+                guard streamShouldContinue(generation) else { return }
+                degradedStreams.insert(.traffic)
+                appendSupervisorLog("Traffic stream interrupted: \(error.localizedDescription)")
+                attempt += 1
+                if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
             }
+        }
+    }
+
+    private func monitorConnections(_ client: MihomoAPIClient, generation: Int) async {
+        var attempt = 0
+        while streamShouldContinue(generation) {
+            do {
+                let stream = try await client.connectionStream()
+                for try await snapshot in stream {
+                    guard streamShouldContinue(generation) else { return }
+                    connections = MihomoConnectionSnapshot(
+                        downloadTotal: snapshot.downloadTotal,
+                        uploadTotal: snapshot.uploadTotal,
+                        connections: snapshot.connections.sorted {
+                            if $0.start == $1.start { return $0.id < $1.id }
+                            return $0.start > $1.start
+                        },
+                        memory: snapshot.memory
+                    )
+                    degradedStreams.remove(.connections)
+                    attempt = 0
+                }
+                guard streamShouldContinue(generation) else { return }
+                throw AppModelError.streamEnded("Connection")
+            } catch is CancellationError {
+                return
+            } catch {
+                guard streamShouldContinue(generation) else { return }
+                degradedStreams.insert(.connections)
+                appendSupervisorLog("Connection stream interrupted: \(error.localizedDescription)")
+                attempt += 1
+                if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
+            }
+        }
+    }
+
+    private func monitorLogs(_ client: MihomoAPIClient, generation: Int) async {
+        var attempt = 0
+        while streamShouldContinue(generation) {
+            do {
+                let stream = try await client.logStream(minimumLevel: .info)
+                for try await entry in stream {
+                    guard streamShouldContinue(generation) else { return }
+                    degradedStreams.remove(.logs)
+                    attempt = 0
+                    appendCoreLog(
+                        CoreLogLine(
+                            stream: .standardOutput,
+                            message: "[\(entry.type)] \(entry.payload)"
+                        )
+                    )
+                }
+                guard streamShouldContinue(generation) else { return }
+                throw AppModelError.streamEnded("Log")
+            } catch is CancellationError {
+                return
+            } catch {
+                guard streamShouldContinue(generation) else { return }
+                degradedStreams.insert(.logs)
+                appendSupervisorLog("Log stream interrupted: \(error.localizedDescription)")
+                attempt += 1
+                if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
+            }
+        }
+    }
+
+    private func streamShouldContinue(_ generation: Int) -> Bool {
+        !Task.isCancelled && generation == controllerGeneration && isConnected
+    }
+
+    private func waitBeforeStreamRetry(_ attempt: Int, generation: Int) async -> Bool {
+        let seconds = min(1 << min(max(attempt - 1, 0), 3), 8)
+        do {
+            try await Task.sleep(for: .seconds(seconds))
+            return streamShouldContinue(generation)
+        } catch {
+            return false
         }
     }
 
     private func stopControllerStreams() {
         cancelControllerStreamTasks()
+        controllerGeneration &+= 1
         apiClient = nil
         activeControllerEndpoint = nil
+        controllerState = .idle
         runtimeConfig = nil
         proxyGroups = []
+        proxiesByName = [:]
+        proxyDelays = [:]
+        rules = []
+        proxyProviders = []
+        ruleProviders = []
+        rulesErrorMessage = nil
+        providersErrorMessage = nil
+        degradedStreams = []
         connections = nil
         traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
     }
@@ -578,18 +1246,179 @@ final class AppModel {
     }
 
     private func appendSupervisorLog(_ message: String) {
-        logs.append(CoreLogLine(stream: .supervisor, message: message))
+        appendCoreLog(CoreLogLine(stream: .supervisor, message: message))
+    }
+
+    private func applyProxyCollection(_ collection: MihomoProxyCollection) {
+        proxiesByName = collection.proxies
+        let currentNames = Set(collection.proxies.keys)
+        proxyDelays = proxyDelays.filter { currentNames.contains($0.key) }
+        proxyGroups = collection.proxies.values
+            .filter { !$0.all.isEmpty && !$0.hidden }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        for proxy in collection.proxies.values {
+            if let delay = proxy.history.last?.delay, delay > 0 {
+                proxyDelays[proxy.name] = delay
+            }
+        }
+    }
+
+    private func delayTarget(forProxy proxy: String, group groupName: String?) -> URL? {
+        if let proxyModel = proxiesByName[proxy], let target = delayTarget(for: proxyModel) {
+            return target
+        }
+        if let groupName,
+           let group = proxyGroups.first(where: { $0.name == groupName }),
+           let target = delayTarget(for: group) {
+            return target
+        }
+        if let group = proxyGroups.first(where: { $0.all.contains(proxy) }),
+           let target = delayTarget(for: group) {
+            return target
+        }
+        return defaultDelayTarget
+    }
+
+    private func expectedDelayStatus(forProxy proxy: String, group groupName: String?) -> String? {
+        if let status = normalizedExpectedStatus(proxiesByName[proxy]?.expectedStatus) {
+            return status
+        }
+        if let groupName,
+           let group = proxyGroups.first(where: { $0.name == groupName }),
+           let status = normalizedExpectedStatus(group.expectedStatus) {
+            return status
+        }
+        let group = proxyGroups.first { $0.all.contains(proxy) }
+        return normalizedExpectedStatus(group?.expectedStatus)
+    }
+
+    private func delayTarget(for proxy: MihomoProxy) -> URL? {
+        if let value = proxy.testURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty,
+           let url = URL(string: value) {
+            return url
+        }
+        return nil
+    }
+
+    private func normalizedExpectedStatus(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private var defaultDelayTarget: URL {
+        URL(string: "https://www.gstatic.com/generate_204")!
+    }
+
+    private func recordOperationFailure(_ error: Error, context: String) {
+        let message = error.localizedDescription
+        errorMessage = message
+        appendSupervisorLog("\(context) failed: \(message)")
+    }
+
+    private func appendCoreLog(_ line: CoreLogLine) {
+        logs.append(line)
+        if logs.count > 1_500 {
+            logs.removeFirst(logs.count - 1_500)
+        }
+    }
+
+    @discardableResult
+    private func begin(_ operation: Operation) -> Bool {
+        guard canPerform(operation) else { return false }
+        return operations.insert(operation).inserted
+    }
+
+    private func end(_ operation: Operation) {
+        operations.remove(operation)
     }
 
     private func systemProxySnapshotURL(layout: ProfileDirectoryLayout) -> URL {
         layout.stateDirectory.appending(path: "system-proxy-snapshot.json")
     }
+
+    private var hasSystemProxySnapshot: Bool {
+        guard let profileLayout else { return false }
+        return FileManager.default.fileExists(
+            atPath: systemProxySnapshotURL(layout: profileLayout).path
+        )
+    }
+}
+
+private extension AppModel.Operation {
+    var serializesNetworkState: Bool {
+        switch self {
+        case .connection,
+             .importProfile,
+             .addRemoteProfile,
+             .activateProfile,
+             .refreshProfile,
+             .removeProfile,
+             .changeSystemProxy:
+            true
+        case .changeMode,
+             .selectProxy,
+             .measureDelay,
+             .measureGroupDelay,
+             .refreshRules,
+             .refreshProviders,
+             .updateProxyProvider,
+             .healthCheckProxyProvider,
+             .updateRuleProvider,
+             .closeConnection,
+             .closeAllConnections:
+            false
+        }
+    }
+
+    var isCoreBound: Bool {
+        switch self {
+        case .changeMode,
+             .selectProxy,
+             .measureDelay,
+             .measureGroupDelay,
+             .refreshRules,
+             .refreshProviders,
+             .updateProxyProvider,
+             .healthCheckProxyProvider,
+             .updateRuleProvider,
+             .closeConnection,
+             .closeAllConnections:
+            true
+        case .connection,
+             .importProfile,
+             .addRemoteProfile,
+             .activateProfile,
+             .refreshProfile,
+             .removeProfile,
+             .changeSystemProxy:
+            false
+        }
+    }
 }
 
 private enum AppModelError: LocalizedError {
     case profileStoreUnavailable
+    case operationInProgress
+    case streamEnded(String)
+    case systemProxyRestoreFailed
+    case profileActivationFailed(String)
 
     var errorDescription: String? {
-        "The MClash profile store is unavailable."
+        switch self {
+        case .profileStoreUnavailable:
+            "The MClash profile store is unavailable."
+        case .operationInProgress:
+            "This operation is already in progress."
+        case let .streamEnded(name):
+            "\(name) stream ended unexpectedly."
+        case .systemProxyRestoreFailed:
+            "MClash could not restore the previous macOS proxy settings, so the running core was left active."
+        case let .profileActivationFailed(message):
+            message
+        }
     }
 }

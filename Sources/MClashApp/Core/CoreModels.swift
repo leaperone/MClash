@@ -72,9 +72,9 @@ enum CoreSupervisorError: LocalizedError, Equatable {
         case .alreadyRunning:
             "The proxy core is already running."
         case let .binaryNotFound(path):
-            "The proxy core was not found at \(path)."
+            "MClash’s bundled proxy core is missing. Reinstall MClash. (\(path))"
         case let .binaryNotExecutable(path):
-            "The proxy core is not executable at \(path)."
+            "MClash’s bundled proxy core is not executable. Reinstall MClash. (\(path))"
         case let .configurationNotFound(path):
             "The active configuration was not found at \(path)."
         case let .configurationInvalid(details):

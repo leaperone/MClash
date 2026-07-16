@@ -124,6 +124,144 @@ struct MihomoModelsTests {
     }
 
     @Test
+    func decodesRulesIncludingAlphaExtraMetadata() throws {
+        let data = Data(
+            #"""
+            {
+              "rules": [{
+                "index": 0,
+                "type": "DomainSuffix",
+                "payload": "example.com",
+                "proxy": "Proxy",
+                "size": -1,
+                "extra": {
+                  "disabled": false,
+                  "hitCount": 4,
+                  "hitAt": "2026-07-16T08:00:00+08:00",
+                  "missCount": 2,
+                  "missAt": "2026-07-16T08:01:00+08:00"
+                }
+              }]
+            }
+            """#.utf8
+        )
+
+        let response = try JSONDecoder().decode(MihomoRuleCollection.self, from: data)
+        let rule = try #require(response.rules.first)
+
+        #expect(rule.type == "DomainSuffix")
+        #expect(rule.payload == "example.com")
+        #expect(rule.size == -1)
+        #expect(rule.extra?.hitCount == 4)
+        #expect(rule.extra?.missAt == "2026-07-16T08:01:00+08:00")
+    }
+
+    @Test
+    func decodesRuleWithoutOptionalWrapperMetadata() throws {
+        let data = Data(
+            #"{"rules":[{"index":1,"type":"Match","payload":"","proxy":"DIRECT","size":-1}]}"#.utf8
+        )
+
+        let response = try JSONDecoder().decode(MihomoRuleCollection.self, from: data)
+
+        #expect(response.rules.first?.extra == nil)
+        #expect(response.rules.first?.proxy == "DIRECT")
+    }
+
+    @Test
+    func decodesProxyProvidersAndSubscriptionMetadata() throws {
+        let data = Data(
+            #"""
+            {
+              "providers": {
+                "provider-a": {
+                  "name": "provider-a",
+                  "type": "Proxy",
+                  "vehicleType": "HTTP",
+                  "proxies": [{
+                    "name": "Node A",
+                    "type": "Shadowsocks",
+                    "alive": true,
+                    "history": []
+                  }],
+                  "testUrl": "https://cp.cloudflare.com/generate_204",
+                  "expectedStatus": "204",
+                  "updatedAt": "2026-07-16T08:00:00+08:00",
+                  "subscriptionInfo": {
+                    "Upload": 1024,
+                    "Download": 2048,
+                    "Total": 107374182400,
+                    "Expire": 1784160000
+                  }
+                }
+              }
+            }
+            """#.utf8
+        )
+
+        let response = try JSONDecoder().decode(MihomoProxyProviderCollection.self, from: data)
+        let provider = try #require(response.providers["provider-a"])
+
+        #expect(provider.vehicleType == "HTTP")
+        #expect(provider.proxies.first?.name == "Node A")
+        #expect(provider.testURL == "https://cp.cloudflare.com/generate_204")
+        #expect(provider.subscriptionInfo?.download == 2048)
+        #expect(provider.subscriptionInfo?.total == 107_374_182_400)
+    }
+
+    @Test
+    func decodesCompatibleProxyProviderWithoutOptionalMetadata() throws {
+        let data = Data(
+            #"{"providers":{"default":{"name":"default","type":"Proxy","vehicleType":"Compatible","proxies":[],"testUrl":"","expectedStatus":""}}}"#.utf8
+        )
+
+        let response = try JSONDecoder().decode(MihomoProxyProviderCollection.self, from: data)
+        let provider = try #require(response.providers["default"])
+
+        #expect(provider.updatedAt == nil)
+        #expect(provider.subscriptionInfo == nil)
+        #expect(provider.vehicleType == "Compatible")
+    }
+
+    @Test
+    func decodesRuleProvidersIncludingInlinePayload() throws {
+        let data = Data(
+            #"""
+            {
+              "providers": {
+                "rules-a": {
+                  "behavior": "Domain",
+                  "format": "Yaml",
+                  "name": "rules-a",
+                  "ruleCount": 123,
+                  "type": "Rule",
+                  "vehicleType": "HTTP",
+                  "updatedAt": "2026-07-16T08:00:00+08:00"
+                },
+                "inline": {
+                  "behavior": "Classical",
+                  "format": "",
+                  "name": "inline",
+                  "ruleCount": 2,
+                  "type": "Rule",
+                  "vehicleType": "Inline",
+                  "updatedAt": "2026-07-16T08:02:00+08:00",
+                  "payload": ["DOMAIN,example.com", "MATCH"]
+                }
+              }
+            }
+            """#.utf8
+        )
+
+        let response = try JSONDecoder().decode(MihomoRuleProviderCollection.self, from: data)
+
+        #expect(response.providers["rules-a"]?.ruleCount == 123)
+        #expect(response.providers["rules-a"]?.payload == nil)
+        #expect(response.providers["inline"]?.format == "")
+        #expect(response.providers["inline"]?.payload == ["DOMAIN,example.com", "MATCH"])
+    }
+
+    @Test
     func decodesConnectionSnapshotAndTraffic() throws {
         let connectionData = Data(
             #"""

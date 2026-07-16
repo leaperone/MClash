@@ -136,6 +136,39 @@ struct SystemProxyManagerTests {
         #expect(reloaded == snapshot)
     }
 
+    @Test("Persisted restore and snapshot removal complete as one manager operation")
+    func restoreAndRemoveSnapshot() async throws {
+        let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+        let originalState = try SystemProxyServiceState(
+            service: service,
+            protocolExists: true,
+            configuration: originalConfiguration
+        )
+        let changedState = try SystemProxyServiceState(
+            service: service,
+            protocolExists: true,
+            configuration: [SystemProxyKeys.httpEnable: .integer(1)]
+        )
+        let backend = FakeSystemProxyBackend(
+            enabledServices: [service],
+            states: [changedState]
+        )
+        let manager = SystemProxyManager(backend: backend)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let url = directory.appendingPathComponent("proxy-state.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await manager.save(
+            snapshot: SystemProxySnapshot(services: [originalState]),
+            to: url
+        )
+        try await manager.restoreSnapshotAndRemove(from: url)
+
+        #expect(backend.currentStates == [originalState])
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test("Concurrent activations are serialized by the manager actor")
     func concurrentOperationsAreSerialized() async throws {
         let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
@@ -169,6 +202,21 @@ struct SystemProxyManagerTests {
         }
         #expect(throws: SystemProxyError.self) {
             _ = try SystemProxyEndpoint(port: 70_000)
+        }
+    }
+
+    @Test("Apply fails when macOS has no enabled network services")
+    func applyRequiresAnEnabledNetworkService() async {
+        let backend = FakeSystemProxyBackend(enabledServices: [], states: [])
+        let manager = SystemProxyManager(backend: backend)
+
+        do {
+            try await manager.apply(endpoints: LocalSystemProxyEndpoints(mixedPort: 7_890))
+            Issue.record("Expected system proxy apply to fail")
+        } catch let error as SystemProxyError {
+            #expect(error == .noEnabledNetworkServices)
+        } catch {
+            Issue.record("Expected SystemProxyError, got \(error)")
         }
     }
 

@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
-    var shutdownHandler: (@MainActor () async -> Void)?
+    var shutdownHandler: (@MainActor () async -> Bool)?
     private var terminationInProgress = false
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -11,8 +11,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
         terminationInProgress = true
         Task {
-            await shutdownHandler()
-            sender.reply(toApplicationShouldTerminate: true)
+            let canTerminate = await shutdownHandler()
+            terminationInProgress = false
+            sender.reply(toApplicationShouldTerminate: canTerminate)
         }
         return .terminateLater
     }

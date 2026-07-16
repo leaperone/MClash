@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-16T04:00:00Z",
+  "title": "Design System: MClash",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "System Accent",
+        "canonical": "NSColor.controlAccentColor",
+        "tonalRamp": []
+      },
+      "window-background": {
+        "role": "neutral",
+        "displayName": "Window Background",
+        "canonical": "NSColor.windowBackgroundColor",
+        "tonalRamp": []
+      },
+      "control-background": {
+        "role": "neutral",
+        "displayName": "Control Background",
+        "canonical": "NSColor.controlBackgroundColor",
+        "tonalRamp": []
+      },
+      "primary-label": {
+        "role": "neutral",
+        "displayName": "Primary Label",
+        "canonical": "NSColor.labelColor",
+        "tonalRamp": []
+      },
+      "secondary-label": {
+        "role": "neutral",
+        "displayName": "Secondary Label",
+        "canonical": "NSColor.secondaryLabelColor",
+        "tonalRamp": []
+      },
+      "separator": {
+        "role": "neutral",
+        "displayName": "Separator",
+        "canonical": "NSColor.separatorColor",
+        "tonalRamp": []
+      },
+      "success": {
+        "role": "state",
+        "displayName": "System Success",
+        "canonical": "NSColor.systemGreen",
+        "tonalRamp": []
+      },
+      "warning": {
+        "role": "state",
+        "displayName": "System Warning",
+        "canonical": "NSColor.systemOrange",
+        "tonalRamp": []
+      },
+      "failure": {
+        "role": "state",
+        "displayName": "System Failure",
+        "canonical": "NSColor.systemRed",
+        "tonalRamp": []
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "System Title",
+        "purpose": "Destination titles and major operational state."
+      },
+      "body": {
+        "displayName": "System Body",
+        "purpose": "Default interface labels and descriptions."
+      },
+      "label": {
+        "displayName": "System Label",
+        "purpose": "Metadata and compact supporting context."
+      },
+      "data": {
+        "displayName": "Monospaced Data",
+        "purpose": "Rates, sizes, ports, versions, and logs."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "state-responsive",
+        "value": "150-250ms, system ease-out",
+        "purpose": "Connection, selection, and disclosure state feedback only."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "instant or crossfade",
+        "purpose": "Required when accessibilityReduceMotion is enabled."
+      }
+    ],
+    "breakpoints": []
+  },
+  "components": [],
+  "narrative": {
+    "northStar": "The Native Network Utility",
+    "overview": "MClash belongs beside System Settings and Activity Monitor: restrained, task-oriented, and entirely governed by macOS semantic behavior.",
+    "keyCharacteristics": [
+      "Native SwiftUI/AppKit control vocabulary",
+      "System-managed appearance and accessibility",
+      "Clear operational and recovery states",
+      "No decorative branding competing with network status"
+    ],
+    "rules": [
+      {
+        "name": "The Semantic Color Rule",
+        "body": "Always use system semantic colors; never hard-code light and dark pairs in views.",
+        "section": "colors"
+      },
+      {
+        "name": "The Platform Owns Depth Rule",
+        "body": "If a surface needs a custom shadow, its containment hierarchy is wrong.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do follow system appearance and accessibility settings automatically.",
+      "Do keep network state and recovery actions immediately discoverable."
+    ],
+    "donts": [
+      "Don't build a cross-platform WebView dashboard.",
+      "Don't expose executable selection or core download as user settings.",
+      "Don't use consumer VPN spectacle or decorative glass effects."
+    ]
+  }
+}

@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ConnectionsView: View {
     @Bindable var model: AppModel
+    @State private var searchText = ""
+    @State private var debouncedSearchText = ""
 
     var body: some View {
         Group {
@@ -17,18 +19,75 @@ struct ConnectionsView: View {
                     systemImage: "checkmark.circle",
                     description: Text("New network connections will appear here automatically.")
                 )
+            } else if filteredConnections.isEmpty {
+                ContentUnavailableView.search(text: searchText)
             } else {
-                List(model.connections?.connections ?? []) { connection in
+                List(filteredConnections) { connection in
                     ConnectionRow(model: model, connection: connection)
                 }
             }
         }
         .navigationTitle("Connections")
-        .toolbar {
-            Button("Close All") {
-                Task { await model.closeAllConnections() }
+        .searchable(text: $searchText, prompt: "Host, process, rule, or node")
+        .task(id: searchText) {
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+                debouncedSearchText = searchText
+            } catch {
+                return
             }
-            .disabled(model.connections?.connections.isEmpty != false)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if model.degradedStreams.contains(.connections) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.clockwise")
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                    Text("Connection data is stale while the live stream reconnects.")
+                        .font(.callout)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .overlay(alignment: .bottom) { Divider() }
+            }
+        }
+        .toolbar {
+            ToolbarItem {
+                Text("\(model.connections?.connections.count ?? 0) active")
+                    .foregroundStyle(.secondary)
+            }
+            ToolbarItem {
+                Button {
+                    Task { await model.closeAllConnections() }
+                } label: {
+                    if model.isPerforming(.closeAllConnections) {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Close All")
+                    }
+                }
+                .disabled(
+                    model.connections?.connections.isEmpty != false
+                        || model.networkStateTransitionInProgress
+                )
+            }
+        }
+    }
+
+    private var filteredConnections: [MihomoConnection] {
+        let connections = model.connections?.connections ?? []
+        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return connections }
+        return connections.filter { connection in
+            connection.metadata.host?.localizedCaseInsensitiveContains(query) == true
+                || connection.metadata.sniffHost?.localizedCaseInsensitiveContains(query) == true
+                || connection.metadata.destinationIP?.localizedCaseInsensitiveContains(query) == true
+                || connection.metadata.process?.localizedCaseInsensitiveContains(query) == true
+                || connection.rule.localizedCaseInsensitiveContains(query)
+                || connection.chains.contains { $0.localizedCaseInsensitiveContains(query) }
         }
     }
 }
@@ -69,10 +128,20 @@ private struct ConnectionRow: View {
             Button {
                 Task { await model.closeConnection(connection.id) }
             } label: {
-                Image(systemName: "xmark")
+                if model.isPerforming(.closeConnection(connection.id)) {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "xmark")
+                }
             }
             .buttonStyle(.borderless)
             .help("Close connection")
+            .accessibilityLabel("Close connection to \(destination)")
+            .disabled(
+                model.networkStateTransitionInProgress
+                    || model.isPerforming(.closeConnection(connection.id))
+            )
         }
         .padding(.vertical, 3)
     }

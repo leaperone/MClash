@@ -26,32 +26,73 @@ struct OverviewView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(model.coreState == .validating || model.coreState == .stopping)
+                    .disabled(!model.canPerform(.connection))
                 }
 
                 Divider()
 
                 LabeledContent("Configuration") {
                     HStack(spacing: 10) {
-                        Text(model.activeConfigURL?.lastPathComponent ?? "Not selected")
-                            .foregroundStyle(model.activeConfigURL == nil ? .secondary : .primary)
-                        Button("Choose…") { model.chooseConfiguration() }
+                        Text(activeProfileName)
+                            .foregroundStyle(model.activeProfileID == nil ? .secondary : .primary)
+                            .lineLimit(1)
+                            .help(activeProfileName)
+                        Button("Manage Profiles") { model.selection = .profiles }
                     }
                 }
 
                 LabeledContent("Core") {
-                    HStack(spacing: 10) {
-                        Text(coreLabel)
-                            .foregroundStyle(model.explicitCoreURL == nil ? .secondary : .primary)
-                        Button("Choose…") { model.chooseCoreBinary() }
-                    }
+                    Text("mihomo Alpha · Included with MClash")
+                        .foregroundStyle(.secondary)
                 }
 
                 if let session = model.runningSession {
+                    if model.liveMetricsAreDegraded {
+                        Label(
+                            "Live traffic or connection data was interrupted and is reconnecting.",
+                            systemImage: "arrow.clockwise"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    }
+
                     Divider()
                     LabeledContent("Version", value: session.version)
                     LabeledContent("Controller", value: session.endpoint.absoluteString)
                     LabeledContent("Started", value: session.startedAt.formatted(date: .omitted, time: .standard))
+
+                    Divider()
+
+                    Grid(alignment: .leading, horizontalSpacing: 36, verticalSpacing: 10) {
+                        GridRow {
+                            Label("Download", systemImage: "arrow.down")
+                                .foregroundStyle(.secondary)
+                            Text(rate(model.traffic.download))
+                                .monospacedDigit()
+                            Label("Upload", systemImage: "arrow.up")
+                                .foregroundStyle(.secondary)
+                            Text(rate(model.traffic.upload))
+                                .monospacedDigit()
+                        }
+                        GridRow {
+                            Text("Routing Mode")
+                                .foregroundStyle(.secondary)
+                            Text((model.runtimeConfig?.mode ?? "—").capitalized)
+                            Text("Connections")
+                                .foregroundStyle(.secondary)
+                            Text("\(model.connections?.connections.count ?? 0)")
+                                .monospacedDigit()
+                        }
+                        GridRow {
+                            Text("System Proxy")
+                                .foregroundStyle(.secondary)
+                            Text(model.systemProxyEnabled ? "On" : "Off")
+                            Text("Session Traffic")
+                                .foregroundStyle(.secondary)
+                            Text(totalTraffic)
+                                .monospacedDigit()
+                        }
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -66,7 +107,7 @@ struct OverviewView: View {
     private var statusDescription: String {
         switch model.coreState {
         case .stopped:
-            "Choose an Alpha core and configuration to start a local proxy session."
+            "Choose a profile to start a local proxy session with the bundled Alpha core."
         case .validating:
             "MClash is checking the active YAML with the core before applying it."
         case .starting:
@@ -93,8 +134,20 @@ struct OverviewView: View {
         }
     }
 
-    private var coreLabel: String {
-        model.explicitCoreURL?.lastPathComponent ?? "Bundled or Application Support core"
+    private var activeProfileName: String {
+        guard let activeProfileID = model.activeProfileID else { return "Not selected" }
+        return model.profiles.first(where: { $0.id == activeProfileID })?.name ?? "Active profile"
+    }
+
+    private var totalTraffic: String {
+        ByteCountFormatter.string(
+            fromByteCount: model.traffic.uploadTotal + model.traffic.downloadTotal,
+            countStyle: .file
+        )
+    }
+
+    private func rate(_ bytes: Int64) -> String {
+        "\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))/s"
     }
 }
 
@@ -123,7 +176,7 @@ private struct StatusMark: View {
         switch state {
         case .running: .green
         case .failed: .red
-        case .validating, .starting, .stopping: .indigo
+        case .validating, .starting, .stopping: .orange
         case .stopped: .secondary
         }
     }

@@ -9,7 +9,9 @@ struct CoreSupervisorSmoke {
 
         let repository = URL(filePath: FileManager.default.currentDirectoryPath)
         let configuration = CoreLaunchConfiguration(
-            binaryURL: repository.appending(path: "Sources/MClashApp/Resources/Core/mihomo-alpha-darwin-arm64"),
+            binaryURL: repository.appending(
+                path: "Sources/MClashApp/Resources/Core/\(CoreBinaryLocator.bundledResourceName)"
+            ),
             homeDirectory: root,
             configURL: repository.appending(path: "Tests/Fixtures/minimal.yaml"),
             controllerPort: 19_092,

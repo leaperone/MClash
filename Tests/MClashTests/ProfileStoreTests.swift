@@ -160,6 +160,36 @@ struct ProfileStoreTests {
         }
         #expect(remote.eTag == "old")
     }
+
+    @Test("Captured profile contents can be restored after a failed runtime rollout")
+    func capturedProfileContentsCanBeRestored() async throws {
+        let fixture = try Fixture()
+        let originalYAML = Data("mixed-port: 7890\n".utf8)
+        let profile = try await fixture.store.createLocalProfile(
+            name: "Original",
+            yaml: originalYAML
+        )
+        let originalMetadata = try await fixture.store.metadata(for: profile.id)
+
+        let replacementMetadata = ProfileMetadata(
+            id: profile.id,
+            name: "Replacement",
+            origin: profile.origin,
+            createdAt: profile.createdAt,
+            updatedAt: profile.updatedAt.addingTimeInterval(60)
+        )
+        try await fixture.store.restoreProfile(
+            metadata: replacementMetadata,
+            configurationData: Data("mixed-port: 7891\n".utf8)
+        )
+        try await fixture.store.restoreProfile(
+            metadata: originalMetadata,
+            configurationData: originalYAML
+        )
+
+        #expect(try await fixture.store.metadata(for: profile.id) == originalMetadata)
+        #expect(try await fixture.store.configurationData(for: profile.id) == originalYAML)
+    }
 }
 
 private struct Fixture {

@@ -10,6 +10,7 @@ sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
 swiftc \
   -parse-as-library \
   -swift-version 6 \
+  -strict-concurrency=complete \
   -warnings-as-errors \
   -target "$(uname -m)-apple-macosx14.0" \
   -framework AppKit \

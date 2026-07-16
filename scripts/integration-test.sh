@@ -2,8 +2,10 @@
 set -euo pipefail
 
 repo_root="${0:A:h:h}"
+source "${repo_root}/scripts/mihomo-alpha-common.sh"
+
 build_dir="${repo_root}/.build/integration"
-core="${repo_root}/Sources/MClashApp/Resources/Core/mihomo-alpha-darwin-arm64"
+architecture="$(uname -m)"
 core_pid=""
 
 cleanup() {
@@ -15,13 +17,17 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "${build_dir}"
+mihomo_alpha_select_architecture "${architecture}"
+core="${MIHOMO_ALPHA_RESOURCE_PATH}"
 
-if [[ ! -x "${core}" ]]; then
-  "${repo_root}/scripts/fetch-mihomo-alpha.sh"
+if [[ ! -f "${core}" ]]; then
+  "${repo_root}/scripts/fetch-mihomo-alpha.sh" --architecture "${architecture}"
 fi
+mihomo_alpha_verify_selected_artifact
 
 swiftc -swift-version 6 \
   "${repo_root}/Sources/MClashApp/Core/CoreModels.swift" \
+  "${repo_root}/Sources/MClashApp/Core/CoreBinaryLocator.swift" \
   "${repo_root}/Sources/MClashApp/Core/CoreSupervisor.swift" \
   "${repo_root}/Tests/Integration/CoreSupervisorSmoke.swift" \
   -o "${build_dir}/core-supervisor-smoke"

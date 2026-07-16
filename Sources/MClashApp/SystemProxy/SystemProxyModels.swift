@@ -278,6 +278,7 @@ public enum SystemProxyError: Error, Equatable, LocalizedError, Sendable {
     case invalidEndpoint(reason: String)
     case invalidServiceState(serviceID: String, reason: String)
     case duplicateService(String)
+    case noEnabledNetworkServices
     case lockFailed
     case commitFailed
     case applyFailed
@@ -302,6 +303,8 @@ public enum SystemProxyError: Error, Equatable, LocalizedError, Sendable {
             return "Invalid proxy state for service '\(serviceID)': \(reason)"
         case let .duplicateService(id):
             return "Proxy operation contains duplicate network service '\(id)'."
+        case .noEnabledNetworkServices:
+            return "No enabled macOS network service is available for system proxy settings."
         case .lockFailed:
             return "Unable to lock macOS network preferences for an atomic proxy update."
         case .commitFailed:

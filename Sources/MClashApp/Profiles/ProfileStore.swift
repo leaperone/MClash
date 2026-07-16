@@ -310,6 +310,41 @@ public actor ProfileStore {
         try fileManager.removeItem(at: directory)
     }
 
+    /// Restores a previously captured profile configuration and metadata.
+    /// Used when a refreshed active subscription validates but cannot start.
+    public func restoreProfile(
+        metadata: ProfileMetadata,
+        configurationData: Data
+    ) async throws {
+        guard !configurationData.isEmpty else {
+            throw ProfileStoreError.emptyConfiguration
+        }
+        _ = try self.metadata(for: metadata.id)
+
+        let stagedConfiguration = try await replacer.stage(
+            data: configurationData,
+            in: layout.runtimeStagingDirectory,
+            preferredName: "profile-rollback.yaml"
+        )
+        let configurationReceipt = try await replacer.replace(
+            destinationURL: layout.configurationURL(for: metadata.id),
+            withStagedFile: stagedConfiguration
+        )
+
+        do {
+            let metadataReceipt = try await replaceEncoded(
+                metadata,
+                at: layout.metadataURL(for: metadata.id),
+                preferredName: "metadata-rollback.json"
+            )
+            try await replacer.commit(metadataReceipt)
+            try await replacer.commit(configurationReceipt)
+        } catch {
+            try? await replacer.rollback(configurationReceipt)
+            throw error
+        }
+    }
+
     private func createProfile(
         name: String,
         yaml: Data,

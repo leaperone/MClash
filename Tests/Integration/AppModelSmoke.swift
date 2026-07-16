@@ -5,9 +5,17 @@ struct AppModelSmoke {
     @MainActor
     static func main() async throws {
         let repository = URL(filePath: FileManager.default.currentDirectoryPath)
-        let model = AppModel(secretStore: StaticSecretProvider())
-        model.explicitCoreURL = repository.appending(
-            path: "Sources/MClashApp/Resources/Core/mihomo-alpha-darwin-arm64"
+        let coreURL = repository.appending(
+            path: "Sources/MClashApp/Resources/Core/\(CoreBinaryLocator.bundledResourceName)"
+        )
+        let locator = CoreBinaryLocator(
+            environment: [:],
+            applicationSupportDirectory: repository.appending(path: ".build/unused-core-support"),
+            bundledBinaryURLs: [coreURL]
+        )
+        let model = AppModel(
+            binaryLocator: locator,
+            secretStore: StaticSecretProvider()
         )
         model.activeConfigURL = repository.appending(path: "Tests/Fixtures/minimal.yaml")
 

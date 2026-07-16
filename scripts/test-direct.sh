@@ -16,6 +16,7 @@ tests=("${repo_root}"/Tests/MClashTests/*.swift(N))
 swiftc \
   -parse-as-library \
   -swift-version 6 \
+  -strict-concurrency=complete \
   -enable-testing \
   -emit-module \
   -emit-library \
@@ -31,6 +32,7 @@ swiftc \
 swiftc \
   -parse-as-library \
   -swift-version 6 \
+  -strict-concurrency=complete \
   -I "${build_dir}" \
   -L "${build_dir}" \
   -lMClashApp \

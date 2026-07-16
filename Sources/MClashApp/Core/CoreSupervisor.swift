@@ -27,6 +27,58 @@ actor CoreSupervisor {
         let standardError: String
     }
 
+    private final class ProcessControl: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+        private var cancelled = false
+        private var completed = false
+
+        func install(_ process: Process) -> Bool {
+            lock.withLock {
+                guard !cancelled else { return false }
+                self.process = process
+                return true
+            }
+        }
+
+        var isCancelled: Bool {
+            lock.withLock { cancelled }
+        }
+
+        func cancel() {
+            let runningProcess = lock.withLock { () -> Process? in
+                cancelled = true
+                return process
+            }
+            if runningProcess?.isRunning == true {
+                runningProcess?.terminate()
+            }
+        }
+
+        func claimCompletion() -> (claimed: Bool, cancelled: Bool) {
+            lock.withLock {
+                guard !completed else { return (false, cancelled) }
+                completed = true
+                process = nil
+                return (true, cancelled)
+            }
+        }
+    }
+
+    private final class ProcessOutputCollector: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+
+        func append(_ chunk: Data) {
+            guard !chunk.isEmpty else { return }
+            lock.withLock { data.append(chunk) }
+        }
+
+        func snapshot() -> Data {
+            lock.withLock { data }
+        }
+    }
+
     private let continuation: AsyncStream<CoreEvent>.Continuation
     private var managedProcess: ManagedProcess?
     private var currentState: CoreRunState = .stopped
@@ -34,6 +86,9 @@ actor CoreSupervisor {
     private var expectedStopIDs = Set<UUID>()
     private var crashTimestamps: [Date] = []
     private var pendingRestartToken: UUID?
+    private var validationInProgress = false
+    private var validationProcessControl: ProcessControl?
+    private var desiredRunGeneration = 0
 
     private let maximumCrashRestarts = 3
     private let crashWindow: TimeInterval = 10 * 60
@@ -60,7 +115,9 @@ actor CoreSupervisor {
     }
 
     func stop() async {
+        desiredRunGeneration &+= 1
         pendingRestartToken = nil
+        validationProcessControl?.cancel()
 
         guard let managedProcess else {
             transition(to: .stopped)
@@ -77,33 +134,46 @@ actor CoreSupervisor {
 
         if managedProcess.process.isRunning {
             kill(managedProcess.process.processIdentifier, SIGKILL)
+            for _ in 0..<20 where managedProcess.process.isRunning {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+
+        if self.managedProcess?.id == managedProcess.id,
+           !managedProcess.process.isRunning {
+            self.managedProcess = nil
+            expectedStopIDs.remove(managedProcess.id)
+            cleanup(managedProcess)
+            transition(to: .stopped)
         }
     }
 
     func validate(_ configuration: CoreLaunchConfiguration) async throws {
+        try await acquireValidationSlot()
+        defer { validationInProgress = false }
+
         transition(to: .validating)
-        try preflight(configuration)
-
-        let result = try await Self.runProcess(
-            executableURL: configuration.binaryURL,
-            arguments: [
-                "-t",
-                "-d", configuration.homeDirectory.path,
-                "-f", configuration.configURL.path
-            ],
-            currentDirectoryURL: configuration.homeDirectory
-        )
-
-        guard result.status == 0 else {
-            let details = [result.standardError, result.standardOutput]
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .joined(separator: "\n")
-            transition(to: .failed(details))
-            throw CoreSupervisorError.configurationInvalid(details)
+        do {
+            try await validateConfiguration(configuration)
+            emitLog("Configuration validation succeeded.", stream: .supervisor)
+            transition(to: .stopped)
+        } catch is CancellationError {
+            transition(to: .stopped)
+            throw CancellationError()
+        } catch {
+            transition(to: .failed(error.localizedDescription))
+            throw error
         }
+    }
 
+    /// Validates a profile without changing the state of a running core.
+    /// Profile downloads use this path before the active session is stopped.
+    func validateWithoutStateChanges(_ configuration: CoreLaunchConfiguration) async throws {
+        try await acquireValidationSlot()
+        defer { validationInProgress = false }
+
+        try await validateConfiguration(configuration)
         emitLog("Configuration validation succeeded.", stream: .supervisor)
-        transition(to: .stopped)
     }
 
     private func start(
@@ -114,6 +184,8 @@ actor CoreSupervisor {
             throw CoreSupervisorError.alreadyRunning
         }
 
+        desiredRunGeneration &+= 1
+        let runGeneration = desiredRunGeneration
         pendingRestartToken = nil
         try preflight(configuration)
         try FileManager.default.createDirectory(
@@ -124,6 +196,14 @@ actor CoreSupervisor {
 
         if validatesConfiguration {
             try await validate(configuration)
+        }
+
+        try Task.checkCancellation()
+        guard runGeneration == desiredRunGeneration else {
+            throw CancellationError()
+        }
+        guard managedProcess == nil else {
+            throw CoreSupervisorError.alreadyRunning
         }
 
         transition(to: .starting)
@@ -180,7 +260,9 @@ actor CoreSupervisor {
 
         do {
             let version = try await waitUntilReady(configuration)
-            guard managedProcess?.id == managed.id, process.isRunning else {
+            guard runGeneration == desiredRunGeneration,
+                  managedProcess?.id == managed.id,
+                  process.isRunning else {
                 throw CoreSupervisorError.launchFailed("The core exited during startup.")
             }
             transition(
@@ -194,14 +276,22 @@ actor CoreSupervisor {
                 )
             )
         } catch {
+            let launchWasCancelled = error is CancellationError
+                || runGeneration != desiredRunGeneration
             expectedStopIDs.insert(managed.id)
             process.terminate()
             if managedProcess?.id == managed.id {
                 managedProcess = nil
                 cleanup(managed)
             }
-            transition(to: .failed(error.localizedDescription))
-            throw error
+            expectedStopIDs.remove(managed.id)
+            if launchWasCancelled {
+                transition(to: .stopped)
+                throw CancellationError()
+            } else {
+                transition(to: .failed(error.localizedDescription))
+                throw error
+            }
         }
     }
 
@@ -216,6 +306,40 @@ actor CoreSupervisor {
         guard fileManager.fileExists(atPath: configuration.configURL.path) else {
             throw CoreSupervisorError.configurationNotFound(configuration.configURL.path)
         }
+    }
+
+    private func validateConfiguration(_ configuration: CoreLaunchConfiguration) async throws {
+        try preflight(configuration)
+        try FileManager.default.createDirectory(
+            at: configuration.homeDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+
+        let result = try await runProcess(
+            executableURL: configuration.binaryURL,
+            arguments: [
+                "-t",
+                "-d", configuration.homeDirectory.path,
+                "-f", configuration.configURL.path
+            ],
+            currentDirectoryURL: configuration.homeDirectory
+        )
+
+        guard result.status == 0 else {
+            let details = [result.standardError, result.standardOutput]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+            throw CoreSupervisorError.configurationInvalid(details)
+        }
+    }
+
+    private func acquireValidationSlot() async throws {
+        while validationInProgress {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        validationInProgress = true
     }
 
     private func waitUntilReady(_ configuration: CoreLaunchConfiguration) async throws -> String {
@@ -321,38 +445,99 @@ actor CoreSupervisor {
         }
     }
 
-    private static func runProcess(
+    private func runProcess(
         executableURL: URL,
         arguments: [String],
         currentDirectoryURL: URL
     ) async throws -> ProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            let standardOutput = Pipe()
-            let standardError = Pipe()
+        let control = ProcessControl()
+        validationProcessControl = control
+        defer {
+            if validationProcessControl === control {
+                validationProcessControl = nil
+            }
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let process = Process()
+                let standardOutput = Pipe()
+                let standardError = Pipe()
+                let outputCollector = ProcessOutputCollector()
+                let errorCollector = ProcessOutputCollector()
 
-            process.executableURL = executableURL
-            process.arguments = arguments
-            process.currentDirectoryURL = currentDirectoryURL
-            process.standardOutput = standardOutput
-            process.standardError = standardError
-            process.terminationHandler = { process in
-                let output = standardOutput.fileHandleForReading.readDataToEndOfFile()
-                let error = standardError.fileHandleForReading.readDataToEndOfFile()
-                continuation.resume(
-                    returning: ProcessResult(
-                        status: process.terminationStatus,
-                        standardOutput: String(decoding: output, as: UTF8.self),
-                        standardError: String(decoding: error, as: UTF8.self)
+                process.executableURL = executableURL
+                process.arguments = arguments
+                process.currentDirectoryURL = currentDirectoryURL
+                process.standardOutput = standardOutput
+                process.standardError = standardError
+
+                standardOutput.fileHandleForReading.readabilityHandler = { handle in
+                    outputCollector.append(handle.availableData)
+                }
+                standardError.fileHandleForReading.readabilityHandler = { handle in
+                    errorCollector.append(handle.availableData)
+                }
+
+                process.terminationHandler = { process in
+                    standardOutput.fileHandleForReading.readabilityHandler = nil
+                    standardError.fileHandleForReading.readabilityHandler = nil
+                    outputCollector.append(
+                        standardOutput.fileHandleForReading.readDataToEndOfFile()
                     )
-                )
-            }
+                    errorCollector.append(
+                        standardError.fileHandleForReading.readDataToEndOfFile()
+                    )
+                    try? standardOutput.fileHandleForReading.close()
+                    try? standardError.fileHandleForReading.close()
 
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
+                    let completion = control.claimCompletion()
+                    guard completion.claimed else { return }
+                    if completion.cancelled {
+                        continuation.resume(throwing: CancellationError())
+                    } else {
+                        continuation.resume(
+                            returning: ProcessResult(
+                                status: process.terminationStatus,
+                                standardOutput: String(
+                                    decoding: outputCollector.snapshot(),
+                                    as: UTF8.self
+                                ),
+                                standardError: String(
+                                    decoding: errorCollector.snapshot(),
+                                    as: UTF8.self
+                                )
+                            )
+                        )
+                    }
+                }
+
+                guard control.install(process) else {
+                    standardOutput.fileHandleForReading.readabilityHandler = nil
+                    standardError.fileHandleForReading.readabilityHandler = nil
+                    let completion = control.claimCompletion()
+                    if completion.claimed {
+                        continuation.resume(throwing: CancellationError())
+                    }
+                    return
+                }
+
+                do {
+                    try process.run()
+                    if control.isCancelled {
+                        process.terminate()
+                    }
+                } catch {
+                    standardOutput.fileHandleForReading.readabilityHandler = nil
+                    standardError.fileHandleForReading.readabilityHandler = nil
+                    process.terminationHandler = nil
+                    let completion = control.claimCompletion()
+                    if completion.claimed {
+                        continuation.resume(throwing: error)
+                    }
+                }
             }
+        } onCancel: {
+            control.cancel()
         }
     }
 }

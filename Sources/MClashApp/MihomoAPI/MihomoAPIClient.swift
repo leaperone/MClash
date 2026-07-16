@@ -89,6 +89,10 @@ public actor MihomoAPIClient {
         try await get(["configs"])
     }
 
+    public func fetchRules() async throws -> MihomoRuleCollection {
+        try await get(["rules"])
+    }
+
     public func fetchProxies() async throws -> MihomoProxyCollection {
         try await get(["proxies"])
     }
@@ -105,6 +109,43 @@ public actor MihomoAPIClient {
             method: "PUT",
             pathComponents: ["proxies", group],
             body: ProxySelectionRequest(name: proxy)
+        )
+    }
+
+    public func fetchProxyProviders() async throws -> MihomoProxyProviderCollection {
+        try await get(["providers", "proxies"])
+    }
+
+    public func fetchProxyProvider(named name: String) async throws -> MihomoProxyProvider {
+        try requireNonEmpty(name, argument: "Proxy provider name")
+        return try await get(["providers", "proxies", name])
+    }
+
+    public func updateProxyProvider(named name: String) async throws {
+        try requireNonEmpty(name, argument: "Proxy provider name")
+        try await sendNoContent(
+            method: "PUT",
+            pathComponents: ["providers", "proxies", name]
+        )
+    }
+
+    public func healthCheckProxyProvider(named name: String) async throws {
+        try requireNonEmpty(name, argument: "Proxy provider name")
+        try await sendNoContent(
+            method: "GET",
+            pathComponents: ["providers", "proxies", name, "healthcheck"]
+        )
+    }
+
+    public func fetchRuleProviders() async throws -> MihomoRuleProviderCollection {
+        try await get(["providers", "rules"])
+    }
+
+    public func updateRuleProvider(named name: String) async throws {
+        try requireNonEmpty(name, argument: "Rule provider name")
+        try await sendNoContent(
+            method: "PUT",
+            pathComponents: ["providers", "rules", name]
         )
     }
 

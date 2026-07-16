@@ -97,6 +97,118 @@ struct MihomoAPIClientTests {
     }
 
     @Test
+    func fetchesRulesAndProviderCollectionsFromAlphaRoutes() async throws {
+        resetStub()
+        defer { resetStub() }
+        StubURLProtocol.install { request in
+            let data: Data
+            switch request.url?.path {
+            case "/api/rules":
+                data = Data(#"{"rules":[]}"#.utf8)
+            case "/api/providers/proxies":
+                data = Data(#"{"providers":{}}"#.utf8)
+            case "/api/providers/rules":
+                data = Data(#"{"providers":{}}"#.utf8)
+            default:
+                return (try Self.response(for: request, statusCode: 404), Data())
+            }
+            return (try Self.response(for: request, statusCode: 200), data)
+        }
+        let client = try makeClient()
+
+        let rules = try await client.fetchRules()
+        let proxyProviders = try await client.fetchProxyProviders()
+        let ruleProviders = try await client.fetchRuleProviders()
+
+        #expect(rules.rules.isEmpty)
+        #expect(proxyProviders.providers.isEmpty)
+        #expect(ruleProviders.providers.isEmpty)
+        #expect(StubURLProtocol.recordedRequests.map(\.httpMethod) == ["GET", "GET", "GET"])
+        #expect(
+            StubURLProtocol.recordedRequests.compactMap(\.url?.path) == [
+                "/api/rules",
+                "/api/providers/proxies",
+                "/api/providers/rules",
+            ]
+        )
+    }
+
+    @Test
+    func proxyProviderOperationsEscapeNameAndMatchAlphaMethods() async throws {
+        resetStub()
+        defer { resetStub() }
+        StubURLProtocol.install { request in
+            if request.httpMethod == "GET", request.url?.path.hasSuffix("healthcheck") != true {
+                let data = Data(
+                    #"{"name":"香港 / 自动","type":"Proxy","vehicleType":"HTTP","proxies":[],"testUrl":"https://example.com","expectedStatus":"204"}"#.utf8
+                )
+                return (try Self.response(for: request, statusCode: 200), data)
+            }
+            return (try Self.response(for: request, statusCode: 204), Data())
+        }
+        let client = try makeClient()
+
+        let provider = try await client.fetchProxyProvider(named: "香港 / 自动")
+        try await client.updateProxyProvider(named: "香港 / 自动")
+        try await client.healthCheckProxyProvider(named: "香港 / 自动")
+
+        #expect(provider.name == "香港 / 自动")
+        let requests = StubURLProtocol.recordedRequests
+        #expect(requests.map(\.httpMethod) == ["GET", "PUT", "GET"])
+        let paths = requests.compactMap { request in
+            request.url.flatMap {
+                URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath
+            }
+        }
+        #expect(paths == [
+            "/api/providers/proxies/%E9%A6%99%E6%B8%AF%20%2F%20%E8%87%AA%E5%8A%A8",
+            "/api/providers/proxies/%E9%A6%99%E6%B8%AF%20%2F%20%E8%87%AA%E5%8A%A8",
+            "/api/providers/proxies/%E9%A6%99%E6%B8%AF%20%2F%20%E8%87%AA%E5%8A%A8/healthcheck",
+        ])
+    }
+
+    @Test
+    func ruleProviderUpdateEscapesNameAndUsesPut() async throws {
+        resetStub()
+        defer { resetStub() }
+        StubURLProtocol.install { request in
+            (try Self.response(for: request, statusCode: 204), Data())
+        }
+        let client = try makeClient()
+
+        try await client.updateRuleProvider(named: "规则 / main")
+
+        let request = try #require(StubURLProtocol.recordedRequests.last)
+        let encodedPath = request.url.flatMap {
+            URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath
+        }
+        #expect(request.httpMethod == "PUT")
+        #expect(encodedPath == "/api/providers/rules/%E8%A7%84%E5%88%99%20%2F%20main")
+    }
+
+    @Test
+    func providerUpdateErrorSurfacesAlphaMessage() async throws {
+        resetStub()
+        defer { resetStub() }
+        StubURLProtocol.install { request in
+            (
+                try Self.response(for: request, statusCode: 503),
+                Data(#"{"message":"provider update failed"}"#.utf8)
+            )
+        }
+        let client = try makeClient()
+
+        do {
+            try await client.updateProxyProvider(named: "provider-a")
+            Issue.record("Expected an HTTP error")
+        } catch let error as MihomoAPIError {
+            #expect(error == .httpStatus(code: 503, message: "provider update failed"))
+        } catch {
+            Issue.record("Expected MihomoAPIError, got \(error)")
+        }
+    }
+
+    @Test
     func httpErrorSurfacesMihomoMessage() async throws {
         resetStub()
         defer { resetStub() }

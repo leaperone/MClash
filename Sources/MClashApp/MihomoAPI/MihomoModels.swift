@@ -263,6 +263,27 @@ public struct MihomoTUNConfigPatch: Codable, Equatable, Sendable {
     }
 }
 
+public struct MihomoRuleCollection: Codable, Equatable, Sendable {
+    public let rules: [MihomoRule]
+}
+
+public struct MihomoRule: Codable, Equatable, Sendable {
+    public let index: Int
+    public let type: String
+    public let payload: String
+    public let proxy: String
+    public let size: Int
+    public let extra: MihomoRuleExtra?
+}
+
+public struct MihomoRuleExtra: Codable, Equatable, Sendable {
+    public let disabled: Bool
+    public let hitCount: UInt64
+    public let hitAt: String
+    public let missCount: UInt64
+    public let missAt: String
+}
+
 public struct MihomoProxyCollection: Codable, Equatable, Sendable {
     public let proxies: [String: MihomoProxy]
 
@@ -357,6 +378,55 @@ public struct MihomoDelayResult: Codable, Equatable, Sendable {
     public let delay: Int
 }
 
+public struct MihomoProxyProviderCollection: Codable, Equatable, Sendable {
+    public let providers: [String: MihomoProxyProvider]
+}
+
+public struct MihomoProxyProvider: Codable, Equatable, Sendable {
+    public let name: String
+    public let type: String
+    public let vehicleType: String
+    public let proxies: [MihomoProxy]
+    public let testURL: String
+    public let expectedStatus: String
+    public let updatedAt: String?
+    public let subscriptionInfo: MihomoSubscriptionInfo?
+
+    enum CodingKeys: String, CodingKey {
+        case name, type, vehicleType, proxies, expectedStatus, updatedAt, subscriptionInfo
+        case testURL = "testUrl"
+    }
+}
+
+public struct MihomoSubscriptionInfo: Codable, Equatable, Sendable {
+    public let upload: Int64
+    public let download: Int64
+    public let total: Int64
+    public let expire: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case upload = "Upload"
+        case download = "Download"
+        case total = "Total"
+        case expire = "Expire"
+    }
+}
+
+public struct MihomoRuleProviderCollection: Codable, Equatable, Sendable {
+    public let providers: [String: MihomoRuleProvider]
+}
+
+public struct MihomoRuleProvider: Codable, Equatable, Sendable {
+    public let behavior: String
+    public let format: String
+    public let name: String
+    public let ruleCount: Int
+    public let type: String
+    public let vehicleType: String
+    public let updatedAt: String
+    public let payload: [String]?
+}
+
 public struct MihomoTraffic: Codable, Equatable, Sendable {
     public let upload: Int64
     public let download: Int64
@@ -404,6 +474,18 @@ public struct MihomoConnectionSnapshot: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case downloadTotal, uploadTotal, connections, memory
+    }
+
+    public init(
+        downloadTotal: Int64,
+        uploadTotal: Int64,
+        connections: [MihomoConnection],
+        memory: UInt64?
+    ) {
+        self.downloadTotal = downloadTotal
+        self.uploadTotal = uploadTotal
+        self.connections = connections
+        self.memory = memory
     }
 
     public init(from decoder: Decoder) throws {

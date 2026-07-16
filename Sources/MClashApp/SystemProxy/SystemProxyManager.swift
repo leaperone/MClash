@@ -57,6 +57,20 @@ public actor SystemProxyManager {
         try restore(snapshot: loadSnapshot(from: url))
     }
 
+    /// Restores and removes a persisted snapshot as one serialized manager operation.
+    public func restoreSnapshotAndRemove(from url: URL) throws {
+        let snapshot = try loadSnapshot(from: url)
+        try restore(snapshot: snapshot)
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            throw SystemProxyError.persistenceFailed(
+                path: url.path,
+                reason: error.localizedDescription
+            )
+        }
+    }
+
     public func save(snapshot: SystemProxySnapshot, to url: URL) throws {
         do {
             let directory = url.deletingLastPathComponent()
@@ -100,6 +114,9 @@ public actor SystemProxyManager {
         endpoints: LocalSystemProxyEndpoints,
         to currentStates: [SystemProxyServiceState]
     ) throws {
+        guard !currentStates.isEmpty else {
+            throw SystemProxyError.noEnabledNetworkServices
+        }
         let updatedStates = try currentStates.map { state in
             var configuration = state.configuration ?? [:]
             configuration[SystemProxyKeys.httpEnable] = .integer(1)
