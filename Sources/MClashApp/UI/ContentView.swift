@@ -5,14 +5,29 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(AppModel.Destination.allCases, selection: $model.selection) { destination in
-                Label(destination.title, systemImage: destination.symbol)
-                    .tag(destination)
+            List(selection: $model.selection) {
+                Section("Status") {
+                    destinationRow(.overview)
+                    destinationRow(.connections)
+                }
+
+                Section("Routing") {
+                    destinationRow(.proxies)
+                    destinationRow(.profiles)
+                    destinationRow(.rules)
+                    destinationRow(.providers)
+                }
+
+                Section("Diagnostics") {
+                    destinationRow(.logs)
+                }
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 240)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 176, ideal: 206, max: 240)
+            .navigationTitle("MClash")
         } detail: {
             VStack(spacing: 0) {
-                if let errorMessage = model.errorMessage {
+                if let errorMessage = activeErrorMessage {
                     ErrorBanner(
                         message: errorMessage,
                         retryNetworkRestore: model.systemProxyRecoveryRequired ? {
@@ -21,11 +36,13 @@ struct ContentView: View {
                         isRestoringNetwork: model.isPerforming(.changeSystemProxy),
                         showLogs: {
                             model.selection = .logs
-                            model.errorMessage = nil
+                            if !model.systemProxyRecoveryRequired {
+                                model.errorMessage = nil
+                            }
                         },
-                        dismiss: {
-                            model.errorMessage = nil
-                        }
+                        dismiss: model.systemProxyRecoveryRequired
+                            ? nil
+                            : { model.errorMessage = nil }
                     )
                     .transition(.opacity)
                 }
@@ -33,6 +50,18 @@ struct ContentView: View {
             }
             .mclashPageSurface()
         }
+    }
+
+    private func destinationRow(_ destination: AppModel.Destination) -> some View {
+        Label(destination.title, systemImage: destination.symbol)
+            .tag(destination)
+    }
+
+    private var activeErrorMessage: String? {
+        if case let .failed(message) = model.systemProxyState {
+            return message
+        }
+        return model.errorMessage
     }
 
     @ViewBuilder
@@ -52,8 +81,6 @@ struct ContentView: View {
             ConnectionsView(model: model)
         case .logs:
             LogsView(model: model)
-        case .settings:
-            SettingsView(model: model)
         }
     }
 }
@@ -74,6 +101,7 @@ private struct ErrorBanner: View {
             Text(message)
                 .font(.callout)
                 .lineLimit(2)
+                .help(message)
 
             Spacer(minLength: 12)
 

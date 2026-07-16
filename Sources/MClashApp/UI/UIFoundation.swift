@@ -16,13 +16,7 @@ func formattedByteCount(
     let normalized = max(0, value)
     guard normalized > 0 else { return "0 B" }
 
-    let formatter = ByteCountFormatter()
-    formatter.countStyle = style
-    formatter.isAdaptive = true
-    formatter.includesCount = true
-    formatter.includesUnit = true
-    formatter.includesActualByteCount = false
-    return formatter.string(fromByteCount: normalized)
+    return ByteCountFormatter.string(fromByteCount: normalized, countStyle: style)
 }
 
 func formattedByteRate(_ value: Int64) -> String {

@@ -8,7 +8,7 @@ struct MClashApp: App {
     var body: some Scene {
         Window("MClash", id: "main") {
             ContentView(model: model)
-                .frame(minWidth: 1_080, minHeight: 640)
+                .frame(minWidth: 780, minHeight: 560)
                 .task {
                     await prepareApplication()
                 }

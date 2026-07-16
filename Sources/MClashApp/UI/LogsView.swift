@@ -8,11 +8,17 @@ struct LogsView: View {
     @State private var sourceFilter: LogSourceFilter = .all
     @State private var followsLatest = true
     @State private var exportError: String?
+    @State private var layout: LogsLayout = .wide
+    @State private var pendingPresentationTask: Task<Void, Never>?
+    @State private var pendingScrollTask: Task<Void, Never>?
+    @State private var presentation = LogPresentationSnapshot.empty
 
     var body: some View {
+        let snapshot = presentation
+
         ScrollViewReader { proxy in
             Group {
-                if model.logs.isEmpty {
+                if snapshot.allCount == 0 {
                     ContentUnavailableView(
                         "No logs yet",
                         systemImage: "text.alignleft",
@@ -20,15 +26,15 @@ struct LogsView: View {
                             "Core and supervisor messages will appear here after the first connection attempt."
                         )
                     )
-                } else if filteredLogs.isEmpty {
+                } else if snapshot.visibleLines.isEmpty {
                     ContentUnavailableView(
                         "No matching logs",
                         systemImage: "line.3.horizontal.decrease.circle",
-                        description: Text(emptyResultsDescription)
+                        description: Text(snapshot.emptyResultsDescription)
                     )
                 } else {
-                    List(filteredLogs) { line in
-                        LogLineRow(line: line)
+                    List(snapshot.visibleLines) { line in
+                        LogLineRow(line: line, compact: layout == .compact)
                             .id(line.id)
                     }
                     .listStyle(.inset)
@@ -38,25 +44,38 @@ struct LogsView: View {
             .navigationTitle("Logs")
             .searchable(text: $searchText, prompt: "Search log messages or sources")
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                statusBar
+                statusBar(snapshot: snapshot)
             }
             .toolbar {
                 ToolbarItem {
-                    Picker("Log Source", selection: $sourceFilter) {
-                        ForEach(LogSourceFilter.allCases) { filter in
-                            Text(filter.title).tag(filter)
+                    if layout == .wide {
+                        Picker("Log Source", selection: $sourceFilter) {
+                            ForEach(LogSourceFilter.allCases) { filter in
+                                Text(filter.title).tag(filter)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                        .frame(minWidth: 220, idealWidth: 260, maxWidth: 300)
+                        .accessibilityLabel("Filter logs by source")
+                    } else {
+                        Picker("Source", selection: $sourceFilter) {
+                            ForEach(LogSourceFilter.allCases) { filter in
+                                Text(filter.title).tag(filter)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .help("Filter logs by source")
                     }
-                    .pickerStyle(.segmented)
-                    .frame(minWidth: 180, idealWidth: 260, maxWidth: 330)
-                    .accessibilityLabel("Filter logs by source")
                 }
 
                 ToolbarItemGroup {
                     Button {
                         followsLatest.toggle()
                         if followsLatest {
-                            scrollToLatest(using: proxy)
+                            scrollToLatest(snapshot.latestID, using: proxy)
+                        } else {
+                            pendingScrollTask?.cancel()
+                            pendingScrollTask = nil
                         }
                     } label: {
                         Label(
@@ -73,12 +92,12 @@ struct LogsView: View {
                     .keyboardShortcut("l", modifiers: [.command, .shift])
 
                     Button {
-                        exportFilteredLogs()
+                        exportFilteredLogs(snapshot.visibleLines)
                     } label: {
                         Label("Export Logs…", systemImage: "square.and.arrow.up")
                     }
                     .help("Export the currently filtered diagnostic log")
-                    .disabled(filteredLogs.isEmpty)
+                    .disabled(snapshot.visibleLines.isEmpty)
                     .keyboardShortcut("e", modifiers: [.command, .shift])
 
                     Button(role: .destructive) {
@@ -90,24 +109,39 @@ struct LogsView: View {
                     .disabled(model.logs.isEmpty)
                 }
             }
-            .onChange(of: filteredLogs.last?.id) { _, _ in
+            .onChange(of: model.logs.last?.id) { _, _ in
+                schedulePresentationRefresh()
+            }
+            .onChange(of: snapshot.latestID) { _, latestID in
                 guard followsLatest else { return }
-                scrollToLatest(using: proxy)
+                scrollToLatest(latestID, using: proxy)
             }
             .onChange(of: sourceFilter) { _, _ in
-                guard followsLatest else { return }
-                scrollToLatest(using: proxy)
+                schedulePresentationRefresh()
             }
             .onChange(of: searchText) { _, _ in
-                guard followsLatest else { return }
-                scrollToLatest(using: proxy)
+                schedulePresentationRefresh()
             }
             .onAppear {
-                guard followsLatest else { return }
-                scrollToLatest(using: proxy)
+                refreshPresentation()
             }
         }
         .mclashPageSurface()
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { updateLayout(geometry.size.width) }
+                    .onChange(of: geometry.size.width) { _, width in
+                        updateLayout(width)
+                    }
+            }
+        }
+        .onDisappear {
+            pendingPresentationTask?.cancel()
+            pendingPresentationTask = nil
+            pendingScrollTask?.cancel()
+            pendingScrollTask = nil
+        }
         .alert(
             "Couldn’t Export Logs",
             isPresented: Binding(
@@ -123,11 +157,11 @@ struct LogsView: View {
         }
     }
 
-    private var statusBar: some View {
+    private func statusBar(snapshot: LogPresentationSnapshot) -> some View {
         HStack(spacing: 10) {
             Text(
-                "\(formattedCount(filteredLogs.count)) of "
-                    + "\(formattedCount(model.logs.count)) entries"
+                "\(formattedCount(snapshot.visibleLines.count)) of "
+                    + "\(formattedCount(snapshot.allCount)) entries"
             )
                 .monospacedDigit()
 
@@ -147,33 +181,52 @@ struct LogsView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var filteredLogs: [CoreLogLine] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return model.logs.filter { line in
-            guard sourceFilter.includes(line.stream) else { return false }
-            guard !query.isEmpty else { return true }
-            return line.message.localizedCaseInsensitiveContains(query)
-                || LogSourceFilter.title(for: line.stream).localizedCaseInsensitiveContains(query)
-        }
-    }
-
-    private var emptyResultsDescription: String {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.isEmpty {
-            return "No \(sourceFilter.title) entries are currently available."
-        }
-        return "No \(sourceFilter.title) entries contain “\(query)”."
-    }
-
-    private func scrollToLatest(using proxy: ScrollViewProxy) {
-        guard let latestID = filteredLogs.last?.id else { return }
-        Task { @MainActor in
+    private func scrollToLatest(_ latestID: UUID?, using proxy: ScrollViewProxy) {
+        pendingScrollTask?.cancel()
+        pendingScrollTask = nil
+        guard let latestID else { return }
+        pendingScrollTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled, followsLatest else { return }
             proxy.scrollTo(latestID, anchor: .bottom)
+            pendingScrollTask = nil
         }
     }
 
-    private func exportFilteredLogs() {
-        let logs = filteredLogs
+    @discardableResult
+    private func refreshPresentation() -> UUID? {
+        pendingPresentationTask?.cancel()
+        pendingPresentationTask = nil
+        let next = LogPresentationSnapshot(
+            logs: model.logs,
+            filter: sourceFilter,
+            searchText: searchText
+        )
+        presentation = next
+        return next.latestID
+    }
+
+    private func schedulePresentationRefresh() {
+        guard pendingPresentationTask == nil else { return }
+        pendingPresentationTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+
+            let next = LogPresentationSnapshot(
+                logs: model.logs,
+                filter: sourceFilter,
+                searchText: searchText
+            )
+            presentation = next
+
+            pendingPresentationTask = nil
+            if next.sourceLatestID != model.logs.last?.id {
+                schedulePresentationRefresh()
+            }
+        }
+    }
+
+    private func exportFilteredLogs(_ logs: [CoreLogLine]) {
         guard !logs.isEmpty else { return }
 
         let panel = NSSavePanel()
@@ -224,6 +277,55 @@ struct LogsView: View {
         }
         return (header + entries).joined(separator: "\n") + "\n"
     }
+
+    private func updateLayout(_ width: CGFloat) {
+        let next = LogsLayout(width: width)
+        if layout != next { layout = next }
+    }
+}
+
+private enum LogsLayout: Equatable {
+    case compact
+    case wide
+
+    init(width: CGFloat) {
+        self = width < 680 ? .compact : .wide
+    }
+}
+
+private struct LogPresentationSnapshot {
+    static let empty = LogPresentationSnapshot(logs: [], filter: .all, searchText: "")
+
+    let allCount: Int
+    let visibleLines: [CoreLogLine]
+    let latestID: UUID?
+    let sourceLatestID: UUID?
+    let emptyResultsDescription: String
+
+    init(logs: [CoreLogLine], filter: LogSourceFilter, searchText: String) {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        allCount = logs.count
+        sourceLatestID = logs.last?.id
+
+        if filter == .all, query.isEmpty {
+            visibleLines = logs
+        } else {
+            visibleLines = logs.filter { line in
+                guard filter.includes(line.stream) else { return false }
+                guard !query.isEmpty else { return true }
+                return line.message.localizedCaseInsensitiveContains(query)
+                    || LogSourceFilter.title(for: line.stream)
+                        .localizedCaseInsensitiveContains(query)
+            }
+        }
+
+        latestID = visibleLines.last?.id
+        if query.isEmpty {
+            emptyResultsDescription = "No \(filter.title) entries are currently available."
+        } else {
+            emptyResultsDescription = "No \(filter.title) entries contain “\(query)”."
+        }
+    }
 }
 
 private enum LogSourceFilter: String, CaseIterable, Identifiable {
@@ -263,26 +365,46 @@ private enum LogSourceFilter: String, CaseIterable, Identifiable {
 
 private struct LogLineRow: View {
     let line: CoreLogLine
+    let compact: Bool
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(line.timestamp, format: .dateTime.hour().minute().second())
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
-                .frame(width: 72, alignment: .trailing)
+        Group {
+            if compact {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 10) {
+                        Label(sourceTitle, systemImage: sourceSymbol)
+                            .foregroundStyle(sourceColor)
+                        Text(line.timestamp, format: .dateTime.hour().minute().second())
+                            .monospacedDigit()
+                            .foregroundStyle(.tertiary)
+                    }
+                    .font(.caption)
 
-            Label(sourceTitle, systemImage: sourceSymbol)
-                .font(.caption)
-                .foregroundStyle(sourceColor)
-                .frame(width: 94, alignment: .leading)
+                    Text(line.message)
+                        .font(.system(.body, design: .monospaced))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(line.timestamp, format: .dateTime.hour().minute().second())
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 72, alignment: .trailing)
 
-            Text(line.message)
-                .font(.system(.body, design: .monospaced))
-                .fixedSize(horizontal: false, vertical: true)
+                    Label(sourceTitle, systemImage: sourceSymbol)
+                        .font(.caption)
+                        .foregroundStyle(sourceColor)
+                        .frame(width: 94, alignment: .leading)
 
-            Spacer(minLength: 0)
+                    Text(line.message)
+                        .font(.system(.body, design: .monospaced))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 0)
+                }
+            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, compact ? 5 : 2)
         .textSelection(.enabled)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)

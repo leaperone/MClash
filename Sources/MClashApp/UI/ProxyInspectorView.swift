@@ -7,7 +7,12 @@ struct ProxyInspectorView: View {
     let openGroup: (String) -> Void
 
     var body: some View {
-        let routes = observedRoutes
+        let traffic = ProxyInspectorTrafficSnapshot(
+            model: model,
+            groupName: group?.name,
+            scopeName: trafficScopeName
+        )
+        let routes = traffic.routes
 
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -30,13 +35,13 @@ struct ProxyInspectorView: View {
                             "Active Connections",
                             value: connectionMetricsStale
                                 ? "Stale"
-                                : formattedCount(groupActiveConnections)
+                                : formattedCount(traffic.groupActiveConnections)
                         )
                         InspectorValueRow(
                             "Observed Traffic",
                             value: connectionMetricsStale
                                 ? "Stale"
-                                : formattedByteCount(groupObservedBytes)
+                                : formattedByteCount(traffic.groupObservedBytes)
                         )
                         if let fixed = group.fixedOverride {
                             InspectorValueRow("Pinned Preference", value: fixed)
@@ -151,26 +156,38 @@ struct ProxyInspectorView: View {
         model.degradedStreams.contains(.connections)
     }
 
-    private var groupActiveConnections: Int {
-        guard let group else { return 0 }
-        return model.connections?.connections.reduce(into: 0) { count, connection in
-            if connection.chains.contains(group.name) { count += 1 }
-        } ?? 0
+    private func capability(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
     }
+}
 
-    private var groupObservedBytes: Int64 {
-        guard let group else { return 0 }
-        return model.routeTrafficEntries.reduce(into: 0) { total, entry in
-            guard entry.routing.chains.contains(group.name) else { return }
-            total = addingTraffic(total, entry.totalDelta)
+private struct ProxyInspectorTrafficSnapshot {
+    let groupActiveConnections: Int
+    let groupObservedBytes: Int64
+    let routes: [ObservedRouteSummary]
+
+    @MainActor
+    init(model: AppModel, groupName: String?, scopeName: String?) {
+        if let groupName {
+            groupActiveConnections = model.connections?.connections.reduce(into: 0) { count, connection in
+                if connection.chains.contains(groupName) { count += 1 }
+            } ?? 0
+        } else {
+            groupActiveConnections = 0
         }
-    }
 
-    private var observedRoutes: [ObservedRouteSummary] {
-        guard let trafficScopeName else { return [] }
+        var groupObservedBytes: Int64 = 0
         var summaries: [ObservedRouteSummary.Key: ObservedRouteSummary] = [:]
-        for entry in model.routeTrafficEntries
-        where entry.routing.chains.contains(trafficScopeName) {
+        for entry in model.routeTrafficEntries {
+            if let groupName, entry.routing.chains.contains(groupName) {
+                groupObservedBytes = addingTraffic(groupObservedBytes, entry.totalDelta)
+            }
+
+            guard let scopeName, entry.routing.chains.contains(scopeName) else { continue }
             let key = ObservedRouteSummary.Key(
                 destination: entry.routing.destination,
                 rule: entry.routing.rule,
@@ -183,7 +200,8 @@ struct ProxyInspectorView: View {
             summary.lastSeen = max(summary.lastSeen, entry.timestamp)
             summaries[key] = summary
         }
-        return summaries.values
+        self.groupObservedBytes = groupObservedBytes
+        routes = summaries.values
             .sorted { lhs, rhs in
                 if lhs.totalBytes != rhs.totalBytes { return lhs.totalBytes > rhs.totalBytes }
                 if lhs.lastSeen != rhs.lastSeen { return lhs.lastSeen > rhs.lastSeen }
@@ -191,14 +209,6 @@ struct ProxyInspectorView: View {
             }
             .prefix(8)
             .map { $0 }
-    }
-
-    private func capability(_ text: String) -> some View {
-        Text(text)
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
     }
 }
 

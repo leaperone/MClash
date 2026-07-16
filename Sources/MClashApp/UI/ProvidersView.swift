@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ProvidersView: View {
     @Bindable var model: AppModel
+    @State private var layout: ProvidersLayout = .wide
 
     var body: some View {
         Group {
@@ -48,7 +49,11 @@ struct ProvidersView: View {
                     if !model.proxyProviders.isEmpty {
                         Section("Proxy Providers") {
                             ForEach(model.proxyProviders, id: \.name) { provider in
-                                ProxyProviderRow(model: model, provider: provider)
+                                ProxyProviderRow(
+                                    model: model,
+                                    provider: provider,
+                                    compact: layout == .compact
+                                )
                             }
                         }
                     }
@@ -56,7 +61,11 @@ struct ProvidersView: View {
                     if !model.ruleProviders.isEmpty {
                         Section("Rule Providers") {
                             ForEach(model.ruleProviders, id: \.name) { provider in
-                                RuleProviderRow(model: model, provider: provider)
+                                RuleProviderRow(
+                                    model: model,
+                                    provider: provider,
+                                    compact: layout == .compact
+                                )
                             }
                         }
                     }
@@ -67,6 +76,15 @@ struct ProvidersView: View {
         }
         .navigationTitle("Providers")
         .mclashPageSurface()
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { updateLayout(geometry.size.width) }
+                    .onChange(of: geometry.size.width) { _, width in
+                        updateLayout(width)
+                    }
+            }
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if model.errorMessage == nil,
                let message = model.providersErrorMessage,
@@ -78,6 +96,7 @@ struct ProvidersView: View {
                     Text(message)
                         .font(.callout)
                         .lineLimit(2)
+                        .help(message)
                     Spacer()
                     Button("Retry") { Task { await model.refreshProviders() } }
                         .disabled(!model.canPerform(.refreshProviders))
@@ -113,6 +132,11 @@ struct ProvidersView: View {
         model.proxyProviders.isEmpty && model.ruleProviders.isEmpty
     }
 
+    private func updateLayout(_ width: CGFloat) {
+        let next = ProvidersLayout(width: width)
+        if layout != next { layout = next }
+    }
+
     private func loadProvidersWhenAvailable() async {
         guard model.controllerIsReady,
               allProvidersAreEmpty,
@@ -138,51 +162,36 @@ struct ProvidersView: View {
     }
 }
 
+private enum ProvidersLayout: Equatable {
+    case compact
+    case wide
+
+    init(width: CGFloat) {
+        self = width < 720 ? .compact : .wide
+    }
+}
+
 private struct ProxyProviderRow: View {
     @Bindable var model: AppModel
     let provider: MihomoProxyProvider
+    let compact: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(provider.name)
-                    Text(metadata)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button {
-                    Task { await model.healthCheckProxyProvider(provider.name) }
-                } label: {
-                    if model.isPerforming(.healthCheckProxyProvider(provider.name)) {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Health Check", systemImage: "speedometer")
+            if compact {
+                VStack(alignment: .leading, spacing: 9) {
+                    providerIdentity
+                    HStack(spacing: 10) {
+                        Spacer(minLength: 0)
+                        providerActions
                     }
                 }
-                .disabled(
-                    providerOperationInProgress
-                        || !model.canPerform(.healthCheckProxyProvider(provider.name))
-                )
-
-                Button {
-                    Task { await model.updateProxyProvider(provider.name) }
-                } label: {
-                    if model.isPerforming(.updateProxyProvider(provider.name)) {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Update", systemImage: "arrow.clockwise")
-                    }
+            } else {
+                HStack(spacing: 12) {
+                    providerIdentity
+                    Spacer(minLength: 18)
+                    providerActions
                 }
-                .disabled(
-                    providerOperationInProgress
-                        || !model.canPerform(.updateProxyProvider(provider.name))
-                )
             }
 
             if let subscription = provider.subscriptionInfo, subscription.total > 0 {
@@ -203,7 +212,54 @@ private struct ProxyProviderRow: View {
                 }
             }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, compact ? 8 : 5)
+    }
+
+    private var providerIdentity: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(provider.name)
+                .lineLimit(compact ? 2 : 1)
+                .help(provider.name)
+            Text(metadata)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(compact ? 2 : 1)
+        }
+    }
+
+    private var providerActions: some View {
+        HStack(spacing: 8) {
+            Button {
+                Task { await model.healthCheckProxyProvider(provider.name) }
+            } label: {
+                if model.isPerforming(.healthCheckProxyProvider(provider.name)) {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("Health Check", systemImage: "speedometer")
+                }
+            }
+            .disabled(
+                providerOperationInProgress
+                    || !model.canPerform(.healthCheckProxyProvider(provider.name))
+            )
+
+            Button {
+                Task { await model.updateProxyProvider(provider.name) }
+            } label: {
+                if model.isPerforming(.updateProxyProvider(provider.name)) {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("Update", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(
+                providerOperationInProgress
+                    || !model.canPerform(.updateProxyProvider(provider.name))
+            )
+        }
+        .controlSize(.small)
     }
 
     private var providerOperationInProgress: Bool {
@@ -239,36 +295,61 @@ private struct ProxyProviderRow: View {
 private struct RuleProviderRow: View {
     @Bindable var model: AppModel
     let provider: MihomoRuleProvider
+    let compact: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(provider.name)
-                Text("\(provider.behavior) · \(provider.vehicleType) · \(provider.ruleCount) rules")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Text(updatedLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            Button {
-                Task { await model.updateRuleProvider(provider.name) }
-            } label: {
-                if model.isPerforming(.updateRuleProvider(provider.name)) {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Label("Update", systemImage: "arrow.clockwise")
+        Group {
+            if compact {
+                VStack(alignment: .leading, spacing: 9) {
+                    ruleProviderIdentity
+                    HStack(spacing: 10) {
+                        Text(updatedLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        updateButton
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    ruleProviderIdentity
+                    Spacer(minLength: 18)
+                    Text(updatedLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    updateButton
                 }
             }
-            .disabled(!model.canPerform(.updateRuleProvider(provider.name)))
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, compact ? 8 : 5)
+    }
+
+    private var ruleProviderIdentity: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(provider.name)
+                .lineLimit(compact ? 2 : 1)
+                .help(provider.name)
+            Text("\(provider.behavior) · \(provider.vehicleType) · \(provider.ruleCount) rules")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var updateButton: some View {
+        Button {
+            Task { await model.updateRuleProvider(provider.name) }
+        } label: {
+            if model.isPerforming(.updateRuleProvider(provider.name)) {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Label("Update", systemImage: "arrow.clockwise")
+            }
+        }
+        .controlSize(.small)
+        .disabled(!model.canPerform(.updateRuleProvider(provider.name)))
     }
 
     private var updatedLabel: String {

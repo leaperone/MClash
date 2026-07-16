@@ -3,6 +3,7 @@ import SwiftUI
 struct ProfilesView: View {
     @Bindable var model: AppModel
     @State private var showingSubscriptionSheet = false
+    @State private var layout: ProfilesLayout = .wide
 
     var body: some View {
         Group {
@@ -10,7 +11,11 @@ struct ProfilesView: View {
                 emptyState
             } else {
                 List(model.profiles) { profile in
-                    ProfileRow(model: model, profile: profile)
+                    ProfileRow(
+                        model: model,
+                        profile: profile,
+                        compact: layout == .compact
+                    )
                 }
                 .listStyle(.inset)
                 .mclashListSurface()
@@ -18,6 +23,15 @@ struct ProfilesView: View {
         }
         .navigationTitle("Profiles")
         .mclashPageSurface()
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { updateLayout(geometry.size.width) }
+                    .onChange(of: geometry.size.width) { _, width in
+                        updateLayout(width)
+                    }
+            }
+        }
         .toolbar {
             ToolbarItemGroup {
                 Button {
@@ -48,6 +62,11 @@ struct ProfilesView: View {
         .sheet(isPresented: $showingSubscriptionSheet) {
             AddSubscriptionView(model: model, isPresented: $showingSubscriptionSheet)
         }
+    }
+
+    private func updateLayout(_ width: CGFloat) {
+        let next = ProfilesLayout(width: width)
+        if layout != next { layout = next }
     }
 
     private var emptyState: some View {
@@ -84,104 +103,44 @@ struct ProfilesView: View {
     }
 }
 
+private enum ProfilesLayout: Equatable {
+    case compact
+    case wide
+
+    init(width: CGFloat) {
+        self = width < 720 ? .compact : .wide
+    }
+}
+
 private struct ProfileRow: View {
     @Bindable var model: AppModel
     let profile: ProfileMetadata
+    let compact: Bool
     @State private var confirmingDelete = false
     @State private var operationError: String?
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            activeIndicator
-
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(profile.name)
-                        .font(.body.weight(isActive ? .semibold : .regular))
-                        .lineLimit(1)
-                        .help(profile.name)
-
-                    if isActive {
-                        Label("Active", systemImage: "checkmark")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.tint)
+        Group {
+            if compact {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 12) {
+                        activeIndicator
+                        profileDetails
+                        Spacer(minLength: 0)
                     }
+                    profileActions
+                        .padding(.leading, 36)
                 }
-
-                HStack(spacing: 10) {
-                    Label(originTitle, systemImage: originSymbol)
-                    Text("•")
-                        .accessibilityHidden(true)
-                    Text(lastUpdatedTitle)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                if let operationTitle {
-                    HStack(spacing: 7) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(operationTitle)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityElement(children: .combine)
-                } else if let operationError {
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                            .accessibilityHidden(true)
-                        Text(operationError)
-                            .lineLimit(2)
-                        Button("Dismiss") { self.operationError = nil }
-                            .buttonStyle(.borderless)
-                            .controlSize(.small)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityElement(children: .contain)
+            } else {
+                HStack(alignment: .center, spacing: 14) {
+                    activeIndicator
+                    profileDetails
+                    Spacer(minLength: 18)
+                    profileActions
                 }
             }
-
-            Spacer(minLength: 18)
-
-            HStack(spacing: 8) {
-                if isRemote {
-                    Button {
-                        refresh()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(!model.canPerform(.refreshProfile(profile.id)))
-                    .help("Refresh \(profile.name) subscription")
-                }
-
-                if isActive {
-                    Text("In Use")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .frame(minWidth: 64)
-                        .accessibilityLabel("\(profile.name) is the active profile")
-                } else {
-                    Button("Activate") {
-                        activate()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!model.canPerform(.activateProfile(profile.id)))
-                    .help("Activate \(profile.name)")
-                }
-
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                    confirmingDelete = true
-                }
-                .buttonStyle(.borderless)
-                .disabled(isActive || !model.canPerform(.removeProfile(profile.id)))
-                .help(isActive ? "Activate another profile before deleting this one" : "Delete \(profile.name)")
-            }
-            .controlSize(.small)
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, compact ? 9 : 7)
         .accessibilityElement(children: .contain)
         .confirmationDialog(
             "Delete \(profile.name)?",
@@ -194,6 +153,99 @@ private struct ProfileRow: View {
         } message: {
             Text("This removes the stored profile from MClash. The subscription itself is not changed.")
         }
+    }
+
+    private var profileDetails: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Text(profile.name)
+                    .font(.body.weight(isActive ? .semibold : .regular))
+                    .lineLimit(compact ? 2 : 1)
+                    .help(profile.name)
+
+            }
+
+            if compact {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(originTitle, systemImage: originSymbol)
+                    Text(lastUpdatedTitle)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 10) {
+                    Label(originTitle, systemImage: originSymbol)
+                    Text("•")
+                        .accessibilityHidden(true)
+                    Text(lastUpdatedTitle)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            if let operationTitle {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(operationTitle)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+            } else if let operationError {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .accessibilityHidden(true)
+                    Text(operationError)
+                        .lineLimit(2)
+                    Button("Dismiss") { self.operationError = nil }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .contain)
+            }
+        }
+    }
+
+    private var profileActions: some View {
+        HStack(spacing: 8) {
+            if isRemote {
+                Button {
+                    refresh()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!model.canPerform(.refreshProfile(profile.id)))
+                .help("Refresh \(profile.name) subscription")
+            }
+
+            if isActive {
+                Text("In Use")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 64)
+                    .accessibilityLabel("\(profile.name) is the active profile")
+            } else {
+                Button("Activate") {
+                    activate()
+                }
+                .buttonStyle(.bordered)
+                .disabled(!model.canPerform(.activateProfile(profile.id)))
+                .help("Activate \(profile.name)")
+            }
+
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                confirmingDelete = true
+            }
+            .buttonStyle(.borderless)
+            .disabled(isActive || !model.canPerform(.removeProfile(profile.id)))
+            .help(isActive ? "Activate another profile before deleting this one" : "Delete \(profile.name)")
+        }
+        .controlSize(.small)
     }
 
     private var activeIndicator: some View {

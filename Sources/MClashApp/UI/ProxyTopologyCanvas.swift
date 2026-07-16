@@ -9,18 +9,135 @@ struct ProxyTopologyCanvas: View {
     let openGroup: (String) -> Void
     let showGroupList: (String) -> Void
 
-    @State private var zoom = 1.0
-    @State private var relationshipsExpanded = false
-    @GestureState private var magnification = 1.0
+    var body: some View {
+        ProxyTopologyResolvedView(
+            topology: topology,
+            rootGroup: rootGroup,
+            selectedPath: selectedPath,
+            delays: delays,
+            focusedNodeName: $focusedNodeName,
+            openGroup: openGroup,
+            showGroupList: showGroupList
+        )
+        .equatable()
+    }
+}
+
+@MainActor
+private struct ProxyTopologyResolvedView: View, Equatable {
+    let topology: ProxyTopology
+    let rootGroup: String
+    let selectedPath: ProxySelectionPath?
+    let delays: [String: Int]
+    @Binding var focusedNodeName: String?
+    let openGroup: (String) -> Void
+    let showGroupList: (String) -> Void
 
     var body: some View {
+        ProxyTopologyInteractiveView(
+            renderModel: ProxyTopologyRenderModel(
+                topology: topology,
+                rootGroup: rootGroup,
+                selectedPath: selectedPath,
+                delays: delays
+            ),
+            rootGroup: rootGroup,
+            focusedNodeName: $focusedNodeName,
+            openGroup: openGroup,
+            showGroupList: showGroupList
+        )
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.topology == rhs.topology
+            && lhs.rootGroup == rhs.rootGroup
+            && lhs.selectedPath == rhs.selectedPath
+            && lhs.delays == rhs.delays
+    }
+}
+
+private struct ProxyTopologyRenderModel {
+    let projection: ProxyTopologyProjection
+    let layout: ProxyTopologyLayout
+    let accessibilityDescriptions: [String: String]
+
+    init(
+        topology: ProxyTopology,
+        rootGroup: String,
+        selectedPath: ProxySelectionPath?,
+        delays: [String: Int]
+    ) {
         let projection = ProxyTopologyProjection(
             topology: topology,
             rootGroup: rootGroup,
             selectedPath: selectedPath,
             delays: delays
         )
-        let layout = ProxyTopologyLayout(projection: projection)
+        self.projection = projection
+        layout = ProxyTopologyLayout(projection: projection)
+        accessibilityDescriptions = Self.makeAccessibilityDescriptions(projection: projection)
+    }
+
+    private static func makeAccessibilityDescriptions(
+        projection: ProxyTopologyProjection
+    ) -> [String: String] {
+        var outgoing: [String: [String]] = [:]
+        var incoming: [String: [String]] = [:]
+
+        for edge in projection.edges {
+            outgoing[edge.source, default: []].append(outgoingDescription(edge))
+            incoming[edge.target, default: []].append(incomingDescription(edge))
+        }
+
+        return Dictionary(
+            uniqueKeysWithValues: projection.nodes.map { node in
+                var details = [node.title, node.subtitle]
+                if node.isSelectedPath { details.append("On the current route") }
+                details.append(contentsOf: outgoing[node.id, default: []])
+                details.append(contentsOf: incoming[node.id, default: []])
+                return (node.id, details.joined(separator: ". "))
+            }
+        )
+    }
+
+    private static func outgoingDescription(_ edge: ProxyTopologyDisplayEdge) -> String {
+        if edge.kind == .dialer {
+            return "Uses \(edge.target) as a dialer dependency"
+        }
+        if edge.isDialerPath {
+            return "Dialer path selects \(edge.target)"
+        }
+        if edge.isSelected {
+            return "Current route selects \(edge.target)"
+        }
+        return "Contains \(edge.target)"
+    }
+
+    private static func incomingDescription(_ edge: ProxyTopologyDisplayEdge) -> String {
+        if edge.kind == .dialer || edge.isDialerPath {
+            return "Dialer dependency from \(edge.source)"
+        }
+        if edge.isSelected {
+            return "Selected by \(edge.source) on the current route"
+        }
+        return "Member of \(edge.source)"
+    }
+}
+
+private struct ProxyTopologyInteractiveView: View {
+    let renderModel: ProxyTopologyRenderModel
+    let rootGroup: String
+    @Binding var focusedNodeName: String?
+    let openGroup: (String) -> Void
+    let showGroupList: (String) -> Void
+
+    @State private var zoom = 1.0
+    @State private var relationshipsExpanded = false
+    @GestureState private var magnification = 1.0
+
+    var body: some View {
+        let projection = renderModel.projection
+        let layout = renderModel.layout
 
         VStack(spacing: 0) {
             ViewThatFits(in: .horizontal) {
@@ -261,10 +378,8 @@ struct ProxyTopologyCanvas: View {
                 if let position = layout.positions[node.id] {
                     ProxyTopologyNodeView(
                         node: node,
-                        accessibilityDescription: nodeAccessibilityDescription(
-                            node,
-                            projection: projection
-                        ),
+                        accessibilityDescription: renderModel.accessibilityDescriptions[node.id]
+                            ?? "\(node.title). \(node.subtitle)",
                         isFocused: focusedNodeName == node.sourceName,
                         onFocus: { focusedNodeName = node.sourceName },
                         onOpenGroup: node.opensGroup ? {
@@ -284,38 +399,6 @@ struct ProxyTopologyCanvas: View {
             }
         }
         .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
-    }
-
-    private func nodeAccessibilityDescription(
-        _ node: ProxyTopologyDisplayNode,
-        projection: ProxyTopologyProjection
-    ) -> String {
-        var details = [node.title, node.subtitle]
-        if node.isSelectedPath { details.append("On the current route") }
-
-        for edge in projection.edges where edge.source == node.id {
-            if edge.kind == .dialer {
-                details.append("Uses \(edge.target) as a dialer dependency")
-            } else if edge.isDialerPath {
-                details.append("Dialer path selects \(edge.target)")
-            } else if edge.isSelected {
-                details.append("Current route selects \(edge.target)")
-            } else {
-                details.append("Contains \(edge.target)")
-            }
-        }
-        for edge in projection.edges where edge.target == node.id {
-            if edge.kind == .dialer {
-                details.append("Dialer dependency from \(edge.source)")
-            } else if edge.isDialerPath {
-                details.append("Dialer dependency from \(edge.source)")
-            } else if edge.isSelected {
-                details.append("Selected by \(edge.source) on the current route")
-            } else {
-                details.append("Member of \(edge.source)")
-            }
-        }
-        return details.joined(separator: ". ")
     }
 }
 

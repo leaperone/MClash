@@ -75,7 +75,6 @@ final class AppModel {
         case providers
         case connections
         case logs
-        case settings
 
         var id: Self { self }
 
@@ -88,7 +87,6 @@ final class AppModel {
             case .providers: "Providers"
             case .connections: "Connections"
             case .logs: "Logs"
-            case .settings: "Settings"
             }
         }
 
@@ -101,7 +99,6 @@ final class AppModel {
             case .providers: "shippingbox"
             case .connections: "arrow.left.arrow.right"
             case .logs: "text.alignleft"
-            case .settings: "gearshape"
             }
         }
     }
@@ -119,15 +116,28 @@ final class AppModel {
     var proxyTopology: ProxyTopology = .empty
     var proxySelectionPaths: [String: ProxySelectionPath] = [:]
     var proxyDelays: [String: Int] = [:]
-    var rules: [MihomoRule] = []
+    var rules: [MihomoRule] = [] {
+        didSet {
+            rulesUseGlobalProxy = rules.contains { $0.proxy == "GLOBAL" }
+            updateGlobalProxyGroupRelevance()
+        }
+    }
     var proxyProviders: [MihomoProxyProvider] = []
     var ruleProviders: [MihomoRuleProvider] = []
     var rulesErrorMessage: String?
     var providersErrorMessage: String?
     var traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
     var trafficHistory: [TrafficSample] = []
-    var connections: MihomoConnectionSnapshot?
+    var connections: MihomoConnectionSnapshot? {
+        didSet {
+            connectionsUseGlobalProxy = connections?.connections.contains {
+                $0.chains.contains("GLOBAL")
+            } == true
+            updateGlobalProxyGroupRelevance()
+        }
+    }
     var routeTrafficEntries: [TrafficAttribution.Entry] = []
+    private(set) var globalProxyGroupIsRelevant = false
     var systemProxyState: SystemProxyState = .off
     var controllerState: ControllerState = .idle
     var autoEnableSystemProxy: Bool {
@@ -155,6 +165,8 @@ final class AppModel {
     private let localPortProbe: LocalPortProbe
     private let preferenceDefaults: UserDefaults
     private var managedMixedPort: Int?
+    private var rulesUseGlobalProxy = false
+    private var connectionsUseGlobalProxy = false
     private var apiClient: MihomoAPIClient?
     private var activeControllerEndpoint: URL?
     private var controllerSetupOperation: (id: UUID, endpoint: URL, task: Task<Void, Never>)?
@@ -1196,10 +1208,7 @@ final class AppModel {
                 Task { [weak self] in await self?.handleRunningSession(session) }
             }
         case let .log(line):
-            logs.append(line)
-            if logs.count > 1_500 {
-                logs.removeFirst(logs.count - 1_500)
-            }
+            appendCoreLog(line)
         }
     }
 
@@ -1775,13 +1784,18 @@ final class AppModel {
         case "global":
             return proxiesByName["GLOBAL"].map { [$0] } ?? []
         default:
-            let globalIsUsed = rules.contains(where: { $0.proxy == "GLOBAL" })
-                || connections?.connections.contains(where: { $0.chains.contains("GLOBAL") }) == true
-            guard globalIsUsed,
+            guard globalProxyGroupIsRelevant,
                   let global = proxiesByName["GLOBAL"] else {
                 return proxyGroups
             }
             return proxyGroups + [global]
+        }
+    }
+
+    private func updateGlobalProxyGroupRelevance() {
+        let next = rulesUseGlobalProxy || connectionsUseGlobalProxy
+        if globalProxyGroupIsRelevant != next {
+            globalProxyGroupIsRelevant = next
         }
     }
 
@@ -1922,7 +1936,9 @@ final class AppModel {
     private func appendCoreLog(_ line: CoreLogLine) {
         logs.append(line)
         if logs.count > 1_500 {
-            logs.removeFirst(logs.count - 1_500)
+            // Trim in batches so a noisy core does not shift the full observable array
+            // for every line after reaching the display limit.
+            logs.removeFirst(logs.count - 1_350)
         }
     }
 

@@ -6,8 +6,16 @@ struct ConnectionsView: View {
     @State private var debouncedSearchText = ""
     @State private var selectedConnectionID: String?
     @State private var sortOrder: [KeyPathComparator<ConnectionTableRow>] = []
+    @State private var inspectorPresented = false
 
     var body: some View {
+        let presentation = ConnectionPresentationSnapshot(
+            snapshot: model.connections,
+            searchText: debouncedSearchText,
+            selectedConnectionID: selectedConnectionID,
+            sortOrder: sortOrder
+        )
+
         Group {
             if !model.isConnected {
                 ContentUnavailableView(
@@ -15,27 +23,25 @@ struct ConnectionsView: View {
                     systemImage: "arrow.left.arrow.right",
                     description: Text("Live connections are streamed from the local Alpha controller.")
                 )
-            } else if model.connections?.connections.isEmpty != false {
+            } else if !presentation.hasConnections {
                 ContentUnavailableView(
                     "No active connections",
                     systemImage: "checkmark.circle",
                     description: Text("New network connections will appear here automatically.")
                 )
-            } else if tableRows.isEmpty {
+            } else if presentation.rows.isEmpty {
                 ContentUnavailableView.search(text: searchText)
             } else {
-                HSplitView {
-                    connectionTable
-                        .frame(minWidth: 420, maxWidth: .infinity)
-
-                    connectionDetail
-                        .frame(minWidth: 240, idealWidth: 320, maxWidth: 400)
-                }
+                connectionTable(rows: presentation.rows)
             }
         }
         .navigationTitle("Connections")
         .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
+        .inspector(isPresented: $inspectorPresented) {
+            connectionInspector(presentation.selectedConnection)
+                .inspectorColumnWidth(min: 280, ideal: 340, max: 440)
+        }
         .task(id: searchText) {
             do {
                 try await Task.sleep(for: .milliseconds(180))
@@ -44,13 +50,15 @@ struct ConnectionsView: View {
                 return
             }
         }
-        .onChange(of: visibleConnectionIDs) { _, ids in
-            guard let selectedConnectionID, !ids.contains(selectedConnectionID) else { return }
+        .onChange(of: presentation.selectedConnectionIsVisible) { _, isVisible in
+            guard selectedConnectionID != nil, !isVisible else { return }
             self.selectedConnectionID = nil
+            inspectorPresented = false
         }
         .onChange(of: model.isConnected) { _, isConnected in
             if !isConnected {
                 selectedConnectionID = nil
+                inspectorPresented = false
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -72,19 +80,28 @@ struct ConnectionsView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Text(connectionCountLabel)
+                Text(presentation.connectionCountLabel)
                     .foregroundStyle(.secondary)
 
-                if let snapshot = model.connections {
-                    Label(formattedByteCount(snapshot.downloadTotal), systemImage: "arrow.down")
+                if let downloadTotal = presentation.downloadTotal,
+                   let uploadTotal = presentation.uploadTotal {
+                    Label(formattedByteCount(downloadTotal), systemImage: "arrow.down")
                         .font(.callout.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .help("Session download")
-                    Label(formattedByteCount(snapshot.uploadTotal), systemImage: "arrow.up")
+                    Label(formattedByteCount(uploadTotal), systemImage: "arrow.up")
                         .font(.callout.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .help("Session upload")
                 }
+
+                Button {
+                    inspectorPresented.toggle()
+                } label: {
+                    Label("Connection Inspector", systemImage: "sidebar.right")
+                }
+                .disabled(presentation.selectedConnection == nil)
+                .help(inspectorPresented ? "Hide Connection Inspector" : "Show Connection Inspector")
 
                 Button {
                     Task { await model.closeAllConnections() }
@@ -97,7 +114,7 @@ struct ConnectionsView: View {
                     }
                 }
                 .disabled(
-                    model.connections?.connections.isEmpty != false
+                    !presentation.hasConnections
                         || !model.canPerform(.closeAllConnections)
                 )
                 .help("Close every active connection")
@@ -105,8 +122,8 @@ struct ConnectionsView: View {
         }
     }
 
-    private var connectionTable: some View {
-        Table(tableRows, selection: $selectedConnectionID, sortOrder: $sortOrder) {
+    private func connectionTable(rows: [ConnectionTableRow]) -> some View {
+        Table(rows, selection: $selectedConnectionID, sortOrder: $sortOrder) {
             TableColumn("Destination", value: \.destination) { row in
                 Text(row.destination)
                     .lineLimit(1)
@@ -176,9 +193,9 @@ struct ConnectionsView: View {
     }
 
     @ViewBuilder
-    private var connectionDetail: some View {
-        if let selectedConnection {
-            ConnectionDetailView(model: model, connection: selectedConnection)
+    private func connectionInspector(_ connection: MihomoConnection?) -> some View {
+        if let connection {
+            ConnectionDetailView(model: model, connection: connection)
         } else {
             ContentUnavailableView(
                 "Select a connection",
@@ -187,47 +204,69 @@ struct ConnectionsView: View {
             )
         }
     }
+}
 
-    private var tableRows: [ConnectionTableRow] {
-        var rows = filteredConnections.map(ConnectionTableRow.init)
-        if sortOrder.isEmpty {
-            rows.sort {
-                if $0.start == $1.start { return $0.id < $1.id }
-                return $0.start > $1.start
+private struct ConnectionPresentationSnapshot {
+    let rows: [ConnectionTableRow]
+    let selectedConnection: MihomoConnection?
+    let totalConnectionCount: Int
+    let downloadTotal: Int64?
+    let uploadTotal: Int64?
+    let isFiltering: Bool
+    let selectedConnectionIDWasNil: Bool
+
+    init(
+        snapshot: MihomoConnectionSnapshot?,
+        searchText: String,
+        selectedConnectionID: String?,
+        sortOrder: [KeyPathComparator<ConnectionTableRow>]
+    ) {
+        let connections = snapshot?.connections ?? []
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isFiltering = !query.isEmpty
+        var rows: [ConnectionTableRow] = []
+        rows.reserveCapacity(connections.count)
+        var selectedConnection: MihomoConnection?
+
+        for connection in connections {
+            let row = ConnectionTableRow(connection)
+            guard !isFiltering || connectionMatchesSearch(connection, row: row, query: query) else {
+                continue
             }
-        } else {
+            rows.append(row)
+            if connection.id == selectedConnectionID {
+                selectedConnection = connection
+            }
+        }
+
+        // AppModel already publishes connections in newest-first order. Only apply another
+        // sort when the user explicitly selects a Table sort descriptor.
+        if !sortOrder.isEmpty {
             rows.sort(using: sortOrder)
         }
-        return rows
+
+        self.rows = rows
+        self.selectedConnection = selectedConnection
+        totalConnectionCount = connections.count
+        downloadTotal = snapshot?.downloadTotal
+        uploadTotal = snapshot?.uploadTotal
+        self.isFiltering = isFiltering
+        selectedConnectionIDWasNil = selectedConnectionID == nil
     }
 
-    private var filteredConnections: [MihomoConnection] {
-        let connections = model.connections?.connections ?? []
-        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return connections }
-        return connections.filter { connection in
-            connectionSearchValues(connection).contains {
-                $0.localizedCaseInsensitiveContains(query)
-            }
+    var hasConnections: Bool {
+        totalConnectionCount > 0
+    }
+
+    var selectedConnectionIsVisible: Bool {
+        selectedConnectionIDWasNil || selectedConnection != nil
+    }
+
+    var connectionCountLabel: String {
+        if !isFiltering {
+            return "\(formattedCount(totalConnectionCount)) active"
         }
-    }
-
-    private var selectedConnection: MihomoConnection? {
-        guard let selectedConnectionID else { return nil }
-        return model.connections?.connections.first { $0.id == selectedConnectionID }
-    }
-
-    private var visibleConnectionIDs: [String] {
-        filteredConnections.map(\.id)
-    }
-
-    private var connectionCountLabel: String {
-        let total = model.connections?.connections.count ?? 0
-        let visible = filteredConnections.count
-        if debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "\(formattedCount(total)) active"
-        }
-        return "\(formattedCount(visible)) of \(formattedCount(total)) active"
+        return "\(formattedCount(rows.count)) of \(formattedCount(totalConnectionCount)) active"
     }
 }
 
@@ -467,31 +506,39 @@ private struct ConnectionDetailRow: View {
     }
 }
 
-private func connectionSearchValues(_ connection: MihomoConnection) -> [String] {
+private func connectionMatchesSearch(
+    _ connection: MihomoConnection,
+    row: ConnectionTableRow,
+    query: String
+) -> Bool {
     let metadata = connection.metadata
-    return [
-        connectionDestination(connection),
-        metadata.host,
-        metadata.sniffHost,
-        metadata.destinationIP,
-        metadata.destinationPort,
-        metadata.remoteDestination,
-        metadata.sourceIP,
-        metadata.sourcePort,
-        metadata.process,
-        metadata.processPath,
-        metadata.inboundName,
-        metadata.inboundUser,
-        metadata.network,
-        metadata.type,
-        connection.rule,
-        connection.rulePayload,
-        metadata.specialProxy,
-        metadata.specialRules,
-    ]
-    .compactMap(nonEmpty)
-    + connection.chains
-    + connection.providerChains
+
+    func matches(_ value: String?) -> Bool {
+        guard let value = nonEmpty(value) else { return false }
+        return value.localizedCaseInsensitiveContains(query)
+    }
+
+    return row.destination.localizedCaseInsensitiveContains(query)
+        || row.process.localizedCaseInsensitiveContains(query)
+        || row.chain.localizedCaseInsensitiveContains(query)
+        || row.rule.localizedCaseInsensitiveContains(query)
+        || matches(metadata.host)
+        || matches(metadata.sniffHost)
+        || matches(metadata.destinationIP)
+        || matches(metadata.destinationPort)
+        || matches(metadata.remoteDestination)
+        || matches(metadata.sourceIP)
+        || matches(metadata.sourcePort)
+        || matches(metadata.processPath)
+        || matches(metadata.inboundName)
+        || matches(metadata.inboundUser)
+        || matches(metadata.network)
+        || matches(metadata.type)
+        || matches(connection.rulePayload)
+        || matches(metadata.specialProxy)
+        || matches(metadata.specialRules)
+        || connection.chains.contains { $0.localizedCaseInsensitiveContains(query) }
+        || connection.providerChains.contains { $0.localizedCaseInsensitiveContains(query) }
 }
 
 private func connectionDestination(_ connection: MihomoConnection) -> String {

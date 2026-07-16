@@ -3,30 +3,24 @@ import SwiftUI
 
 struct OverviewView: View {
     @Bindable var model: AppModel
+    @State private var layout: OverviewLayout = .wide
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MClashLayout.sectionSpacing) {
-                networkStateSection
-
-                if model.liveMetricsAreDegraded {
-                    liveDataNotice
-                }
-
-                liveSessionSection
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: MClashLayout.sectionSpacing) {
-                        trafficChartSection
-                            .frame(minWidth: 520, maxWidth: .infinity)
-                        sessionDetailsSection
-                            .frame(minWidth: 310, idealWidth: 350, maxWidth: 390)
-                    }
-
-                    VStack(alignment: .leading, spacing: MClashLayout.sectionSpacing) {
-                        trafficChartSection
-                        sessionDetailsSection
-                    }
+                OverviewNetworkStateSection(model: model, layout: layout)
+                OverviewLiveDataNotice(model: model)
+                OverviewMetricsSection(model: model, layout: layout)
+                primaryContent
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear
+                        .onAppear { updateLayout(for: geometry.size.width) }
+                        .onChange(of: geometry.size.width) { _, width in
+                            updateLayout(for: width)
+                        }
                 }
             }
             .padding(.horizontal, MClashLayout.pagePadding)
@@ -38,15 +32,84 @@ struct OverviewView: View {
         .mclashPageSurface()
     }
 
-    private var networkStateSection: some View {
-        GroupBox {
+    private var primaryContent: some View {
+        let contentLayout = layout == .wide
+            ? AnyLayout(HStackLayout(alignment: .top, spacing: MClashLayout.sectionSpacing))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: MClashLayout.sectionSpacing))
+
+        return contentLayout {
+            OverviewTrafficSection(model: model)
+                .frame(minWidth: layout == .wide ? 500 : nil, maxWidth: .infinity, alignment: .topLeading)
+
+            Divider()
+
+            OverviewSessionDetailsSection(
+                model: model,
+                presentation: layout.detailsPresentation
+            )
+            .frame(width: layout == .wide ? 320 : nil, alignment: .topLeading)
+        }
+    }
+
+    private func updateLayout(for width: CGFloat) {
+        let nextLayout = OverviewLayout(width: width)
+        if layout != nextLayout {
+            layout = nextLayout
+        }
+    }
+}
+
+private enum OverviewLayout: Equatable {
+    case compact
+    case singleColumn
+    case wide
+
+    init(width: CGFloat) {
+        switch width {
+        case ..<620: self = .compact
+        case ..<880: self = .singleColumn
+        default: self = .wide
+        }
+    }
+
+    var metricColumnCount: Int {
+        switch self {
+        case .compact: 2
+        case .singleColumn: 3
+        case .wide: 5
+        }
+    }
+
+    var stateRowsAreInline: Bool {
+        self != .compact
+    }
+
+    var detailsPresentation: OverviewDetailPresentation {
+        self == .singleColumn ? .row : .stacked
+    }
+}
+
+private enum OverviewDetailPresentation {
+    case row
+    case stacked
+}
+
+private struct OverviewNetworkStateSection: View {
+    @Bindable var model: AppModel
+    let layout: OverviewLayout
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            OverviewSectionHeader(title: "Network State", symbol: "network")
+
             VStack(spacing: 0) {
-                StateRow(
+                OverviewStateRow(
                     title: "mihomo Core",
                     status: coreStatusTitle,
                     description: coreStatusDescription,
                     symbol: coreStatusSymbol,
-                    color: coreStatusColor
+                    color: coreStatusColor,
+                    isInline: layout.stateRowsAreInline
                 ) {
                     Button {
                         Task { await model.toggleConnection() }
@@ -67,14 +130,15 @@ struct OverviewView: View {
                 }
 
                 Divider()
-                    .padding(.leading, 42)
+                    .padding(.leading, layout.stateRowsAreInline ? 58 : 16)
 
-                StateRow(
+                OverviewStateRow(
                     title: "macOS System Proxy",
                     status: systemProxyStatusTitle,
                     description: systemProxyStatusDescription,
                     symbol: systemProxyStatusSymbol,
-                    color: systemProxyStatusColor
+                    color: systemProxyStatusColor,
+                    isInline: layout.stateRowsAreInline
                 ) {
                     Button(systemProxyActionTitle) {
                         Task {
@@ -95,314 +159,11 @@ struct OverviewView: View {
                     )
                 }
             }
-            .padding(.vertical, 2)
-        } label: {
-            Label("Network State", systemImage: "network")
-        }
-    }
-
-    private var liveDataNotice: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.clockwise")
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Live data is reconnecting")
-                    .font(.callout.weight(.medium))
-                Text("Traffic, memory, or connection totals may be temporarily stale.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button("View Logs") { model.selection = .logs }
-                .controlSize(.small)
-        }
-        .padding(12)
-        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.orange.opacity(0.2))
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    private var liveSessionSection: some View {
-        GroupBox {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    downloadMetric
-                    metricDivider
-                    uploadMetric
-                    metricDivider
-                    connectionMetric
-                    metricDivider
-                    trafficMetric
-                    metricDivider
-                    memoryMetric
-                }
-
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 140), spacing: 16)],
-                    alignment: .leading,
-                    spacing: 14
-                ) {
-                    downloadMetric
-                    uploadMetric
-                    connectionMetric
-                    trafficMetric
-                    memoryMetric
-                }
-            }
-            .padding(.vertical, 6)
-        } label: {
-            Label("Live Session", systemImage: "waveform.path.ecg")
-        }
-    }
-
-    private var downloadMetric: some View {
-        MetricCell(
-            title: "Download",
-            value: formattedByteRate(model.traffic.download),
-            symbol: "arrow.down",
-            color: .blue
-        )
-    }
-
-    private var uploadMetric: some View {
-        MetricCell(
-            title: "Upload",
-            value: formattedByteRate(model.traffic.upload),
-            symbol: "arrow.up",
-            color: .orange
-        )
-    }
-
-    private var connectionMetric: some View {
-        MetricCell(
-            title: "Connections",
-            value: formattedCount(model.connections?.connections.count ?? 0),
-            symbol: "arrow.left.arrow.right",
-            color: .primary
-        )
-    }
-
-    private var trafficMetric: some View {
-        MetricCell(
-            title: "Session Traffic",
-            value: totalTraffic,
-            symbol: "sum",
-            color: .primary
-        )
-    }
-
-    private var memoryMetric: some View {
-        MetricCell(
-            title: "Memory",
-            value: memoryUsage,
-            symbol: "memorychip",
-            color: .primary
-        )
-    }
-
-    private var metricDivider: some View {
-        Divider()
-            .frame(height: 42)
-    }
-
-    private var trafficChartSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 18) {
-                    TrafficLegendItem(
-                        title: "Download",
-                        value: formattedByteRate(model.traffic.download),
-                        color: .blue
-                    )
-                    TrafficLegendItem(
-                        title: "Upload",
-                        value: formattedByteRate(model.traffic.upload),
-                        color: .orange
-                    )
-                    Spacer()
-                    Text("Recent activity")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if model.trafficHistory.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "chart.xyaxis.line")
-                            .font(.title2)
-                            .foregroundStyle(.tertiary)
-                            .accessibilityHidden(true)
-                        Text(model.isConnected ? "Waiting for traffic samples…" : "Connect to view live traffic")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 190)
-                } else {
-                    Chart(model.trafficHistory, id: \.timestamp) { sample in
-                        AreaMark(
-                            x: .value("Time", sample.timestamp),
-                            y: .value("Download", sample.download)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(Color.blue.opacity(0.08))
-
-                        LineMark(
-                            x: .value("Time", sample.timestamp),
-                            y: .value("Download", sample.download)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(.blue)
-                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-
-                        AreaMark(
-                            x: .value("Time", sample.timestamp),
-                            y: .value("Upload", sample.upload)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(Color.orange.opacity(0.07))
-
-                        LineMark(
-                            x: .value("Time", sample.timestamp),
-                            y: .value("Upload", sample.upload)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(.orange)
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-
-                        if model.trafficHistory.count == 1 {
-                            PointMark(
-                                x: .value("Time", sample.timestamp),
-                                y: .value("Download", sample.download)
-                            )
-                            .foregroundStyle(.blue)
-
-                            PointMark(
-                                x: .value("Time", sample.timestamp),
-                                y: .value("Upload", sample.upload)
-                            )
-                            .foregroundStyle(.orange)
-                        }
-                    }
-                    .chartYScale(domain: .automatic(includesZero: true))
-                    .chartXAxis {
-                        AxisMarks(values: .automatic(desiredCount: 4)) {
-                            AxisGridLine()
-                            AxisTick()
-                            AxisValueLabel(format: .dateTime.hour().minute().second())
-                        }
-                    }
-                    .chartYAxis {
-                        AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
-                            AxisGridLine()
-                            AxisTick()
-                            AxisValueLabel {
-                                if let bytes = value.as(Int64.self) {
-                                    Text(formattedByteRate(bytes))
-                                }
-                            }
-                        }
-                    }
-                    .frame(height: 220)
-                    .accessibilityLabel("Recent network traffic")
-                    .accessibilityValue(
-                        "Download \(formattedByteRate(model.traffic.download)), "
-                            + "upload \(formattedByteRate(model.traffic.upload))"
-                    )
-                }
-            }
-            .padding(.top, 4)
-        } label: {
-            Label("Traffic", systemImage: "chart.xyaxis.line")
-        }
-    }
-
-    private var sessionDetailsSection: some View {
-        GroupBox {
-            VStack(spacing: 0) {
-                DetailRow(title: "Profile") {
-                    HStack(spacing: 10) {
-                        Text(activeProfileName)
-                            .foregroundStyle(model.activeProfileID == nil ? .secondary : .primary)
-                            .lineLimit(1)
-                            .help(activeProfileName)
-                        Button("Manage…") { model.selection = .profiles }
-                            .controlSize(.small)
-                    }
-                }
-
-                detailDivider
-
-                DetailRow(title: "Routing Mode") {
-                    Text(routingMode)
-                }
-
-                detailDivider
-
-                DetailRow(title: "Primary Group") {
-                    HStack(spacing: 10) {
-                        Text(primaryGroupSelection)
-                            .lineLimit(1)
-                            .help(primaryGroupSelection)
-                        Button("Choose…") { model.selection = .proxies }
-                            .controlSize(.small)
-                            .disabled(!model.controllerIsReady)
-                    }
-                }
-
-                detailDivider
-
-                DetailRow(title: "HTTP Proxy") {
-                    addressText(model.localHTTPProxyAddress)
-                }
-
-                detailDivider
-
-                DetailRow(title: "SOCKS5 Proxy") {
-                    addressText(model.localSOCKSProxyAddress)
-                }
-
-                if let session = model.runningSession {
-                    detailDivider
-
-                    DetailRow(title: "Core Version") {
-                        Text(session.version)
-                            .monospaced()
-                            .textSelection(.enabled)
-                    }
-
-                    detailDivider
-
-                    DetailRow(title: "Session Started") {
-                        Text(session.startedAt.formatted(date: .abbreviated, time: .standard))
-                    }
-                }
-            }
-            .padding(.vertical, 2)
-        } label: {
-            Label("Configuration", systemImage: "slider.horizontal.3")
-        }
-    }
-
-    private var detailDivider: some View {
-        Divider()
-            .padding(.leading, 138)
-    }
-
-    @ViewBuilder
-    private func addressText(_ address: String?) -> some View {
-        if let address {
-            Text(address)
-                .monospaced()
-                .textSelection(.enabled)
-        } else {
-            Text("Unavailable")
-                .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .background(
+                Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
         }
     }
 
@@ -517,6 +278,307 @@ struct OverviewView: View {
             "Starts the local core with the active profile."
         }
     }
+}
+
+private struct OverviewLiveDataNotice: View {
+    @Bindable var model: AppModel
+
+    @ViewBuilder
+    var body: some View {
+        if model.liveMetricsAreDegraded {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.clockwise")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Live data is reconnecting")
+                        .font(.callout.weight(.medium))
+                    Text("Traffic, memory, or connection totals may be temporarily stale.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("View Logs") { model.selection = .logs }
+                    .controlSize(.small)
+            }
+            .padding(12)
+            .background(
+                Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .accessibilityElement(children: .contain)
+        }
+    }
+}
+
+private struct OverviewMetricsSection: View {
+    @Bindable var model: AppModel
+    let layout: OverviewLayout
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            OverviewSectionHeader(title: "Live Session", symbol: "waveform.path.ecg")
+
+            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 16) {
+                OverviewMetricCell(
+                    title: "Download",
+                    value: formattedByteRate(model.traffic.download),
+                    symbol: "arrow.down",
+                    color: .blue
+                )
+                OverviewMetricCell(
+                    title: "Upload",
+                    value: formattedByteRate(model.traffic.upload),
+                    symbol: "arrow.up",
+                    color: .orange
+                )
+                OverviewMetricCell(
+                    title: "Connections",
+                    value: formattedCount(model.connections?.connections.count ?? 0),
+                    symbol: "arrow.left.arrow.right",
+                    color: .primary
+                )
+                OverviewMetricCell(
+                    title: "Session Traffic",
+                    value: totalTraffic,
+                    symbol: "sum",
+                    color: .primary
+                )
+                OverviewMetricCell(
+                    title: "Memory",
+                    value: memoryUsage,
+                    symbol: "memorychip",
+                    color: .primary
+                )
+            }
+            .padding(.vertical, 14)
+            .overlay(alignment: .top) { Divider() }
+            .overlay(alignment: .bottom) { Divider() }
+        }
+    }
+
+    private var metricColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(minimum: 120), spacing: 16, alignment: .topLeading),
+            count: layout.metricColumnCount
+        )
+    }
+
+    private var totalTraffic: String {
+        formattedByteCount(
+            saturatingByteSum(model.traffic.uploadTotal, model.traffic.downloadTotal)
+        )
+    }
+
+    private var memoryUsage: String {
+        guard let memory = model.connections?.memory else { return "—" }
+        return formattedByteCount(Int64(clamping: memory), style: .memory)
+    }
+}
+
+private struct OverviewTrafficSection: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let samples = model.trafficHistory
+        let downloadRate = model.traffic.download
+        let uploadRate = model.traffic.upload
+
+        VStack(alignment: .leading, spacing: 14) {
+            OverviewSectionHeader(title: "Traffic", symbol: "chart.xyaxis.line")
+
+            HStack(spacing: 18) {
+                OverviewTrafficLegendItem(
+                    title: "Download",
+                    value: formattedByteRate(downloadRate),
+                    color: .blue
+                )
+                OverviewTrafficLegendItem(
+                    title: "Upload",
+                    value: formattedByteRate(uploadRate),
+                    color: .orange
+                )
+                Spacer()
+                Text("Recent activity")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if samples.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "chart.xyaxis.line")
+                        .font(.title2)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                    Text(model.isConnected ? "Waiting for traffic samples…" : "Connect to view live traffic")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 230)
+            } else {
+                Chart(samples, id: \.timestamp) { sample in
+                    AreaMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Download", sample.download)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(Color.blue.opacity(0.08))
+
+                    LineMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Download", sample.download)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+
+                    AreaMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Upload", sample.upload)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(Color.orange.opacity(0.07))
+
+                    LineMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Upload", sample.upload)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.orange)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+
+                    if samples.count == 1 {
+                        PointMark(
+                            x: .value("Time", sample.timestamp),
+                            y: .value("Download", sample.download)
+                        )
+                        .foregroundStyle(.blue)
+
+                        PointMark(
+                            x: .value("Time", sample.timestamp),
+                            y: .value("Upload", sample.upload)
+                        )
+                        .foregroundStyle(.orange)
+                    }
+                }
+                .chartYScale(domain: .automatic(includesZero: true))
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) {
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel(format: .dateTime.hour().minute().second())
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel {
+                            if let bytes = value.as(Int64.self) {
+                                Text(formattedByteRate(bytes))
+                            }
+                        }
+                    }
+                }
+                .frame(height: 250)
+                .accessibilityLabel("Recent network traffic")
+                .accessibilityValue(
+                    "Download \(formattedByteRate(downloadRate)), upload \(formattedByteRate(uploadRate))"
+                )
+            }
+        }
+    }
+}
+
+private struct OverviewSessionDetailsSection: View {
+    @Bindable var model: AppModel
+    let presentation: OverviewDetailPresentation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            OverviewSectionHeader(title: "Configuration", symbol: "slider.horizontal.3")
+
+            VStack(spacing: 0) {
+                OverviewDetailRow(title: "Profile", presentation: presentation) {
+                    HStack(spacing: 10) {
+                        Text(activeProfileName)
+                            .foregroundStyle(model.activeProfileID == nil ? .secondary : .primary)
+                            .lineLimit(1)
+                            .help(activeProfileName)
+                        Button("Manage…") { model.selection = .profiles }
+                            .controlSize(.small)
+                    }
+                }
+
+                detailDivider
+
+                OverviewDetailRow(title: "Routing Mode", presentation: presentation) {
+                    Text(routingMode)
+                }
+
+                detailDivider
+
+                OverviewDetailRow(title: "Primary Group", presentation: presentation) {
+                    HStack(spacing: 10) {
+                        Text(primaryGroupSelection)
+                            .lineLimit(1)
+                            .help(primaryGroupSelection)
+                        Button("Choose…") { model.selection = .proxies }
+                            .controlSize(.small)
+                            .disabled(!model.controllerIsReady)
+                    }
+                }
+
+                detailDivider
+
+                OverviewDetailRow(title: "HTTP Proxy", presentation: presentation) {
+                    addressText(model.localHTTPProxyAddress)
+                }
+
+                detailDivider
+
+                OverviewDetailRow(title: "SOCKS5 Proxy", presentation: presentation) {
+                    addressText(model.localSOCKSProxyAddress)
+                }
+
+                if let session = model.runningSession {
+                    detailDivider
+
+                    OverviewDetailRow(title: "Core Version", presentation: presentation) {
+                        Text(session.version)
+                            .monospaced()
+                            .textSelection(.enabled)
+                    }
+
+                    detailDivider
+
+                    OverviewDetailRow(title: "Session Started", presentation: presentation) {
+                        Text(session.startedAt.formatted(date: .abbreviated, time: .standard))
+                    }
+                }
+            }
+        }
+    }
+
+    private var detailDivider: some View {
+        Divider()
+            .padding(.leading, presentation == .row ? 138 : 0)
+    }
+
+    @ViewBuilder
+    private func addressText(_ address: String?) -> some View {
+        if let address {
+            Text(address)
+                .monospaced()
+                .textSelection(.enabled)
+        } else {
+            Text("Unavailable")
+                .foregroundStyle(.secondary)
+        }
+    }
 
     private var activeProfileName: String {
         model.activeProfile?.name ?? "Not selected"
@@ -539,25 +601,27 @@ struct OverviewView: View {
         guard let group = global ?? model.proxyGroups.first else { return "Unavailable" }
         return "\(group.name) → \(group.now ?? "Not selected")"
     }
+}
 
-    private var totalTraffic: String {
-        formattedByteCount(
-            saturatingByteSum(model.traffic.uploadTotal, model.traffic.downloadTotal)
-        )
-    }
+private struct OverviewSectionHeader: View {
+    let title: String
+    let symbol: String
 
-    private var memoryUsage: String {
-        guard let memory = model.connections?.memory else { return "—" }
-        return formattedByteCount(Int64(clamping: memory), style: .memory)
+    var body: some View {
+        Label(title, systemImage: symbol)
+            .font(.headline)
+            .foregroundStyle(.primary)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
-private struct StateRow<Action: View>: View {
+private struct OverviewStateRow<Action: View>: View {
     let title: String
     let status: String
     let description: String
     let symbol: String
     let color: Color
+    let isInline: Bool
     @ViewBuilder let action: () -> Action
 
     init(
@@ -566,6 +630,7 @@ private struct StateRow<Action: View>: View {
         description: String,
         symbol: String,
         color: Color,
+        isInline: Bool,
         @ViewBuilder action: @escaping () -> Action
     ) {
         self.title = title
@@ -573,36 +638,32 @@ private struct StateRow<Action: View>: View {
         self.description = description
         self.symbol = symbol
         self.color = color
+        self.isInline = isInline
         self.action = action
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 12) {
-                stateIcon
-                stateDescription
-                Spacer(minLength: 16)
-                action()
-            }
-            .frame(minWidth: 560)
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .center, spacing: 10) {
+        Group {
+            if isInline {
+                HStack(alignment: .center, spacing: 12) {
                     stateIcon
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(.headline)
-                        Text(status)
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(color)
-                    }
-                    Spacer(minLength: 8)
+                    stateDescription
+                    Spacer(minLength: 16)
                     action()
                 }
-                Text(description)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .center, spacing: 10) {
+                        stateIcon
+                        stateTitle
+                        Spacer(minLength: 8)
+                        action()
+                    }
+                    Text(description)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(.vertical, 12)
@@ -615,6 +676,16 @@ private struct StateRow<Action: View>: View {
             .foregroundStyle(color)
             .frame(width: 30)
             .accessibilityHidden(true)
+    }
+
+    private var stateTitle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.headline)
+            Text(status)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(color)
+        }
     }
 
     private var stateDescription: some View {
@@ -634,27 +705,7 @@ private struct StateRow<Action: View>: View {
     }
 }
 
-private extension StateRow where Action == EmptyView {
-    init(
-        title: String,
-        status: String,
-        description: String,
-        symbol: String,
-        color: Color
-    ) {
-        self.init(
-            title: title,
-            status: status,
-            description: description,
-            symbol: symbol,
-            color: color
-        ) {
-            EmptyView()
-        }
-    }
-}
-
-private struct MetricCell: View {
+private struct OverviewMetricCell: View {
     let title: String
     let value: String
     let symbol: String
@@ -679,7 +730,7 @@ private struct MetricCell: View {
     }
 }
 
-private struct TrafficLegendItem: View {
+private struct OverviewTrafficLegendItem: View {
     let title: String
     let value: String
     let color: Color
@@ -701,25 +752,28 @@ private struct TrafficLegendItem: View {
     }
 }
 
-private struct DetailRow<Value: View>: View {
+private struct OverviewDetailRow<Value: View>: View {
     let title: String
+    let presentation: OverviewDetailPresentation
     @ViewBuilder let value: () -> Value
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline, spacing: 20) {
-                Text(title)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 118, alignment: .leading)
-                value()
-                Spacer(minLength: 0)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                value()
+        Group {
+            if presentation == .row {
+                HStack(alignment: .firstTextBaseline, spacing: 20) {
+                    Text(title)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 118, alignment: .leading)
+                    value()
+                    Spacer(minLength: 0)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    value()
+                }
             }
         }
         .padding(.vertical, 9)

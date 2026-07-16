@@ -20,8 +20,8 @@ struct MenuBarContent: View {
                         connectedControls
                     }
 
-                    if let errorMessage = model.errorMessage {
-                        inlineError(errorMessage)
+                    if let issueMessage {
+                        inlineError(issueMessage)
                     }
                 }
                 .padding(16)
@@ -36,7 +36,7 @@ struct MenuBarContent: View {
         }
         // MenuBarExtra windows cannot infer a useful intrinsic height from ScrollView content.
         // An explicit popover size keeps the entire quick-control surface visible on every launch.
-        .frame(width: 360, height: 600)
+        .frame(width: 360, height: 440)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("MClash quick controls")
     }
@@ -59,20 +59,6 @@ struct MenuBarContent: View {
             }
 
             Spacer(minLength: 8)
-
-            if model.isConnected {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Label(formattedByteRate(model.traffic.download), systemImage: "arrow.down")
-                    Label(formattedByteRate(model.traffic.upload), systemImage: "arrow.up")
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .labelStyle(.titleAndIcon)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    "Download \(formattedByteRate(model.traffic.download)), upload \(formattedByteRate(model.traffic.upload))"
-                )
-            }
         }
     }
 
@@ -169,16 +155,6 @@ struct MenuBarContent: View {
             )
             .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
 
-            if !model.systemProxyEnabled {
-                Label(
-                    "Core is running; other apps will use MClash after System Proxy is enabled.",
-                    systemImage: "info.circle"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
             VStack(alignment: .leading, spacing: 7) {
                 Text("Routing Mode")
                     .font(.caption)
@@ -197,10 +173,6 @@ struct MenuBarContent: View {
                 )
             }
 
-            if model.controllerIsReady {
-                proxyEndpointSummary
-            }
-
             if model.controllerState == .loading {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -209,83 +181,17 @@ struct MenuBarContent: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-            } else if model.controllerIsReady, !quickProxyGroups.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Proxy Groups")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        if quickProxyGroups.count > 3 {
-                            Button("Show All") {
-                                showMainWindow(destination: .proxies)
-                            }
-                            .buttonStyle(.link)
-                            .controlSize(.small)
-                        }
-                    }
-
-                    ForEach(Array(quickProxyGroups.prefix(3)), id: \.name) { group in
-                        ProxyGroupQuickControl(model: model, group: group)
-                    }
-                }
             }
 
-            if model.liveMetricsAreDegraded {
-                Label("Live metrics interrupted · reconnecting", systemImage: "arrow.clockwise")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-
-            HStack(spacing: 12) {
-                Button("Connections") {
-                    showMainWindow(destination: .connections)
-                }
-                .buttonStyle(.link)
-
-                Text("\(formattedCount(model.connections?.connections.count ?? 0)) active")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Button {
-                    Task { await model.restartConnection() }
-                } label: {
-                    Label("Restart", systemImage: "arrow.clockwise")
-                }
-                .controlSize(.small)
-                .disabled(model.networkStateTransitionInProgress)
-
-                if model.connections?.connections.isEmpty == false {
-                    Button("Close All") {
-                        Task { await model.closeAllConnections() }
-                    }
-                    .controlSize(.small)
-                    .disabled(
-                        !model.canPerform(.closeAllConnections)
-                    )
-                }
-            }
-        }
-    }
-
-    private var proxyEndpointSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Local Proxy")
+            if !model.systemProxyEnabled, model.controllerIsReady {
+                Label(
+                    "Enable System Proxy to route macOS apps through MClash.",
+                    systemImage: "info.circle"
+                )
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            ProxyEndpointRow(
-                label: "HTTP",
-                address: model.localHTTPProxyAddress,
-                symbol: "globe"
-            )
-            ProxyEndpointRow(
-                label: "SOCKS5",
-                address: model.localSOCKSProxyAddress,
-                symbol: "point.3.connected.trianglepath.dotted"
-            )
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -295,6 +201,7 @@ struct MenuBarContent: View {
             Label {
                 Text(message)
                     .lineLimit(3)
+                    .help(message)
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
@@ -319,10 +226,14 @@ struct MenuBarContent: View {
                     .disabled(model.isPerforming(.changeSystemProxy))
                 }
                 Button("View Logs") {
-                    model.errorMessage = nil
+                    if !model.systemProxyRecoveryRequired {
+                        model.errorMessage = nil
+                    }
                     showMainWindow(destination: .logs)
                 }
-                Button("Dismiss") { model.errorMessage = nil }
+                if !model.systemProxyRecoveryRequired, model.errorMessage != nil {
+                    Button("Dismiss") { model.errorMessage = nil }
+                }
             }
             .controlSize(.small)
         }
@@ -353,8 +264,11 @@ struct MenuBarContent: View {
         )
     }
 
-    private var quickProxyGroups: [MihomoProxy] {
-        model.proxyGroups(forRoutingMode: model.runtimeConfig?.mode ?? "rule")
+    private var issueMessage: String? {
+        if case let .failed(message) = model.systemProxyState { return message }
+        if let message = model.errorMessage { return message }
+        if case let .degraded(message) = model.controllerState { return message }
+        return nil
     }
 
     private var connectionOperationInProgress: Bool {
@@ -437,144 +351,5 @@ struct MenuBarContent: View {
         model.selection = destination
         openWindow(id: "main")
         NSApplication.shared.activate(ignoringOtherApps: true)
-    }
-}
-
-private struct ProxyEndpointRow: View {
-    let label: String
-    let address: String?
-    let symbol: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Label(label, systemImage: symbol)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(address ?? "Unavailable")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(address == nil ? .secondary : .primary)
-            if let address {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(address, forType: .string)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(.borderless)
-                .help("Copy \(label) proxy address")
-                .accessibilityLabel("Copy \(label) proxy address")
-            }
-        }
-        .font(.caption)
-    }
-}
-
-private struct ProxyGroupQuickControl: View {
-    @Bindable var model: AppModel
-    let group: MihomoProxy
-    @State private var showingNodePicker = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(group.name)
-                    .font(.callout)
-                    .lineLimit(1)
-                    .help(group.name)
-                HStack(spacing: 5) {
-                    Text(group.now ?? "Not selected")
-                        .lineLimit(1)
-                        .help(group.now ?? "Not selected")
-                    if group.fixedOverride != nil {
-                        Image(systemName: "pin.fill")
-                            .foregroundStyle(.orange)
-                            .help("Automatic selection is pinned")
-                    }
-                    if let selected = group.now,
-                       let delay = model.proxyDelay(for: selected, in: group.name)
-                            ?? historyDelay(selected) {
-                        Text("· \(delay) ms")
-                            .monospacedDigit()
-                            .foregroundStyle(delayColor(delay))
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 8)
-
-            if let selected = group.now {
-                Button {
-                    Task {
-                        _ = await model.measureDelay(proxy: selected, group: group.name)
-                    }
-                } label: {
-                    if model.isPerforming(.measureDelay(selected)) {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "speedometer")
-                    }
-                }
-                .buttonStyle(.borderless)
-                .help("Test selected node latency")
-                .accessibilityLabel("Test \(selected) latency")
-                .disabled(
-                    !model.canPerform(.measureDelay(selected))
-                )
-            }
-
-            Button {
-                showingNodePicker = true
-            } label: {
-                if model.isPerforming(.selectProxy(group.name)) {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: "chevron.up.chevron.down")
-                }
-            }
-            .buttonStyle(.borderless)
-            .help("Choose node for \(group.name)")
-            .accessibilityLabel("Choose node for \(group.name)")
-            .disabled(
-                group.groupBehavior?.supportsSelectionUpdate != true
-                    || !model.canPerform(.selectProxy(group.name))
-            )
-            .popover(isPresented: $showingNodePicker, arrowEdge: .trailing) {
-                ProxyNodePicker(
-                    model: model,
-                    group: group,
-                    isPresented: $showingNodePicker
-                )
-            }
-
-            if group.fixedOverride != nil,
-               group.groupBehavior?.supportsClearingOverride == true {
-                Button {
-                    Task { _ = await model.clearProxyOverride(group: group.name) }
-                } label: {
-                    Image(systemName: "pin.slash")
-                }
-                .buttonStyle(.borderless)
-                .help("Resume automatic selection")
-                .accessibilityLabel("Resume automatic selection for \(group.name)")
-                .disabled(!model.canPerform(.clearProxyOverride(group.name)))
-            }
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    private func historyDelay(_ selected: String) -> Int? {
-        guard selected == group.now else { return nil }
-        return group.history.last?.delay
-    }
-
-    private func delayColor(_ delay: Int) -> Color {
-        if delay <= 0 { return .secondary }
-        if delay < 150 { return .green }
-        if delay < 350 { return .orange }
-        return .red
     }
 }
