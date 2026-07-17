@@ -67,14 +67,14 @@ notarize() {
 }
 
 sign_path() {
-  local path="$1"
+  local target_path="$1"
   shift
-  codesign --force \
+  /usr/bin/codesign --force \
     --sign "${identity}" \
     --timestamp \
     --options runtime \
     "$@" \
-    "${path}"
+    "${target_path}"
 }
 
 sign_application() {
