@@ -104,8 +104,26 @@ jobs:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify release tag
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          tag_ref="refs/tags/${MCLASH_RELEASE_TAG}"
+          git show-ref --verify --quiet "${tag_ref}" || {
+            print -u2 "Release tag does not exist: ${MCLASH_RELEASE_TAG}"
+            print -u2 "Push the tag first; pushing it is the release approval."
+            exit 1
+          }
+          tag_commit="$(git rev-list -n 1 "${tag_ref}")"
+          checked_out_commit="$(git rev-parse HEAD)"
+          if [[ "${tag_commit}" != "${checked_out_commit}" ]]; then
+            print -u2 "Checked-out commit ${checked_out_commit} does not match ${MCLASH_RELEASE_TAG} (${tag_commit})."
+            exit 1
+          fi
 
       - name: Verify Apple Silicon runner
         shell: zsh {0}
@@ -369,7 +387,6 @@ jobs:
         id: publish
         env:
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
-          TARGET_SHA: ${{ github.sha }}
         shell: zsh {0}
         run: |
           set -euo pipefail
@@ -395,7 +412,6 @@ jobs:
               "${prerelease_args[@]}"
           else
             gh release create "${MCLASH_RELEASE_TAG}" "${assets[@]}" \
-              --target "${TARGET_SHA}" \
               --title "MClash ${MCLASH_VERSION}" \
               --notes-file "${MCLASH_RELEASE_NOTES}" \
               "${prerelease_args[@]}"

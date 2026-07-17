@@ -202,7 +202,7 @@ fi
   -c "Set :NetworkExtension:NEMachServiceName ${team_identifier_prefix}${network_extension_bundle_id}" \
   "${system_extension_contents}/Info.plist"
 plutil -lint "${system_extension_contents}/Info.plist" >/dev/null
-if rg -q '\$\([^)]+\)' "${system_extension_contents}/Info.plist"; then
+if grep -Eq '\$\([^)]+\)' "${system_extension_contents}/Info.plist"; then
   print -u2 "Unresolved build-setting placeholder in Network Extension Info.plist."
   exit 1
 fi
