@@ -14,6 +14,10 @@ struct AppRoutingRelaySnapshot: Sendable {
     let note: String?
     let localPort: UInt16?
     let effectiveAction: FlowTrafficDisposition?
+    let uploadDatagrams: UInt64?
+    let downloadDatagrams: UInt64?
+    let droppedDatagrams: UInt64?
+    let lastPayloadAt: Date?
 
     init(
         state: AppRoutingRelayState,
@@ -22,7 +26,11 @@ struct AppRoutingRelaySnapshot: Sendable {
         error: String?,
         note: String? = nil,
         localPort: UInt16?,
-        effectiveAction: FlowTrafficDisposition? = nil
+        effectiveAction: FlowTrafficDisposition? = nil,
+        uploadDatagrams: UInt64? = nil,
+        downloadDatagrams: UInt64? = nil,
+        droppedDatagrams: UInt64? = nil,
+        lastPayloadAt: Date? = nil
     ) {
         self.state = state
         self.uploadBytes = uploadBytes
@@ -31,6 +39,10 @@ struct AppRoutingRelaySnapshot: Sendable {
         self.note = note
         self.localPort = localPort
         self.effectiveAction = effectiveAction
+        self.uploadDatagrams = uploadDatagrams
+        self.downloadDatagrams = downloadDatagrams
+        self.droppedDatagrams = droppedDatagrams
+        self.lastPayloadAt = lastPayloadAt
     }
 }
 

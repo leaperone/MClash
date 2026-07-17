@@ -79,7 +79,7 @@ struct TransparentProxyProviderMessageClientTests {
             response(protocolVersion: 0, revision: 1, captureEnabled: false, failOpen: true),
         ])
         await #expect(throws: TransparentProxyProviderMessageError.unsupportedProtocolVersion(
-            expected: 1,
+            expected: TransparentProxyProviderControlRequest.currentProtocolVersion,
             actual: 0
         )) {
             try await TransparentProxyProviderMessageClient(session: oldProtocol).status()
@@ -185,7 +185,7 @@ struct TransparentProxyProviderMessageClientTests {
     }
 
     private func response(
-        protocolVersion: Int = 1,
+        protocolVersion: Int = TransparentProxyProviderControlRequest.currentProtocolVersion,
         accepted: Bool = true,
         provider: String = "transparent-proxy",
         revision: UInt64,

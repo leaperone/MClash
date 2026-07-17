@@ -23,6 +23,8 @@ enum CaptureRuleDraftAction: String, CaseIterable, Identifiable, Sendable {
     case direct
     case reject
     case mihomoProfileRules
+    case mihomoGlobal
+    case mihomoGroup
 
     var id: String { rawValue }
 
@@ -31,14 +33,8 @@ enum CaptureRuleDraftAction: String, CaseIterable, Identifiable, Sendable {
         case .direct: "Direct"
         case .reject: "Reject"
         case .mihomoProfileRules: "Mihomo profile rules"
-        }
-    }
-
-    var captureAction: CaptureAction {
-        switch self {
-        case .direct: .direct
-        case .reject: .reject
-        case .mihomoProfileRules: .mihomo(.profileRules)
+        case .mihomoGlobal: "Mihomo GLOBAL"
+        case .mihomoGroup: "Mihomo policy group"
         }
     }
 }
@@ -54,6 +50,7 @@ enum CaptureRuleDraftError: Error, Equatable, Sendable {
     case noTransportProtocol
     case invalidPortRange(String)
     case noMatchCriteria
+    case missingMihomoGroup
     case unsupportedExistingRule(String)
     case invalidCaptureRule(String)
 }
@@ -81,6 +78,8 @@ extension CaptureRuleDraftError: LocalizedError {
             "Port must be 1–65535 or a range such as 8000-9000; received \(value)."
         case .noMatchCriteria:
             "Add an application, executable, user, destination, protocol restriction, or port restriction."
+        case .missingMihomoGroup:
+            "Choose a Mihomo policy group."
         case let .unsupportedExistingRule(reason):
             "This rule uses an option that this editor cannot represent: \(reason)."
         case let .invalidCaptureRule(reason):
@@ -110,6 +109,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
     var matchesUDP: Bool
     var portRange: String
     var action: CaptureRuleDraftAction
+    var mihomoGroup: String
     var unavailableFallback: UnavailableFallback
 
     init(
@@ -128,6 +128,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         matchesUDP: Bool = true,
         portRange: String = "",
         action: CaptureRuleDraftAction = .mihomoProfileRules,
+        mihomoGroup: String = "",
         unavailableFallback: UnavailableFallback = .direct
     ) {
         self.identifier = identifier
@@ -145,6 +146,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         self.matchesUDP = matchesUDP
         self.portRange = portRange
         self.action = action
+        self.mihomoGroup = mihomoGroup
         self.unavailableFallback = unavailableFallback
     }
 
@@ -164,6 +166,9 @@ struct CaptureRuleDraft: Equatable, Sendable {
             action: try Self.draftAction(rule.action),
             unavailableFallback: rule.unavailableFallback
         )
+        if case let .mihomo(.group(group)) = rule.action {
+            mihomoGroup = group
+        }
 
         var applicationMatchers: [ApplicationSourceMatcher] = []
         var applicationPatternMatchers: [ApplicationIdentifierPatternMatcher] = []
@@ -321,7 +326,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
                 destinations: destinations,
                 protocols: protocols,
                 portRanges: portRanges,
-                action: action.captureAction,
+                action: try captureAction(),
                 unavailableFallback: unavailableFallback
             )
             try rule.validate()
@@ -330,6 +335,19 @@ struct CaptureRuleDraft: Equatable, Sendable {
             throw error
         } catch {
             throw CaptureRuleDraftError.invalidCaptureRule(String(describing: error))
+        }
+    }
+
+    private func captureAction() throws -> CaptureAction {
+        switch action {
+        case .direct: return .direct
+        case .reject: return .reject
+        case .mihomoProfileRules: return .mihomo(.profileRules)
+        case .mihomoGlobal: return .mihomo(.global)
+        case .mihomoGroup:
+            let group = mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !group.isEmpty else { throw CaptureRuleDraftError.missingMihomoGroup }
+            return .mihomo(.group(group))
         }
     }
 
@@ -463,10 +481,8 @@ struct CaptureRuleDraft: Equatable, Sendable {
         case .direct: .direct
         case .reject: .reject
         case .mihomo(.profileRules): .mihomoProfileRules
-        case .mihomo(.global):
-            throw CaptureRuleDraftError.unsupportedExistingRule("Mihomo global action")
-        case let .mihomo(.group(group)):
-            throw CaptureRuleDraftError.unsupportedExistingRule("Mihomo group action \(group)")
+        case .mihomo(.global): .mihomoGlobal
+        case .mihomo(.group): .mihomoGroup
         }
     }
 

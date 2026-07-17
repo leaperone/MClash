@@ -10,7 +10,7 @@ enum TransparentProxyProviderControlCommand: String, Codable, Sendable {
 }
 
 struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
-    static let currentProtocolVersion = 1
+    static let currentProtocolVersion = 2
 
     let protocolVersion: Int
     let command: TransparentProxyProviderControlCommand
@@ -18,6 +18,7 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
     let captureEnabled: Bool?
     let failOpen: Bool?
     let captureConfigurationSnapshot: Data?
+    let mihomoRouteProxyCatalog: Data?
     let mihomoSOCKSHost: String?
     let mihomoSOCKSPort: UInt16?
     let mihomoSOCKSUsername: String?
@@ -31,6 +32,7 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
         captureEnabled: Bool? = nil,
         failOpen: Bool? = nil,
         captureConfigurationSnapshot: Data? = nil,
+        mihomoRouteProxyCatalog: Data? = nil,
         mihomoSOCKSHost: String? = nil,
         mihomoSOCKSPort: UInt16? = nil,
         mihomoSOCKSUsername: String? = nil,
@@ -44,6 +46,7 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
         self.captureEnabled = captureEnabled
         self.failOpen = failOpen
         self.captureConfigurationSnapshot = captureConfigurationSnapshot
+        self.mihomoRouteProxyCatalog = mihomoRouteProxyCatalog
         self.mihomoSOCKSHost = mihomoSOCKSHost
         self.mihomoSOCKSPort = mihomoSOCKSPort
         self.mihomoSOCKSUsername = mihomoSOCKSUsername
@@ -204,6 +207,7 @@ struct TransparentProxyProviderMessageClient: Sendable {
                 captureEnabled: configuration.captureEnabled,
                 failOpen: configuration.failOpen,
                 captureConfigurationSnapshot: configuration.encodedCaptureSnapshot,
+                mihomoRouteProxyCatalog: configuration.encodedMihomoRouteProxyCatalog,
                 mihomoSOCKSHost: listener?.ipv4Endpoint.host,
                 mihomoSOCKSPort: listener?.port,
                 mihomoSOCKSUsername: listener?.authentication?.username,

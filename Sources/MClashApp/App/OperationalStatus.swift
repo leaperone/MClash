@@ -242,6 +242,47 @@ extension AppModel {
             break
         }
 
+        if let networkCaptureRollbackFailure {
+            issues.append(
+                OperationalIssue(
+                    id: "app-routing.rollback",
+                    severity: .error,
+                    subsystem: .appRouting,
+                    title: "A previous network state could not be fully restored",
+                    consequence: "App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change.",
+                    technicalDetail: networkCaptureRollbackFailure,
+                    primaryActionTitle: "View Recovery Log",
+                    primaryAction: .openLogs,
+                    secondaryActionTitle: nil,
+                    secondaryAction: nil
+                )
+            )
+        }
+
+        if networkCapturePreferences.enabled,
+           networkCapturePreferences.dnsEnabled,
+           dnsProxyAutomaticallyDisabled || dnsProxyRuntimeError != nil {
+            let restored = dnsProxyAutomaticallyDisabled
+            issues.append(
+                OperationalIssue(
+                    id: "app-routing.dns",
+                    severity: .error,
+                    subsystem: .appRouting,
+                    title: restored
+                        ? "DNS routing was stopped and system DNS was restored"
+                        : "DNS routing is unverified",
+                    consequence: restored
+                        ? "App Routing remains enabled, but ordinary DNS is no longer being sent through MClash."
+                        : "MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener.",
+                    technicalDetail: dnsProxyRuntimeError,
+                    primaryActionTitle: "Retry DNS Routing",
+                    primaryAction: .openAppRouting,
+                    secondaryActionTitle: "View Logs",
+                    secondaryAction: .openLogs
+                )
+            )
+        }
+
         for stream in degradedStreams.sorted(by: { $0.presentationTitle < $1.presentationTitle }) {
             issues.append(
                 OperationalIssue(

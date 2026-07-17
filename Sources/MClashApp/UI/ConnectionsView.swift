@@ -19,6 +19,19 @@ struct ConnectionsView: View {
                 systemImage: "arrow.left.arrow.right",
                 description: "Live connections are streamed from the local Mihomo controller."
             )
+        } else if model.connections == nil,
+                  let health = model.liveStreamHealth[.connections],
+                  health.phase == .stale {
+            ContentUnavailableView {
+                Label("Connections unavailable", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+            } description: {
+                Text(liveStreamDetail(health, source: "Mihomo connections"))
+            } actions: {
+                Button("Reconnect MClash") {
+                    Task { await model.restartConnection() }
+                }
+                .disabled(!model.canPerform(.connection))
+            }
         } else if model.connections == nil {
             VStack(spacing: 12) {
                 ProgressView()
@@ -121,12 +134,12 @@ struct ConnectionsView: View {
                         Text(routeTitle(aggregate.route))
                             .fontWeight(.medium)
                             .lineLimit(1)
-                        Text(routeSubtitle(aggregate.route))
+                        Text(routeSubtitle(aggregate.route, traffic: aggregate.traffic))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
-                    .help(routeHelp(aggregate.route))
+                    .help(routeHelp(aggregate.route, traffic: aggregate.traffic))
                 }
                 .width(min: 240, ideal: 380)
 
@@ -271,7 +284,8 @@ struct ConnectionsView: View {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return model.flowLedger.routeAggregates }
         return model.flowLedger.routeAggregates.filter { aggregate in
-            routeHelp(aggregate.route).localizedCaseInsensitiveContains(query)
+            routeHelp(aggregate.route, traffic: aggregate.traffic)
+                .localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -499,7 +513,7 @@ struct ConnectionsView: View {
                         )
                         .font(.callout)
                         .foregroundStyle(.orange)
-                        .help("Pass-through Direct, UDP Direct, and fail-open flows were handed back to macOS. Their payload after handoff is not reported as zero.")
+                        .help("Built-in bypass and fail-open flows were handed back to macOS. Their payload after handoff is not reported as zero.")
                     }
 
                     if workspace == .history {
@@ -704,7 +718,10 @@ struct ConnectionsView: View {
                   model.liveStreamHealth[.connections]?.hasCurrentData != true else {
                 return nil
             }
-            return "Live connection data is stale while the Mihomo stream reconnects."
+            return liveStreamDetail(
+                model.liveStreamHealth[.connections] ?? .inactive,
+                source: "Mihomo connections"
+            )
         case .apps, .routes, .history:
             var staleSources: [String] = []
             if model.isConnected,
@@ -716,9 +733,36 @@ struct ConnectionsView: View {
                 staleSources.append("App Routing activity")
             }
             guard !staleSources.isEmpty else { return nil }
+            let details = [
+                model.isConnected
+                    ? model.liveStreamHealth[.connections].map {
+                        liveStreamDetail($0, source: "Mihomo connections")
+                    }
+                    : nil,
+                appRoutingIsActive
+                    ? model.liveStreamHealth[.appRouting].map {
+                        liveStreamDetail($0, source: "App Routing activity")
+                    }
+                    : nil,
+            ].compactMap { $0 }
             return staleSources.joined(separator: " and ")
-                + " are stale. Existing ledger rows remain visible as last-known observations."
+                + " are stale. Existing ledger rows remain visible as last-known observations. "
+                + details.joined(separator: " ")
         }
+    }
+
+    private func liveStreamDetail(
+        _ health: LiveStreamHealth,
+        source: String
+    ) -> String {
+        let received = health.lastReceivedAt.map {
+            "last received \($0.formatted(.relative(presentation: .named)))"
+        } ?? "no sample received"
+        let attempt = health.retryAttempt > 0
+            ? "retry \(formattedCount(health.retryAttempt))"
+            : "waiting for the first response"
+        let error = health.lastError.map { " Last error: \($0)" } ?? ""
+        return "\(source): \(received), \(attempt).\(error)"
     }
 
     private var unmeasuredHandoffCount: Int {
@@ -1412,13 +1456,7 @@ private func trafficCoverageTitle(_ traffic: FlowLedgerTrafficAggregate) -> Stri
 }
 
 private func trafficCoverageHelp(_ traffic: FlowLedgerTrafficAggregate) -> String {
-    if traffic.notMeasuredAfterHandoffCount > 0 {
-        return "\(formattedCount(traffic.notMeasuredAfterHandoffCount)) direct or fail-open flows were handed back to macOS. Their payload is not observable after handoff and is not counted as zero."
-    }
-    if traffic.notApplicableCount > 0, traffic.exactTotalBytes == 0 {
-        return "These decisions did not carry payload, for example rejected flows."
-    }
-    return "All displayed bytes were measured by Mihomo or the App Routing relay."
+    FlowLedgerTrafficPresentation.coverageHelp(traffic)
 }
 
 private func routeTitle(_ route: FlowLedgerRouteKey) -> String {
@@ -1438,7 +1476,10 @@ private func routeTitle(_ route: FlowLedgerRouteKey) -> String {
     }
 }
 
-private func routeSubtitle(_ route: FlowLedgerRouteKey) -> String {
+private func routeSubtitle(
+    _ route: FlowLedgerRouteKey,
+    traffic: FlowLedgerTrafficAggregate
+) -> String {
     switch route {
     case let .mihomo(rule, payload, chain):
         let decision = [rule, payload].compactMap(nonEmpty).joined(separator: " · ")
@@ -1448,7 +1489,7 @@ private func routeSubtitle(_ route: FlowLedgerRouteKey) -> String {
         return rule.map { "App rule \($0) · awaiting Mihomo correlation" }
             ?? "Awaiting Mihomo correlation"
     case .direct:
-        return "Handed back to macOS; payload not measured"
+        return FlowLedgerTrafficPresentation.directRouteDetail(traffic)
     case .rejected:
         return "Blocked by App Routing"
     case .failOpen:
@@ -1458,14 +1499,17 @@ private func routeSubtitle(_ route: FlowLedgerRouteKey) -> String {
     }
 }
 
-private func routeHelp(_ route: FlowLedgerRouteKey) -> String {
+private func routeHelp(
+    _ route: FlowLedgerRouteKey,
+    traffic: FlowLedgerTrafficAggregate
+) -> String {
     switch route {
     case let .mihomo(rule, payload, chain):
         let decision = [rule, payload].compactMap(nonEmpty).joined(separator: " · ")
         let path = chain.isEmpty ? "No proxy chain reported" : chain.joined(separator: " → ")
         return [nonEmpty(decision), path].compactMap { $0 }.joined(separator: "\n")
     default:
-        return "\(routeTitle(route))\n\(routeSubtitle(route))"
+        return "\(routeTitle(route))\n\(routeSubtitle(route, traffic: traffic))"
     }
 }
 
@@ -1484,7 +1528,7 @@ private func captureOriginTitle(_ origin: FlowLedgerCaptureOrigin) -> String {
     case .appRouting:
         return "App Routing"
     case let .localListener(name):
-        return name
+        return "\(name) · local listener (origin unverified)"
     case .unknown:
         return "Unattributed"
     }

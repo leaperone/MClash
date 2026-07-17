@@ -31,12 +31,21 @@ struct CaptureRuleEngineTests {
 
         let matching = try context(
             userID: 501,
+            hostname: "api.example.com",
             ipAddress: "203.0.113.5",
             port: 443,
             transport: .tcp
         )
-        #expect(engine.evaluate(matching).action == .mihomo(.group("HK")))
-        #expect(engine.evaluate(matching).unavailableFallback == .reject)
+        let matchingDecision = engine.evaluate(matching)
+        #expect(matchingDecision.action == .mihomo(.group("HK")))
+        #expect(matchingDecision.unavailableFallback == .reject)
+        #expect(matchingDecision.evidence == CaptureRuleDecisionEvidence(
+            outcome: .matchedRule,
+            source: .userID(501),
+            destination: .network(try IPNetwork("203.0.113.0/24")),
+            transportProtocol: .exact(.tcp),
+            destinationPort: .range(try PortRange(443))
+        ))
 
         let wrongProtocol = try context(userID: 501, ipAddress: "203.0.113.5", port: 443, transport: .udp)
         #expect(engine.evaluate(wrongProtocol).cause == .defaultDirect)
@@ -160,7 +169,15 @@ struct CaptureRuleEngineTests {
             processStartTime: startTime,
             executablePath: matcher.canonicalExecutablePath
         )
-        #expect(engine.evaluate(try context(source: selectedExecution)).action == .reject)
+        let selectedDecision = engine.evaluate(try context(source: selectedExecution))
+        #expect(selectedDecision.action == .reject)
+        #expect(selectedDecision.evidence?.source == .processInstance(
+            RuleProcessInstanceSourceEvidence(
+                processIdentifier: 77,
+                canonicalExecutablePath: matcher.canonicalExecutablePath,
+                assurance: .exactProcessStartTimeAndExecutablePath
+            )
+        ))
 
         let reusedStartTime = try ProcessStartTime(seconds: 1_700_000_001, microseconds: 42)
         let reusedPID = source(
@@ -223,7 +240,152 @@ struct CaptureRuleEngineTests {
         )
         let destination = try FlowDestination(hostname: "api.example.com", port: 443)
         let flow = FlowContext(source: source(), destination: destination, transportProtocol: .tcp)
-        #expect(try engine([rule]).evaluate(flow).cause == .matchedRule("domain"))
+        let decision = try engine([rule]).evaluate(flow)
+        #expect(decision.cause == .matchedRule("domain"))
+        #expect(decision.evidence?.destination == .host(RuleHostDestinationEvidence(
+            kind: .suffix,
+            value: "example.com"
+        )))
+
+        let exactIPRule = try CaptureRule(
+            id: "exact-ip",
+            priority: 1,
+            destinations: [.ip(try IPAddress("203.0.113.8"))],
+            action: .direct
+        )
+        let exactIPDecision = try engine([exactIPRule]).evaluate(context())
+        #expect(exactIPDecision.evidence?.destination == .ip(try IPAddress("203.0.113.8")))
+    }
+
+    @Test
+    func testEvidenceDistinguishesSignedPatternPathProcessAndUserIdentity() throws {
+        let signedRule = try CaptureRule(
+            id: "signed",
+            priority: 1,
+            sources: [.application(ApplicationSourceMatcher(
+                designatedRequirement: "SECRET REQUIREMENT",
+                signingIdentifier: "com.example.browser",
+                teamIdentifier: "TEAM",
+                bundleIdentifier: "com.example.browser"
+            ))],
+            action: .direct
+        )
+        let signedDecision = try engine([signedRule]).evaluate(context(source: source(
+            designatedRequirement: "SECRET REQUIREMENT",
+            signingIdentifier: "com.example.browser",
+            teamIdentifier: "TEAM",
+            bundleIdentifier: "com.example.browser"
+        )))
+        let signedEvidence = try #require(signedDecision.evidence?.source)
+        #expect(signedEvidence.identityAssurance == .verifiedCodeSignatureRequirement)
+        guard case let .application(application) = signedEvidence else {
+            Issue.record("Expected signed application evidence")
+            return
+        }
+        #expect(application.bundleIdentifier == "com.example.browser")
+
+        let patternRule = try CaptureRule(
+            id: "pattern",
+            priority: 1,
+            sources: [.applicationIdentifierPattern(
+                try ApplicationIdentifierPatternMatcher(pattern: "browser*")
+            )],
+            action: .direct
+        )
+        let patternDecision = try engine([patternRule]).evaluate(context(source: source(
+            executablePath: "/Applications/BrowserHelper.app/Contents/MacOS/BrowserWorker"
+        )))
+        #expect(patternDecision.evidence?.source == .applicationIdentifierPattern(
+            RuleApplicationPatternEvidence(
+                pattern: "browser*",
+                matchedField: .executableName
+            )
+        ))
+
+        let pathRule = try CaptureRule(
+            id: "path",
+            priority: 1,
+            sources: [.executable(ExecutableSourceMatcher(
+                canonicalPath: "/opt/browser",
+                designatedRequirement: "SECRET REQUIREMENT",
+                sha256: "AABB"
+            ))],
+            action: .direct
+        )
+        let pathDecision = try engine([pathRule]).evaluate(context(source: source(
+            executablePath: "/opt/browser",
+            executableSHA256: "aabb",
+            designatedRequirement: "SECRET REQUIREMENT"
+        )))
+        #expect(pathDecision.evidence?.source == .executable(RuleExecutableSourceEvidence(
+            canonicalPath: "/opt/browser",
+            assurance: .exactExecutablePathCodeSignatureRequirementAndSHA256
+        )))
+
+        let processRule = try CaptureRule(
+            id: "process",
+            priority: 1,
+            sources: [.processInstance(ProcessInstanceSourceMatcher(
+                processIdentifier: 42,
+                auditToken: auditToken
+            ))],
+            action: .direct
+        )
+        let processDecision = try engine([processRule]).evaluate(context())
+        #expect(processDecision.evidence?.source == .processInstance(
+            RuleProcessInstanceSourceEvidence(
+                processIdentifier: 42,
+                canonicalExecutablePath: nil,
+                assurance: .exactAuditToken
+            )
+        ))
+    }
+
+    @Test
+    func testDefaultAndBuiltInBypassHaveExplicitEvidence() throws {
+        let noMatch = try CaptureRule(
+            id: "udp-only",
+            priority: 1,
+            protocols: [.udp],
+            action: .reject
+        )
+        let defaultDecision = try engine([noMatch]).evaluate(context(transport: .tcp))
+        #expect(defaultDecision.evidence == CaptureRuleDecisionEvidence(outcome: .defaultDirect))
+
+        let bypassDecision = try engine([
+            try CaptureRule(id: "reject", priority: 1, action: .reject)
+        ]).evaluate(context(ipAddress: "127.0.0.1"))
+        #expect(bypassDecision.evidence == CaptureRuleDecisionEvidence(
+            outcome: .builtInBypass,
+            builtInBypassReason: .loopback
+        ))
+    }
+
+    @Test
+    func testEvidenceBoundsStringsAndOmitsSecretIdentityMaterial() throws {
+        let longIdentifier = String(repeating: "a", count: 2_000)
+        let rule = try CaptureRule(
+            id: "bounded",
+            priority: 1,
+            sources: [.application(ApplicationSourceMatcher(
+                designatedRequirement: "not-a-telemetry-secret",
+                signingIdentifier: longIdentifier
+            ))],
+            action: .direct
+        )
+        let decision = try engine([rule]).evaluate(context(source: source(
+            designatedRequirement: "not-a-telemetry-secret",
+            signingIdentifier: longIdentifier
+        )))
+        guard case let .application(application) = decision.evidence?.source else {
+            Issue.record("Expected application evidence")
+            return
+        }
+        #expect(application.signingIdentifier?.count == 255)
+        let json = String(decoding: try JSONEncoder().encode(decision.evidence), as: UTF8.self)
+        #expect(!json.contains("not-a-telemetry-secret"))
+        #expect(!json.contains("auditToken"))
+        #expect(!json.contains("sha256"))
     }
 
     private func engine(_ rules: [CaptureRule]) throws -> CaptureRuleEngine {

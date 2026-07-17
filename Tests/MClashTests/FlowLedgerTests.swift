@@ -64,7 +64,10 @@ struct FlowLedgerTests {
 
         #expect(
             entry.association
-                == .destinationAndStartTime(connectionID: "matching")
+                == .destinationAndStartTime(
+                    connectionID: "matching",
+                    difference: 3
+                )
         )
     }
 

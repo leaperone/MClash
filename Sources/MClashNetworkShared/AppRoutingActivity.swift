@@ -50,9 +50,9 @@ public struct AppRoutingActivityDestination: Codable, Hashable, Sendable {
 }
 
 public enum AppRoutingRelayState: String, Codable, Hashable, Sendable {
-    /// Rejected, UDP-direct, built-in bypass, or fail-open decisions do not
-    /// create a measurable relay. TCP direct decisions use the normal relay
-    /// lifecycle states.
+    /// Rejected, built-in bypass, or fail-open decisions do not create a
+    /// measurable relay. Owned TCP and UDP Direct decisions use the normal
+    /// relay lifecycle states.
     case notApplicable
     case pending
     case connecting
@@ -71,6 +71,10 @@ public enum AppRoutingRelayState: String, Codable, Hashable, Sendable {
 /// being presented as proxied traffic.
 public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
     public let flowIdentifier: UUID
+    /// Groups per-destination UDP conversations that originated from the same
+    /// application UDP flow. TCP activities and legacy UDP records leave this
+    /// value nil.
+    public let parentFlowIdentifier: UUID?
     public var sequence: UInt64
     public let configurationRevision: UInt64
     public let startedAt: Date
@@ -93,11 +97,22 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
     public var payloadBytesAreMeasured: Bool?
     public var uploadBytes: UInt64
     public var downloadBytes: UInt64
+    /// Datagram counters are populated for owned UDP conversations. They stay
+    /// nil for TCP and legacy pass-through records so zero is never confused
+    /// with "not observable".
+    public var uploadDatagrams: UInt64?
+    public var downloadDatagrams: UInt64?
+    public var droppedDatagrams: UInt64?
+    public var lastPayloadAt: Date?
 
     public var id: UUID { flowIdentifier }
+    /// Structured, privacy-bounded rule-decision evidence carried by the
+    /// provider snapshot. Legacy activity records return nil.
+    public var ruleEvidence: CaptureRuleDecisionEvidence? { decision.ruleEvidence }
 
     public init(
         flowIdentifier: UUID = UUID(),
+        parentFlowIdentifier: UUID? = nil,
         sequence: UInt64 = 0,
         configurationRevision: UInt64,
         startedAt: Date,
@@ -114,9 +129,14 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
         relayLocalPort: UInt16? = nil,
         payloadBytesAreMeasured: Bool? = nil,
         uploadBytes: UInt64 = 0,
-        downloadBytes: UInt64 = 0
+        downloadBytes: UInt64 = 0,
+        uploadDatagrams: UInt64? = nil,
+        downloadDatagrams: UInt64? = nil,
+        droppedDatagrams: UInt64? = nil,
+        lastPayloadAt: Date? = nil
     ) {
         self.flowIdentifier = flowIdentifier
+        self.parentFlowIdentifier = parentFlowIdentifier
         self.sequence = sequence
         self.configurationRevision = configurationRevision
         self.startedAt = startedAt
@@ -136,6 +156,10 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
         self.payloadBytesAreMeasured = payloadBytesAreMeasured
         self.uploadBytes = uploadBytes
         self.downloadBytes = downloadBytes
+        self.uploadDatagrams = uploadDatagrams
+        self.downloadDatagrams = downloadDatagrams
+        self.droppedDatagrams = droppedDatagrams
+        self.lastPayloadAt = lastPayloadAt
     }
 
     private static func matchedRuleIdentifier(

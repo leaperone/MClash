@@ -4,9 +4,9 @@ import MClashNetworkShared
 /// A stable, presentation-independent account of traffic observed by MClash.
 ///
 /// The ledger deliberately distinguishes measured bytes from traffic that was
-/// handed back to the operating system. App Routing's TCP Direct relay is
-/// measured at confirmed delivery boundaries; UDP Direct, built-in bypasses,
-/// and fail-open handoffs remain explicitly unmeasured rather than becoming a
+/// handed back to the operating system. App Routing's owned TCP and UDP Direct
+/// relays are measured at confirmed delivery boundaries; built-in bypasses and
+/// fail-open handoffs remain explicitly unmeasured rather than becoming a
 /// misleading zero.
 struct FlowLedger: Sendable {
     private static let defaultAssociationWindow: TimeInterval = 15
@@ -202,12 +202,13 @@ struct FlowLedger: Sendable {
         }
 
         guard let heuristic = candidates.min(by: candidateIsPreferred) else { return nil }
-        return ConnectionMatch(
-            record: heuristic.record,
-            association: .destinationAndStartTime(
-                connectionID: heuristic.record.connection.id
+            return ConnectionMatch(
+                record: heuristic.record,
+                association: .destinationAndStartTime(
+                connectionID: heuristic.record.connection.id,
+                difference: heuristic.delta
+                )
             )
-        )
     }
 
     private static func candidateIsPreferred(
@@ -255,8 +256,9 @@ struct FlowLedger: Sendable {
     }
 
     private static func isAppRoutingInbound(_ name: String?) -> Bool {
-        name == NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName
-            || name == NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName
+        name?.hasPrefix(
+            NetworkExtensionMihomoListenerConfiguration.listenerNamePrefix
+        ) == true
     }
 
     private static func entry(
@@ -555,7 +557,7 @@ enum FlowLedgerCaptureOrigin: Hashable, Sendable {
 
 enum FlowLedgerAssociation: Hashable, Sendable {
     case exactRelayPort(connectionID: String)
-    case destinationAndStartTime(connectionID: String)
+    case destinationAndStartTime(connectionID: String, difference: TimeInterval)
     case none
 }
 

@@ -130,6 +130,27 @@ struct CaptureRuleDraftTests {
         #expect(try draft.makeRule().action == .reject)
     }
 
+    @Test("GLOBAL and named Mihomo policy groups round-trip through the editor")
+    func mapsDedicatedMihomoRoutes() throws {
+        var draft = CaptureRuleDraft(
+            identifier: "global-route",
+            matchesTCP: true,
+            matchesUDP: false,
+            action: .mihomoGlobal
+        )
+        #expect(try draft.makeRule().action == .mihomo(.global))
+
+        draft.identifier = "group-route"
+        draft.action = .mihomoGroup
+        #expect(throws: CaptureRuleDraftError.missingMihomoGroup) {
+            try draft.makeRule()
+        }
+        draft.mihomoGroup = " Auto "
+        let groupRule = try draft.makeRule()
+        #expect(groupRule.action == .mihomo(.group("Auto")))
+        #expect(try CaptureRuleDraft(rule: groupRule).makeRule() == groupRule)
+    }
+
     @Test("Candidate selection is stable by ID and can populate its executable")
     func selectsApplicationCandidate() {
         let first = makeCandidate(id: "/Applications/First.app", name: "First")
@@ -301,7 +322,7 @@ struct CaptureRuleDraftTests {
         }
     }
 
-    @Test("Unsupported existing process, multi-target, and Mihomo actions fail closed")
+    @Test("Unsupported existing process and multi-target rules fail closed")
     func rejectsUnsupportedExistingRules() throws {
         let processRule = try CaptureRule(
             id: "process",
@@ -337,19 +358,6 @@ struct CaptureRuleDraftTests {
             try CaptureRuleDraft(rule: destinations)
         }
 
-        let group = try CaptureRule(
-            id: "group",
-            priority: 1,
-            destinations: [.ip(try IPAddress("192.0.2.1"))],
-            action: .mihomo(.group("Auto"))
-        )
-        #expect(
-            throws: CaptureRuleDraftError.unsupportedExistingRule(
-                "Mihomo group action Auto"
-            )
-        ) {
-            try CaptureRuleDraft(rule: group)
-        }
     }
 
     private func makeCandidate(

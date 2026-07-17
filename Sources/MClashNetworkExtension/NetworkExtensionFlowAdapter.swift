@@ -8,7 +8,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         var revision: UInt64 = 0
         var captureEnabled = false
         var configuration: CaptureConfigurationLoadResult = .failOpen(.missingEncodedSnapshot)
-        var mihomoSOCKSConfiguration: ProviderSOCKSConfiguration?
+        var mihomoSOCKSConfigurations: [MihomoRoute: ProviderSOCKSConfiguration] = [:]
     }
 
     private let lock = NSLock()
@@ -31,9 +31,9 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         state.revision = Self.uint64(configuration?[ProviderConfigurationKey.revision]) ?? 0
         state.captureEnabled = captureEnabled
         state.configuration = loadResult
-        state.mihomoSOCKSConfiguration = ProviderSOCKSConfiguration(
+        state.mihomoSOCKSConfigurations = ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
-        )
+        ) ?? [:]
         lock.unlock()
     }
 
@@ -52,7 +52,9 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             configuration[ProviderConfigurationKey.captureConfigurationSnapshot] as? Data
         )
         guard case .loaded = snapshot else { return false }
-        return ProviderSOCKSConfiguration(providerConfiguration: configuration) != nil
+        return ProviderSOCKSConfiguration.routeCatalog(
+            providerConfiguration: configuration
+        ) != nil
     }
 
     func planTCPFlow(_ flow: NEAppProxyTCPFlow) -> TCPFlowInterceptionPlan {
@@ -101,7 +103,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         return TCPFlowInterceptionPlan(
             decision: outcome.decision,
             destination: destination,
-            proxy: currentState.mihomoSOCKSConfiguration,
+            proxy: proxy(for: outcome.decision, state: currentState),
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
                 configuration: currentState.configuration
@@ -117,25 +119,29 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     @available(macOS 15.0, *)
     func planUDPFlow(
         _ flow: NEAppProxyUDPFlow,
-        initialRemoteEndpoint: Network.NWEndpoint
+        initialRemoteEndpoint: Network.NWEndpoint,
+        parentFlowIdentifier: UUID? = nil
     ) -> UDPFlowInterceptionPlan {
         guard let endpoint = Self.endpoint(initialRemoteEndpoint) else {
             return UDPFlowInterceptionPlan(
                 decision: failOpen(.unsupportedRemoteEndpoint),
                 initialDestination: nil,
                 proxy: nil,
+                unavailableFallback: .direct,
                 activity: fallbackActivity(
                     flow: flow,
                     endpoint: nil,
                     transportProtocol: .udp,
                     failure: .unsupportedRemoteEndpoint
-                )
+                ),
+                parentFlowIdentifier: parentFlowIdentifier
             )
         }
         return planUDPFlow(
             flow: flow,
             endpoint: endpoint,
-            state: snapshotState()
+            state: snapshotState(),
+            parentFlowIdentifier: parentFlowIdentifier
         )
     }
 
@@ -150,26 +156,59 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     @available(macOS, introduced: 14.0, obsoleted: 15.0)
     func planLegacyUDPFlow(
         _ flow: NEAppProxyUDPFlow,
-        initialRemoteEndpoint: NetworkExtension.__NWEndpoint
+        initialRemoteEndpoint: NetworkExtension.__NWEndpoint,
+        parentFlowIdentifier: UUID? = nil
     ) -> UDPFlowInterceptionPlan {
         guard let endpoint = Self.legacyEndpoint(initialRemoteEndpoint) else {
             return UDPFlowInterceptionPlan(
                 decision: failOpen(.unsupportedRemoteEndpoint),
                 initialDestination: nil,
                 proxy: nil,
+                unavailableFallback: .direct,
                 activity: fallbackActivity(
                     flow: flow,
                     endpoint: nil,
                     transportProtocol: .udp,
                     failure: .unsupportedRemoteEndpoint
-                )
+                ),
+                parentFlowIdentifier: parentFlowIdentifier
             )
         }
         return planUDPFlow(
             flow: flow,
             endpoint: endpoint,
-            state: snapshotState()
+            state: snapshotState(),
+            parentFlowIdentifier: parentFlowIdentifier
         )
+    }
+
+    /// Re-evaluates one destination of an already-owned UDP flow. A UDP socket
+    /// may send datagrams to several endpoints, so the initial flow decision is
+    /// not a safe substitute for a per-destination rule decision.
+    func planUDPDatagram(
+        _ flow: NEAppProxyUDPFlow,
+        destination: SOCKS5Endpoint,
+        parentFlowIdentifier: UUID
+    ) -> UDPFlowInterceptionPlan {
+        let endpoint = FlowRemoteEndpoint(
+            host: destination.address.ipAddress?.presentation
+                ?? destination.address.domain
+                ?? "",
+            port: destination.port
+        )
+        return planUDPFlow(
+            flow: flow,
+            endpoint: endpoint,
+            state: snapshotState(),
+            parentFlowIdentifier: parentFlowIdentifier,
+            // An NE UDP flow's remoteHostname describes its initial target and
+            // must not leak into later per-datagram destination decisions.
+            remoteHostname: ""
+        )
+    }
+
+    func currentRevision() -> UInt64 {
+        snapshotState().revision
     }
 
     @available(macOS, introduced: 14.0, obsoleted: 15.0)
@@ -194,7 +233,10 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         flow: NEAppProxyFlow,
         endpoint: FlowRemoteEndpoint,
         transportProtocol: TransportProtocol,
-        state currentState: State
+        state currentState: State,
+        remoteHostname: String? = nil,
+        activityFlowIdentifier: UUID? = nil,
+        parentFlowIdentifier: UUID? = nil
     ) -> FlowDecisionOutcome {
         let metadata = flow.metaData
         let applicationMetadata = FlowApplicationMetadata(
@@ -210,7 +252,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         }
         let context = contextBuilder.resolve(
             endpoint: endpoint,
-            remoteHostname: flow.remoteHostname,
+            remoteHostname: remoteHostname ?? flow.remoteHostname,
             metadata: applicationMetadata,
             identityResolution: identityResolution,
             transportProtocol: transportProtocol,
@@ -220,7 +262,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             configuration: currentState.configuration,
             context: context,
             captureEnabled: currentState.captureEnabled,
-            mihomoAvailable: currentState.mihomoSOCKSConfiguration != nil
+            mihomoAvailable: !currentState.mihomoSOCKSConfigurations.isEmpty
         )
         return FlowDecisionOutcome(
             decision: decision,
@@ -231,7 +273,9 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                 context: context,
                 identityResolution: identityResolution,
                 decision: decision,
-                state: currentState
+                state: currentState,
+                flowIdentifier: activityFlowIdentifier,
+                parentFlowIdentifier: parentFlowIdentifier
             )
         )
     }
@@ -239,23 +283,37 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     private func planUDPFlow(
         flow: NEAppProxyUDPFlow,
         endpoint: FlowRemoteEndpoint,
-        state currentState: State
+        state currentState: State,
+        parentFlowIdentifier: UUID? = nil,
+        remoteHostname: String? = nil
     ) -> UDPFlowInterceptionPlan {
         let outcome = decide(
             flow: flow,
             endpoint: endpoint,
             transportProtocol: .udp,
-            state: currentState
+            state: currentState,
+            remoteHostname: remoteHostname,
+            parentFlowIdentifier: parentFlowIdentifier
         )
-        let destination = try? currentState.mihomoSOCKSConfiguration?.destination(
-            for: endpoint
-        )
+        let destination = try? ProviderSOCKSConfiguration.destination(for: endpoint)
         return UDPFlowInterceptionPlan(
             decision: outcome.decision,
             initialDestination: destination,
-            proxy: currentState.mihomoSOCKSConfiguration,
+            proxy: proxy(for: outcome.decision, state: currentState),
+            unavailableFallback: unavailableFallbackRequested(
+                by: outcome.decision,
+                configuration: currentState.configuration
+            ),
             activity: outcome.activity
         )
+    }
+
+    private func proxy(
+        for decision: FlowTrafficDecision,
+        state: State
+    ) -> ProviderSOCKSConfiguration? {
+        guard case let .mihomo(route) = decision.disposition else { return nil }
+        return state.mihomoSOCKSConfigurations[route]
     }
 
     private func makeActivity(
@@ -265,7 +323,9 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         context: FlowContextResolution,
         identityResolution: ProcessIdentityResolution,
         decision: FlowTrafficDecision,
-        state: State
+        state: State,
+        flowIdentifier: UUID? = nil,
+        parentFlowIdentifier: UUID? = nil
     ) -> AppRoutingActivity {
         let resolvedContext = context.context
         let identity = identityResolution.identity
@@ -289,6 +349,8 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         )
 
         return AppRoutingActivity(
+            flowIdentifier: flowIdentifier ?? UUID(),
+            parentFlowIdentifier: parentFlowIdentifier,
             configurationRevision: state.revision,
             startedAt: Date(),
             endedAt: terminal ? Date() : nil,
@@ -401,7 +463,6 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     ) -> Bool {
         switch decision.disposition {
         case .direct:
-            guard transportProtocol == .tcp else { return true }
             if case let .rule(cause) = decision.reason,
                case .builtInBypass = cause {
                 return true
@@ -485,5 +546,23 @@ struct UDPFlowInterceptionPlan: Sendable {
     let decision: FlowTrafficDecision
     let initialDestination: SOCKS5Endpoint?
     let proxy: ProviderSOCKSConfiguration?
+    let unavailableFallback: UnavailableFallback
     let activity: AppRoutingActivity
+    let parentFlowIdentifier: UUID?
+
+    init(
+        decision: FlowTrafficDecision,
+        initialDestination: SOCKS5Endpoint?,
+        proxy: ProviderSOCKSConfiguration?,
+        unavailableFallback: UnavailableFallback,
+        activity: AppRoutingActivity,
+        parentFlowIdentifier: UUID? = nil
+    ) {
+        self.decision = decision
+        self.initialDestination = initialDestination
+        self.proxy = proxy
+        self.unavailableFallback = unavailableFallback
+        self.activity = activity
+        self.parentFlowIdentifier = parentFlowIdentifier ?? activity.parentFlowIdentifier
+    }
 }

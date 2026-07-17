@@ -40,6 +40,90 @@ struct LocalPortProbe: Sendable {
         return port
     }
 
+    /// Reserves distinct loopback ports for listeners that must bind both TCP
+    /// and UDP. All descriptors stay open until the complete set is selected,
+    /// preventing duplicate ephemeral-port results within one allocation.
+    func availableTCPAndUDPPorts(count: Int) throws -> [Int] {
+        guard count > 0 else { throw LocalPortProbeError.noPorts }
+
+        var descriptors: [Int32] = []
+        defer { descriptors.forEach { Darwin.close($0) } }
+        var ports: [Int] = []
+        var attempts = 0
+
+        while ports.count < count, attempts < max(64, count * 8) {
+            attempts += 1
+            let tcp = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+            guard tcp >= 0 else {
+                throw LocalPortProbeError.socketCreationFailed(errno)
+            }
+
+            var address = loopbackAddress(port: 0)
+            let tcpBind = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(
+                        tcp,
+                        $0,
+                        socklen_t(MemoryLayout<sockaddr_in>.size)
+                    )
+                }
+            }
+            guard tcpBind == 0 else {
+                let code = errno
+                Darwin.close(tcp)
+                throw LocalPortProbeError.bindFailed(code)
+            }
+
+            var addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let nameResult = withUnsafeMutablePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.getsockname(tcp, $0, &addressLength)
+                }
+            }
+            guard nameResult == 0 else {
+                let code = errno
+                Darwin.close(tcp)
+                throw LocalPortProbeError.portLookupFailed(code)
+            }
+            let port = Int(UInt16(bigEndian: address.sin_port))
+            guard (1 ... 65_535).contains(port) else {
+                Darwin.close(tcp)
+                throw LocalPortProbeError.invalidPort(port)
+            }
+
+            let udp = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
+            guard udp >= 0 else {
+                let code = errno
+                Darwin.close(tcp)
+                throw LocalPortProbeError.socketCreationFailed(code)
+            }
+            var udpAddress = loopbackAddress(port: port)
+            let udpBind = withUnsafePointer(to: &udpAddress) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(
+                        udp,
+                        $0,
+                        socklen_t(MemoryLayout<sockaddr_in>.size)
+                    )
+                }
+            }
+            guard udpBind == 0 else {
+                Darwin.close(tcp)
+                Darwin.close(udp)
+                continue
+            }
+
+            descriptors.append(tcp)
+            descriptors.append(udp)
+            ports.append(port)
+        }
+
+        guard ports.count == count else {
+            throw LocalPortProbeError.portSetUnavailable(requested: count)
+        }
+        return ports
+    }
+
     func isListening(port: Int) -> Bool {
         guard (1...65_535).contains(port) else { return false }
 
@@ -206,6 +290,7 @@ enum LocalPortProbeError: LocalizedError, Equatable {
     case portLookupFailed(Int32)
     case invalidPort(Int)
     case noPorts
+    case portSetUnavailable(requested: Int)
     case listenerUnavailable([Int])
 
     var errorDescription: String? {
@@ -220,6 +305,8 @@ enum LocalPortProbeError: LocalizedError, Equatable {
             "The operating system returned an invalid local proxy port (\(port))."
         case .noPorts:
             "No local proxy listener was configured."
+        case let .portSetUnavailable(requested):
+            "Could not reserve \(requested) distinct local TCP/UDP proxy ports."
         case let .listenerUnavailable(ports):
             "The local proxy listener did not start on \(ports.map(String.init).joined(separator: ", "))."
         }

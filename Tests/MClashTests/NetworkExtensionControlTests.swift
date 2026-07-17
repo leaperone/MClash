@@ -187,7 +187,7 @@ struct NetworkExtensionControlTests {
         let result = try await service.enable(configuration)
 
         #expect(result == .running)
-        #expect(await recorder.snapshot() == ["transparent.status"])
+        #expect(await recorder.snapshot() == ["transparent.status", "dns.status"])
     }
 
     @Test("Provider state drift forces a controlled restart")
@@ -428,6 +428,20 @@ private struct MockDNSProxyManager: DNSProxyManaging {
 
     func reload() async throws {
         await recorder.append("dns.reload")
+    }
+
+    func runtimeStatus(
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> DNSProxyRuntimeStatus {
+        await recorder.append("dns.status")
+        let now = Date()
+        return DNSProxyRuntimeStatus(
+            revision: configuration.revision,
+            activationIdentifier: configuration.activationIdentifier,
+            phase: .running,
+            backendReady: true,
+            startedAt: now
+        )
     }
 
     func disable() async throws {

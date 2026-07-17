@@ -5,14 +5,14 @@ import MClashNetworkShared
 
 /// Transparent application proxy entry point. The framework first sends all
 /// outbound TCP/UDP flows (except loopback) to this provider. The local rule
-/// engine owns selected TCP Direct flows for exact relay accounting as well as
-/// reject and Mihomo routes. Security-critical loop bypasses, true fail-open
-/// decisions, and UDP Direct remain on the original unmeasured network path.
+/// engine owns selected TCP and UDP Direct flows for exact relay accounting as
+/// well as reject and Mihomo routes. Security-critical loop bypasses and true
+/// fail-open decisions remain on the original unmeasured network path.
 final class TransparentProxyProvider: NETransparentProxyProvider {
     private let runtime = ProviderRuntimeState(providerName: "transparent-proxy")
     private let flowDecisionCoordinator = NetworkExtensionFlowDecisionCoordinator()
     private let tcpRelays = TCPFlowRelayRegistry()
-    private let udpRelays = UDPFlowRelayRegistry()
+    private let udpSessions = UDPFlowSessionRegistry()
     private let activities = AppRoutingActivityRing(capacity: 2_000)
 
     override func startProxy(
@@ -49,7 +49,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         completionHandler: @escaping () -> Void
     ) {
         tcpRelays.cancelAll()
-        udpRelays.cancelAll()
+        udpSessions.cancelAll()
         runtime.stop()
         completionHandler()
     }
@@ -92,9 +92,8 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 }
                 AppProxyFlowCompatibility.open(tcpFlow, completion: completion)
                 return true
-            case let .mihomo(route):
-                guard route == .profileRules,
-                      let proxy = plan.proxy,
+            case .mihomo:
+                guard let proxy = plan.proxy,
                       let destination = plan.destination
                 else {
                     return handleUnavailableMihomoTCPRoute(
@@ -123,52 +122,71 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         _ flow: NEAppProxyUDPFlow,
         initialRemoteEndpoint remoteEndpoint: NetworkExtension.__NWEndpoint
     ) -> Bool {
+        let parentFlowIdentifier = UUID()
         let plan = flowDecisionCoordinator.planLegacyUDPFlow(
             flow,
-            initialRemoteEndpoint: remoteEndpoint
+            initialRemoteEndpoint: remoteEndpoint,
+            parentFlowIdentifier: parentFlowIdentifier
         )
-        return handleUDPFlow(flow, plan: plan)
+        return handleUDPFlow(
+            flow,
+            plan: plan,
+            parentFlowIdentifier: parentFlowIdentifier
+        )
     }
 
     private func handleUDPFlow(
         _ flow: NEAppProxyUDPFlow,
-        plan: UDPFlowInterceptionPlan
+        plan: UDPFlowInterceptionPlan,
+        parentFlowIdentifier: UUID
     ) -> Bool {
         activities.upsert(plan.activity)
         switch plan.decision.disposition {
-        case .direct, .failOpen:
-            return false
-        case .reject:
-            let completion: @Sendable (Error?) -> Void = { error in
-                let rejection = error ?? NSError(
-                    domain: "one.leaper.mclash.network-extension",
-                    code: 2,
-                    userInfo: [NSLocalizedDescriptionKey: "Datagram flow rejected by MClash rule"]
-                )
-                flow.closeReadWithError(rejection)
-                flow.closeWriteWithError(rejection)
-            }
-            AppProxyFlowCompatibility.open(flow, completion: completion)
-            return true
-        case let .mihomo(route):
-            guard route == .profileRules,
-                  plan.initialDestination != nil,
-                  let proxy = plan.proxy
-            else {
-                // A generic listener cannot faithfully implement a forced
-                // global/group route. Leave the flow untouched until a
-                // route-specific mihomo listener is configured.
-                recordUnsupportedRoute(plan.activity)
+        case .direct:
+            if Self.isBuiltInBypass(plan.decision) {
                 return false
             }
-            markRelayConnecting(plan.activity.flowIdentifier)
-            udpRelays.start(
-                flow: flow,
-                proxy: proxy,
-                activityObserver: relayObserver(for: plan.activity.flowIdentifier)
-            )
+        case .failOpen:
+            return false
+        case .reject, .mihomo:
+            break
+        }
+
+        guard plan.initialDestination != nil else {
+            recordUDPDirectRelayUnavailable(plan.activity)
+            return false
+        }
+        let coordinator = flowDecisionCoordinator
+        let activities = activities
+        let started = udpSessions.start(
+            id: parentFlowIdentifier,
+            flow: flow,
+            initialPlan: plan,
+            planner: { destination in
+                coordinator.planUDPDatagram(
+                    flow,
+                    destination: destination,
+                    parentFlowIdentifier: parentFlowIdentifier
+                )
+            },
+            revisionProvider: {
+                coordinator.currentRevision()
+            },
+            activitySink: { activity in
+                activities.upsert(activity)
+            },
+            observerFactory: { identifier in
+                Self.relayObserver(
+                    activities: activities,
+                    flowIdentifier: identifier
+                )
+            }
+        )
+        guard started else {
+            recordUDPAdmissionFailure(plan.activity, flow: flow)
             return true
         }
+        return true
     }
 
     private func observeWithoutIntercepting(_ decision: FlowTrafficDecision) -> Bool {
@@ -309,6 +327,9 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         if let snapshot = request.captureConfigurationSnapshot {
             configuration[ProviderConfigurationKey.captureConfigurationSnapshot] = snapshot
         }
+        if let catalog = request.mihomoRouteProxyCatalog {
+            configuration[ProviderConfigurationKey.mihomoRouteProxyCatalog] = catalog
+        }
         if let host = request.mihomoSOCKSHost {
             configuration[ProviderConfigurationKey.mihomoSOCKSHost] = host
         }
@@ -327,19 +348,41 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
     private func markRelayConnecting(_ flowIdentifier: UUID) {
         guard var activity = activities.activity(for: flowIdentifier) else { return }
         activity.relayState = .connecting
+        activity.payloadBytesAreMeasured = true
         activity.endedAt = nil
         activities.upsert(activity)
     }
 
-    /// UDP direct relay is intentionally not implemented in this phase. Keep
-    /// its previous pass-through behavior explicit and unmeasured.
-    private func recordUnsupportedRoute(_ original: AppRoutingActivity) {
+    private func recordUDPDirectRelayUnavailable(_ original: AppRoutingActivity) {
         guard var activity = activities.activity(for: original.flowIdentifier) else { return }
-        activity.effectiveAction = .direct
-        activity.relayState = .notApplicable
-        activity.relayError = "This UDP Mihomo route requires a route-specific listener; traffic was left direct and is not measured."
+        activity.relayState = .failed
+        activity.relayError = "The original UDP destination could not be converted for direct relay; traffic was left to macOS."
         activity.endedAt = Date()
         activities.upsert(activity)
+    }
+
+    private func recordUDPAdmissionFailure(
+        _ original: AppRoutingActivity,
+        flow: NEAppProxyUDPFlow
+    ) {
+        let error = NSError(
+            domain: "one.leaper.mclash.network-extension",
+            code: 6,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "App Routing reached its active UDP flow safety limit"
+            ]
+        )
+        guard var activity = activities.activity(for: original.flowIdentifier) else { return }
+        activity.relayState = .failed
+        activity.relayError = error.localizedDescription
+        activity.endedAt = Date()
+        activities.upsert(activity)
+        AppProxyFlowCompatibility.open(flow) { completionError in
+            let terminalError = completionError ?? error
+            flow.closeReadWithError(terminalError)
+            flow.closeWriteWithError(terminalError)
+        }
     }
 
     private func recordDirectRelayUnavailable(_ original: AppRoutingActivity) {
@@ -404,7 +447,16 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
     private func relayObserver(
         for flowIdentifier: UUID
     ) -> @Sendable (AppRoutingRelaySnapshot) -> Void {
-        let activities = activities
+        Self.relayObserver(
+            activities: activities,
+            flowIdentifier: flowIdentifier
+        )
+    }
+
+    private static func relayObserver(
+        activities: AppRoutingActivityRing,
+        flowIdentifier: UUID
+    ) -> @Sendable (AppRoutingRelaySnapshot) -> Void {
         return { snapshot in
             guard var activity = activities.activity(for: flowIdentifier) else { return }
             activity.relayState = snapshot.state
@@ -415,6 +467,18 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             activity.uploadBytes = snapshot.uploadBytes
             activity.downloadBytes = snapshot.downloadBytes
             activity.relayLocalPort = snapshot.localPort
+            if let value = snapshot.uploadDatagrams {
+                activity.uploadDatagrams = value
+            }
+            if let value = snapshot.downloadDatagrams {
+                activity.downloadDatagrams = value
+            }
+            if let value = snapshot.droppedDatagrams {
+                activity.droppedDatagrams = value
+            }
+            if let value = snapshot.lastPayloadAt {
+                activity.lastPayloadAt = value
+            }
             if let effectiveAction = snapshot.effectiveAction {
                 activity.effectiveAction = effectiveAction
                 if effectiveAction == .direct {
@@ -433,7 +497,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
 
     override func sleep(completionHandler: @escaping () -> Void) {
         tcpRelays.cancelAll()
-        udpRelays.cancelAll()
+        udpSessions.cancelAll()
         completionHandler()
     }
 
@@ -461,10 +525,16 @@ extension TransparentProxyProvider: NEAppProxyUDPFlowHandling {
         _ flow: NEAppProxyUDPFlow,
         initialRemoteFlowEndpoint remoteEndpoint: Network.NWEndpoint
     ) -> Bool {
+        let parentFlowIdentifier = UUID()
         let plan = flowDecisionCoordinator.planUDPFlow(
             flow,
-            initialRemoteEndpoint: remoteEndpoint
+            initialRemoteEndpoint: remoteEndpoint,
+            parentFlowIdentifier: parentFlowIdentifier
         )
-        return handleUDPFlow(flow, plan: plan)
+        return handleUDPFlow(
+            flow,
+            plan: plan,
+            parentFlowIdentifier: parentFlowIdentifier
+        )
     }
 }

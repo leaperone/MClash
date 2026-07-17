@@ -63,15 +63,37 @@ swiftc -swift-version 6 \
 
 application_sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
 application_sources=("${(@)application_sources:#*/App/MClashApp.swift}")
+network_shared_sources=("${repo_root}"/Sources/MClashNetworkShared/**/*.swift(N))
+network_shared_library="${build_dir}/libMClashNetworkShared.a"
+swiftc \
+  -parse-as-library \
+  -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
+  -emit-module \
+  -emit-library \
+  -static \
+  -module-name MClashNetworkShared \
+  "${network_shared_sources[@]}" \
+  -emit-module-path "${build_dir}/MClashNetworkShared.swiftmodule" \
+  -o "${network_shared_library}"
 swiftc -parse-as-library -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
   -F "${sparkle_framework_dir}" \
   -framework AppKit \
+  -framework NetworkExtension \
   -framework Security \
   -framework ServiceManagement \
   -framework Sparkle \
   -framework SwiftUI \
   -framework SystemConfiguration \
+  -framework SystemExtensions \
   -framework UserNotifications \
+  -lsqlite3 \
+  -I "${build_dir}" \
+  -L "${build_dir}" \
+  -lMClashNetworkShared \
   -Xlinker -rpath \
   -Xlinker "${sparkle_framework_dir}" \
   "${application_sources[@]}" \

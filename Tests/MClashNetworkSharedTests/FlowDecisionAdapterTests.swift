@@ -167,6 +167,9 @@ struct FlowDecisionAdapterTests {
             rule: .matchedRule("rule"),
             fallback: .reject
         ))
+        #expect(unavailable.ruleEvidence?.outcome == .matchedRule)
+        #expect(unavailable.ruleEvidence?.source == .unconstrained)
+        #expect(unavailable.ruleEvidence?.destination == .unconstrained)
     }
 
     @Test
@@ -180,7 +183,11 @@ struct FlowDecisionAdapterTests {
             context: context,
             captureEnabled: false,
             mihomoAvailable: false
-        ) == FlowTrafficDecision(disposition: .failOpen, reason: .captureDisabled))
+        ) == FlowTrafficDecision(
+            disposition: .failOpen,
+            reason: .captureDisabled,
+            ruleEvidence: CaptureRuleDecisionEvidence(outcome: .captureDisabled)
+        ))
 
         #expect(adapter.decide(
             configuration: .failOpen(.missingEncodedSnapshot),
@@ -189,7 +196,8 @@ struct FlowDecisionAdapterTests {
             mihomoAvailable: false
         ) == FlowTrafficDecision(
             disposition: .failOpen,
-            reason: .configurationUnavailable(.missingEncodedSnapshot)
+            reason: .configurationUnavailable(.missingEncodedSnapshot),
+            ruleEvidence: CaptureRuleDecisionEvidence(outcome: .configurationUnavailable)
         ))
 
         #expect(adapter.decide(
@@ -199,8 +207,37 @@ struct FlowDecisionAdapterTests {
             mihomoAvailable: false
         ) == FlowTrafficDecision(
             disposition: .failOpen,
-            reason: .contextUnavailable(.missingSourceAppAuditToken)
+            reason: .contextUnavailable(.missingSourceAppAuditToken),
+            ruleEvidence: CaptureRuleDecisionEvidence(
+                outcome: .contextUnavailable,
+                contextUnavailableReason: .missingSourceApplicationAuditToken
+            )
         ))
+    }
+
+    @Test
+    func contextFailuresAreClassifiedWithoutCopyingSensitiveValuesIntoEvidence() throws {
+        let adapter = FlowTrafficDecisionAdapter()
+        let decision = adapter.decide(
+            configuration: try loaded(action: .direct),
+            context: .failOpen(.signingIdentifierMismatch(
+                metadata: "potentially-long-untrusted-value",
+                resolved: "verified-value"
+            )),
+            captureEnabled: true,
+            mihomoAvailable: true
+        )
+
+        #expect(decision.ruleEvidence == CaptureRuleDecisionEvidence(
+            outcome: .contextUnavailable,
+            contextUnavailableReason: .sourceSigningIdentifierMismatch
+        ))
+        let evidenceJSON = String(
+            decoding: try JSONEncoder().encode(decision.ruleEvidence),
+            as: UTF8.self
+        )
+        #expect(!evidenceJSON.contains("potentially-long-untrusted-value"))
+        #expect(!evidenceJSON.contains("verified-value"))
     }
 
     private func metadata() -> FlowApplicationMetadata {

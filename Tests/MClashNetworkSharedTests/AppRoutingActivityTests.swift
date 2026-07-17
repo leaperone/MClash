@@ -6,9 +6,25 @@ import Testing
 struct AppRoutingActivityTests {
     @Test("Activity is Codable, Hashable, and omits sensitive process material")
     func activityRoundTripAndPrivacyBoundary() throws {
+        let evidence = CaptureRuleDecisionEvidence(
+            outcome: .matchedRule,
+            source: .application(RuleApplicationSourceEvidence(
+                signingIdentifier: "com.example.browser",
+                teamIdentifier: "TEAM123",
+                bundleIdentifier: "com.example.browser"
+            )),
+            destination: .host(RuleHostDestinationEvidence(kind: .suffix, value: "example.com")),
+            transportProtocol: .exact(.tcp),
+            destinationPort: .range(try PortRange(443))
+        )
         var activity = makeActivity(
             flowIdentifier: UUID(uuidString: "D54CF072-2153-4CD8-BB79-B467628B66FA")!,
-            ruleIdentifier: "Browser Proxy"
+            ruleIdentifier: "Browser Proxy",
+            decision: FlowTrafficDecision(
+                disposition: .mihomo(.profileRules),
+                reason: .rule(.matchedRule("Browser Proxy")),
+                ruleEvidence: evidence
+            )
         )
         activity.relayState = .relaying
         activity.relayNote = "Mihomo setup failed before payload; Direct fallback is active."
@@ -22,6 +38,7 @@ struct AppRoutingActivityTests {
         #expect(Set([activity, decoded]).count == 1)
         #expect(decoded.matchedRuleIdentifier == "Browser Proxy")
         #expect(decoded.cause == activity.decision.reason)
+        #expect(decoded.ruleEvidence == evidence)
         #expect(decoded.relayNote == activity.relayNote)
 
         let json = String(decoding: data, as: UTF8.self)
@@ -29,6 +46,33 @@ struct AppRoutingActivityTests {
         #expect(!json.contains("password"))
         #expect(!json.contains("designatedRequirement"))
         #expect(!json.contains("not-a-telemetry-secret"))
+    }
+
+    @Test("Legacy activity without structured rule evidence still decodes")
+    func legacyActivityWithoutRuleEvidenceDecodes() throws {
+        let evidence = CaptureRuleDecisionEvidence(
+            outcome: .matchedRule,
+            source: .userID(501),
+            destination: .unconstrained,
+            transportProtocol: .exact(.tcp),
+            destinationPort: .unconstrained
+        )
+        let activity = makeActivity(decision: FlowTrafficDecision(
+            disposition: .mihomo(.profileRules),
+            reason: .rule(.matchedRule("Proxy Browser")),
+            ruleEvidence: evidence
+        ))
+        let encoded = try JSONEncoder().encode(activity)
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var decision = try #require(object["decision"] as? [String: Any])
+        decision.removeValue(forKey: "ruleEvidence")
+        object["decision"] = decision
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(AppRoutingActivity.self, from: legacyData)
+        #expect(decoded.ruleEvidence == nil)
+        #expect(decoded.matchedRuleIdentifier == "Proxy Browser")
+        #expect(decoded.effectiveAction == .mihomo(.profileRules))
     }
 
     @Test("Matched rule is derived from regular and unavailable decisions")

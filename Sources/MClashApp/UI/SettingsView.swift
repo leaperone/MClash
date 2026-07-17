@@ -32,6 +32,33 @@ struct SettingsView: View {
                     )
                     .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
                 }
+                if model.systemProxyEnabled {
+                    LabeledContent(
+                        "Guard",
+                        value: model.systemProxyPreferences.guardEnabled
+                            ? "Active · every \(model.systemProxyPreferences.guardIntervalSeconds)s"
+                            : "Paused"
+                    )
+                    if let repairedAt = model.systemProxyGuardLastRepairedAt {
+                        LabeledContent(
+                            "External changes repaired",
+                            value: "\(model.systemProxyGuardRepairCount) · last \(repairedAt.formatted(.relative(presentation: .named)))"
+                        )
+                        .help(repairedAt.formatted(date: .abbreviated, time: .standard))
+                    }
+                    Button(
+                        model.systemProxyPreferences.guardEnabled
+                            ? "Pause Proxy Guard"
+                            : "Resume Proxy Guard"
+                    ) {
+                        Task {
+                            await model.setSystemProxyGuardPaused(
+                                model.systemProxyPreferences.guardEnabled
+                            )
+                        }
+                    }
+                    .disabled(!model.canPerform(.changeSystemProxySettings))
+                }
                 systemProxySettingsFeedback
 
                 Button("Bypass & Guard Settings…") {
@@ -231,6 +258,9 @@ struct SettingsView: View {
         if model.pendingSystemProxyEnabled == true { return "Turning On" }
         if model.pendingSystemProxyEnabled == false { return "Turning Off" }
         if model.systemProxyRecoveryRequired { return "Needs Restoration" }
+        if model.systemProxyEnabled, !model.systemProxyPreferences.guardEnabled {
+            return "On · Guard Paused"
+        }
         return model.systemProxyEnabled ? "On" : "Off"
     }
 
@@ -438,6 +468,17 @@ private struct SystemProxySettingsEditor: View {
                             value: $guardIntervalSeconds,
                             in: 2...300
                         )
+                        Label(
+                            "While active, MClash rewrites changed macOS proxy settings back to its local listeners. This can override Proxifier or another proxy app. Pause the guard before another app takes ownership.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Paused: MClash leaves later macOS proxy changes untouched. The current proxy remains enabled until you turn it off.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

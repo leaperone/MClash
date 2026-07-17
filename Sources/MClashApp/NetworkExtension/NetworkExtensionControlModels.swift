@@ -8,24 +8,34 @@ enum MClashNetworkExtensionIdentifiers {
 
 struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     let revision: UInt64
+    let activationIdentifier: UUID
     let dnsEnabled: Bool
     let failOpen: Bool
     let captureEnabled: Bool
     let encodedCaptureSnapshot: Data?
+    let encodedMihomoRouteProxyCatalog: Data?
     let mihomoListener: NetworkExtensionMihomoListenerConfiguration?
 
-    init(revision: UInt64, dnsEnabled: Bool = true, failOpen: Bool = true) {
+    init(
+        revision: UInt64,
+        dnsEnabled: Bool = true,
+        failOpen: Bool = true,
+        activationIdentifier: UUID = UUID()
+    ) {
         self.revision = revision
+        self.activationIdentifier = activationIdentifier
         self.dnsEnabled = dnsEnabled
         self.failOpen = failOpen
         captureEnabled = true
         encodedCaptureSnapshot = nil
+        encodedMihomoRouteProxyCatalog = nil
         mihomoListener = nil
     }
 
     init(
         preferences: NetworkCapturePreferences,
-        mihomoListener: NetworkExtensionMihomoListenerConfiguration
+        mihomoListener: NetworkExtensionMihomoListenerConfiguration,
+        activationIdentifier: UUID = UUID()
     ) throws {
         try preferences.snapshot.validate()
         guard preferences.snapshot.revision > 0 else {
@@ -44,21 +54,27 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         }
 
         revision = preferences.snapshot.revision
+        self.activationIdentifier = activationIdentifier
         dnsEnabled = preferences.enabled && preferences.dnsEnabled
         failOpen = preferences.failOpen
         captureEnabled = preferences.enabled
         self.encodedCaptureSnapshot = encodedSnapshot
+        encodedMihomoRouteProxyCatalog = try mihomoListener.encodedRouteProxyCatalog()
         self.mihomoListener = mihomoListener
     }
 
     var providerConfiguration: [String: NSObject] {
         var configuration: [String: NSObject] = [
             "revision": NSNumber(value: revision),
+            "activationIdentifier": activationIdentifier.uuidString as NSString,
             "captureEnabled": NSNumber(value: captureEnabled),
             "failOpen": NSNumber(value: failOpen),
         ]
         if let encodedCaptureSnapshot {
             configuration["captureConfigurationSnapshot"] = encodedCaptureSnapshot as NSData
+        }
+        if let encodedMihomoRouteProxyCatalog {
+            configuration["mihomoRouteProxyCatalog"] = encodedMihomoRouteProxyCatalog as NSData
         }
         if let mihomoListener {
             configuration["mihomoSOCKSHost"] = mihomoListener.ipv4Endpoint.host as NSString

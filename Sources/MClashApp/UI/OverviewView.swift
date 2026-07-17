@@ -718,12 +718,16 @@ private struct OverviewFlowSummarySection: View {
                 contentLayout {
                     flowPanel(
                         title: "Top Applications",
-                        rows: Array(model.flowLedger.applicationAggregates.prefix(4)).map {
-                            FlowSummaryRow(
-                                title: $0.application.displayName,
-                                detail: "\(formattedCount($0.activeCount)) active · \(formattedCount($0.entryCount)) observed",
-                                traffic: overviewTrafficTitle($0.traffic),
-                                partial: $0.traffic.notMeasuredAfterHandoffCount > 0
+                        rows: Array(model.flowLedger.applicationAggregates.prefix(4)).map { aggregate in
+                            let rate = model.appRoutingTrafficRates.byApplication[
+                                appRoutingRateKey(aggregate.application)
+                            ] ?? AppRoutingByteRate()
+                            return FlowSummaryRow(
+                                title: aggregate.application.displayName,
+                                detail: "\(formattedCount(aggregate.activeCount)) active · \(formattedCount(aggregate.entryCount)) observed · now ↓ \(formattedByteRate(Int64(clamping: rate.download))) ↑ \(formattedByteRate(Int64(clamping: rate.upload)))",
+                                traffic: overviewTrafficTitle(aggregate.traffic),
+                                partial: aggregate.traffic.notMeasuredAfterHandoffCount > 0,
+                                trafficHelp: FlowLedgerTrafficPresentation.coverageHelp(aggregate.traffic)
                             )
                         }
                     )
@@ -733,15 +737,28 @@ private struct OverviewFlowSummarySection: View {
                         rows: Array(model.flowLedger.routeAggregates.prefix(4)).map {
                             FlowSummaryRow(
                                 title: overviewRouteTitle($0.route),
-                                detail: overviewRouteDetail($0.route, active: $0.activeCount),
+                                detail: overviewRouteDetail(
+                                    $0.route,
+                                    traffic: $0.traffic,
+                                    active: $0.activeCount
+                                ),
                                 traffic: overviewTrafficTitle($0.traffic),
-                                partial: $0.traffic.notMeasuredAfterHandoffCount > 0
+                                partial: $0.traffic.notMeasuredAfterHandoffCount > 0,
+                                trafficHelp: FlowLedgerTrafficPresentation.coverageHelp($0.traffic)
                             )
                         }
                     )
                 }
             }
         }
+    }
+
+    private func appRoutingRateKey(_ application: FlowLedgerApplication) -> String {
+        application.bundleIdentifier
+            ?? application.executablePath
+            ?? application.signingIdentifier
+            ?? application.processIdentifier.map { "PID \($0)" }
+            ?? "PID 0"
     }
 
     private func flowPanel(title: String, rows: [FlowSummaryRow]) -> some View {
@@ -763,15 +780,13 @@ private struct OverviewFlowSummarySection: View {
                         Text(row.detail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(2)
                     }
                     Spacer(minLength: 12)
                     Text(row.traffic)
                         .font(.callout.monospacedDigit())
                         .foregroundStyle(row.partial ? Color.orange : Color.secondary)
-                        .help(row.partial
-                            ? "Measured bytes only. Some direct or fail-open payload continued outside MClash after handoff."
-                            : "Observed traffic")
+                        .help(row.trafficHelp)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
@@ -791,6 +806,7 @@ private struct OverviewFlowSummarySection: View {
         let detail: String
         let traffic: String
         let partial: Bool
+        let trafficHelp: String
     }
 }
 
@@ -801,26 +817,54 @@ private struct OverviewTrafficSection: View {
         let samples = model.trafficHistory
         let downloadRate = model.traffic.download
         let uploadRate = model.traffic.upload
+        let directDownloadRate = model.appRoutingTrafficRates.direct.download
+        let directUploadRate = model.appRoutingTrafficRates.direct.upload
 
         VStack(alignment: .leading, spacing: 14) {
             OverviewSectionHeader(title: "Traffic", symbol: "chart.xyaxis.line")
 
-            HStack(spacing: 18) {
-                OverviewTrafficLegendItem(
-                    title: trafficIsCurrent ? "Download" : "Download · stale",
-                    value: trafficIsCurrent ? formattedByteRate(downloadRate) : "—",
-                    color: .blue
-                )
-                OverviewTrafficLegendItem(
-                    title: trafficIsCurrent ? "Upload" : "Upload · stale",
-                    value: trafficIsCurrent ? formattedByteRate(uploadRate) : "—",
-                    color: .orange
-                )
-                Spacer()
-                Text(trafficIsCurrent ? "Recent activity" : "Last received samples")
-                    .font(.caption)
-                    .foregroundStyle(trafficIsCurrent ? Color.secondary : Color.orange)
+            Grid(alignment: .leading, horizontalSpacing: 22, verticalSpacing: 8) {
+                GridRow {
+                    OverviewTrafficLegendItem(
+                        title: trafficIsCurrent ? "Mihomo download" : "Mihomo download · stale",
+                        value: trafficIsCurrent ? formattedByteRate(downloadRate) : "—",
+                        color: .blue
+                    )
+                    OverviewTrafficLegendItem(
+                        title: trafficIsCurrent ? "Mihomo upload" : "Mihomo upload · stale",
+                        value: trafficIsCurrent ? formattedByteRate(uploadRate) : "—",
+                        color: .orange
+                    )
+                }
+                GridRow {
+                    OverviewTrafficLegendItem(
+                        title: appRoutingRateIsCurrent
+                            ? "App Routing Direct download"
+                            : "App Routing Direct download · stale",
+                        value: appRoutingRateIsCurrent
+                            ? formattedByteRate(Int64(clamping: directDownloadRate))
+                            : "—",
+                        color: .cyan
+                    )
+                    OverviewTrafficLegendItem(
+                        title: appRoutingRateIsCurrent
+                            ? "App Routing Direct upload"
+                            : "App Routing Direct upload · stale",
+                        value: appRoutingRateIsCurrent
+                            ? formattedByteRate(Int64(clamping: directUploadRate))
+                            : "—",
+                        color: .mint
+                    )
+                }
             }
+
+            Text(observableRateSummary)
+                .font(.caption)
+                .foregroundStyle(
+                    trafficIsCurrent && appRoutingRateIsCurrent
+                        ? Color.secondary
+                        : Color.orange
+                )
 
             if samples.isEmpty {
                 VStack(spacing: 8) {
@@ -828,7 +872,7 @@ private struct OverviewTrafficSection: View {
                         .font(.title2)
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
-                    Text(model.isConnected ? "Waiting for traffic samples…" : "Connect to view live traffic")
+                    Text(model.isConnected ? "Waiting for Mihomo traffic samples…" : "Connect to view live traffic")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -899,7 +943,7 @@ private struct OverviewTrafficSection: View {
                     }
                 }
                 .frame(height: 250)
-                .accessibilityLabel("Recent network traffic")
+                .accessibilityLabel("Recent Mihomo core network traffic")
                 .accessibilityValue(
                     trafficIsCurrent
                         ? "Download \(formattedByteRate(downloadRate)), upload \(formattedByteRate(uploadRate))"
@@ -911,6 +955,31 @@ private struct OverviewTrafficSection: View {
 
     private var trafficIsCurrent: Bool {
         model.liveStreamHealth[.traffic]?.hasCurrentData == true
+    }
+
+    private var appRoutingRateIsCurrent: Bool {
+        guard model.networkCapturePreferences.enabled else { return true }
+        return model.liveStreamHealth[.appRouting]?.hasCurrentData == true
+    }
+
+    private var observableRateSummary: String {
+        guard trafficIsCurrent, appRoutingRateIsCurrent else {
+            return "Last-known values are retained, but at least one traffic source is stale. The chart below contains Mihomo core samples only."
+        }
+        let download = saturatingRateSum(
+            UInt64(max(0, model.traffic.download)),
+            model.appRoutingTrafficRates.direct.download
+        )
+        let upload = saturatingRateSum(
+            UInt64(max(0, model.traffic.upload)),
+            model.appRoutingTrafficRates.direct.upload
+        )
+        return "MClash-observable total now: ↓ \(formattedByteRate(Int64(clamping: download))) · ↑ \(formattedByteRate(Int64(clamping: upload))). This adds Mihomo core traffic and measured App Routing Direct relays; unmeasured handoffs are excluded."
+    }
+
+    private func saturatingRateSum(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? .max : value
     }
 }
 
@@ -933,7 +1002,11 @@ private func overviewRouteTitle(_ route: FlowLedgerRouteKey) -> String {
     }
 }
 
-private func overviewRouteDetail(_ route: FlowLedgerRouteKey, active: Int) -> String {
+private func overviewRouteDetail(
+    _ route: FlowLedgerRouteKey,
+    traffic: FlowLedgerTrafficAggregate,
+    active: Int
+) -> String {
     let activeTitle = "\(formattedCount(active)) active"
     switch route {
     case let .mihomo(rule, payload, chain):
@@ -947,7 +1020,8 @@ private func overviewRouteDetail(_ route: FlowLedgerRouteKey, active: Int) -> St
         return [activeTitle, ruleTitle.isEmpty ? path : ruleTitle]
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
-    case .direct: return "\(activeTitle) · handed to macOS"
+    case .direct:
+        return "\(activeTitle) · \(FlowLedgerTrafficPresentation.directRouteDetail(traffic))"
     case .rejected: return "\(activeTitle) · blocked"
     case .failOpen: return "\(activeTitle) · handed to macOS after failure"
     case .relayFailed: return "\(activeTitle) · relay unavailable"

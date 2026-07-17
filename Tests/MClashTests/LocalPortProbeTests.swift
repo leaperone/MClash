@@ -11,6 +11,15 @@ struct LocalPortProbeTests {
         #expect((1...65_535).contains(port))
     }
 
+    @Test("A route catalog receives distinct TCP and UDP eligible ports")
+    func allocatesDistinctTCPAndUDPPorts() throws {
+        let ports = try LocalPortProbe().availableTCPAndUDPPorts(count: 4)
+
+        #expect(ports.count == 4)
+        #expect(Set(ports).count == 4)
+        #expect(ports.allSatisfy { (1 ... 65_535).contains($0) })
+    }
+
     @Test("Invalid ports are never reported as listening")
     func rejectsInvalidPorts() {
         let probe = LocalPortProbe()

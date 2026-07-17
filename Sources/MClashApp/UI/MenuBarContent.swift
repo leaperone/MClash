@@ -716,6 +716,7 @@ struct MenuBarContent: View {
         switch model.systemProxyState {
         case .on:
             if model.systemProxyGuardFailure != nil { return "On · unverified" }
+            if !model.systemProxyPreferences.guardEnabled { return "On · guard paused" }
             return "On"
         case .enabling: return "Turning on…"
         case .disabling: return "Restoring…"
@@ -727,9 +728,12 @@ struct MenuBarContent: View {
     private var captureStatusSymbol: String {
         switch model.systemProxyState {
         case .on:
-            return model.systemProxyGuardFailure == nil
+            if model.systemProxyGuardFailure != nil {
+                return "exclamationmark.circle.fill"
+            }
+            return model.systemProxyPreferences.guardEnabled
                 ? "checkmark.circle.fill"
-                : "exclamationmark.circle.fill"
+                : "pause.circle.fill"
         case .enabling, .disabling: return "arrow.clockwise"
         case .failed: return "exclamationmark.triangle.fill"
         case .off: return "circle"
@@ -738,7 +742,9 @@ struct MenuBarContent: View {
 
     private var captureStatusColor: Color {
         switch model.systemProxyState {
-        case .on: return model.systemProxyGuardFailure == nil ? .green : .orange
+        case .on:
+            return model.systemProxyGuardFailure == nil
+                && model.systemProxyPreferences.guardEnabled ? .green : .orange
         case .enabling, .disabling: return .orange
         case .failed: return .red
         case .off: return .secondary

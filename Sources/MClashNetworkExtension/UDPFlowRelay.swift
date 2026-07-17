@@ -14,8 +14,8 @@ enum UDPFlowRelayError: Error, LocalizedError, Sendable {
     case flowReadFailed(String)
     case flowWriteFailed(String)
     case invalidDatagramBatch(datagrams: Int, endpoints: Int)
-    case tooManyDatagrams(limit: Int, actual: Int)
-    case datagramBatchTooLarge(limit: Int, actual: Int)
+    case datagramTooLarge(limit: Int, actual: Int)
+    case unexpectedDestination
     case unsupportedEndpoint
     case invalidRelayEndpoint
     case unexpectedControlData
@@ -43,10 +43,10 @@ enum UDPFlowRelayError: Error, LocalizedError, Sendable {
             "Writing the intercepted UDP flow failed: \(message)"
         case let .invalidDatagramBatch(datagrams, endpoints):
             "The intercepted UDP flow returned \(datagrams) datagrams and \(endpoints) endpoints."
-        case let .tooManyDatagrams(limit, actual):
-            "The intercepted UDP flow returned \(actual) datagrams; limit is \(limit)."
-        case let .datagramBatchTooLarge(limit, actual):
-            "The intercepted UDP batch is \(actual) bytes; limit is \(limit)."
+        case let .datagramTooLarge(limit, actual):
+            "The intercepted UDP datagram is \(actual) bytes; limit is \(limit)."
+        case .unexpectedDestination:
+            "The UDP flow changed destinations after its routing decision; MClash stopped it rather than applying the wrong IP or port rule."
         case .unsupportedEndpoint:
             "The UDP datagram endpoint is unsupported."
         case .invalidRelayEndpoint:
@@ -59,7 +59,12 @@ enum UDPFlowRelayError: Error, LocalizedError, Sendable {
     }
 }
 
-private struct UDPFlowDatagram: Sendable {
+enum UDPFlowRelayExit: Sendable {
+    case finished
+    case directFallback(String)
+}
+
+struct UDPFlowDatagram: Sendable {
     let payload: Data
     let endpoint: SOCKS5Endpoint
 }
@@ -67,7 +72,7 @@ private struct UDPFlowDatagram: Sendable {
 /// Bridges the macOS 14 `NWHostEndpoint` UDP flow API and the macOS 15
 /// `Network.NWEndpoint` API without allowing deprecated endpoint wrappers to
 /// escape the compatibility boundary.
-private enum UDPAppProxyFlowCompatibility {
+enum UDPAppProxyFlowCompatibility {
     static func read(
         from flow: NEAppProxyUDPFlow,
         completion: @escaping @Sendable ([UDPFlowDatagram]?, Error?) -> Void
@@ -109,8 +114,8 @@ private enum UDPAppProxyFlowCompatibility {
                     )
                 }
                 completion(converted, error)
-            } catch {
-                completion(nil, error)
+            } catch let conversionError {
+                completion(nil, conversionError)
             }
         }
     }
@@ -276,14 +281,13 @@ final class UDPFlowRelay: @unchecked Sendable {
     private enum Limits {
         static let startupTimeout: DispatchTimeInterval = .seconds(10)
         static let idleTimeout: DispatchTimeInterval = .seconds(120)
-        static let maximumBatchDatagrams = 64
-        static let maximumBatchBytes = 256 * 1_024
     }
 
     private let flow: NEAppProxyUDPFlow
     private let proxy: ProviderSOCKSConfiguration
+    private let expectedDestination: SOCKS5Endpoint
     private let queue: DispatchQueue
-    private let completion: @Sendable (UUID) -> Void
+    private let completion: @Sendable (UUID, UDPFlowRelayExit) -> Void
     private let activityReporter: AppRoutingRelayActivityReporter
 
     private var controlConnection: NWConnection?
@@ -297,19 +301,25 @@ final class UDPFlowRelay: @unchecked Sendable {
     private var startedHandshake = false
     private var startedUDPConnection = false
     private var openedFlow = false
+    private var failoverState: UDPRelayFailoverState
     private var finished = false
-    private var uploadBytes: UInt64 = 0
-    private var downloadBytes: UInt64 = 0
+    private var byteLedger = UDPRelayByteLedger()
     private var relayLocalPort: UInt16?
 
     init(
         flow: NEAppProxyUDPFlow,
         proxy: ProviderSOCKSConfiguration,
+        expectedDestination: SOCKS5Endpoint,
+        unavailableFallback: UnavailableFallback,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
-        completion: @escaping @Sendable (UUID) -> Void
+        completion: @escaping @Sendable (UUID, UDPFlowRelayExit) -> Void
     ) {
         self.flow = flow
         self.proxy = proxy
+        self.expectedDestination = expectedDestination
+        failoverState = UDPRelayFailoverState(
+            unavailableFallback: unavailableFallback
+        )
         self.completion = completion
         let queue = DispatchQueue(label: "one.leaper.mclash.udp-relay.\(id.uuidString)")
         self.queue = queue
@@ -339,7 +349,7 @@ final class UDPFlowRelay: @unchecked Sendable {
 
     func cancel() {
         queue.async { [self] in
-            finish(error: UDPFlowRelayError.cancelled)
+            finish(error: UDPFlowRelayError.cancelled, allowDirectFallback: false)
         }
     }
 
@@ -613,6 +623,7 @@ final class UDPFlowRelay: @unchecked Sendable {
                     return
                 }
                 self.openedFlow = true
+                self.failoverState.markFlowOpened()
                 self.report(.ready)
                 self.startupTimeout?.cancel()
                 self.startupTimeout = nil
@@ -652,6 +663,9 @@ final class UDPFlowRelay: @unchecked Sendable {
                 }
                 do {
                     try self.validate(datagrams)
+                    for datagram in datagrams {
+                        self.byteLedger.recordApplicationRead(datagram.payload.count)
+                    }
                     self.resetIdleTimeout()
                     self.sendToRelay(datagrams, index: 0)
                 } catch {
@@ -662,21 +676,16 @@ final class UDPFlowRelay: @unchecked Sendable {
     }
 
     private func validate(_ datagrams: [UDPFlowDatagram]) throws {
-        guard datagrams.count <= Limits.maximumBatchDatagrams else {
-            throw UDPFlowRelayError.tooManyDatagrams(
-                limit: Limits.maximumBatchDatagrams,
-                actual: datagrams.count
-            )
-        }
-        var totalBytes = 0
         for datagram in datagrams {
-            guard datagram.payload.count <= Limits.maximumBatchBytes - totalBytes else {
-                throw UDPFlowRelayError.datagramBatchTooLarge(
-                    limit: Limits.maximumBatchBytes,
-                    actual: totalBytes + datagram.payload.count
+            guard datagram.endpoint == expectedDestination else {
+                throw UDPFlowRelayError.unexpectedDestination
+            }
+            guard datagram.payload.count <= SOCKS5Limits.maximumUDPDatagramBytes else {
+                throw UDPFlowRelayError.datagramTooLarge(
+                    limit: SOCKS5Limits.maximumUDPDatagramBytes,
+                    actual: datagram.payload.count
                 )
             }
-            totalBytes += datagram.payload.count
         }
     }
 
@@ -712,7 +721,8 @@ final class UDPFlowRelay: @unchecked Sendable {
                                 error.localizedDescription
                             ))
                         } else {
-                            self.uploadBytes &+= UInt64(item.payload.count)
+                            self.byteLedger.recordUpstreamAccepted(item.payload.count)
+                            self.failoverState.markApplicationPayloadForwarded()
                             self.report(.relaying)
                             self.sendToRelay(datagrams, index: index + 1)
                         }
@@ -749,8 +759,7 @@ final class UDPFlowRelay: @unchecked Sendable {
                         payload: decoded.payload,
                         endpoint: decoded.destination
                     )
-                    self.downloadBytes &+= UInt64(decoded.payload.count)
-                    self.report(.relaying)
+                    self.byteLedger.recordUpstreamReceived(decoded.payload.count)
                     self.resetIdleTimeout()
                     UDPAppProxyFlowCompatibility.write(
                         datagram,
@@ -763,6 +772,10 @@ final class UDPFlowRelay: @unchecked Sendable {
                                     error.localizedDescription
                                 ))
                             } else {
+                                self.byteLedger.recordApplicationDelivered(
+                                    decoded.payload.count
+                                )
+                                self.report(.relaying)
                                 self.readFromRelay()
                             }
                         }
@@ -774,8 +787,18 @@ final class UDPFlowRelay: @unchecked Sendable {
         }
     }
 
-    private func finish(error: Error?) {
+    private func finish(
+        error: Error?,
+        allowDirectFallback: Bool = true
+    ) {
         guard !finished else { return }
+        if let error,
+           allowDirectFallback,
+           failoverState.canFallbackToDirect,
+           !openedFlow {
+            finishForDirectFallback(error: error)
+            return
+        }
         finished = true
         startupTimeout?.cancel()
         startupTimeout = nil
@@ -800,14 +823,29 @@ final class UDPFlowRelay: @unchecked Sendable {
             error == nil ? .completed : .failed,
             error: error?.localizedDescription
         )
-        completion(id)
+        completion(id, .finished)
+    }
+
+    private func finishForDirectFallback(error: Error) {
+        finished = true
+        startupTimeout?.cancel()
+        startupTimeout = nil
+        idleTimeout?.cancel()
+        idleTimeout = nil
+        controlConnection?.stateUpdateHandler = nil
+        controlConnection?.cancel()
+        controlConnection = nil
+        udpConnection?.stateUpdateHandler = nil
+        udpConnection?.cancel()
+        udpConnection = nil
+        completion(id, .directFallback(error.localizedDescription))
     }
 
     private func report(_ state: AppRoutingRelayState, error: String? = nil) {
         activityReporter.report(AppRoutingRelaySnapshot(
             state: state,
-            uploadBytes: uploadBytes,
-            downloadBytes: downloadBytes,
+            uploadBytes: byteLedger.uploadBytes,
+            downloadBytes: byteLedger.downloadBytes,
             error: error,
             localPort: relayLocalPort
         ))
@@ -822,38 +860,135 @@ final class UDPFlowRelay: @unchecked Sendable {
 }
 
 final class UDPFlowRelayRegistry: @unchecked Sendable {
+    private static let maximumActiveRelays = 512
     private let lock = NSLock()
-    private var relays: [UUID: UDPFlowRelay] = [:]
+    private var mihomoRelays: [UUID: UDPFlowRelay] = [:]
+    private var directRelays: [UUID: DirectUDPFlowRelay] = [:]
+    private var generation = UUID()
 
-    func start(
+    func startMihomo(
         flow: NEAppProxyUDPFlow,
         proxy: ProviderSOCKSConfiguration,
+        expectedDestination: SOCKS5Endpoint,
+        unavailableFallback: UnavailableFallback,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
     ) {
+        let relayGeneration = currentGeneration()
         let relay = UDPFlowRelay(
             flow: flow,
             proxy: proxy,
+            expectedDestination: expectedDestination,
+            unavailableFallback: unavailableFallback,
             activityObserver: activityObserver
-        ) { [weak self] identifier in
-            self?.remove(identifier)
+        ) { [weak self] identifier, exit in
+            self?.finishMihomo(
+                identifier,
+                exit: exit,
+                generation: relayGeneration,
+                flow: flow,
+                expectedDestination: expectedDestination,
+                activityObserver: activityObserver
+            )
         }
         lock.lock()
-        relays[relay.id] = relay
+        guard generation == relayGeneration,
+              mihomoRelays.count + directRelays.count < Self.maximumActiveRelays else {
+            lock.unlock()
+            relay.cancel()
+            return
+        }
+        mihomoRelays[relay.id] = relay
         lock.unlock()
         relay.start()
     }
 
-    func cancelAll() {
-        lock.lock()
-        let current = Array(relays.values)
-        relays.removeAll(keepingCapacity: false)
-        lock.unlock()
-        current.forEach { $0.cancel() }
+    func startDirect(
+        flow: NEAppProxyUDPFlow,
+        expectedDestination: SOCKS5Endpoint,
+        relayNote: String? = nil,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
+    ) {
+        startDirect(
+            flow: flow,
+            expectedDestination: expectedDestination,
+            relayNote: relayNote,
+            activityObserver: activityObserver,
+            expectedGeneration: currentGeneration()
+        )
     }
 
-    private func remove(_ identifier: UUID) {
+    func cancelAll() {
         lock.lock()
-        relays.removeValue(forKey: identifier)
+        generation = UUID()
+        let currentMihomo = Array(mihomoRelays.values)
+        let currentDirect = Array(directRelays.values)
+        mihomoRelays.removeAll(keepingCapacity: false)
+        directRelays.removeAll(keepingCapacity: false)
         lock.unlock()
+        currentMihomo.forEach { $0.cancel() }
+        currentDirect.forEach { $0.cancel() }
+    }
+
+    private func finishMihomo(
+        _ identifier: UUID,
+        exit: UDPFlowRelayExit,
+        generation relayGeneration: UUID,
+        flow: NEAppProxyUDPFlow,
+        expectedDestination: SOCKS5Endpoint,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
+    ) {
+        lock.lock()
+        let wasRegistered = mihomoRelays.removeValue(forKey: identifier) != nil
+        let mayTransition = wasRegistered && generation == relayGeneration
+        lock.unlock()
+
+        guard mayTransition,
+              case let .directFallback(reason) = exit else { return }
+        startDirect(
+            flow: flow,
+            expectedDestination: expectedDestination,
+            relayNote: "Mihomo SOCKS UDP setup failed before application payload forwarding; MClash used the rule's Direct fallback. \(reason)",
+            activityObserver: activityObserver,
+            expectedGeneration: relayGeneration
+        )
+    }
+
+    private func startDirect(
+        flow: NEAppProxyUDPFlow,
+        expectedDestination: SOCKS5Endpoint,
+        relayNote: String?,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
+        expectedGeneration: UUID
+    ) {
+        let relay = DirectUDPFlowRelay(
+            flow: flow,
+            expectedDestination: expectedDestination,
+            relayNote: relayNote,
+            activityObserver: activityObserver
+        ) { [weak self] identifier in
+            self?.removeDirect(identifier)
+        }
+        lock.lock()
+        guard generation == expectedGeneration,
+              mihomoRelays.count + directRelays.count < Self.maximumActiveRelays else {
+            lock.unlock()
+            relay.cancel()
+            return
+        }
+        directRelays[relay.id] = relay
+        lock.unlock()
+        relay.start()
+    }
+
+    private func removeDirect(_ identifier: UUID) {
+        lock.lock()
+        directRelays.removeValue(forKey: identifier)
+        lock.unlock()
+    }
+
+    private func currentGeneration() -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation
     }
 }

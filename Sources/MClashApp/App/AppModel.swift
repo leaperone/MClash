@@ -189,6 +189,23 @@ final class AppModel {
         let failedCount: Int
     }
 
+    struct NetworkCaptureChangeReceipt: Equatable, Sendable {
+        enum Outcome: Equatable, Sendable {
+            case savedForNextActivation
+            case appliedAndVerified(
+                enabled: Bool,
+                dnsEnabled: Bool,
+                systemProxyWasDisabled: Bool
+            )
+            case rejectedAndRolledBack(String)
+            case rollbackFailed(String)
+        }
+
+        let completedAt: Date
+        let duration: TimeInterval
+        let outcome: Outcome
+    }
+
     private enum ProfileRefreshOperationOutcome {
         case updated
         case unchanged
@@ -329,6 +346,16 @@ final class AppModel {
     private(set) var networkCapturePreferences = NetworkCapturePreferences.disabled()
     private(set) var appRoutingActivities: [AppRoutingActivity] = []
     private(set) var appRoutingActivityError: String?
+    private(set) var appRoutingTrafficRates: AppRoutingTrafficRateSnapshot = .zero
+    private(set) var appRoutingActivityDroppedCount: UInt64 = 0
+    private(set) var appRoutingActivityCoverageStartedAt: Date?
+    private(set) var dnsProxyRuntimeStatus: DNSProxyRuntimeStatus?
+    private(set) var dnsProxyRuntimeError: String?
+    private(set) var dnsProxyLastVerifiedAt: Date?
+    private(set) var dnsProxyAutomaticallyDisabled = false
+    private(set) var networkCaptureChangeReceipt: NetworkCaptureChangeReceipt?
+    private(set) var networkCaptureRollbackFailure: String?
+    private var dnsProxyRuntimeFailureCount = 0
     private(set) var launchAtLogin = false
     private(set) var notificationsEnabled = false
     var controllerState: ControllerState = .idle
@@ -375,6 +402,8 @@ final class AppModel {
     private(set) var storageInitializationFailures: [StorageInitializationFailure] = []
     private(set) var systemProxyGuardFailure: SystemProxyGuardFailure?
     private(set) var systemProxyGuardLastVerifiedAt: Date?
+    private(set) var systemProxyGuardLastRepairedAt: Date?
+    private(set) var systemProxyGuardRepairCount = 0
     private(set) var systemProxySettingsReceipt: SystemProxySettingsReceipt?
 
     private let supervisor: CoreSupervisor
@@ -429,7 +458,9 @@ final class AppModel {
     private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
     private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
     private var appRoutingActivityTask: Task<Void, Never>?
+    private var dnsProxyRuntimeTask: Task<Void, Never>?
     private var appRoutingActivityCursor: UInt64 = 0
+    private var appRoutingTrafficRateTracker = AppRoutingTrafficRateTracker()
     private(set) var appRoutingProviderStatusFailureCount = 0
     private(set) var appRoutingProviderLastVerifiedAt: Date?
     private(set) var preparationInProgress = false
@@ -658,7 +689,9 @@ final class AppModel {
                         throw error
                     }
                     if networkCapturePreferences.enabled {
-                        networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener()
+                        networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener(
+                            for: networkCapturePreferences.snapshot.rules
+                        )
                     }
                 }
                 do {
@@ -2123,7 +2156,7 @@ final class AppModel {
             try await applyNetworkCaptureRules(
                 networkCapturePreferences.snapshot.rules,
                 enabled: enabled,
-                dnsEnabled: false
+                dnsEnabled: networkCapturePreferences.dnsEnabled
             )
         } catch {
             recordOperationFailure(error, context: "Network capture update")
@@ -2146,8 +2179,9 @@ final class AppModel {
     func applyNetworkCaptureRules(
         _ rules: [CaptureRule],
         enabled: Bool,
-        dnsEnabled: Bool = false
+        dnsEnabled: Bool? = nil
     ) async throws {
+        let transactionStartedAt = Date()
         guard begin(.changeNetworkCapture) else {
             throw AppModelError.operationInProgress
         }
@@ -2164,30 +2198,56 @@ final class AppModel {
             throw AppModelError.profileStoreUnavailable
         }
 
+        let systemProxyWasOn: Bool = {
+            if case .on = systemProxyState { return true }
+            return false
+        }()
+        var systemProxyWasDisabled = false
         if enabled, systemProxyEnabled || hasSystemProxySnapshot {
             guard await performDisableSystemProxy() else {
                 throw AppModelError.systemProxyRestoreFailed
             }
+            systemProxyWasDisabled = systemProxyWasOn
         }
 
         let previous = networkCapturePreferences
         let previousListener = networkExtensionMihomoListener
         let wasConnected = isConnected || isBusy
         do {
-            if enabled, networkExtensionMihomoListener == nil {
-                networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener()
+            if enabled {
+                networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener(
+                    for: rules
+                )
             }
             let candidate = try await store.replaceRules(
                 rules,
                 enabled: enabled,
-                // DNS capture stays opt-in and is enabled only when a working
-                // DNS data plane is packaged by the provider.
-                dnsEnabled: enabled && dnsEnabled,
+                // This is the user's persistent choice. Runtime activation is
+                // still gated by App Routing being enabled, but rule edits or
+                // a temporary disable must never silently erase the choice.
+                dnsEnabled: dnsEnabled ?? previous.dnsEnabled,
                 failOpen: true
             )
             networkCapturePreferences = candidate
             if !enabled {
                 networkExtensionMihomoListener = nil
+            }
+
+            // Editing rules or the DNS preference while App Routing is off is
+            // a persistence-only operation. There is no active data plane to
+            // recompose, so restarting Mihomo would only interrupt traffic.
+            if !previous.enabled, !enabled {
+                networkCaptureState = .off
+                networkCaptureRollbackFailure = nil
+                networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                    completedAt: Date(),
+                    duration: Date().timeIntervalSince(transactionStartedAt),
+                    outcome: .savedForNextActivation
+                )
+                appendSupervisorLog(
+                    "App Routing settings were saved for the next activation; the running core was not restarted."
+                )
+                return
             }
 
             if wasConnected {
@@ -2232,8 +2292,20 @@ final class AppModel {
             } else {
                 appendSupervisorLog("Per-application network capture is disabled.")
             }
+            networkCaptureRollbackFailure = nil
+            networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                completedAt: Date(),
+                duration: Date().timeIntervalSince(transactionStartedAt),
+                outcome: .appliedAndVerified(
+                    enabled: enabled,
+                    dnsEnabled: candidate.dnsEnabled,
+                    systemProxyWasDisabled: systemProxyWasDisabled
+                )
+            )
         } catch {
             let primaryError = error
+            var rollbackFailures: [String] = []
+
             do {
                 networkExtensionMihomoListener = previous.enabled ? previousListener : nil
                 networkCapturePreferences = try await store.replaceRules(
@@ -2242,22 +2314,122 @@ final class AppModel {
                     dnsEnabled: previous.dnsEnabled,
                     failOpen: previous.failOpen
                 )
-                if isConnected || isBusy {
-                    _ = await performDisconnect()
+            } catch {
+                rollbackFailures.append(
+                    "saved App Routing settings: \(error.localizedDescription)"
+                )
+            }
+
+            if isConnected || isBusy {
+                let disconnected = await performDisconnect()
+                if !disconnected {
+                    rollbackFailures.append(
+                        "running core: could not stop it before restoration"
+                    )
                 }
+            }
+
+            do {
                 let rollback = try await activateStoredProfile(
                     activeProfileID,
                     validator: try makeProfileValidator()
                 )
                 self.activeProfileID = rollback.profileID
                 activeConfigURL = rollback.configurationURL
-                if wasConnected { _ = await performConnect() }
+                profiles = try await profileStore.profiles()
             } catch {
-                appendSupervisorLog(
-                    "Network capture rollback failed: \(error.localizedDescription)"
+                rollbackFailures.append(
+                    "active profile: \(error.localizedDescription)"
                 )
             }
-            throw primaryError
+
+            if wasConnected {
+                let reconnected = await performConnect()
+                if !reconnected {
+                    rollbackFailures.append(
+                        "mihomo core: \(errorMessage ?? "the previous session could not be restarted")"
+                    )
+                }
+            }
+
+            if systemProxyWasOn {
+                if networkCapturePreferences.enabled {
+                    rollbackFailures.append(
+                        "System Proxy: App Routing remained enabled, so restoring the mutually exclusive proxy would be unsafe"
+                    )
+                } else {
+                    await performEnableSystemProxy()
+                    if case .on = systemProxyState {
+                        appendSupervisorLog(
+                            "Network capture rollback restored the previously enabled macOS System Proxy."
+                        )
+                    } else {
+                        rollbackFailures.append(
+                            "System Proxy: \(errorMessage ?? "the previous macOS proxy could not be re-enabled and verified")"
+                        )
+                    }
+                }
+            }
+
+            let elapsed = Date().timeIntervalSince(transactionStartedAt)
+            if rollbackFailures.isEmpty {
+                networkCaptureRollbackFailure = nil
+                networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                    completedAt: Date(),
+                    duration: elapsed,
+                    outcome: .rejectedAndRolledBack(primaryError.localizedDescription)
+                )
+                appendSupervisorLog(
+                    "App Routing change was rejected and all previous network state was restored: \(primaryError.localizedDescription)"
+                )
+                throw primaryError
+            } else {
+                let rollbackDetail = rollbackFailures.joined(separator: "; ")
+                let transactionError = NetworkCaptureTransactionFailure(
+                    updateReason: primaryError.localizedDescription,
+                    rollbackReason: rollbackDetail
+                )
+                networkCaptureRollbackFailure = transactionError.localizedDescription
+                networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                    completedAt: Date(),
+                    duration: elapsed,
+                    outcome: .rollbackFailed(transactionError.localizedDescription)
+                )
+                appendSupervisorLog(
+                    "Network capture rollback failed: \(transactionError.localizedDescription)"
+                )
+                throw transactionError
+            }
+        }
+    }
+
+    func setDNSCaptureEnabled(_ enabled: Bool) async {
+        guard enabled != networkCapturePreferences.dnsEnabled
+                || dnsProxyAutomaticallyDisabled else { return }
+        do {
+            try await applyNetworkCaptureRules(
+                networkCapturePreferences.snapshot.rules,
+                enabled: networkCapturePreferences.enabled,
+                dnsEnabled: enabled
+            )
+        } catch {
+            recordOperationFailure(error, context: "DNS routing update")
+        }
+    }
+
+    func retryDNSCaptureActivation() async {
+        guard networkCapturePreferences.enabled,
+              networkCapturePreferences.dnsEnabled else { return }
+        dnsProxyAutomaticallyDisabled = false
+        dnsProxyRuntimeFailureCount = 0
+        do {
+            try await applyNetworkCaptureRules(
+                networkCapturePreferences.snapshot.rules,
+                enabled: true,
+                dnsEnabled: true
+            )
+        } catch {
+            recordOperationFailure(error, context: "DNS routing retry")
         }
     }
 
@@ -2317,6 +2489,8 @@ final class AppModel {
             ) {
             case .running:
                 networkCaptureState = .on(revision: configuration.revision)
+                dnsProxyAutomaticallyDisabled = false
+                dnsProxyRuntimeFailureCount = 0
                 startAppRoutingActivityMonitor()
                 appendSupervisorLog(
                     "Network Extension is routing selected flows through mihomo."
@@ -2436,6 +2610,8 @@ final class AppModel {
         let generation = controllerGeneration
         systemProxyGuardFailure = nil
         systemProxyGuardLastVerifiedAt = nil
+        systemProxyGuardLastRepairedAt = nil
+        systemProxyGuardRepairCount = 0
         systemProxyState = .enabling
         do {
             guard let httpPort = localHTTPProxyPort, let socksPort = localSOCKSProxyPort else {
@@ -2620,6 +2796,25 @@ final class AppModel {
         }
     }
 
+    func setSystemProxyGuardPaused(_ paused: Bool) async {
+        var preferences = systemProxyPreferences
+        guard preferences.guardEnabled == paused else { return }
+        preferences.guardEnabled = !paused
+        do {
+            try await applySystemProxyPreferences(preferences)
+            appendSupervisorLog(
+                paused
+                    ? "System proxy guard paused; current macOS proxy settings were left in place."
+                    : "System proxy guard resumed and verified."
+            )
+        } catch {
+            recordOperationFailure(
+                error,
+                context: paused ? "Pause system proxy guard" : "Resume system proxy guard"
+            )
+        }
+    }
+
     private func currentSystemProxyEndpoints() -> LocalSystemProxyEndpoints? {
         guard let httpPort = localHTTPProxyPort,
               let socksPort = localSOCKSProxyPort else { return nil }
@@ -2685,6 +2880,7 @@ final class AppModel {
             )
             guard systemProxyGuardCanVerify else { return }
             if !matches {
+                let detectedAt = Date()
                 try await systemProxyManager.apply(
                     endpoints: endpoints,
                     bypassDomains: bypassDomains
@@ -2701,6 +2897,10 @@ final class AppModel {
                 appendSupervisorLog(
                     "System proxy guard restored and verified externally changed settings."
                 )
+                systemProxyGuardLastRepairedAt = detectedAt
+                if systemProxyGuardRepairCount < Int.max {
+                    systemProxyGuardRepairCount += 1
+                }
             }
 
             systemProxyGuardLastVerifiedAt = Date()
@@ -2752,6 +2952,8 @@ final class AppModel {
         let wasRecovering = systemProxyRecoveryRequired
         systemProxyGuardFailure = nil
         systemProxyGuardLastVerifiedAt = nil
+        systemProxyGuardLastRepairedAt = nil
+        systemProxyGuardRepairCount = 0
         systemProxyState = .disabling
         do {
             if FileManager.default.fileExists(atPath: snapshotURL.path) {
@@ -2849,6 +3051,10 @@ final class AppModel {
             appRoutingActivities.removeAll(keepingCapacity: true)
             appRoutingActivityCursor = 0
             appRoutingActivityError = nil
+            appRoutingTrafficRateTracker.reset()
+            appRoutingTrafficRates = .zero
+            appRoutingActivityDroppedCount = 0
+            appRoutingActivityCoverageStartedAt = Date()
             scheduleFlowLedgerRefresh()
         } catch {
             appRoutingActivityError = error.localizedDescription
@@ -3699,6 +3905,10 @@ final class AppModel {
     private func startAppRoutingActivityMonitor() {
         appRoutingActivityTask?.cancel()
         appRoutingActivityCursor = 0
+        appRoutingTrafficRateTracker.reset()
+        appRoutingTrafficRates = .zero
+        appRoutingActivityDroppedCount = 0
+        appRoutingActivityCoverageStartedAt = Date()
         appRoutingProviderStatusFailureCount = 0
         appRoutingProviderLastVerifiedAt = nil
         appRoutingActivities.removeAll(keepingCapacity: true)
@@ -3708,6 +3918,7 @@ final class AppModel {
         liveStreamHealth[.appRouting] = .connecting(
             previousSampleAt: liveStreamHealth[.appRouting]?.lastReceivedAt
         )
+        startDNSProxyRuntimeMonitor()
         appRoutingActivityTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var failureAttempt = 0
@@ -3724,14 +3935,25 @@ final class AppModel {
                         if let dropped = batch.droppedBeforeSequence,
                            appRoutingActivityCursor > 0,
                            appRoutingActivityCursor < dropped {
+                            appRoutingActivityDroppedCount = Self.saturatingAdd(
+                                appRoutingActivityDroppedCount,
+                                dropped - appRoutingActivityCursor
+                            )
                             appRoutingActivities.removeAll(keepingCapacity: true)
                             appRoutingActivityCursor = 0
+                            appRoutingTrafficRateTracker.reset()
+                            appRoutingTrafficRates = .zero
+                            appRoutingActivityCoverageStartedAt = Date()
                             continue
                         }
                         mergeAppRoutingActivities(batch.activities)
                         appRoutingActivityCursor = batch.nextCursor
                         hasMore = batch.hasMore
                     }
+                    appRoutingTrafficRates = appRoutingTrafficRateTracker.ingest(
+                        appRoutingActivities,
+                        at: Date()
+                    )
                     failureAttempt = 0
                     successfulPollsSinceProviderCheck += 1
                     if successfulPollsSinceProviderCheck
@@ -3771,6 +3993,75 @@ final class AppModel {
                         return
                     }
                 }
+            }
+        }
+    }
+
+    private func startDNSProxyRuntimeMonitor() {
+        dnsProxyRuntimeTask?.cancel()
+        dnsProxyRuntimeFailureCount = 0
+        dnsProxyRuntimeStatus = nil
+        dnsProxyLastVerifiedAt = nil
+        guard networkCapturePreferences.dnsEnabled else {
+            dnsProxyRuntimeError = nil
+            return
+        }
+        dnsProxyRuntimeTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                guard case let .on(expectedRevision) = networkCaptureState else { return }
+                await refreshDNSProxyRuntime(expectedRevision: expectedRevision)
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private func refreshDNSProxyRuntime(expectedRevision: UInt64) async {
+        guard networkCapturePreferences.dnsEnabled,
+              !dnsProxyAutomaticallyDisabled else { return }
+        do {
+            guard let status = try await networkExtensionControl
+                .dnsProviderRuntimeStatus() else {
+                throw NSError(
+                    domain: "one.leaper.mclash.dns-runtime",
+                    code: 0,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "DNS Provider runtime status is unavailable"
+                    ]
+                )
+            }
+            guard status.revision == expectedRevision,
+                  status.isOperational else {
+                throw NSError(
+                    domain: "one.leaper.mclash.dns-runtime",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "DNS Provider is \(status.phase.rawValue) and backendReady=\(status.backendReady)"
+                    ]
+                )
+            }
+            dnsProxyRuntimeStatus = status
+            dnsProxyRuntimeError = nil
+            dnsProxyRuntimeFailureCount = 0
+            dnsProxyLastVerifiedAt = Date()
+        } catch {
+            dnsProxyRuntimeFailureCount += 1
+            dnsProxyRuntimeError = error.localizedDescription
+            guard dnsProxyRuntimeFailureCount >= 2 else { return }
+            do {
+                try await networkExtensionControl.disableDNSProxyAfterFailure()
+                dnsProxyAutomaticallyDisabled = true
+                dnsProxyRuntimeError = "DNS Routing was automatically turned off because its Provider heartbeat or Mihomo backend could not be verified. System DNS has been restored; App Routing is still running. Last error: \(error.localizedDescription)"
+                appendSupervisorLog(dnsProxyRuntimeError ?? "DNS Routing was turned off.")
+            } catch {
+                dnsProxyRuntimeError = "DNS Routing failed and MClash could not confirm that macOS disabled it: \(error.localizedDescription)"
+                appendSupervisorLog(dnsProxyRuntimeError ?? "DNS Routing shutdown failed.")
             }
         }
     }
@@ -3832,10 +4123,17 @@ final class AppModel {
     private func stopAppRoutingActivityMonitor() {
         appRoutingActivityTask?.cancel()
         appRoutingActivityTask = nil
+        dnsProxyRuntimeTask?.cancel()
+        dnsProxyRuntimeTask = nil
         appRoutingProviderStatusFailureCount = 0
         appRoutingProviderLastVerifiedAt = nil
         degradedStreams.remove(.appRouting)
         liveStreamHealth[.appRouting] = .inactive
+        dnsProxyRuntimeStatus = nil
+        dnsProxyLastVerifiedAt = nil
+        dnsProxyRuntimeFailureCount = 0
+        appRoutingTrafficRateTracker.reset()
+        appRoutingTrafficRates = .zero
     }
 
     private func mergeAppRoutingActivities(_ updates: [AppRoutingActivity]) {
@@ -3852,7 +4150,12 @@ final class AppModel {
                 return $0.sequence > $1.sequence
             }
         if appRoutingActivities.count > 2_000 {
-            appRoutingActivities.removeLast(appRoutingActivities.count - 2_000)
+            let removed = appRoutingActivities.count - 2_000
+            appRoutingActivities.removeLast(removed)
+            appRoutingActivityDroppedCount = Self.saturatingAdd(
+                appRoutingActivityDroppedCount,
+                UInt64(removed)
+            )
         }
         scheduleFlowLedgerRefresh()
     }
@@ -4369,7 +4672,9 @@ final class AppModel {
         }
     }
 
-    private func makeNetworkExtensionMihomoListener() throws
+    private func makeNetworkExtensionMihomoListener(
+        for rules: [CaptureRule]
+    ) throws
         -> NetworkExtensionMihomoListenerConfiguration
     {
         var randomBytes = [UInt8](repeating: 0, count: 32)
@@ -4382,10 +4687,40 @@ final class AppModel {
             username: "mclash-network-extension",
             password: password
         )
-        return try NetworkExtensionMihomoListenerConfiguration(
-            port: localPortProbe.availableTCPPort(),
-            authentication: authentication
+        let requestedRoutes = Set<MihomoRoute>(rules.lazy.filter(\.enabled).compactMap { rule in
+            guard case let .mihomo(route) = rule.action,
+                  route != .profileRules else { return nil }
+            return route
+        })
+        guard requestedRoutes.count <= Self.maximumDedicatedMihomoRoutes else {
+            throw AppModelError.tooManyNetworkCaptureRoutes(
+                actual: requestedRoutes.count,
+                maximum: Self.maximumDedicatedMihomoRoutes
+            )
+        }
+        let sortedRoutes = requestedRoutes.sorted {
+            Self.mihomoRouteSortKey($0) < Self.mihomoRouteSortKey($1)
+        }
+        let ports = try localPortProbe.availableTCPAndUDPPorts(
+            count: sortedRoutes.count + 1
         )
+        var routePorts: [MihomoRoute: Int] = [:]
+        for (route, port) in zip(sortedRoutes, ports.dropFirst()) {
+            routePorts[route] = port
+        }
+        return try NetworkExtensionMihomoListenerConfiguration(
+            port: ports[0],
+            authentication: authentication,
+            routePorts: routePorts
+        )
+    }
+
+    private static func mihomoRouteSortKey(_ route: MihomoRoute) -> String {
+        switch route {
+        case .profileRules: "0:profile"
+        case .global: "1:global"
+        case let .group(group): "2:group:\(group)"
+        }
     }
 
     private func refreshActiveProfileListenerPorts() async {
@@ -4436,6 +4771,12 @@ final class AppModel {
     static let systemProxyGuardFailureThreshold = 3
     static let appRoutingProviderFailureThreshold = 3
     static let appRoutingProviderStatusCheckInterval = 5
+    static let maximumDedicatedMihomoRoutes = 64
+
+    private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? .max : value
+    }
 }
 
 private extension AppModel.Operation {
@@ -4565,6 +4906,7 @@ private enum AppModelError: LocalizedError {
     case explicitLocalProxyListenersUnavailable([Int])
     case explicitLocalProxyListenerRejected(field: String, requested: Int, actual: Int)
     case systemProxyGuardVerificationFailed
+    case tooManyNetworkCaptureRoutes(actual: Int, maximum: Int)
 
     var errorDescription: String? {
         switch self {
@@ -4594,6 +4936,8 @@ private enum AppModelError: LocalizedError {
             "mihomo did not apply the requested \(field) listener port \(requested); it reported \(actual)."
         case .systemProxyGuardVerificationFailed:
             "The macOS system proxy still did not match MClash after reapplying it."
+        case let .tooManyNetworkCaptureRoutes(actual, maximum):
+            "App Routing requests \(actual) distinct Mihomo route targets; the safe maximum is \(maximum)."
         }
     }
 }
@@ -4604,6 +4948,15 @@ private struct SystemProxyPreferenceRollbackFailure: LocalizedError {
 
     var errorDescription: String? {
         "The new macOS system proxy settings could not be verified, and MClash could not restore the previous settings. Update error: \(updateReason) Rollback error: \(rollbackReason)"
+    }
+}
+
+private struct NetworkCaptureTransactionFailure: LocalizedError {
+    let updateReason: String
+    let rollbackReason: String
+
+    var errorDescription: String? {
+        "The App Routing change failed and MClash could not completely restore the previous network state. Update error: \(updateReason) Recovery error: \(rollbackReason)"
     }
 }
 

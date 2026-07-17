@@ -1,4 +1,5 @@
 import Foundation
+import MClashNetworkShared
 @testable import MClashApp
 import Testing
 
@@ -41,6 +42,42 @@ struct NetworkExtensionMihomoListenerTests {
         #expect(configuration.ipv4Endpoint.host == "127.0.0.1")
         #expect(configuration.ipv6Endpoint.host == "::1")
         #expect(configuration.ipv4Endpoint.port == 17_891)
+    }
+
+    @Test("GLOBAL and policy-group actions receive distinct forced-route listeners")
+    func emitsRouteSpecificListeners() throws {
+        let configuration = try NetworkExtensionMihomoListenerConfiguration(
+            port: 17_881,
+            routePorts: [
+                .global: 17_882,
+                .group("Auto Select"): 17_883,
+            ]
+        )
+
+        let result = try RuntimeConfigurationComposer().applying(
+            .empty,
+            to: Data("rules: []\n".utf8),
+            networkExtensionListener: configuration
+        )
+        let yaml = try #require(String(data: result, encoding: .utf8))
+
+        #expect(yaml.components(separatedBy: "type: socks").count == 7)
+        #expect(yaml.components(separatedBy: "port: 17881").count == 3)
+        #expect(yaml.components(separatedBy: "port: 17882").count == 3)
+        #expect(yaml.components(separatedBy: "port: 17883").count == 3)
+        #expect(yaml.components(separatedBy: "proxy: \"GLOBAL\"").count == 3)
+        #expect(yaml.components(separatedBy: "proxy: \"Auto Select\"").count == 3)
+
+        let catalog = try MihomoRouteProxyCatalog.decode(
+            configuration.encodedRouteProxyCatalog()
+        )
+        #expect(catalog.map(\.route) == [
+            .profileRules,
+            .global,
+            .group("Auto Select"),
+        ])
+        #expect(configuration.endpoint(for: .global)?.port == 17_882)
+        #expect(configuration.endpoint(for: .group("Auto Select"))?.port == 17_883)
     }
 
     @Test("Internal listener composes with scalar, DNS, and rule overrides")
@@ -163,6 +200,12 @@ struct NetworkExtensionMihomoListenerTests {
         }
         #expect(throws: NetworkExtensionMihomoListenerValidationError.invalidPort(65_536)) {
             try NetworkExtensionMihomoListenerConfiguration(port: 65_536)
+        }
+        #expect(throws: NetworkExtensionMihomoListenerValidationError.duplicatePort(17_899)) {
+            try NetworkExtensionMihomoListenerConfiguration(
+                port: 17_899,
+                routePorts: [.global: 17_899]
+            )
         }
         #expect(
             throws: NetworkExtensionMihomoListenerValidationError.invalidCredentialLength(

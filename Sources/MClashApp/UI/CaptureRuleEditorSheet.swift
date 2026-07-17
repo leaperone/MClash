@@ -8,7 +8,9 @@ struct CaptureRuleEditorSheet: View {
     @Binding private var draft: CaptureRuleDraft
     private let applicationCandidates: [ApplicationCaptureCandidate]
     private let processCandidates: [RunningProcessCaptureCandidate]
+    private let mihomoGroupNames: [String]
     private let existingRuleIDs: Set<String>
+    private let appliesImmediately: Bool
     private let onCommit: @MainActor (CaptureRule) -> Void
 
     @State private var submissionError: String?
@@ -20,14 +22,18 @@ struct CaptureRuleEditorSheet: View {
         draft: Binding<CaptureRuleDraft>,
         applicationCandidates: [ApplicationCaptureCandidate],
         processCandidates: [RunningProcessCaptureCandidate],
+        mihomoGroupNames: [String] = [],
         existingRuleIDs: Set<String> = [],
+        appliesImmediately: Bool = false,
         onCommit: @escaping @MainActor (CaptureRule) -> Void
     ) {
         _isPresented = isPresented
         _draft = draft
         self.applicationCandidates = applicationCandidates
         self.processCandidates = processCandidates
+        self.mihomoGroupNames = mihomoGroupNames
         self.existingRuleIDs = existingRuleIDs
+        self.appliesImmediately = appliesImmediately
         self.onCommit = onCommit
         _showsAdvancedOptions = State(initialValue: Self.usesAdvancedOptions(draft.wrappedValue))
     }
@@ -57,6 +63,15 @@ struct CaptureRuleEditorSheet: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("capture-rule-validation-error")
+            }
+
+            if appliesImmediately {
+                Label(
+                    "Saving updates the active App Routing configuration and restarts Mihomo. Current connections can close.",
+                    systemImage: "arrow.clockwise.circle"
+                )
+                .font(.callout)
+                .foregroundStyle(.orange)
             }
 
             HStack(spacing: 10) {
@@ -131,6 +146,20 @@ struct CaptureRuleEditorSheet: View {
             Picker("Route traffic", selection: $draft.action) {
                 ForEach(CaptureRuleDraftAction.allCases) { action in
                     Text(action.title).tag(action)
+                }
+            }
+
+            if draft.action == .mihomoGroup {
+                if availableMihomoGroups.isEmpty {
+                    TextField("Policy group", text: $draft.mihomoGroup)
+                        .textFieldStyle(.roundedBorder)
+                } else {
+                    Picker("Policy group", selection: $draft.mihomoGroup) {
+                        Text("Choose a group").tag("")
+                        ForEach(availableMihomoGroups, id: \.self) { group in
+                            Text(group).tag(group)
+                        }
+                    }
                 }
             }
 
@@ -325,11 +354,24 @@ struct CaptureRuleEditorSheet: View {
         switch draft.action {
         case .mihomoProfileRules:
             "Send matching traffic to Mihomo and apply the active profile's routing rules."
+        case .mihomoGlobal:
+            "Send matching traffic directly to Mihomo's GLOBAL routing target through a dedicated private listener."
+        case .mihomoGroup:
+            "Send matching traffic directly to the selected Mihomo policy group through its own private listener."
         case .direct:
             "Connect matching traffic directly without using a proxy."
         case .reject:
             "Block matching connections."
         }
+    }
+
+    private var availableMihomoGroups: [String] {
+        var groups = mihomoGroupNames
+        let selected = draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !selected.isEmpty, !groups.contains(selected) {
+            groups.append(selected)
+        }
+        return Array(Set(groups.filter { !$0.isEmpty })).sorted()
     }
 
     private var rulePreview: String {
@@ -362,7 +404,11 @@ struct CaptureRuleEditorSheet: View {
 
         let port = draft.portRange.trimmingCharacters(in: .whitespacesAndNewlines)
         let targetWithPort = port.isEmpty ? target : "\(target):\(port)"
-        return "\(source) → \(targetWithPort) → \(draft.action.title)"
+        let action = draft.action == .mihomoGroup
+            && !draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Mihomo · \(draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines))"
+            : draft.action.title
+        return "\(source) → \(targetWithPort) → \(action)"
     }
 
     private var destinationPlaceholder: String {

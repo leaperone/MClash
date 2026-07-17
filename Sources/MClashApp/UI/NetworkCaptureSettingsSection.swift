@@ -39,6 +39,8 @@ struct AppRoutingView: View {
     @State private var activityInspectorPresented = false
     @State private var appliedRuleRevision: UInt64?
     @State private var appliedRuleRevisionAt: Date?
+    @State private var showingDNSReplacementConfirmation = false
+    @State private var showingAppRoutingEnableConfirmation = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -90,7 +92,9 @@ struct AppRoutingView: View {
                 draft: $draft,
                 applicationCandidates: applicationCandidates,
                 processCandidates: processCandidates,
-                existingRuleIDs: Set(rules.map(\.id).filter { $0 != editingRuleID })
+                mihomoGroupNames: model.proxyTopology.groupOrder,
+                existingRuleIDs: Set(rules.map(\.id).filter { $0 != editingRuleID }),
+                appliesImmediately: model.networkCapturePreferences.enabled
             ) { rule in
                 save(rule)
             }
@@ -109,6 +113,30 @@ struct AppRoutingView: View {
                     description: Text("Choose a flow to inspect every routing stage.")
                 )
             }
+        }
+        .confirmationDialog(
+            "Enable App Routing?",
+            isPresented: $showingAppRoutingEnableConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Enable App Routing") {
+                Task { await model.setNetworkCaptureEnabled(true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(appRoutingEnableConfirmationMessage)
+        }
+        .confirmationDialog(
+            "Replace the current macOS DNS Proxy?",
+            isPresented: $showingDNSReplacementConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Enable MClash DNS Routing") {
+                Task { await model.setDNSCaptureEnabled(true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("macOS allows one active DNS Proxy. Enabling MClash DNS Routing can replace Proxifier DNS or another DNS Proxy. MClash restores normal system DNS if its Provider fails, but it cannot recreate another app's private DNS configuration for you.")
         }
     }
 
@@ -149,6 +177,8 @@ struct AppRoutingView: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 300)
 
+            dataPlaneStatus
+
             if workspace == .activity {
                 activitySummary
             }
@@ -157,6 +187,204 @@ struct AppRoutingView: View {
         }
         .padding(.horizontal, MClashLayout.pagePadding)
         .padding(.vertical, 20)
+    }
+
+    private var dataPlaneStatus: some View {
+        HStack(alignment: .top, spacing: 12) {
+            dataPlaneCard(
+                title: "Application Traffic",
+                status: applicationDataPlaneTitle,
+                detail: applicationDataPlaneDetail,
+                symbol: applicationDataPlaneSymbol,
+                color: applicationDataPlaneColor
+            ) {
+                EmptyView()
+            }
+
+            dataPlaneCard(
+                title: "DNS Traffic",
+                status: dnsDataPlaneTitle,
+                detail: dnsDataPlaneDetail,
+                symbol: dnsDataPlaneSymbol,
+                color: dnsDataPlaneColor
+            ) {
+                VStack(alignment: .trailing, spacing: 6) {
+                    Toggle("Route DNS through Mihomo", isOn: dnsEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .disabled(
+                            model.pendingNetworkCaptureEnabled != nil
+                                || !model.canPerform(.changeNetworkCapture)
+                        )
+                        .help("Route ordinary system DNS TCP/UDP flows through the private Mihomo listener. App-implemented DoH cannot be identified as DNS.")
+                    if model.dnsProxyAutomaticallyDisabled
+                        || model.dnsProxyRuntimeError != nil {
+                        Button("Retry") {
+                            Task { await model.retryDNSCaptureActivation() }
+                        }
+                        .controlSize(.small)
+                        .disabled(!model.canPerform(.changeNetworkCapture))
+                    }
+                }
+            }
+        }
+    }
+
+    private func dataPlaneCard<Actions: View>(
+        title: String,
+        status: String,
+        detail: String,
+        symbol: String,
+        color: Color,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .font(.title3)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(status)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(color)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(5)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            actions()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(color.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private var applicationDataPlaneTitle: String {
+        switch model.networkCaptureState {
+        case .on:
+            model.appRoutingProviderLastVerifiedAt == nil
+                ? "Verifying Provider"
+                : "Provider Verified"
+        case .enabling: "Starting"
+        case .awaitingUserApproval: "Approval Required"
+        case .failed: "Needs Attention"
+        case .waitingForConnection: "Waiting for Connection"
+        case .disabling: "Stopping"
+        case .requiresReboot: "Restart Required"
+        case .off: "Off"
+        }
+    }
+
+    private var applicationDataPlaneDetail: String {
+        let active = model.appRoutingActivities.filter {
+            $0.endedAt == nil && $0.relayState != .failed
+        }.count
+        let measured = model.appRoutingTrafficRates.measured
+        let direct = model.appRoutingTrafficRates.direct
+        let rates = model.liveStreamHealth[.appRouting]?.hasCurrentData == true
+            ? "measured ↓ \(formattedActivityRate(measured.download)) ↑ \(formattedActivityRate(measured.upload)); Direct ↓ \(formattedActivityRate(direct.download)) ↑ \(formattedActivityRate(direct.upload))"
+            : "live rates unavailable; last-known counters are retained"
+        if let date = model.appRoutingProviderLastVerifiedAt {
+            return "\(formattedCount(active)) active conversations · \(rates) · Provider verified \(date.formatted(.relative(presentation: .named)))."
+        }
+        return "\(formattedCount(active)) active conversations · \(rates) · waiting for an authenticated Provider response."
+    }
+
+    private var applicationDataPlaneSymbol: String {
+        switch model.networkCaptureState {
+        case .on: "checkmark.shield.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .enabling, .disabling: "arrow.clockwise"
+        case .awaitingUserApproval: "lock.shield.fill"
+        default: "shield"
+        }
+    }
+
+    private var applicationDataPlaneColor: Color {
+        switch model.networkCaptureState {
+        case .on: model.appRoutingProviderLastVerifiedAt == nil ? .orange : .green
+        case .failed: .red
+        case .enabling, .disabling, .awaitingUserApproval, .requiresReboot: .orange
+        default: .secondary
+        }
+    }
+
+    private var dnsDataPlaneTitle: String {
+        if model.dnsProxyAutomaticallyDisabled { return "System DNS Restored" }
+        guard model.networkCapturePreferences.dnsEnabled else { return "Off" }
+        guard model.networkCapturePreferences.enabled else { return "Starts with App Routing" }
+        if let status = model.dnsProxyRuntimeStatus, status.isOperational {
+            return status.lastResponseDeliveredAt == nil
+                ? "Mihomo Listener Ready"
+                : "DNS Responses Observed"
+        }
+        if model.dnsProxyRuntimeError != nil { return "Needs Attention" }
+        return "Verifying Provider"
+    }
+
+    private var dnsDataPlaneDetail: String {
+        if let error = model.dnsProxyRuntimeError { return error }
+        guard let status = model.dnsProxyRuntimeStatus else {
+            return model.networkCapturePreferences.dnsEnabled
+                ? "Waiting for a matching DNS Provider heartbeat and Mihomo backend probe."
+                : "Ordinary DNS remains on the current macOS resolver."
+        }
+        let (totalBytes, overflow) = status.uploadBytes.addingReportingOverflow(
+            status.downloadBytes
+        )
+        let traffic = formattedActivityBytes(overflow ? .max : totalBytes)
+        let association = status.lastBackendAssociationAt.map {
+            "SOCKS association \($0.formatted(.relative(presentation: .named)))"
+        } ?? "SOCKS association not yet verified"
+        let query = status.lastQueryForwardedAt.map {
+            "query forwarded \($0.formatted(.relative(presentation: .named)))"
+        } ?? "no query forwarded yet"
+        let response = status.lastResponseDeliveredAt.map {
+            "response delivered \($0.formatted(.relative(presentation: .named)))"
+        } ?? "no response delivered yet"
+        return "\(formattedCount(Int(clamping: status.activeTCPFlows))) TCP + \(formattedCount(Int(clamping: status.activeUDPFlows))) UDP active · \(formattedCount(Int(clamping: status.completedFlows))) completed · \(formattedCount(Int(clamping: status.failedFlows))) failed · \(traffic). \(association); \(query); \(response)."
+    }
+
+    private var dnsDataPlaneSymbol: String {
+        if model.dnsProxyAutomaticallyDisabled { return "arrow.uturn.backward.circle.fill" }
+        if model.dnsProxyRuntimeStatus?.isOperational == true { return "checkmark.shield.fill" }
+        if model.dnsProxyRuntimeError != nil { return "exclamationmark.triangle.fill" }
+        return model.networkCapturePreferences.dnsEnabled ? "arrow.clockwise" : "network"
+    }
+
+    private var dnsDataPlaneColor: Color {
+        if model.dnsProxyAutomaticallyDisabled { return .orange }
+        if model.dnsProxyRuntimeStatus?.isOperational == true { return .green }
+        if model.dnsProxyRuntimeError != nil { return .red }
+        return model.networkCapturePreferences.dnsEnabled ? .orange : .secondary
+    }
+
+    private var dnsEnabled: Binding<Bool> {
+        Binding(
+            get: {
+                model.networkCapturePreferences.dnsEnabled
+                    && !model.dnsProxyAutomaticallyDisabled
+            },
+            set: { value in
+                if value {
+                    showingDNSReplacementConfirmation = true
+                } else {
+                    Task { await model.setDNSCaptureEnabled(false) }
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -209,16 +437,84 @@ struct AppRoutingView: View {
                     }
                 }
             }
-        case .off, .enabling, .on, .disabling:
+        case .off, .on:
+            networkCaptureReceiptNotice
+        case .enabling, .disabling:
             EmptyView()
         }
+    }
+
+    @ViewBuilder
+    private var networkCaptureReceiptNotice: some View {
+        if let receipt = model.networkCaptureChangeReceipt {
+            switch receipt.outcome {
+            case .savedForNextActivation:
+                statusNotice(
+                    title: "Settings saved without interrupting Mihomo",
+                    message: "App Routing is off, so the rules and DNS preference were saved for the next activation. Completed in \(formattedDuration(receipt.duration)).",
+                    symbol: "checkmark.circle.fill",
+                    color: .green
+                ) { EmptyView() }
+            case let .appliedAndVerified(enabled, dnsEnabled, systemProxyWasDisabled):
+                statusNotice(
+                    title: enabled ? "App Routing change verified" : "App Routing turned off",
+                    message: networkCaptureReceiptMessage(
+                        enabled: enabled,
+                        dnsEnabled: dnsEnabled,
+                        systemProxyWasDisabled: systemProxyWasDisabled,
+                        duration: receipt.duration
+                    ),
+                    symbol: "checkmark.circle.fill",
+                    color: .green
+                ) { EmptyView() }
+            case let .rejectedAndRolledBack(reason):
+                statusNotice(
+                    title: "Change rejected; previous network state restored",
+                    message: "\(reason) Recovery completed in \(formattedDuration(receipt.duration)).",
+                    symbol: "arrow.uturn.backward.circle.fill",
+                    color: .orange
+                ) { EmptyView() }
+            case let .rollbackFailed(reason):
+                statusNotice(
+                    title: "Previous network state was not fully restored",
+                    message: reason,
+                    symbol: "exclamationmark.triangle.fill",
+                    color: .red
+                ) {
+                    Button("View Logs") { model.selection = .logs }
+                }
+            }
+        }
+    }
+
+    private func networkCaptureReceiptMessage(
+        enabled: Bool,
+        dnsEnabled: Bool,
+        systemProxyWasDisabled: Bool,
+        duration: TimeInterval
+    ) -> String {
+        var facts = [
+            enabled ? "App Routing is enabled" : "App Routing is disabled",
+            dnsEnabled && enabled ? "DNS routing requested" : "DNS routing is off",
+        ]
+        if systemProxyWasDisabled {
+            facts.append("the previously enabled System Proxy was restored to its saved macOS configuration")
+        }
+        facts.append("completed in \(formattedDuration(duration))")
+        return facts.joined(separator: "; ") + "."
+    }
+
+    private func formattedDuration(_ duration: TimeInterval) -> String {
+        duration < 1
+            ? "\(Int((duration * 1_000).rounded())) ms"
+            : "\(String(format: "%.1f", duration)) s"
     }
 
     private var activitySummary: some View {
         let recent = model.appRoutingActivities.filter {
             $0.startedAt >= Date().addingTimeInterval(-60)
         }
-        let active = recent.filter {
+        let active = model.appRoutingActivities.filter {
             $0.endedAt == nil
                 && $0.relayState != .completed
                 && $0.relayState != .failed
@@ -237,16 +533,54 @@ struct AppRoutingView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 18) {
                 summaryMetric("Active", value: active, color: .green)
-                summaryMetric("Via Mihomo", value: viaMihomo, color: .accentColor)
-                summaryMetric("Direct / Handoff", value: direct, color: .secondary)
-                summaryMetric("Rejected", value: rejected, color: .red)
-                summaryMetric("Failed", value: failed, color: .orange)
+                summaryMetric("Via Mihomo · 60s", value: viaMihomo, color: .accentColor)
+                summaryMetric("Direct / Handoff · 60s", value: direct, color: .secondary)
+                summaryMetric("Rejected · 60s", value: rejected, color: .red)
+                summaryMetric("Failed · 60s", value: failed, color: .orange)
                 Spacer(minLength: 12)
                 providerHeartbeat
             }
-            Text("Flow outcomes started in the last minute. Relayed TCP Direct traffic is measured; UDP Direct, built-in bypass, and fail-open handoffs remain explicitly unmeasured.")
+            Text("Active includes every retained open conversation. Outcome counts cover flows started in the last minute. Owned TCP and UDP Direct traffic is measured; built-in bypass and fail-open handoffs remain explicitly unmeasured.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Label(
+                    "Measured now ↓ \(formattedActivityRate(model.appRoutingTrafficRates.measured.download)) ↑ \(formattedActivityRate(model.appRoutingTrafficRates.measured.upload))",
+                    systemImage: "speedometer"
+                )
+                Label(
+                    "Retained \(formattedCount(model.appRoutingActivities.count))/2,000",
+                    systemImage: "tray.full"
+                )
+                if model.appRoutingActivityDroppedCount > 0 {
+                    Label(
+                        "\(formattedActivityCount(model.appRoutingActivityDroppedCount)) records dropped",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .foregroundStyle(.orange)
+                }
+                if let coverage = model.appRoutingActivityCoverageStartedAt {
+                    Text("Coverage since \(coverage.formatted(.relative(presentation: .named)))")
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            let pathRates = model.appRoutingTrafficRates.byPath
+                .filter { $0.value.total > 0 }
+                .sorted { $0.value.total > $1.value.total }
+            if !pathRates.isEmpty {
+                HStack(spacing: 12) {
+                    Text("Paths now")
+                        .fontWeight(.semibold)
+                    ForEach(Array(pathRates.prefix(4)), id: \.key) { path, rate in
+                        Text(
+                            "\(appRoutingTrafficPathTitle(path)) ↓ \(formattedActivityRate(rate.download)) ↑ \(formattedActivityRate(rate.upload))"
+                        )
+                    }
+                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .background(
@@ -418,12 +752,17 @@ struct AppRoutingView: View {
 
             TableColumn("Traffic") { rule in
                 let value = statistics[rule.id] ?? .zero
-                Text(formattedRuleTraffic(value.measuredBytes, partial: value.unmeasuredCount > 0))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(value.unmeasuredCount > 0 ? Color.orange : Color.secondary)
-                    .help(ruleTrafficHelp(value))
+                let rate = model.appRoutingTrafficRates.byRule[rule.id] ?? AppRoutingByteRate()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formattedRuleTraffic(value.measuredBytes, partial: value.unmeasuredCount > 0))
+                    Text("↓ \(formattedActivityRate(rate.download))  ↑ \(formattedActivityRate(rate.upload))")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(value.unmeasuredCount > 0 ? Color.orange : Color.secondary)
+                .help(ruleTrafficHelp(value))
             }
-            .width(min: 78, ideal: 100)
+            .width(min: 116, ideal: 138)
 
             TableColumn("Last Match") { rule in
                 if let date = statistics[rule.id]?.lastMatchedAt {
@@ -837,8 +1176,24 @@ struct AppRoutingView: View {
         case .mihomo: switch activity.relayState {
             case .pending, .connecting: "Connecting"
             case .ready: "Mihomo ready"
-            case .relaying: "Via Mihomo"
-            case .completed: "Mihomo complete"
+            case .relaying:
+                if routeIsConfirmed(activity) {
+                    "Route confirmed"
+                } else if routeIsProbable(activity) {
+                    "Probable Mihomo match"
+                } else if (activity.downloadDatagrams ?? 0) > 0 {
+                    "Response observed"
+                } else {
+                    "Sent to Mihomo"
+                }
+            case .completed:
+                if routeIsConfirmed(activity) {
+                    "Route confirmed"
+                } else if routeIsProbable(activity) {
+                    "Probable Mihomo match"
+                } else {
+                    "Mihomo complete"
+                }
             case .failed: "Relay failed"
             case .notApplicable: "Mihomo"
             }
@@ -869,13 +1224,39 @@ struct AppRoutingView: View {
         guard case .mihomo = activity.effectiveAction else { return "—" }
         guard let entry = model.appRoutingFlowEntries[activity.flowIdentifier],
               let route = entry.mihomoRoute else {
-            return activity.relayState == .failed ? "Relay failed" : "Waiting for Mihomo metadata"
+            if activity.relayState == .failed { return "Relay failed" }
+            if (activity.downloadDatagrams ?? 0) > 0 {
+                return "Response observed · node path not yet matched"
+            }
+            if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
+                return "Sent to Mihomo · awaiting /connections confirmation"
+            }
+            return "Waiting for Mihomo metadata"
         }
         let rule = [route.rule, route.rulePayload]
             .compactMap { $0 }
             .joined(separator: " · ")
         let chain = route.chain.joined(separator: " → ")
-        return [rule, chain].filter { !$0.isEmpty }.joined(separator: " · ")
+        var components = [rule, chain].filter { !$0.isEmpty }
+        if case let .destinationAndStartTime(_, difference) = entry.association {
+            components.insert(
+                "Probable · destination/time Δ\(difference.formatted(.number.precision(.fractionLength(2))))s",
+                at: 0
+            )
+        }
+        return components.joined(separator: " · ")
+    }
+
+    private func routeIsConfirmed(_ activity: AppRoutingActivity) -> Bool {
+        FlowLedgerAssociationPresentation.isConfirmed(
+            model.appRoutingFlowEntries[activity.flowIdentifier]?.association
+        )
+    }
+
+    private func routeIsProbable(_ activity: AppRoutingActivity) -> Bool {
+        FlowLedgerAssociationPresentation.isProbable(
+            model.appRoutingFlowEntries[activity.flowIdentifier]?.association
+        )
     }
 
     @ViewBuilder
@@ -916,6 +1297,25 @@ struct AppRoutingView: View {
 
     private func formattedActivityBytes(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+    }
+
+    private func formattedActivityRate(_ bytesPerSecond: UInt64) -> String {
+        "\(formattedActivityBytes(bytesPerSecond))/s"
+    }
+
+    private func formattedActivityCount(_ value: UInt64) -> String {
+        value.formatted(.number.grouping(.automatic))
+    }
+
+    private func appRoutingTrafficPathTitle(_ path: AppRoutingTrafficPath) -> String {
+        switch path {
+        case .direct: "Direct"
+        case .failOpen: "Fail Open"
+        case .rejected: "Rejected"
+        case .mihomo(.profileRules): "Mihomo Rules"
+        case .mihomo(.global): "Mihomo GLOBAL"
+        case let .mihomo(.group(group)): group
+        }
     }
 
     private var rules: [CaptureRule] {
@@ -999,9 +1399,27 @@ struct AppRoutingView: View {
                     ?? model.networkCapturePreferences.enabled
             },
             set: { value in
-                Task { await model.setNetworkCaptureEnabled(value) }
+                if value {
+                    showingAppRoutingEnableConfirmation = true
+                } else {
+                    Task { await model.setNetworkCaptureEnabled(false) }
+                }
             }
         )
+    }
+
+    private var appRoutingEnableConfirmationMessage: String {
+        var effects = [
+            "MClash will restart the Mihomo core, which can close current connections.",
+            "macOS may ask you to approve the MClash Network Filter."
+        ]
+        if model.systemProxyEnabled {
+            effects.insert(
+                "The currently enabled MClash System Proxy will be turned off because the two capture modes are mutually exclusive.",
+                at: 0
+            )
+        }
+        return effects.joined(separator: " ")
     }
 
     private var statusTitle: String {
@@ -1352,6 +1770,13 @@ private struct AppRoutingFlowInspector: View {
                         )
                         if let route = ledgerEntry?.mihomoRoute {
                             pipelineStage(
+                                "Mihomo Match",
+                                value: mihomoAssociationTitle,
+                                symbol: routeIsConfirmed
+                                    ? "checkmark.seal.fill"
+                                    : "questionmark.diamond.fill"
+                            )
+                            pipelineStage(
                                 "Mihomo Rule",
                                 value: [route.rule, route.rulePayload]
                                     .compactMap { $0 }
@@ -1368,16 +1793,42 @@ private struct AppRoutingFlowInspector: View {
                         } else if case .mihomo = activity.effectiveAction {
                             pipelineStage(
                                 "Mihomo Metadata",
-                                value: "Waiting for an associated Mihomo connection",
-                                symbol: "clock"
+                                value: mihomoEvidenceTitle,
+                                symbol: mihomoEvidenceSymbol
                             )
                         }
                         pipelineStage("Destination", value: destination, symbol: "scope")
                     }
 
+                    let ruleEvidence = AppRoutingRuleEvidencePresentation.make(for: activity)
+                    inspectorSection("Why this rule matched") {
+                        Label(ruleEvidence.summary, systemImage: ruleEvidence.symbol)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(ruleEvidence.rows) { row in
+                            detailRow(row.title, value: row.value)
+                        }
+                        if let consequence = ruleEvidence.consequence {
+                            Text(consequence)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
                     inspectorSection("Traffic") {
                         detailRow("Download", value: measurementTitle(downloadMeasurement))
                         detailRow("Upload", value: measurementTitle(uploadMeasurement))
+                        if let uploadDatagrams = activity.uploadDatagrams,
+                           let downloadDatagrams = activity.downloadDatagrams {
+                            detailRow(
+                                "Datagrams",
+                                value: "↑ \(uploadDatagrams.formatted()) · ↓ \(downloadDatagrams.formatted())"
+                            )
+                        }
+                        if let dropped = activity.droppedDatagrams, dropped > 0 {
+                            detailRow("Dropped datagrams", value: dropped.formatted())
+                        }
                         if isUnmeasuredAfterHandoff {
                             Label(
                                 "MClash recorded the routing decision, then returned this flow to macOS. Payload bytes after that handoff are not observable.",
@@ -1389,7 +1840,7 @@ private struct AppRoutingFlowInspector: View {
                         } else if activity.effectiveAction == .direct,
                                   activity.payloadBytesAreMeasured == true {
                             Label(
-                                "App Routing relayed this Direct TCP flow and counted bytes accepted by the destination and delivered to the application.",
+                                "App Routing owned this Direct flow and counted bytes only after upstream acceptance and application delivery.",
                                 systemImage: "checkmark.circle"
                             )
                             .font(.caption)
@@ -1413,6 +1864,12 @@ private struct AppRoutingFlowInspector: View {
                             detailRow(
                                 "Duration",
                                 value: Duration.seconds(endedAt.timeIntervalSince(activity.startedAt)).formatted()
+                            )
+                        }
+                        if let lastPayloadAt = activity.lastPayloadAt {
+                            detailRow(
+                                "Last payload",
+                                value: lastPayloadAt.formatted(date: .abbreviated, time: .standard)
                             )
                         }
                         detailRow("PID", value: String(activity.source.processIdentifier))
@@ -1510,7 +1967,8 @@ private struct AppRoutingFlowInspector: View {
 
     private var outcomeTitle: String {
         switch ledgerEntry?.outcome {
-        case .viaMihomo: "Via Mihomo"
+        case .viaMihomo:
+            routeIsConfirmed ? "Mihomo route confirmed" : mihomoEvidenceTitle
         case .direct:
             activity.payloadBytesAreMeasured == true
                 ? "Direct · relayed and measured"
@@ -1523,7 +1981,7 @@ private struct AppRoutingFlowInspector: View {
             case .direct: "Direct"
             case .reject: "Rejected"
             case .failOpen: "Fail-open"
-            case .mihomo: "Via Mihomo"
+            case .mihomo: mihomoEvidenceTitle
             }
         }
     }
@@ -1537,6 +1995,39 @@ private struct AppRoutingFlowInspector: View {
         case .relayFailed: "exclamationmark.triangle.fill"
         case nil: "questionmark.circle"
         }
+    }
+
+    private var routeIsConfirmed: Bool {
+        FlowLedgerAssociationPresentation.isConfirmed(ledgerEntry?.association)
+    }
+
+    private var routeIsProbable: Bool {
+        FlowLedgerAssociationPresentation.isProbable(ledgerEntry?.association)
+    }
+
+    private var mihomoAssociationTitle: String {
+        FlowLedgerAssociationPresentation.title(ledgerEntry?.association)
+    }
+
+    private var mihomoEvidenceTitle: String {
+        if routeIsConfirmed { return "Route confirmed by Mihomo /connections" }
+        if routeIsProbable { return mihomoAssociationTitle }
+        if (activity.downloadDatagrams ?? 0) > 0 {
+            return "Response observed; node path not yet matched"
+        }
+        if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
+            return "Sent to Mihomo; awaiting /connections confirmation"
+        }
+        return "Waiting for an associated Mihomo connection"
+    }
+
+    private var mihomoEvidenceSymbol: String {
+        if routeIsConfirmed { return "checkmark.seal.fill" }
+        if (activity.downloadDatagrams ?? 0) > 0 { return "arrow.down.circle.fill" }
+        if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
+            return "arrow.up.circle.fill"
+        }
+        return "clock"
     }
 
     private var uploadMeasurement: FlowLedgerByteMeasurement {

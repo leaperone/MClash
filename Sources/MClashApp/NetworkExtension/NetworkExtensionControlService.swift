@@ -9,6 +9,8 @@ protocol NetworkExtensionControlling: Sendable {
     func uninstall() async throws -> NetworkExtensionUninstallOutcome
     func currentState() async -> NetworkExtensionControlState
     func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus
+    func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus?
+    func disableDNSProxyAfterFailure() async throws
     func appRoutingActivity(after cursor: UInt64, limit: Int) async throws
         -> AppRoutingActivityBatch
     func clearAppRoutingActivity() async throws
@@ -20,12 +22,17 @@ extension NetworkExtensionControlling {
     ) async throws -> NetworkExtensionEnableOutcome {
         try await enable(configuration, progress: { _ in })
     }
+
+    func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus? { nil }
+
+    func disableDNSProxyAfterFailure() async throws {}
 }
 
 actor NetworkExtensionControlService: NetworkExtensionControlling {
     private let systemExtension: any SystemExtensionControlling
     private let transparentProxy: any TransparentProxyManaging
     private let dnsProxy: any DNSProxyManaging
+    private var activeConfiguration: NetworkExtensionRuntimeConfiguration?
 
     private(set) var state: NetworkExtensionControlState = .inactive
 
@@ -59,8 +66,10 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
             // Never treat the actor's cached state as proof that capture is
             // still active.
             if let providerStatus = try? await providerRuntimeStatus(),
-               providerStatus.matches(configuration)
+               providerStatus.matches(configuration),
+               await dnsRuntimeMatches(configuration)
             {
+                activeConfiguration = configuration
                 return .running
             }
         }
@@ -85,6 +94,7 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                 Task { await self?.recordUserApprovalRequirement() }
             }
             if result == .requiresReboot {
+                activeConfiguration = nil
                 try transition(.rebootRequired)
                 return .requiresReboot
             }
@@ -116,17 +126,38 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                 try transition(.dnsProxyConfigured)
             }
 
+            activeConfiguration = configuration
             return .running
         } catch {
+            activeConfiguration = nil
             // Roll back in reverse data-plane order. DNS is always disabled
             // first, before the transparent provider and its local backend can
             // stop, so no resolver traffic is left pointing at a dead relay.
-            try? await dnsProxy.disable()
-            try? await transparentProxy.stop()
-            let failure = NetworkExtensionControlFailure(
+            var rollbackFailures: [String] = []
+            do {
+                try await dnsProxy.disable()
+            } catch {
+                rollbackFailures.append(
+                    "DNS rollback failed: \(error.localizedDescription)"
+                )
+            }
+            do {
+                try await transparentProxy.stop()
+            } catch {
+                rollbackFailures.append(
+                    "Transparent proxy rollback failed: \(error.localizedDescription)"
+                )
+            }
+            let primary = NetworkExtensionControlFailure(
                 operation: operation,
                 underlying: error
             )
+            let failure = rollbackFailures.isEmpty
+                ? primary
+                : NetworkExtensionControlFailure(
+                    operation: operation,
+                    message: ([primary.message] + rollbackFailures).joined(separator: " · ")
+                )
             try? transition(.failed(failure))
             throw failure
         }
@@ -165,6 +196,7 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
             try? transition(.failed(failure))
             throw failure
         }
+        activeConfiguration = nil
     }
 
     func uninstall() async throws -> NetworkExtensionUninstallOutcome {
@@ -205,6 +237,18 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
         try await transparentProxy.providerStatus()
     }
 
+    func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus? {
+        guard let activeConfiguration, activeConfiguration.dnsEnabled else { return nil }
+        return try await dnsProxy.runtimeStatus(for: activeConfiguration)
+    }
+
+    func disableDNSProxyAfterFailure() async throws {
+        try await dnsProxy.disable()
+        if state.phase == .running {
+            state.dnsRequested = false
+        }
+    }
+
     func appRoutingActivity(
         after cursor: UInt64,
         limit: Int
@@ -229,6 +273,16 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
 
     private func recordUserApprovalRequirement() {
         try? transition(.systemExtensionNeedsApproval)
+    }
+
+    private func dnsRuntimeMatches(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async -> Bool {
+        guard configuration.dnsEnabled else { return true }
+        guard let status = try? await dnsProxy.runtimeStatus(for: configuration) else {
+            return false
+        }
+        return status.isOperational
     }
 }
 

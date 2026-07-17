@@ -15,7 +15,7 @@ enum ProviderControlCommand: String, Codable, Sendable {
 }
 
 struct ProviderControlRequest: Codable, Sendable {
-    static let currentProtocolVersion = 1
+    static let currentProtocolVersion = 2
 
     let protocolVersion: Int
     let command: ProviderControlCommand
@@ -23,6 +23,7 @@ struct ProviderControlRequest: Codable, Sendable {
     let captureEnabled: Bool?
     let failOpen: Bool?
     let captureConfigurationSnapshot: Data?
+    let mihomoRouteProxyCatalog: Data?
     let mihomoSOCKSHost: String?
     let mihomoSOCKSPort: UInt16?
     let mihomoSOCKSUsername: String?
@@ -47,8 +48,11 @@ enum ProviderConfigurationKey {
     static let revision = "revision"
     static let captureEnabled = "captureEnabled"
     static let failOpen = "failOpen"
+    static let activationIdentifier = "activationIdentifier"
     /// JSON-encoded `CaptureConfigurationSnapshot` stored as `Data`/`NSData`.
     static let captureConfigurationSnapshot = "captureConfigurationSnapshot"
+    /// JSON-encoded `[MihomoRouteProxyEndpoint]` stored as `Data`/`NSData`.
+    static let mihomoRouteProxyCatalog = "mihomoRouteProxyCatalog"
     static let mihomoSOCKSHost = "mihomoSOCKSHost"
     static let mihomoSOCKSPort = "mihomoSOCKSPort"
     static let mihomoSOCKSUsername = "mihomoSOCKSUsername"

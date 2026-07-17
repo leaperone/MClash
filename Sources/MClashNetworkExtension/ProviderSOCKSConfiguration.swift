@@ -46,6 +46,53 @@ struct ProviderSOCKSConfiguration: Equatable, Sendable {
         self.credentials = credentials
     }
 
+    init?(routeEndpoint: MihomoRouteProxyEndpoint) {
+        guard routeEndpoint.host == "127.0.0.1" || routeEndpoint.host == "::1",
+              routeEndpoint.port > 0
+        else { return nil }
+        let credentials: SOCKS5UsernamePasswordCredentials?
+        switch (routeEndpoint.username, routeEndpoint.password) {
+        case (nil, nil):
+            credentials = nil
+        case let (username?, password?):
+            guard let value = try? SOCKS5UsernamePasswordCredentials(
+                username: username,
+                password: password
+            ) else { return nil }
+            credentials = value
+        default:
+            return nil
+        }
+        host = routeEndpoint.host
+        port = routeEndpoint.port
+        self.credentials = credentials
+    }
+
+    static func routeCatalog(
+        providerConfiguration: [String: Any]?
+    ) -> [MihomoRoute: ProviderSOCKSConfiguration]? {
+        guard let providerConfiguration else { return nil }
+        if let data = providerConfiguration[
+            ProviderConfigurationKey.mihomoRouteProxyCatalog
+        ] as? Data {
+            guard let endpoints = try? MihomoRouteProxyCatalog.decode(data) else {
+                return nil
+            }
+            var result: [MihomoRoute: ProviderSOCKSConfiguration] = [:]
+            for endpoint in endpoints {
+                guard let configuration = ProviderSOCKSConfiguration(
+                    routeEndpoint: endpoint
+                ) else { return nil }
+                result[endpoint.route] = configuration
+            }
+            return result[.profileRules] == nil ? nil : result
+        }
+        guard let profileRules = ProviderSOCKSConfiguration(
+            providerConfiguration: providerConfiguration
+        ) else { return nil }
+        return [.profileRules: profileRules]
+    }
+
     var networkHost: NWEndpoint.Host { NWEndpoint.Host(host) }
 
     var networkPort: NWEndpoint.Port {

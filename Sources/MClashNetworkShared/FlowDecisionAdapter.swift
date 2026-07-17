@@ -288,10 +288,18 @@ public enum FlowTrafficDecisionReason: Codable, Hashable, Sendable {
 public struct FlowTrafficDecision: Codable, Hashable, Sendable {
     public let disposition: FlowTrafficDisposition
     public let reason: FlowTrafficDecisionReason
+    /// Optional for wire compatibility with activity records written before
+    /// structured rule evidence was introduced.
+    public let ruleEvidence: CaptureRuleDecisionEvidence?
 
-    public init(disposition: FlowTrafficDisposition, reason: FlowTrafficDecisionReason) {
+    public init(
+        disposition: FlowTrafficDisposition,
+        reason: FlowTrafficDecisionReason,
+        ruleEvidence: CaptureRuleDecisionEvidence? = nil
+    ) {
         self.disposition = disposition
         self.reason = reason
+        self.ruleEvidence = ruleEvidence
     }
 }
 
@@ -305,7 +313,11 @@ public struct FlowTrafficDecisionAdapter: Sendable {
         mihomoAvailable: Bool
     ) -> FlowTrafficDecision {
         guard captureEnabled else {
-            return FlowTrafficDecision(disposition: .failOpen, reason: .captureDisabled)
+            return FlowTrafficDecision(
+                disposition: .failOpen,
+                reason: .captureDisabled,
+                ruleEvidence: CaptureRuleDecisionEvidence(outcome: .captureDisabled)
+            )
         }
         guard case let .loaded(snapshot) = configuration else {
             guard case let .failOpen(failure) = configuration else {
@@ -313,7 +325,8 @@ public struct FlowTrafficDecisionAdapter: Sendable {
             }
             return FlowTrafficDecision(
                 disposition: .failOpen,
-                reason: .configurationUnavailable(failure)
+                reason: .configurationUnavailable(failure),
+                ruleEvidence: CaptureRuleDecisionEvidence(outcome: .configurationUnavailable)
             )
         }
         guard case let .resolved(flowContext, _) = context else {
@@ -322,7 +335,11 @@ public struct FlowTrafficDecisionAdapter: Sendable {
             }
             return FlowTrafficDecision(
                 disposition: .failOpen,
-                reason: .contextUnavailable(failure)
+                reason: .contextUnavailable(failure),
+                ruleEvidence: CaptureRuleDecisionEvidence(
+                    outcome: .contextUnavailable,
+                    contextUnavailableReason: Self.contextUnavailableReason(failure)
+                )
             )
         }
 
@@ -331,18 +348,21 @@ public struct FlowTrafficDecisionAdapter: Sendable {
         case .direct:
             return FlowTrafficDecision(
                 disposition: .direct,
-                reason: .rule(ruleDecision.cause)
+                reason: .rule(ruleDecision.cause),
+                ruleEvidence: ruleDecision.evidence
             )
         case .reject:
             return FlowTrafficDecision(
                 disposition: .reject,
-                reason: .rule(ruleDecision.cause)
+                reason: .rule(ruleDecision.cause),
+                ruleEvidence: ruleDecision.evidence
             )
         case let .mihomo(route):
             if mihomoAvailable {
                 return FlowTrafficDecision(
                     disposition: .mihomo(route),
-                    reason: .rule(ruleDecision.cause)
+                    reason: .rule(ruleDecision.cause),
+                    ruleEvidence: ruleDecision.evidence
                 )
             }
             let disposition: FlowTrafficDisposition = switch ruleDecision.unavailableFallback {
@@ -354,8 +374,30 @@ public struct FlowTrafficDecisionAdapter: Sendable {
                 reason: .mihomoUnavailable(
                     rule: ruleDecision.cause,
                     fallback: ruleDecision.unavailableFallback
-                )
+                ),
+                ruleEvidence: ruleDecision.evidence
             )
+        }
+    }
+
+    private static func contextUnavailableReason(
+        _ failure: FlowContextConversionFailure
+    ) -> RuleContextUnavailableReason {
+        switch failure {
+        case .missingSourceAppAuditToken:
+            .missingSourceApplicationAuditToken
+        case .identityUnavailable:
+            .sourceIdentityResolutionFailed
+        case .identityAuditTokenMismatch:
+            .sourceIdentityAuditTokenMismatch
+        case .signingIdentifierMismatch:
+            .sourceSigningIdentifierMismatch
+        case .emptyRemoteHost:
+            .emptyRemoteHost
+        case .invalidRemotePort:
+            .invalidRemotePort
+        case .unsupportedRemoteEndpoint:
+            .unsupportedRemoteEndpoint
         }
     }
 }

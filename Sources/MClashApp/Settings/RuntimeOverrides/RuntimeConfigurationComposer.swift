@@ -399,7 +399,10 @@ public struct RuntimeConfigurationComposer: Sendable {
         }
 
         let section = lines[listenersIndex ..< sectionEnd].map(\.raw).joined()
-        try rejectReservedListenerNameConflicts(in: section)
+        try rejectReservedListenerNameConflicts(
+            in: section,
+            configuration: configuration
+        )
 
         switch lines[listenersIndex].rootValueStyle {
         case .block:
@@ -517,20 +520,20 @@ public struct RuntimeConfigurationComposer: Sendable {
         sequencePrefix: String,
         newline: String
     ) throws -> [String] {
-        try [
-            (NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName,
-             NetworkExtensionMihomoListenerConfiguration.ipv4Host),
-            (NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName,
-             NetworkExtensionMihomoListenerConfiguration.ipv6Host),
-        ].flatMap { name, host in
+        try configuration.listenerDescriptors.flatMap { descriptor in
             let fieldPrefix = sequencePrefix + "  "
             var output = [
-                "\(sequencePrefix)- name: \(try yamlQuoted(name))\(newline)",
+                "\(sequencePrefix)- name: \(try yamlQuoted(descriptor.name))\(newline)",
                 "\(fieldPrefix)type: socks\(newline)",
-                "\(fieldPrefix)port: \(configuration.port)\(newline)",
-                "\(fieldPrefix)listen: \(try yamlQuoted(host))\(newline)",
+                "\(fieldPrefix)port: \(descriptor.port)\(newline)",
+                "\(fieldPrefix)listen: \(try yamlQuoted(descriptor.host))\(newline)",
                 "\(fieldPrefix)udp: true\(newline)",
             ]
+            if let outboundProxy = descriptor.outboundProxy {
+                output.append(
+                    "\(fieldPrefix)proxy: \(try yamlQuoted(outboundProxy))\(newline)"
+                )
+            }
             if let authentication = configuration.authentication {
                 output.append("\(fieldPrefix)users:\(newline)")
                 output.append(
@@ -551,12 +554,7 @@ public struct RuntimeConfigurationComposer: Sendable {
     private func encodedNetworkExtensionListenerFlowMappings(
         _ configuration: NetworkExtensionMihomoListenerConfiguration
     ) throws -> [String] {
-        try [
-            (NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName,
-             NetworkExtensionMihomoListenerConfiguration.ipv4Host),
-            (NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName,
-             NetworkExtensionMihomoListenerConfiguration.ipv6Host),
-        ].map { name, host in
+        try configuration.listenerDescriptors.map { descriptor in
             let users: String
             if let authentication = configuration.authentication {
                 users = "[{\"username\": \(try yamlQuoted(authentication.username)), "
@@ -564,17 +562,21 @@ public struct RuntimeConfigurationComposer: Sendable {
             } else {
                 users = "[]"
             }
-            return "{\"name\": \(try yamlQuoted(name)), \"type\": \"socks\", "
-                + "\"port\": \(configuration.port), \"listen\": \(try yamlQuoted(host)), "
-                + "\"udp\": true, \"users\": \(users)}"
+            let proxy = try descriptor.outboundProxy.map {
+                ", \"proxy\": \(try yamlQuoted($0))"
+            } ?? ""
+            return "{\"name\": \(try yamlQuoted(descriptor.name)), \"type\": \"socks\", "
+                + "\"port\": \(descriptor.port), \"listen\": \(try yamlQuoted(descriptor.host)), "
+                + "\"udp\": true\(proxy), \"users\": \(users)}"
         }
     }
 
-    private func rejectReservedListenerNameConflicts(in section: String) throws {
-        for name in [
-            NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName,
-            NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName,
-        ] where section.contains(name) {
+    private func rejectReservedListenerNameConflicts(
+        in section: String,
+        configuration: NetworkExtensionMihomoListenerConfiguration
+    ) throws {
+        for name in configuration.listenerDescriptors.map(\.name)
+        where section.contains(name) {
             throw RuntimeConfigurationComposerError.reservedListenerNameConflict(name)
         }
     }
