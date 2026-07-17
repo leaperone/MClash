@@ -94,9 +94,9 @@ struct LogsView: View {
                     Button {
                         exportFilteredLogs(snapshot.visibleLines)
                     } label: {
-                        Label("Export Logs…", systemImage: "square.and.arrow.up")
+                        Label("Export Diagnostics…", systemImage: "square.and.arrow.up")
                     }
-                    .help("Export the currently filtered diagnostic log")
+                    .help("Export current operating status and the filtered logs with recognized credentials redacted")
                     .disabled(snapshot.visibleLines.isEmpty)
                     .keyboardShortcut("e", modifiers: [.command, .shift])
 
@@ -230,7 +230,7 @@ struct LogsView: View {
         guard !logs.isEmpty else { return }
 
         let panel = NSSavePanel()
-        panel.title = "Export Diagnostic Logs"
+        panel.title = "Export MClash Diagnostics"
         panel.prompt = "Export"
         panel.canCreateDirectories = true
         panel.allowedContentTypes = [.plainText]
@@ -262,20 +262,97 @@ struct LogsView: View {
 
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let header = [
-            "# MClash diagnostic log",
+            "# MClash diagnostic report",
             "# Exported: \(timestampFormatter.string(from: Date()))",
+            "# Version: \(diagnosticVersion)",
+            "# Operational status: \(model.operationalSnapshot.title)",
+            "# Capture: \(model.operationalSnapshot.captureSummary)",
+            "# Core connected: \(model.isConnected ? "Yes" : "No")",
+            "# Controller ready: \(model.controllerIsReady ? "Yes" : "No")",
+            "# Active connections: \(model.connections?.connections.count ?? 0)",
+            "# Observed ledger entries: \(model.flowLedger.entries.count)",
+            "# Attention items: \(model.operationalIssues.count)",
+            "# Recognized credentials: redacted",
             "# Source filter: \(sourceFilter.title)",
             "# Search: \(query.isEmpty ? "None" : query)",
             "# Entries: \(logs.count)",
-            ""
+            "",
+            "## Operational issues",
+        ] + diagnosticIssues + [
+            "",
+            "## Live data sources",
+        ] + diagnosticLiveSources + [
+            "",
+            "## Filtered logs",
         ]
 
         let entries = logs.map { line in
             let timestamp = timestampFormatter.string(from: line.timestamp)
             let source = LogSourceFilter.title(for: line.stream)
-            return "[\(timestamp)] [\(source)] \(line.message)"
+            return redactedDiagnosticText("[\(timestamp)] [\(source)] \(line.message)")
         }
         return (header + entries).joined(separator: "\n") + "\n"
+    }
+
+    private var diagnosticVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+            as? String ?? "Unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion")
+            as? String ?? "Unknown"
+        return "\(version) (\(build))"
+    }
+
+    private var diagnosticIssues: [String] {
+        guard !model.operationalIssues.isEmpty else { return ["- None"] }
+        return model.operationalIssues.map { issue in
+            let detail = issue.technicalDetail.map {
+                " · \(redactedDiagnosticText($0))"
+            } ?? ""
+            return "- [\(diagnosticSeverity(issue.severity))] \(issue.subsystem.rawValue): \(issue.title) · \(issue.consequence)\(detail)"
+        }
+    }
+
+    private var diagnosticLiveSources: [String] {
+        AppModel.LiveStream.allCases.map { stream in
+            guard let health = model.liveStreamHealth[stream] else {
+                return "- \(diagnosticStreamName(stream)): inactive"
+            }
+            let sample = health.lastReceivedAt.map {
+                " · last sample \($0.formatted(.iso8601))"
+            } ?? ""
+            let error = health.lastError.map {
+                " · \(redactedDiagnosticText($0))"
+            } ?? ""
+            return "- \(diagnosticStreamName(stream)): \(diagnosticPhaseName(health.phase))\(sample)\(error)"
+        }
+    }
+
+    private func diagnosticSeverity(_ severity: OperationalIssue.Severity) -> String {
+        switch severity {
+        case .information: "INFO"
+        case .warning: "WARNING"
+        case .error: "ERROR"
+        }
+    }
+
+    private func diagnosticStreamName(_ stream: AppModel.LiveStream) -> String {
+        switch stream {
+        case .traffic: "Traffic rate"
+        case .connections: "Connections"
+        case .logs: "Logs"
+        case .proxies: "Proxy state"
+        case .appRouting: "App Routing"
+        }
+    }
+
+    private func diagnosticPhaseName(_ phase: LiveStreamHealth.Phase) -> String {
+        switch phase {
+        case .inactive: "inactive"
+        case .connecting: "connecting"
+        case .live: "live"
+        case .reconnecting: "reconnecting"
+        case .stale: "stale"
+        }
     }
 
     private func updateLayout(_ width: CGFloat) {

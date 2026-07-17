@@ -11,9 +11,13 @@ struct MenuBarContent: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     statusHeader
+                    operatingState
                     if model.isConnected {
                         liveMetrics
                     }
+                    appRoutingStatus
+                    operationalEvidence
+                    managementLinks
                     primaryAction
 
                     Divider()
@@ -46,7 +50,7 @@ struct MenuBarContent: View {
     }
 
     private var statusHeader: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: statusSymbol)
                 .font(.system(size: 19, weight: .semibold))
                 .foregroundStyle(statusColor)
@@ -59,46 +63,245 @@ struct MenuBarContent: View {
                 Text(statusSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
         }
     }
 
+    private var operatingState: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            operationalStateRow(
+                title: "Mihomo Core",
+                value: coreStatusTitle,
+                symbol: coreStatusSymbol,
+                color: coreStatusColor
+            )
+            operationalStateRow(
+                title: "macOS Capture",
+                value: captureStatusTitle,
+                symbol: captureStatusSymbol,
+                color: captureStatusColor
+            )
+        }
+        .padding(10)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            "Mihomo Core: \(coreStatusTitle). macOS Capture: \(captureStatusTitle)."
+        )
+    }
+
+    private func operationalStateRow(
+        title: String,
+        value: String,
+        symbol: String,
+        color: Color
+    ) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .frame(width: 14)
+                .accessibilityHidden(true)
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .fontWeight(.medium)
+                .lineLimit(1)
+        }
+        .font(.caption)
+    }
+
     private var liveMetrics: some View {
-        HStack(spacing: 14) {
+        HStack(alignment: .top, spacing: 8) {
             metricLabel(
-                formattedByteRate(model.traffic.download),
+                title: "Download",
+                value: liveTrafficValue(model.traffic.download),
                 symbol: "arrow.down",
                 color: .blue
             )
             metricLabel(
-                formattedByteRate(model.traffic.upload),
+                title: "Upload",
+                value: liveTrafficValue(model.traffic.upload),
                 symbol: "arrow.up",
                 color: .purple
             )
-            Spacer(minLength: 4)
             metricLabel(
-                formattedCount(model.connections?.connections.count ?? 0),
+                title: "Connections",
+                value: liveConnectionCount,
                 symbol: "arrow.left.arrow.right",
                 color: .secondary
             )
         }
-        .font(.caption.monospacedDigit())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Download \(formattedByteRate(model.traffic.download)), upload \(formattedByteRate(model.traffic.upload)), "
-                + "\(formattedCount(model.connections?.connections.count ?? 0)) active connections"
+            "Download \(liveTrafficValue(model.traffic.download)), "
+                + "upload \(liveTrafficValue(model.traffic.upload)), "
+                + "connections \(liveConnectionCount)"
         )
     }
 
-    private func metricLabel(_ value: String, symbol: String, color: Color) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol)
-                .foregroundStyle(color)
+    private func metricLabel(
+        title: String,
+        value: String,
+        symbol: String,
+        color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(title, systemImage: symbol)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleAndIcon)
             Text(value)
+                .font(.caption.monospacedDigit().weight(.medium))
+                .foregroundStyle(value == "Stale" ? Color.orange : Color.primary)
+                .lineLimit(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(9)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+    }
+
+    private var appRoutingStatus: some View {
+        Button {
+            showMainWindow(destination: .appRouting)
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: appRoutingStatusSymbol)
+                    .foregroundStyle(appRoutingStatusColor)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("App Routing")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Text(appRoutingRuleSummary)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(appRoutingStatusTitle)
+                    .font(.caption.monospacedDigit().weight(.medium))
+                    .foregroundStyle(appRoutingStatusColor)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(appRoutingStatusHelp)
+        .accessibilityLabel(
+            "App Routing, \(appRoutingStatusTitle), \(appRoutingRuleSummary)"
+        )
+    }
+
+    @ViewBuilder
+    private var operationalEvidence: some View {
+        if !model.operationalIssues.isEmpty {
+            Button {
+                showMainWindow(destination: .attention)
+            } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(attentionColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(attentionTitle)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(model.operationalIssues[0].consequence)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                "\(attentionTitle). \(model.operationalIssues[0].consequence)"
+            )
+        } else {
+            Button {
+                showMainWindow(destination: .connections)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: evidenceSymbol)
+                        .foregroundStyle(evidenceColor)
+                    Text(evidenceTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(evidenceTitle)
+        }
+    }
+
+    private var managementLinks: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Open")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Grid(horizontalSpacing: 7, verticalSpacing: 7) {
+                GridRow {
+                    destinationButton(.overview)
+                    destinationButton(.connections)
+                }
+                GridRow {
+                    destinationButton(.appRouting)
+                    destinationButton(.attention)
+                }
+            }
+        }
+    }
+
+    private func destinationButton(_ destination: AppModel.Destination) -> some View {
+        Button {
+            showMainWindow(destination: destination)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: destination.symbol)
+                    .frame(width: 13)
+                Text(destination.title)
+                    .lineLimit(1)
+                if destination == .attention, !model.operationalIssues.isEmpty {
+                    Spacer(minLength: 2)
+                    Text(formattedCount(model.operationalIssues.count))
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.orange.opacity(0.16), in: Capsule())
+                } else {
+                    Spacer(minLength: 2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
     }
 
     @ViewBuilder
@@ -417,13 +620,11 @@ struct MenuBarContent: View {
     }
 
     private var issueMessage: String? {
-        if case let .failed(message) = model.systemProxyState { return message }
-        if case let .failed(message) = model.networkCaptureState {
-            return "App Routing: \(message)"
+        guard let message = model.errorMessage else { return nil }
+        let duplicatesOperationalIssue = model.operationalIssues.contains {
+            $0.technicalDetail == message || $0.consequence == message
         }
-        if let message = model.errorMessage { return message }
-        if case let .degraded(message) = model.controllerState { return message }
-        return nil
+        return duplicatesOperationalIssue ? nil : message
     }
 
     private var connectionOperationInProgress: Bool {
@@ -456,68 +657,268 @@ struct MenuBarContent: View {
     }
 
     private var statusTitle: String {
-        if model.preparationInProgress {
-            return "Preparing MClash"
-        }
-        switch model.coreState {
-        case .running:
-            switch model.controllerState {
-            case .ready: return model.systemProxyEnabled ? "Connected" : "Core Running"
-            case .loading: return "Preparing Controls"
-            case .degraded: return "Connected with an Issue"
-            case .idle: return "Connected"
-            }
-        default:
-            return model.statusTitle
-        }
+        model.operationalSnapshot.title
     }
 
     private var statusSubtitle: String {
-        if model.preparationInProgress {
-            return "Checking profiles and network state"
-        }
-        if let profile = model.activeProfile {
-            return model.isConnected && !model.systemProxyEnabled
-                ? "\(profile.name) · System Proxy off"
-                : profile.name
-        }
-        return "No active profile"
+        model.operationalSnapshot.detail
     }
 
     private var statusSymbol: String {
-        if model.preparationInProgress { return "arrow.triangle.2.circlepath" }
-        switch model.coreState {
-        case .running:
-            if model.controllerIsReady, model.systemProxyEnabled {
-                return "checkmark.shield.fill"
-            } else if model.controllerIsReady {
-                return "network"
-            } else {
-                return "ellipsis.circle.fill"
-            }
-        case .failed:
-            return "exclamationmark.triangle.fill"
-        case .validating, .starting, .stopping:
-            return "arrow.triangle.2.circlepath"
-        case .stopped:
-            return "pause.circle.fill"
+        switch model.operationalSnapshot.level {
+        case .active: "checkmark.shield.fill"
+        case .attention: "exclamationmark.triangle.fill"
+        case .transitioning: "arrow.triangle.2.circlepath"
+        case .localOnly: "network"
+        case .disconnected: "pause.circle.fill"
         }
     }
 
     private var statusColor: Color {
-        if model.preparationInProgress { return .orange }
-        switch model.coreState {
-        case .running:
-            return model.controllerIsReady
-                ? (model.systemProxyEnabled ? .green : .secondary)
-                : .orange
-        case .failed:
-            return .red
-        case .validating, .starting, .stopping:
-            return .orange
-        case .stopped:
-            return .secondary
+        switch model.operationalSnapshot.level {
+        case .active: .green
+        case .attention: model.operationalIssues.first?.severity == .error ? .red : .orange
+        case .transitioning: .orange
+        case .localOnly, .disconnected: .secondary
         }
+    }
+
+    private var coreStatusTitle: String {
+        switch model.coreState {
+        case .running: model.controllerIsReady ? "Running" : "Running · Controls unavailable"
+        case .validating: "Validating"
+        case .starting: "Starting"
+        case .stopping: "Stopping"
+        case .stopped: "Off"
+        case .failed: "Failed"
+        }
+    }
+
+    private var coreStatusSymbol: String {
+        switch model.coreState {
+        case .running: model.controllerIsReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+        case .validating, .starting, .stopping: "arrow.clockwise"
+        case .stopped: "circle"
+        case .failed: "xmark.circle.fill"
+        }
+    }
+
+    private var coreStatusColor: Color {
+        switch model.coreState {
+        case .running: model.controllerIsReady ? .green : .orange
+        case .validating, .starting, .stopping: .orange
+        case .stopped: .secondary
+        case .failed: .red
+        }
+    }
+
+    private var captureStatusTitle: String {
+        if model.operationalSnapshot.activeCaptureCount > 0 {
+            if appRoutingCaptureIsOn, !appRoutingActivityIsCurrent {
+                return systemProxyCaptureIsOn
+                    ? "System Proxy · App Routing unverified"
+                    : "App Routing · unverified"
+            }
+            return model.operationalSnapshot.captureSummary
+        }
+        if model.networkStateTransitionInProgress {
+            return "Changing…"
+        }
+        switch model.networkCaptureState {
+        case .awaitingUserApproval: return "Approval needed"
+        case .requiresReboot: return "Restart needed"
+        case .failed: return "Unavailable"
+        case .off, .waitingForConnection, .enabling, .on, .disabling:
+            break
+        }
+        if case .failed = model.systemProxyState { return "Unavailable" }
+        return model.isConnected ? "Off · local listeners only" : "Off"
+    }
+
+    private var captureStatusSymbol: String {
+        if model.operationalSnapshot.activeCaptureCount > 0 {
+            return appRoutingCaptureIsOn && !appRoutingActivityIsCurrent
+                ? "exclamationmark.circle.fill"
+                : "checkmark.circle.fill"
+        }
+        if model.networkStateTransitionInProgress { return "arrow.clockwise" }
+        if model.operationalIssues.contains(where: {
+            $0.subsystem == .systemProxy || $0.subsystem == .appRouting
+        }) {
+            return "exclamationmark.triangle.fill"
+        }
+        return "circle"
+    }
+
+    private var captureStatusColor: Color {
+        if model.operationalSnapshot.activeCaptureCount > 0 {
+            return appRoutingCaptureIsOn && !appRoutingActivityIsCurrent ? .orange : .green
+        }
+        if model.networkStateTransitionInProgress { return .orange }
+        if model.operationalIssues.contains(where: {
+            $0.subsystem == .systemProxy || $0.subsystem == .appRouting
+        }) {
+            return model.operationalIssues.contains(where: {
+                ($0.subsystem == .systemProxy || $0.subsystem == .appRouting)
+                    && $0.severity == .error
+            }) ? .red : .orange
+        }
+        return .secondary
+    }
+
+    private var systemProxyCaptureIsOn: Bool {
+        if case .on = model.systemProxyState { return true }
+        return false
+    }
+
+    private var appRoutingCaptureIsOn: Bool {
+        if case .on = model.networkCaptureState { return true }
+        return false
+    }
+
+    private var appRoutingActivityIsCurrent: Bool {
+        model.liveStreamHealth[.appRouting]?.hasCurrentData == true
+    }
+
+    private func liveTrafficValue(_ value: Int64) -> String {
+        guard model.isConnected else { return "—" }
+        switch model.liveStreamHealth[.traffic]?.phase ?? .inactive {
+        case .live: return formattedByteRate(value)
+        case .connecting: return "Waiting"
+        case .reconnecting, .stale: return "Stale"
+        case .inactive: return "Unavailable"
+        }
+    }
+
+    private var liveConnectionCount: String {
+        guard model.isConnected else { return "—" }
+        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
+        case .live: return formattedCount(model.connections?.connections.count ?? 0)
+        case .connecting: return "Waiting"
+        case .reconnecting, .stale: return "Stale"
+        case .inactive: return "Unavailable"
+        }
+    }
+
+    private var activeAppRoutingRelayCount: Int {
+        model.appRoutingActivities.lazy.filter { activity in
+            guard activity.endedAt == nil else { return false }
+            switch activity.relayState {
+            case .pending, .connecting, .ready, .relaying:
+                return true
+            case .notApplicable, .completed, .failed:
+                return false
+            }
+        }.count
+    }
+
+    private var enabledAppRoutingRuleCount: Int {
+        model.networkCapturePreferences.snapshot.rules.lazy.filter(\.enabled).count
+    }
+
+    private var appRoutingRuleSummary: String {
+        "\(formattedCount(enabledAppRoutingRuleCount)) enabled "
+            + (enabledAppRoutingRuleCount == 1 ? "rule" : "rules")
+    }
+
+    private var appRoutingStatusTitle: String {
+        switch model.networkCaptureState {
+        case .off: return "Off"
+        case .waitingForConnection: return "Waiting for Core"
+        case .enabling: return "Starting"
+        case .awaitingUserApproval: return "Needs Approval"
+        case .on:
+            switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
+            case .live:
+                return "\(formattedCount(activeAppRoutingRelayCount)) active "
+                    + (activeAppRoutingRelayCount == 1 ? "relay" : "relays")
+            case .connecting:
+                return "Verifying"
+            case .reconnecting, .stale:
+                return "Relays stale"
+            case .inactive:
+                return "Data unavailable"
+            }
+        case .disabling: return "Stopping"
+        case .requiresReboot: return "Restart Required"
+        case .failed: return "Failed"
+        }
+    }
+
+    private var appRoutingStatusSymbol: String {
+        switch model.networkCaptureState {
+        case .on:
+            return model.liveStreamHealth[.appRouting]?.hasCurrentData == true
+                ? "checkmark.circle.fill"
+                : "exclamationmark.circle.fill"
+        case .enabling, .disabling, .waitingForConnection: return "arrow.clockwise"
+        case .awaitingUserApproval, .requiresReboot: return "exclamationmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        case .off: return "circle"
+        }
+    }
+
+    private var appRoutingStatusColor: Color {
+        switch model.networkCaptureState {
+        case .on:
+            return model.liveStreamHealth[.appRouting]?.hasCurrentData == true ? .green : .orange
+        case .enabling, .disabling, .waitingForConnection, .awaitingUserApproval, .requiresReboot:
+            return .orange
+        case .failed: return .red
+        case .off: return .secondary
+        }
+    }
+
+    private var appRoutingStatusHelp: String {
+        switch model.networkCaptureState {
+        case .on where model.liveStreamHealth[.appRouting]?.hasCurrentData == true:
+            return "Provider activity is current. \(activeAppRoutingRelayCount) active "
+                + "\(activeAppRoutingRelayCount == 1 ? "relay" : "relays") and "
+                + "\(enabledAppRoutingRuleCount) enabled "
+                + (enabledAppRoutingRuleCount == 1 ? "rule." : "rules.")
+        case .on:
+            if let receivedAt = model.liveStreamHealth[.appRouting]?.lastReceivedAt {
+                return "Relay counts are not current. The provider was last verified "
+                    + receivedAt.formatted(.relative(presentation: .named)) + "."
+            }
+            return "Relay counts are unavailable until the provider responds."
+        case .off:
+            return "App Routing is off. Saved rules are not intercepting traffic."
+        default:
+            return "Open App Routing for provider status and recovery actions."
+        }
+    }
+
+    private var attentionTitle: String {
+        "\(formattedCount(model.operationalIssues.count)) "
+            + (model.operationalIssues.count == 1 ? "item needs attention" : "items need attention")
+    }
+
+    private var attentionColor: Color {
+        model.operationalIssues.first?.severity == .error ? .red : .orange
+    }
+
+    private var evidenceTitle: String {
+        if let date = model.operationalSnapshot.latestSuccessfulProxyAt {
+            return "Last proxied flow observed \(date.formatted(.relative(presentation: .named)))"
+        }
+        if model.operationalSnapshot.activeCaptureCount > 0 {
+            return "Capture is on; no successfully proxied flow observed yet"
+        }
+        if model.isConnected {
+            return "Core is ready; macOS traffic capture is off"
+        }
+        return "Traffic capture is off"
+    }
+
+    private var evidenceSymbol: String {
+        model.operationalSnapshot.latestSuccessfulProxyAt == nil
+            ? "eye.slash"
+            : "checkmark.shield.fill"
+    }
+
+    private var evidenceColor: Color {
+        model.operationalSnapshot.latestSuccessfulProxyAt == nil ? .secondary : .green
     }
 
     private func showMainWindow(destination: AppModel.Destination) {
@@ -527,8 +928,8 @@ struct MenuBarContent: View {
     }
 
     private var popoverHeight: CGFloat {
-        if issueMessage != nil { return 500 }
-        if !quickRouteGroups.isEmpty { return 500 }
-        return model.isConnected ? 420 : 280
+        if model.isConnected { return 600 }
+        if !model.operationalIssues.isEmpty || issueMessage != nil { return 520 }
+        return 480
     }
 }

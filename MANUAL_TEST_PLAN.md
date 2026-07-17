@@ -7,8 +7,10 @@ before testing failure scenarios.
 
 ## 1. Clean launch and first profile
 
-- Launch MClash with no profiles. Confirm the main window and menu bar item both
-  show **Disconnected** and **Choose a Profile**.
+- Launch MClash with no profiles. Confirm Overview, the sidebar footer, and the
+  menu bar all say traffic capture is off and explain that a profile must be
+  chosen. They must not present an empty profile list as healthy if application
+  storage failed to initialize.
 - Open the menu bar popup repeatedly. Confirm every row is clickable, the popup
   remains within the screen, the status/actions/profile/mode/proxy groups are
   visible above the footer, and **Open MClash**, **Settings**, and **Quit** work.
@@ -94,8 +96,15 @@ before testing failure scenarios.
 
 ## 5. Daily menu bar workflow
 
-- Verify current status, active profile, upload/download rates, and any degraded
-  live-data warning are readable in both light and dark appearance.
+- Verify **Mihomo Core** and **macOS Capture** are separate rows. A running Core
+  with System Proxy and App Routing both off must say capture is off/local only,
+  never simply “Connected”.
+- Verify upload/download rates, active connections, App Routing relay/rule
+  counts, and the last successfully proxied-flow evidence are readable in both
+  light and dark appearance. Interrupt a live stream and confirm its cached
+  number becomes **Stale** or **Unavailable**, not a plausible live zero.
+- Open Overview, Traffic, App Routing, and Attention from the menu bar. Confirm
+  each opens the existing main window at the requested destination.
 - Switch Rule / Global / Direct and confirm the main Proxies view reflects the
   server-confirmed mode. With the default Settings option enabled, confirm old
   connections close so the new route takes effect immediately; disable the
@@ -133,6 +142,17 @@ before testing failure scenarios.
 - App Routing: turn the feature on while connected, approve the system
   extension if macOS requests it, and confirm the status reaches **App Routing
   On**. If it reports **Restart Required**, restart macOS and repeat the check.
+- App Routing: open **Activity** and create traffic from two applications. Confirm
+  the one-minute summary, Provider verification time, app/PID, destination,
+  matched App rule, Mihomo rule, root-to-leaf node path, relay outcome, and
+  measured byte counts update automatically. Double-click a row and verify the
+  complete Application → Capture → App Rule → Mihomo Rule → Proxy Path →
+  Destination pipeline.
+- App Routing: exercise a Direct rule and a fail-open path. Confirm payload says
+  **Not measured after handoff**, never `0 B`. Exercise Reject and confirm it
+  says **No payload**. Stop or invalidate the Provider while the Host stays open;
+  after bounded retries, green On must become a durable Attention/Failed state
+  with the actual disconnect reason and a Retry action.
 
 - Proxies: confirm Rule groups follow the subscription YAML order rather than
   alphabetical order. Global must show only GLOBAL, and Direct must show a
@@ -183,14 +203,33 @@ before testing failure scenarios.
 - Rules: search by type, payload, and policy; verify result counts and hit counts.
 - Providers: refresh all, update proxy providers, run health checks, update rule
   providers, and verify subscription usage/expiry where supplied.
-- Connections: search by host/process/rule/node, sort table columns, inspect one
-  connection's metadata, close one connection, and close all connections.
-- Logs: confirm source filters, search, pause/resume follow, export, and Clear
-  work and the list remains responsive under load.
-- Overview: verify traffic chart/rates, total traffic, routing mode, current
-  proxy, connection count, memory, HTTP/SOCKS addresses, system proxy state, and
-  core version. At a normal wide window, Traffic and Configuration must appear
-  side by side; at a narrow width they must return to one readable column.
+- Traffic: in **Live**, search by host/process/rule/node, sort columns, inspect a
+  connection, close one, and close all. In **Apps** and **Routes**, verify active
+  counts, observed flow counts, exact measured traffic, and partial-coverage
+  warnings. In **History**, verify completed Mihomo and App Routing flows retain
+  app, destination, capture origin, result, traffic semantics, and end time.
+- Traffic: Direct/fail-open rows and aggregates must explicitly mark unmeasured
+  handoffs; rejected rows must say no payload. Interrupt Mihomo or Provider
+  telemetry and confirm existing rows are labeled last-known/stale rather than
+  disappearing or masquerading as current data.
+- Logs: confirm source filters, search, pause/resume follow, **Export
+  Diagnostics…**, and Clear work under load. Inspect the exported report for
+  operating status, concurrent Attention items, source freshness, and filtered
+  logs. Seed test messages containing Bearer tokens, URL credentials, query
+  tokens, `-secret`, and password fields; exported text must redact their values.
+- Overview: verify the operational summary, capture coverage, concurrent
+  Attention count, Core/System Proxy/App Routing rows, current rates, connection
+  count, Mihomo session total, active App relays, Top Applications, Top Routes,
+  traffic chart, routing mode, current proxy, HTTP/SOCKS addresses, and core
+  version. At a normal wide window, Traffic and Configuration must appear side
+  by side; at a narrow width they must return to one readable column.
+- Overview: interrupt traffic telemetry. Current rates and Mihomo session total
+  must change to **Stale**, while the retained chart is labeled **Last received
+  samples**. Restore telemetry and confirm the live labels recover.
+- Attention: create simultaneous controller, Provider, and system-proxy guard
+  failures where practical. Confirm all issues remain visible at once, each
+  explains the user consequence, technical detail, and recovery action, and one
+  transient banner cannot hide the other issues.
 - Across every tab, switch between light and dark appearance and between empty
   and populated states. Confirm the page background stays continuous, lists
   keep consistent outer margins, and banners do not stack or change the page

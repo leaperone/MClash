@@ -133,7 +133,11 @@ actor AppleTransparentProxyManager: TransparentProxyManaging {
     }
 
     func providerStatus() async throws -> TransparentProxyProviderStatus {
-        try await providerMessageClient().status()
+        // Reloading makes this query useful after the host app has restarted:
+        // the in-memory manager is not authoritative, while the configuration
+        // persisted by NetworkExtension is.
+        try await reload()
+        return try await providerMessageClient().status()
     }
 
     func quiesceProvider(revision: UInt64) async throws -> TransparentProxyProviderStatus {
@@ -227,24 +231,69 @@ actor AppleTransparentProxyManager: TransparentProxyManaging {
     ) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: connectionTimeout)
+        var observedConnectionAttempt = connection.status != .disconnected
 
         while clock.now < deadline {
             let status = connection.status
             if status == target {
                 return
             }
-            if target == .connected && status == .invalid {
-                throw NetworkExtensionControlFailure(
-                    operation: .startTransparentProxy,
-                    message: "Transparent proxy connection became invalid"
-                )
+            if target == .connected {
+                switch status {
+                case .connecting, .connected, .reasserting, .disconnecting:
+                    observedConnectionAttempt = true
+                case .invalid:
+                    throw await connectionFailure(
+                        connection,
+                        operation: .startTransparentProxy,
+                        fallback: "Transparent proxy connection became invalid"
+                    )
+                case .disconnected where observedConnectionAttempt:
+                    throw await connectionFailure(
+                        connection,
+                        operation: .startTransparentProxy,
+                        fallback: "Transparent proxy disconnected during startup"
+                    )
+                default:
+                    break
+                }
             }
             try await Task.sleep(for: .milliseconds(100))
         }
 
-        throw NetworkExtensionControlFailure(
+        throw await connectionFailure(
+            connection,
             operation: target == .connected ? .startTransparentProxy : .stopTransparentProxy,
-            message: "Timed out waiting for transparent proxy status \(target.rawValue)"
+            fallback: "Timed out waiting for transparent proxy status \(target.rawValue)"
         )
+    }
+
+    private func connectionFailure(
+        _ connection: NEVPNConnection,
+        operation: NetworkExtensionControlOperation,
+        fallback: String
+    ) async -> NetworkExtensionControlFailure {
+        let error = await lastDisconnectError(for: connection)
+        guard let error else {
+            return NetworkExtensionControlFailure(operation: operation, message: fallback)
+        }
+
+        let underlyingError = error as NSError
+        var detail = underlyingError.localizedDescription
+        if underlyingError.domain != NSCocoaErrorDomain {
+            detail += " (\(underlyingError.domain) \(underlyingError.code))"
+        }
+        return NetworkExtensionControlFailure(
+            operation: operation,
+            message: "\(fallback): \(detail)"
+        )
+    }
+
+    private func lastDisconnectError(for connection: NEVPNConnection) async -> Error? {
+        await withCheckedContinuation { continuation in
+            connection.fetchLastDisconnectError { error in
+                continuation.resume(returning: error)
+            }
+        }
     }
 }

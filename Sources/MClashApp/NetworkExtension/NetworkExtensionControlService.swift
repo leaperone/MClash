@@ -8,6 +8,7 @@ protocol NetworkExtensionControlling: Sendable {
     func disable() async throws
     func uninstall() async throws -> NetworkExtensionUninstallOutcome
     func currentState() async -> NetworkExtensionControlState
+    func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus
     func appRoutingActivity(after cursor: UInt64, limit: Int) async throws
         -> AppRoutingActivityBatch
     func clearAppRoutingActivity() async throws
@@ -54,7 +55,14 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
            state.revision == configuration.revision,
            state.dnsRequested == configuration.dnsEnabled
         {
-            return .running
+            // The host process may outlive or lose contact with the provider.
+            // Never treat the actor's cached state as proof that capture is
+            // still active.
+            if let providerStatus = try? await providerRuntimeStatus(),
+               providerStatus.matches(configuration)
+            {
+                return .running
+            }
         }
 
         // A revision change is a controlled restart. Reusing an already-open
@@ -125,14 +133,16 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     }
 
     func disable() async throws {
-        guard state.phase != .inactive && state.phase != .uninstalled else {
-            return
+        let hasTrackedOperation = state.phase != .inactive && state.phase != .uninstalled
+        if hasTrackedOperation {
+            try transition(.beginDisable)
         }
-        try transition(.beginDisable)
 
         do {
             try await dnsProxy.disable()
-            try transition(.dnsProxyDisabled)
+            if hasTrackedOperation {
+                try transition(.dnsProxyDisabled)
+            }
         } catch {
             let failure = NetworkExtensionControlFailure(
                 operation: .disableDNSProxy,
@@ -144,7 +154,9 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
 
         do {
             try await transparentProxy.stop()
-            try transition(.transparentProxyStopped)
+            if hasTrackedOperation {
+                try transition(.transparentProxyStopped)
+            }
         } catch {
             let failure = NetworkExtensionControlFailure(
                 operation: .stopTransparentProxy,
@@ -189,6 +201,10 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
         state
     }
 
+    func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus {
+        try await transparentProxy.providerStatus()
+    }
+
     func appRoutingActivity(
         after cursor: UInt64,
         limit: Int
@@ -213,5 +229,13 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
 
     private func recordUserApprovalRequirement() {
         try? transition(.systemExtensionNeedsApproval)
+    }
+}
+
+private extension TransparentProxyProviderStatus {
+    func matches(_ configuration: NetworkExtensionRuntimeConfiguration) -> Bool {
+        running
+            && captureEnabled == configuration.captureEnabled
+            && revision == configuration.revision
     }
 }

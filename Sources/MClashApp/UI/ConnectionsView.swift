@@ -1,6 +1,284 @@
 import SwiftUI
 
 struct ConnectionsView: View {
+    private enum Workspace: String, CaseIterable, Identifiable {
+        case live = "Live"
+        case apps = "Apps"
+        case routes = "Routes"
+        case history = "History"
+
+        var id: Self { self }
+    }
+
+    @ViewBuilder
+    private func liveWorkspace(presentation: ConnectionPresentationSnapshot) -> some View {
+        if !model.isConnected {
+            DisconnectedUnavailableView(
+                model: model,
+                title: "Connect to inspect traffic",
+                systemImage: "arrow.left.arrow.right",
+                description: "Live connections are streamed from the local Mihomo controller."
+            )
+        } else if model.connections == nil {
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Loading active connections…")
+                    .foregroundStyle(.secondary)
+            }
+        } else if !presentation.hasConnections {
+            ContentUnavailableView(
+                "No active connections",
+                systemImage: "checkmark.circle",
+                description: Text("New network connections will appear here automatically.")
+            )
+        } else if presentation.rows.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            connectionTable(rows: presentation.rows)
+        }
+    }
+
+    @ViewBuilder
+    private var applicationWorkspace: some View {
+        if model.flowLedger.entries.isEmpty {
+            ContentUnavailableView(
+                "No observed application traffic",
+                systemImage: "square.stack.3d.up",
+                description: Text("Applications appear after Mihomo or App Routing observes a flow.")
+            )
+        } else if filteredApplications.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            Table(filteredApplications) {
+                TableColumn("Application") { aggregate in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(aggregate.application.displayName)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        if let identifier = aggregate.application.bundleIdentifier {
+                            Text(identifier)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .help(aggregate.application.executablePath ?? aggregate.application.displayName)
+                }
+                .width(min: 180, ideal: 260)
+
+                TableColumn("Active") { aggregate in
+                    Text(formattedCount(aggregate.activeCount))
+                        .monospacedDigit()
+                }
+                .width(70)
+
+                TableColumn("Observed Flows") { aggregate in
+                    Text(formattedCount(aggregate.entryCount))
+                        .monospacedDigit()
+                }
+                .width(100)
+
+                TableColumn("Download") { aggregate in
+                    Text(formattedLedgerBytes(aggregate.traffic.exactDownloadBytes))
+                        .monospacedDigit()
+                }
+                .width(min: 90, ideal: 110)
+
+                TableColumn("Upload") { aggregate in
+                    Text(formattedLedgerBytes(aggregate.traffic.exactUploadBytes))
+                        .monospacedDigit()
+                }
+                .width(min: 90, ideal: 110)
+
+                TableColumn("Coverage") { aggregate in
+                    Text(trafficCoverageTitle(aggregate.traffic))
+                        .foregroundStyle(
+                            aggregate.traffic.notMeasuredAfterHandoffCount > 0
+                                ? Color.orange
+                                : Color.secondary
+                        )
+                        .help(trafficCoverageHelp(aggregate.traffic))
+                }
+                .width(min: 120, ideal: 170)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var routeWorkspace: some View {
+        if model.flowLedger.routeAggregates.isEmpty {
+            ContentUnavailableView(
+                "No observed routes",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                description: Text("Routes appear as traffic decisions and Mihomo connections are observed.")
+            )
+        } else if filteredRoutes.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            Table(filteredRoutes) {
+                TableColumn("Route") { aggregate in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(routeTitle(aggregate.route))
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        Text(routeSubtitle(aggregate.route))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .help(routeHelp(aggregate.route))
+                }
+                .width(min: 240, ideal: 380)
+
+                TableColumn("Active") { aggregate in
+                    Text(formattedCount(aggregate.activeCount))
+                        .monospacedDigit()
+                }
+                .width(70)
+
+                TableColumn("Flows") { aggregate in
+                    Text(formattedCount(aggregate.entryCount))
+                        .monospacedDigit()
+                }
+                .width(70)
+
+                TableColumn("Observed Traffic") { aggregate in
+                    Text(formattedLedgerBytes(aggregate.traffic.exactTotalBytes))
+                        .monospacedDigit()
+                }
+                .width(min: 110, ideal: 130)
+
+                TableColumn("Coverage") { aggregate in
+                    Text(trafficCoverageTitle(aggregate.traffic))
+                        .foregroundStyle(
+                            aggregate.traffic.notMeasuredAfterHandoffCount > 0
+                                ? Color.orange
+                                : Color.secondary
+                        )
+                        .help(trafficCoverageHelp(aggregate.traffic))
+                }
+                .width(min: 120, ideal: 170)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var historyWorkspace: some View {
+        if historicalEntries.isEmpty {
+            ContentUnavailableView(
+                "No traffic history",
+                systemImage: "clock.arrow.circlepath",
+                description: Text("Completed connections and App Routing decisions are kept for this app session.")
+            )
+        } else if filteredHistory.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            Table(filteredHistory) {
+                TableColumn("Application") { entry in
+                    Text(entry.application.displayName)
+                        .lineLimit(1)
+                }
+                .width(min: 130, ideal: 190)
+
+                TableColumn("Destination") { entry in
+                    Text(ledgerDestination(entry.destination))
+                        .lineLimit(1)
+                        .help(ledgerDestination(entry.destination))
+                }
+                .width(min: 170, ideal: 240)
+
+                TableColumn("Capture") { entry in
+                    Text(captureOriginTitle(entry.captureOrigin))
+                        .lineLimit(1)
+                }
+                .width(min: 100, ideal: 130)
+
+                TableColumn("Result") { entry in
+                    Text(outcomeTitle(entry.outcome))
+                        .foregroundStyle(outcomeColor(entry.outcome))
+                }
+                .width(min: 90, ideal: 120)
+
+                TableColumn("Traffic") { entry in
+                    Text(ledgerTrafficTitle(entry))
+                        .monospacedDigit()
+                        .help(ledgerTrafficHelp(entry))
+                }
+                .width(min: 105, ideal: 140)
+
+                TableColumn("Ended") { entry in
+                    if let endedAt = entry.endedAt {
+                        Text(endedAt, style: .time)
+                            .monospacedDigit()
+                    } else {
+                        Text("—")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .width(86)
+            }
+        }
+    }
+
+    private var workspaceSummary: String {
+        switch workspace {
+        case .live:
+            return ""
+        case .apps:
+            return "\(formattedCount(model.flowLedger.applicationAggregates.count)) apps"
+        case .routes:
+            return "\(formattedCount(model.flowLedger.routeAggregates.count)) routes"
+        case .history:
+            return "\(formattedCount(historicalEntries.count)) records"
+        }
+    }
+
+    private var filteredApplications: [FlowLedgerApplicationAggregate] {
+        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.flowLedger.applicationAggregates }
+        return model.flowLedger.applicationAggregates.filter { aggregate in
+            [
+                aggregate.application.displayName,
+                aggregate.application.bundleIdentifier,
+                aggregate.application.executablePath,
+                aggregate.application.signingIdentifier,
+            ].compactMap { $0 }.contains {
+                $0.localizedCaseInsensitiveContains(query)
+            }
+        }
+    }
+
+    private var filteredRoutes: [FlowLedgerRouteAggregate] {
+        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.flowLedger.routeAggregates }
+        return model.flowLedger.routeAggregates.filter { aggregate in
+            routeHelp(aggregate.route).localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var historicalEntries: [FlowLedgerEntry] {
+        model.flowLedger.entries.filter { !$0.state.isActive }
+    }
+
+    private var filteredHistory: [FlowLedgerEntry] {
+        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return historicalEntries }
+        return historicalEntries.filter { entry in
+            [
+                entry.application.displayName,
+                ledgerDestination(entry.destination),
+                captureOriginTitle(entry.captureOrigin),
+                outcomeTitle(entry.outcome),
+                entry.appRoutingRule,
+                entry.mihomoRoute?.rule,
+                entry.mihomoRoute?.rulePayload,
+                entry.mihomoRoute?.chain.joined(separator: " → "),
+            ].compactMap { $0 }.contains {
+                $0.localizedCaseInsensitiveContains(query)
+            }
+        }
+    }
+
     @Bindable var model: AppModel
     @SceneStorage("mclash.connections.searchText") private var searchText = ""
     @State private var debouncedSearchText = ""
@@ -13,6 +291,8 @@ struct ConnectionsView: View {
     @State private var inspectorPresentation: ConnectionInspectorPresentation = .popover
     @State private var confirmingCloseAll = false
     @State private var showingClosedHistory = false
+    @State private var confirmingClearTrafficHistory = false
+    @SceneStorage("mclash.traffic.workspace") private var workspace: Workspace = .live
 
     var body: some View {
         let presentation = ConnectionPresentationSnapshot(
@@ -23,32 +303,18 @@ struct ConnectionsView: View {
         )
 
         Group {
-            if !model.isConnected {
-                DisconnectedUnavailableView(
-                    model: model,
-                    title: "Connect to inspect traffic",
-                    systemImage: "arrow.left.arrow.right",
-                    description: "Live connections are streamed from the local Alpha controller."
-                )
-            } else if model.connections == nil {
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Loading active connections…")
-                        .foregroundStyle(.secondary)
-                }
-            } else if !presentation.hasConnections {
-                ContentUnavailableView(
-                    "No active connections",
-                    systemImage: "checkmark.circle",
-                    description: Text("New network connections will appear here automatically.")
-                )
-            } else if presentation.rows.isEmpty {
-                ContentUnavailableView.search(text: searchText)
-            } else {
-                connectionTable(rows: presentation.rows)
+            switch workspace {
+            case .live:
+                liveWorkspace(presentation: presentation)
+            case .apps:
+                applicationWorkspace
+            case .routes:
+                routeWorkspace
+            case .history:
+                historyWorkspace
             }
         }
-        .navigationTitle("Connections")
+        .navigationTitle("Traffic")
         .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
         .background {
@@ -89,6 +355,10 @@ struct ConnectionsView: View {
                 inspectorPresented = false
             }
         }
+        .onChange(of: workspace) { _, _ in
+            selectedConnectionID = nil
+            inspectorPresented = false
+        }
         .confirmationDialog(
             "Close all \(formattedCount(presentation.totalConnectionCount)) active connections?",
             isPresented: $confirmingCloseAll
@@ -100,17 +370,29 @@ struct ConnectionsView: View {
         } message: {
             Text("Apps may reconnect automatically. This affects every active connection, not only the current search results.")
         }
+        .confirmationDialog(
+            "Clear traffic history for this app session?",
+            isPresented: $confirmingClearTrafficHistory
+        ) {
+            Button("Clear History", role: .destructive) {
+                model.clearClosedConnectionHistory()
+                Task { await model.clearAppRoutingActivity() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Active connections remain visible. Completed Mihomo connections and App Routing decisions are removed from MClash's in-memory history.")
+        }
         .sheet(isPresented: $showingClosedHistory) {
             ClosedConnectionsHistoryView(model: model)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if model.errorMessage == nil,
-               model.degradedStreams.contains(.connections) {
+               let notice = trafficDataNotice {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.clockwise")
                         .foregroundStyle(.orange)
                         .accessibilityHidden(true)
-                    Text("Connection data is stale while the live stream reconnects.")
+                    Text(notice)
                         .font(.callout)
                     Spacer()
                 }
@@ -122,50 +404,109 @@ struct ConnectionsView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button {
-                    showingClosedHistory = true
-                } label: {
-                    Label(
-                        "Recently Closed",
-                        systemImage: "clock.arrow.circlepath"
-                    )
-                }
-                .help("View up to 500 recently closed connections")
-
-                Text(presentation.connectionCountLabel)
-                    .foregroundStyle(.secondary)
-
-                if let downloadTotal = presentation.downloadTotal,
-                   let uploadTotal = presentation.uploadTotal {
-                    Label(formattedByteCount(downloadTotal), systemImage: "arrow.down")
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .help("Session download")
-                    Label(formattedByteCount(uploadTotal), systemImage: "arrow.up")
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .help("Session upload")
-                }
-
-                inspectorButton(selectedConnection: presentation.selectedConnection)
-
-                Button {
-                    confirmingCloseAll = true
-                } label: {
-                    if model.isPerforming(.closeAllConnections) {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Close All", systemImage: "xmark.circle")
+                Picker("Traffic Workspace", selection: $workspace) {
+                    ForEach(Workspace.allCases) { item in
+                        Text(item.rawValue).tag(item)
                     }
                 }
-                .disabled(
-                    !presentation.hasConnections
-                        || !model.canPerform(.closeAllConnections)
-                )
-                .help("Close every active connection")
+                .pickerStyle(.segmented)
+                .frame(width: 300)
+
+                if workspace == .live {
+                    Text(presentation.connectionCountLabel)
+                        .foregroundStyle(.secondary)
+
+                    if let downloadTotal = presentation.downloadTotal,
+                       let uploadTotal = presentation.uploadTotal {
+                        Label(formattedByteCount(downloadTotal), systemImage: "arrow.down")
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .help("Mihomo session download")
+                        Label(formattedByteCount(uploadTotal), systemImage: "arrow.up")
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .help("Mihomo session upload")
+                    }
+
+                    inspectorButton(selectedConnection: presentation.selectedConnection)
+
+                    Button {
+                        confirmingCloseAll = true
+                    } label: {
+                        if model.isPerforming(.closeAllConnections) {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Close All", systemImage: "xmark.circle")
+                        }
+                    }
+                    .disabled(
+                        !presentation.hasConnections
+                            || !model.canPerform(.closeAllConnections)
+                    )
+                    .help("Close every active connection")
+                } else {
+                    Text(workspaceSummary)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+
+                    if unmeasuredHandoffCount > 0 {
+                        Label(
+                            "\(formattedCount(unmeasuredHandoffCount)) unmeasured",
+                            systemImage: "arrow.uturn.right"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .help("Direct and fail-open flows were handed back to macOS. Their payload after handoff is not reported as zero.")
+                    }
+
+                    if workspace == .history {
+                        Button("Clear History", role: .destructive) {
+                            confirmingClearTrafficHistory = true
+                        }
+                        .disabled(historicalEntries.isEmpty)
+                    }
+                }
             }
         }
+    }
+
+    private var trafficDataNotice: String? {
+        switch workspace {
+        case .live:
+            guard model.isConnected,
+                  model.liveStreamHealth[.connections]?.hasCurrentData != true else {
+                return nil
+            }
+            return "Live connection data is stale while the Mihomo stream reconnects."
+        case .apps, .routes, .history:
+            var staleSources: [String] = []
+            if model.isConnected,
+               model.liveStreamHealth[.connections]?.hasCurrentData != true {
+                staleSources.append("Mihomo connections")
+            }
+            if appRoutingIsActive,
+               model.liveStreamHealth[.appRouting]?.hasCurrentData != true {
+                staleSources.append("App Routing activity")
+            }
+            guard !staleSources.isEmpty else { return nil }
+            return staleSources.joined(separator: " and ")
+                + " are stale. Existing ledger rows remain visible as last-known observations."
+        }
+    }
+
+    private var unmeasuredHandoffCount: Int {
+        model.flowLedger.entries.reduce(into: 0) { count, entry in
+            if entry.upload == .notMeasuredAfterHandoff
+                || entry.download == .notMeasuredAfterHandoff {
+                count += 1
+            }
+        }
+    }
+
+    private var appRoutingIsActive: Bool {
+        if case .on = model.networkCaptureState { return true }
+        return false
     }
 
     private func inspectorButton(selectedConnection: MihomoConnection?) -> some View {
@@ -818,4 +1159,146 @@ private func formattedConnectionStart(_ value: String) -> String {
     fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     let date = fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     return date?.formatted(date: .abbreviated, time: .standard) ?? value
+}
+
+private func formattedLedgerBytes(_ value: UInt64) -> String {
+    formattedByteCount(value > UInt64(Int64.max) ? Int64.max : Int64(value))
+}
+
+private func trafficCoverageTitle(_ traffic: FlowLedgerTrafficAggregate) -> String {
+    if traffic.notMeasuredAfterHandoffCount > 0 {
+        return "Partial · \(formattedCount(traffic.notMeasuredAfterHandoffCount)) handoff"
+    }
+    if traffic.notApplicableCount > 0, traffic.exactTotalBytes == 0 {
+        return "No payload"
+    }
+    return "Measured"
+}
+
+private func trafficCoverageHelp(_ traffic: FlowLedgerTrafficAggregate) -> String {
+    if traffic.notMeasuredAfterHandoffCount > 0 {
+        return "\(formattedCount(traffic.notMeasuredAfterHandoffCount)) direct or fail-open flows were handed back to macOS. Their payload is not observable after handoff and is not counted as zero."
+    }
+    if traffic.notApplicableCount > 0, traffic.exactTotalBytes == 0 {
+        return "These decisions did not carry payload, for example rejected flows."
+    }
+    return "All displayed bytes were measured by Mihomo or the App Routing relay."
+}
+
+private func routeTitle(_ route: FlowLedgerRouteKey) -> String {
+    switch route {
+    case let .mihomo(rule, _, chain):
+        return chain.last ?? rule ?? "Mihomo"
+    case let .unresolvedMihomo(rule):
+        return rule.map { "Mihomo · \($0)" } ?? "Mihomo · resolving"
+    case .direct:
+        return "Direct"
+    case .rejected:
+        return "Rejected"
+    case .failOpen:
+        return "Fail Open"
+    case .relayFailed:
+        return "Relay Failed"
+    }
+}
+
+private func routeSubtitle(_ route: FlowLedgerRouteKey) -> String {
+    switch route {
+    case let .mihomo(rule, payload, chain):
+        let decision = [rule, payload].compactMap(nonEmpty).joined(separator: " · ")
+        let path = chain.joined(separator: " → ")
+        return nonEmpty(decision) ?? nonEmpty(path) ?? "Mihomo route"
+    case let .unresolvedMihomo(rule):
+        return rule.map { "App rule \($0) · awaiting Mihomo correlation" }
+            ?? "Awaiting Mihomo correlation"
+    case .direct:
+        return "Handed back to macOS; payload not measured"
+    case .rejected:
+        return "Blocked by App Routing"
+    case .failOpen:
+        return "Relay failed; handed back to macOS"
+    case let .relayFailed(rule):
+        return rule.map { "App rule \($0)" } ?? "App Routing relay"
+    }
+}
+
+private func routeHelp(_ route: FlowLedgerRouteKey) -> String {
+    switch route {
+    case let .mihomo(rule, payload, chain):
+        let decision = [rule, payload].compactMap(nonEmpty).joined(separator: " · ")
+        let path = chain.isEmpty ? "No proxy chain reported" : chain.joined(separator: " → ")
+        return [nonEmpty(decision), path].compactMap { $0 }.joined(separator: "\n")
+    default:
+        return "\(routeTitle(route))\n\(routeSubtitle(route))"
+    }
+}
+
+private func ledgerDestination(_ destination: FlowLedgerDestination) -> String {
+    let address = nonEmpty(destination.hostname)
+        ?? nonEmpty(destination.ipAddress)
+        ?? "Unknown destination"
+    guard let port = destination.port else { return address }
+    return endpoint(address: address, port: String(port)) ?? address
+}
+
+private func captureOriginTitle(_ origin: FlowLedgerCaptureOrigin) -> String {
+    switch origin {
+    case .systemProxy:
+        return "System Proxy"
+    case .appRouting:
+        return "App Routing"
+    case let .localListener(name):
+        return name
+    case .unknown:
+        return "Unattributed"
+    }
+}
+
+private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
+    switch outcome {
+    case .viaMihomo: "Via Mihomo"
+    case .direct: "Direct"
+    case .rejected: "Rejected"
+    case .failOpen: "Fail Open"
+    case .relayFailed: "Failed"
+    }
+}
+
+private func outcomeColor(_ outcome: FlowLedgerOutcome) -> Color {
+    switch outcome {
+    case .viaMihomo: .green
+    case .direct: .secondary
+    case .rejected, .relayFailed: .red
+    case .failOpen: .orange
+    }
+}
+
+private func ledgerTrafficTitle(_ entry: FlowLedgerEntry) -> String {
+    if entry.upload == .notMeasuredAfterHandoff
+        || entry.download == .notMeasuredAfterHandoff {
+        return "Not measured"
+    }
+    if entry.upload == .notApplicable, entry.download == .notApplicable {
+        return "No payload"
+    }
+    let upload = ledgerExactBytes(entry.upload)
+    let download = ledgerExactBytes(entry.download)
+    let (total, overflow) = upload.addingReportingOverflow(download)
+    return formattedLedgerBytes(overflow ? .max : total)
+}
+
+private func ledgerTrafficHelp(_ entry: FlowLedgerEntry) -> String {
+    if entry.upload == .notMeasuredAfterHandoff
+        || entry.download == .notMeasuredAfterHandoff {
+        return "This flow was handed back to macOS. MClash cannot observe its payload after handoff, so it is not reported as 0 B."
+    }
+    if entry.upload == .notApplicable, entry.download == .notApplicable {
+        return "This decision carried no payload."
+    }
+    return "Download \(formattedLedgerBytes(ledgerExactBytes(entry.download))) · Upload \(formattedLedgerBytes(ledgerExactBytes(entry.upload)))"
+}
+
+private func ledgerExactBytes(_ measurement: FlowLedgerByteMeasurement) -> UInt64 {
+    guard case let .exact(bytes) = measurement else { return 0 }
+    return bytes
 }

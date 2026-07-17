@@ -83,11 +83,13 @@ struct AppRoutingActivityTests {
     @Test("Capacity eviction reports an exact dropped-before watermark")
     func capacityAndDroppedWatermark() {
         let ring = BoundedAppRoutingActivityRing(capacity: 2)
-        let first = ring.upsert(makeActivity())
-        let second = ring.upsert(makeActivity())
-        let third = ring.upsert(makeActivity())
+        let first = ring.upsert(makeTerminalActivity())
+        let second = ring.upsert(makeTerminalActivity())
+        let third = ring.upsert(makeTerminalActivity())
 
         #expect(ring.count == 2)
+        #expect(ring.activeCount == 0)
+        #expect(ring.historyCount == 2)
         #expect(ring.activity(for: first.flowIdentifier) == nil)
         #expect(ring.droppedBeforeSequence == first.sequence)
 
@@ -96,6 +98,76 @@ struct AppRoutingActivityTests {
         #expect(batch.droppedBeforeSequence == first.sequence)
         #expect(batch.nextCursor == third.sequence)
         #expect(!batch.hasMore)
+    }
+
+    @Test("Active flow survives short-flow history pressure and remains updatable")
+    func activeFlowSurvivesHistoryPressure() {
+        let ring = BoundedAppRoutingActivityRing(capacity: 3)
+        let activeIdentifier = UUID()
+        let initial = ring.upsert(makeActivity(flowIdentifier: activeIdentifier))
+
+        for _ in 0..<20 {
+            ring.upsert(makeTerminalActivity())
+        }
+
+        #expect(ring.count == 3)
+        #expect(ring.activeCount == 1)
+        #expect(ring.historyCount == 2)
+        #expect(ring.activity(for: activeIdentifier) == initial)
+
+        var update = initial
+        update.relayState = .relaying
+        update.uploadBytes = 12_345
+        update.downloadBytes = 67_890
+        let stored = ring.upsert(update)
+
+        #expect(ring.activity(for: activeIdentifier) == stored)
+        #expect(stored.sequence == 22)
+        #expect(stored.uploadBytes == 12_345)
+        #expect(stored.downloadBytes == 67_890)
+    }
+
+    @Test("Concurrent active flows may exceed history capacity without eviction")
+    func activeFlowsMayTemporarilyExceedCapacity() {
+        let ring = BoundedAppRoutingActivityRing(capacity: 2)
+        let identifiers = (0..<4).map { _ in UUID() }
+        identifiers.forEach { ring.upsert(makeActivity(flowIdentifier: $0)) }
+
+        #expect(ring.count == 4)
+        #expect(ring.activeCount == 4)
+        #expect(ring.historyCount == 0)
+        #expect(identifiers.allSatisfy { ring.activity(for: $0) != nil })
+
+        var completed = ring.activity(for: identifiers[0])!
+        completed.relayState = .completed
+        completed.endedAt = Date(timeIntervalSince1970: 1_721_200_100)
+        ring.upsert(completed)
+
+        #expect(ring.activeCount == 3)
+        #expect(ring.historyCount == 0)
+        #expect(ring.activity(for: identifiers[0]) == nil)
+        #expect(identifiers.dropFirst().allSatisfy { ring.activity(for: $0) != nil })
+    }
+
+    @Test("Final state migrates an active flow to bounded history with exact counters")
+    func finalStateIsExactAndRetained() {
+        let ring = BoundedAppRoutingActivityRing(capacity: 2)
+        let identifier = UUID()
+        var activity = ring.upsert(makeActivity(flowIdentifier: identifier))
+        activity.relayState = .completed
+        activity.endedAt = Date(timeIntervalSince1970: 1_721_200_100)
+        activity.uploadBytes = 999_999
+        activity.downloadBytes = 888_888
+
+        let completed = ring.upsert(activity)
+
+        #expect(ring.activeCount == 0)
+        #expect(ring.historyCount == 1)
+        #expect(ring.activity(for: identifier) == completed)
+        #expect(completed.relayState == .completed)
+        #expect(completed.endedAt == activity.endedAt)
+        #expect(completed.uploadBytes == 999_999)
+        #expect(completed.downloadBytes == 888_888)
     }
 
     @Test("Cursor and limit page changed records without duplication")
@@ -153,6 +225,31 @@ struct AppRoutingActivityTests {
         #expect(next.sequence == second.sequence + 1)
     }
 
+    @Test("Clearing history preserves active flows and their future final update")
+    func removeHistoryPreservesActiveFlows() {
+        let ring = BoundedAppRoutingActivityRing(capacity: 3)
+        let activeIdentifier = UUID()
+        var active = ring.upsert(makeActivity(flowIdentifier: activeIdentifier))
+        let terminal = ring.upsert(makeTerminalActivity())
+
+        ring.removeHistory()
+
+        #expect(ring.count == 1)
+        #expect(ring.activeCount == 1)
+        #expect(ring.historyCount == 0)
+        #expect(ring.activity(for: terminal.flowIdentifier) == nil)
+        #expect(ring.activity(for: activeIdentifier) == active)
+        #expect(ring.droppedBeforeSequence == terminal.sequence)
+
+        active.relayState = .failed
+        active.relayError = "relay stopped"
+        active.endedAt = Date(timeIntervalSince1970: 1_721_200_200)
+        let failed = ring.upsert(active)
+        #expect(ring.activity(for: activeIdentifier) == failed)
+        #expect(ring.activeCount == 0)
+        #expect(ring.historyCount == 1)
+    }
+
     @Test("Concurrent upserts preserve uniqueness, order, and the hard bound")
     func concurrentUpserts() {
         let ring = BoundedAppRoutingActivityRing(capacity: 64)
@@ -171,6 +268,122 @@ struct AppRoutingActivityTests {
         #expect(sequences == sequences.sorted())
         #expect(Set(batch.activities.map(\.flowIdentifier)).count == identifiers.count)
         #expect(batch.activities.allSatisfy { $0.sequence > 0 })
+    }
+
+    @Test("Concurrent active updates and terminal churn preserve every live flow")
+    func concurrentActiveAndHistoryChurn() {
+        let ring = BoundedAppRoutingActivityRing(capacity: 64)
+        let activeIdentifiers = (0..<16).map { _ in UUID() }
+        let terminalIdentifiers = (0..<1_000).map { _ in UUID() }
+        activeIdentifiers.forEach { ring.upsert(makeActivity(flowIdentifier: $0)) }
+
+        DispatchQueue.concurrentPerform(iterations: 2_000) { index in
+            if index.isMultiple(of: 2) {
+                var update = makeActivity(
+                    flowIdentifier: activeIdentifiers[(index / 2) % activeIdentifiers.count]
+                )
+                update.relayState = .relaying
+                update.uploadBytes = UInt64(index)
+                ring.upsert(update)
+            } else {
+                ring.upsert(makeTerminalActivity(
+                    flowIdentifier: terminalIdentifiers[index / 2]
+                ))
+            }
+        }
+
+        let batch = ring.batch(limit: 64)
+        #expect(ring.latestSequence == 2_016)
+        #expect(ring.activeCount == activeIdentifiers.count)
+        #expect(ring.historyCount == 48)
+        #expect(ring.count == ring.capacity)
+        #expect(activeIdentifiers.allSatisfy { ring.activity(for: $0) != nil })
+        #expect(batch.activities.map(\.sequence) == batch.activities.map(\.sequence).sorted())
+        #expect(Set(batch.activities.map(\.flowIdentifier)).count == batch.activities.count)
+    }
+
+    @Test("Report limiter coalesces bursts and flushes the latest trailing counters")
+    func reportLimiterThrottlesAndFlushes() {
+        var limiter = AppRoutingRelayReportLimiter(
+            minimumIntervalNanoseconds: 250,
+            byteThreshold: 1_000
+        )
+
+        #expect(limiter.decision(
+            for: .ready,
+            uploadBytes: 0,
+            downloadBytes: 0,
+            nowNanoseconds: 0
+        ) == .emit)
+        #expect(limiter.decision(
+            for: .relaying,
+            uploadBytes: 100,
+            downloadBytes: 50,
+            nowNanoseconds: 10
+        ) == .emit)
+        #expect(limiter.decision(
+            for: .relaying,
+            uploadBytes: 200,
+            downloadBytes: 100,
+            nowNanoseconds: 60
+        ) == .schedule(afterNanoseconds: 200))
+        #expect(limiter.decision(
+            for: .relaying,
+            uploadBytes: 300,
+            downloadBytes: 200,
+            nowNanoseconds: 100
+        ) == .suppress)
+        let earlyFlush = limiter.shouldEmitScheduledReport(
+            uploadBytes: 300,
+            downloadBytes: 200,
+            nowNanoseconds: 259
+        )
+        #expect(!earlyFlush)
+        let dueFlush = limiter.shouldEmitScheduledReport(
+            uploadBytes: 300,
+            downloadBytes: 200,
+            nowNanoseconds: 260
+        )
+        #expect(dueFlush)
+    }
+
+    @Test("Byte threshold bypasses time throttle and terminal states are immediate")
+    func reportLimiterByteThresholdAndFinalState() {
+        var limiter = AppRoutingRelayReportLimiter(
+            minimumIntervalNanoseconds: 1_000,
+            byteThreshold: 500
+        )
+        #expect(limiter.decision(
+            for: .relaying,
+            uploadBytes: 10,
+            downloadBytes: 10,
+            nowNanoseconds: 0
+        ) == .emit)
+        #expect(limiter.decision(
+            for: .relaying,
+            uploadBytes: 410,
+            downloadBytes: 110,
+            nowNanoseconds: 10
+        ) == .emit)
+        #expect(limiter.decision(
+            for: .relaying,
+            uploadBytes: 420,
+            downloadBytes: 120,
+            nowNanoseconds: 20
+        ) == .schedule(afterNanoseconds: 990))
+
+        #expect(limiter.decision(
+            for: .failed,
+            uploadBytes: 777,
+            downloadBytes: 888,
+            nowNanoseconds: 21
+        ) == .emit)
+        let staleFlush = limiter.shouldEmitScheduledReport(
+            uploadBytes: 777,
+            downloadBytes: 888,
+            nowNanoseconds: 2_000
+        )
+        #expect(!staleFlush)
     }
 
     @Test("Batch itself has a stable wire representation")
@@ -219,5 +432,14 @@ struct AppRoutingActivityTests {
             relayError: nil,
             relayLocalPort: nil
         )
+    }
+
+    private func makeTerminalActivity(
+        flowIdentifier: UUID = UUID()
+    ) -> AppRoutingActivity {
+        var activity = makeActivity(flowIdentifier: flowIdentifier)
+        activity.relayState = .completed
+        activity.endedAt = Date(timeIntervalSince1970: 1_721_200_100)
+        return activity
     }
 }

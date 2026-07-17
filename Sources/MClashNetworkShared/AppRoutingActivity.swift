@@ -168,29 +168,52 @@ public struct AppRoutingActivityBatch: Codable, Hashable, Sendable {
     }
 }
 
-/// A lock-protected, bounded, last-update-ordered activity store.
+/// A lock-protected, active-flow-aware, last-update-ordered activity store.
 ///
-/// Upserting an existing flow replaces its previous value, assigns a new
-/// sequence, and moves it to the newest position. Capacity therefore bounds the
-/// number of flow records, not the number of updates. Cursor consumers receive
-/// only records changed after their cursor. When capacity eviction creates a
-/// gap, `droppedBeforeSequence` tells the consumer that a resynchronization may
-/// be required.
+/// Active and terminal flows have separate O(1) indexes. Terminal history is
+/// evicted before an active flow, so a long-lived relay cannot disappear merely
+/// because many short flows completed after it. `capacity` remains the normal
+/// total record bound: history is trimmed to leave room for active flows. When
+/// concurrent active flows alone exceed it, they are retained until they become
+/// terminal, at which point the history bound is restored.
+///
+/// Upserting an existing flow assigns a new sequence and coalesces its previous
+/// value. Cursor consumers receive only records changed after their cursor.
+/// When history eviction creates a gap, `droppedBeforeSequence` tells the
+/// consumer that a resynchronization may be required.
 public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
     public let capacity: Int
 
     private let lock = NSLock()
-    private var storage: [AppRoutingActivity] = []
+    private var active: [UUID: AppRoutingActivity] = [:]
+    private var history: [UUID: HistoryRecord] = [:]
+    private var oldestHistoryIdentifier: UUID?
+    private var newestHistoryIdentifier: UUID?
     private var nextSequence: UInt64 = 1
     private var droppedBefore: UInt64?
 
+    private struct HistoryRecord {
+        var activity: AppRoutingActivity
+        var previous: UUID?
+        var next: UUID?
+    }
+
     public init(capacity: Int) {
         self.capacity = max(0, capacity)
-        storage.reserveCapacity(self.capacity)
+        active.reserveCapacity(self.capacity)
+        history.reserveCapacity(self.capacity)
     }
 
     public var count: Int {
-        withLock { storage.count }
+        withLock { active.count + history.count }
+    }
+
+    public var activeCount: Int {
+        withLock { active.count }
+    }
+
+    public var historyCount: Int {
+        withLock { history.count }
     }
 
     public var latestSequence: UInt64 {
@@ -208,12 +231,6 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
         withLock {
             precondition(nextSequence < UInt64.max, "App Routing activity sequence exhausted")
 
-            if let existingIndex = storage.firstIndex(where: {
-                $0.flowIdentifier == activity.flowIdentifier
-            }) {
-                storage.remove(at: existingIndex)
-            }
-
             var stored = activity
             stored.sequence = nextSequence
             nextSequence += 1
@@ -223,18 +240,23 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
                 return stored
             }
 
-            storage.append(stored)
-            if storage.count > capacity {
-                let removed = storage.removeFirst()
-                markDropped(removed.sequence)
+            let identifier = stored.flowIdentifier
+            active.removeValue(forKey: identifier)
+            removeHistory(identifier, markAsDropped: false)
+
+            if Self.isActive(stored) {
+                active[identifier] = stored
+            } else {
+                appendHistory(stored)
             }
+            trimHistoryToCapacity()
             return stored
         }
     }
 
     public func activity(for flowIdentifier: UUID) -> AppRoutingActivity? {
         withLock {
-            storage.first { $0.flowIdentifier == flowIdentifier }
+            active[flowIdentifier] ?? history[flowIdentifier]?.activity
         }
     }
 
@@ -243,7 +265,11 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
     public func batch(after cursor: UInt64 = 0, limit: Int) -> AppRoutingActivityBatch {
         withLock {
             let boundedLimit = min(max(0, limit), capacity)
-            let candidates = storage.filter { $0.sequence > cursor }
+            var candidates = active.values.filter { $0.sequence > cursor }
+            candidates.append(contentsOf: history.values.lazy
+                .map(\.activity)
+                .filter { $0.sequence > cursor })
+            candidates.sort { $0.sequence < $1.sequence }
             let selected = Array(candidates.prefix(boundedLimit))
             return AppRoutingActivityBatch(
                 activities: selected,
@@ -258,11 +284,80 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
     /// therefore detect that records were discarded.
     public func removeAll() {
         withLock {
-            if let last = storage.last {
-                markDropped(last.sequence)
+            if !active.isEmpty || !history.isEmpty {
+                markDropped(nextSequence - 1)
             }
-            storage.removeAll(keepingCapacity: true)
+            active.removeAll(keepingCapacity: true)
+            removeAllHistory()
         }
+    }
+
+    /// Clears completed/direct history while preserving live relay records.
+    /// This is the provider-facing clear operation: active flows remain
+    /// observable and continue accepting counter/final-state updates.
+    public func removeHistory() {
+        withLock {
+            if let newestHistoryIdentifier,
+               let newest = history[newestHistoryIdentifier]?.activity {
+                markDropped(newest.sequence)
+            }
+            removeAllHistory()
+        }
+    }
+
+    private static func isActive(_ activity: AppRoutingActivity) -> Bool {
+        guard activity.endedAt == nil else { return false }
+        switch activity.relayState {
+        case .pending, .connecting, .ready, .relaying:
+            return true
+        case .notApplicable, .completed, .failed:
+            return false
+        }
+    }
+
+    private func appendHistory(_ activity: AppRoutingActivity) {
+        let identifier = activity.flowIdentifier
+        history[identifier] = HistoryRecord(
+            activity: activity,
+            previous: newestHistoryIdentifier,
+            next: nil
+        )
+        if let newestHistoryIdentifier {
+            history[newestHistoryIdentifier]?.next = identifier
+        } else {
+            oldestHistoryIdentifier = identifier
+        }
+        newestHistoryIdentifier = identifier
+    }
+
+    private func removeHistory(_ identifier: UUID, markAsDropped: Bool) {
+        guard let removed = history.removeValue(forKey: identifier) else { return }
+        if let previous = removed.previous {
+            history[previous]?.next = removed.next
+        } else {
+            oldestHistoryIdentifier = removed.next
+        }
+        if let next = removed.next {
+            history[next]?.previous = removed.previous
+        } else {
+            newestHistoryIdentifier = removed.previous
+        }
+        if markAsDropped {
+            markDropped(removed.activity.sequence)
+        }
+    }
+
+    private func trimHistoryToCapacity() {
+        while active.count + history.count > capacity,
+              let oldestHistoryIdentifier {
+            removeHistory(oldestHistoryIdentifier, markAsDropped: true)
+        }
+    }
+
+    private func removeAllHistory() {
+        history.removeAll(keepingCapacity: true)
+        oldestHistoryIdentifier = nil
+        newestHistoryIdentifier = nil
     }
 
     private func markDropped(_ sequence: UInt64) {
@@ -273,5 +368,110 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try operation()
+    }
+}
+
+/// Pure state machine used by Network Extension relays to coalesce high-rate
+/// byte-counter activity without delaying lifecycle or terminal states.
+public struct AppRoutingRelayReportLimiter: Sendable {
+    public enum Decision: Equatable, Sendable {
+        case emit
+        case schedule(afterNanoseconds: UInt64)
+        case suppress
+    }
+
+    public let minimumIntervalNanoseconds: UInt64
+    public let byteThreshold: UInt64
+
+    private var lastRelayingReportAt: UInt64?
+    private var lastUploadBytes: UInt64 = 0
+    private var lastDownloadBytes: UInt64 = 0
+    private var scheduledDeadline: UInt64?
+
+    public init(
+        minimumIntervalNanoseconds: UInt64 = 250_000_000,
+        byteThreshold: UInt64 = 256 * 1_024
+    ) {
+        self.minimumIntervalNanoseconds = minimumIntervalNanoseconds
+        self.byteThreshold = byteThreshold
+    }
+
+    /// Lifecycle states always emit immediately. Relaying counters emit on the
+    /// first sample, then at most once per interval unless enough bytes accrue.
+    public mutating func decision(
+        for state: AppRoutingRelayState,
+        uploadBytes: UInt64,
+        downloadBytes: UInt64,
+        nowNanoseconds: UInt64
+    ) -> Decision {
+        guard state == .relaying else {
+            scheduledDeadline = nil
+            return .emit
+        }
+
+        guard let lastRelayingReportAt else {
+            recordRelayingReport(
+                uploadBytes: uploadBytes,
+                downloadBytes: downloadBytes,
+                nowNanoseconds: nowNanoseconds
+            )
+            return .emit
+        }
+
+        let elapsed = nowNanoseconds >= lastRelayingReportAt
+            ? nowNanoseconds - lastRelayingReportAt
+            : minimumIntervalNanoseconds
+        let uploadDelta = Self.counterDelta(uploadBytes, since: lastUploadBytes)
+        let downloadDelta = Self.counterDelta(downloadBytes, since: lastDownloadBytes)
+        let byteDelta = uploadDelta.addingReportingOverflow(downloadDelta)
+        let reachedByteThreshold = byteDelta.overflow || byteDelta.partialValue >= byteThreshold
+        if elapsed >= minimumIntervalNanoseconds || reachedByteThreshold {
+            recordRelayingReport(
+                uploadBytes: uploadBytes,
+                downloadBytes: downloadBytes,
+                nowNanoseconds: nowNanoseconds
+            )
+            return .emit
+        }
+
+        if scheduledDeadline == nil {
+            let remaining = minimumIntervalNanoseconds - elapsed
+            let deadline = nowNanoseconds.addingReportingOverflow(remaining)
+            scheduledDeadline = deadline.overflow ? UInt64.max : deadline.partialValue
+            return .schedule(afterNanoseconds: remaining)
+        }
+        return .suppress
+    }
+
+    /// Flushes the latest counters for a previously scheduled trailing report.
+    public mutating func shouldEmitScheduledReport(
+        uploadBytes: UInt64,
+        downloadBytes: UInt64,
+        nowNanoseconds: UInt64
+    ) -> Bool {
+        guard let scheduledDeadline,
+              nowNanoseconds >= scheduledDeadline
+        else { return false }
+        recordRelayingReport(
+            uploadBytes: uploadBytes,
+            downloadBytes: downloadBytes,
+            nowNanoseconds: nowNanoseconds
+        )
+        return true
+    }
+
+    private mutating func recordRelayingReport(
+        uploadBytes: UInt64,
+        downloadBytes: UInt64,
+        nowNanoseconds: UInt64
+    ) {
+        lastRelayingReportAt = nowNanoseconds
+        lastUploadBytes = uploadBytes
+        lastDownloadBytes = downloadBytes
+        scheduledDeadline = nil
+    }
+
+    private static func counterDelta(_ value: UInt64, since previous: UInt64) -> UInt64 {
+        value >= previous ? value - previous : value
     }
 }

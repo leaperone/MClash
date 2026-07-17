@@ -7,6 +7,30 @@ import Security
 @MainActor
 @Observable
 final class AppModel {
+    struct StorageInitializationFailure: Identifiable, Equatable, Sendable {
+        enum Component: String, Hashable, Sendable {
+            case applicationState = "Application State"
+            case profiles = "Profiles"
+            case runtimeOverrides = "Runtime Settings"
+            case systemProxySettings = "System Proxy Settings"
+            case appRoutingSettings = "App Routing Settings"
+        }
+
+        let component: Component
+        let occurredAt: Date
+        let reason: String
+        let recoverySuggestion: String
+
+        var id: String { component.rawValue }
+    }
+
+    struct SystemProxyGuardFailure: Equatable, Sendable {
+        let consecutiveFailures: Int
+        let firstFailureAt: Date
+        let lastFailureAt: Date
+        let reason: String
+    }
+
     private struct ProxyDelayContextKey: Hashable {
         let group: String
         let proxy: String
@@ -38,11 +62,12 @@ final class AppModel {
         case degraded(String)
     }
 
-    enum LiveStream: Hashable {
+    enum LiveStream: CaseIterable, Hashable {
         case traffic
         case connections
         case logs
         case proxies
+        case appRouting
     }
 
     enum SystemProxyState: Equatable {
@@ -141,6 +166,7 @@ final class AppModel {
         case rules
         case providers
         case connections
+        case attention
         case logs
         case settings
 
@@ -152,9 +178,10 @@ final class AppModel {
             case .proxies: "Proxies"
             case .appRouting: "App Routing"
             case .profiles: "Profiles"
-            case .rules: "Rules"
+            case .rules: "Mihomo Rules"
             case .providers: "Providers"
-            case .connections: "Connections"
+            case .connections: "Traffic"
+            case .attention: "Attention"
             case .logs: "Logs"
             case .settings: "Settings"
             }
@@ -169,6 +196,7 @@ final class AppModel {
             case .rules: "list.bullet.rectangle"
             case .providers: "shippingbox"
             case .connections: "arrow.left.arrow.right"
+            case .attention: "exclamationmark.triangle"
             case .logs: "text.alignleft"
             case .settings: "gearshape"
             }
@@ -206,6 +234,7 @@ final class AppModel {
     var connections: MihomoConnectionSnapshot? {
         didSet {
             recordClosedConnections(previous: oldValue, current: connections)
+            scheduleFlowLedgerRefresh()
             proxyInspectorTrafficRevision &+= 1
             connectionsUseGlobalProxy = connections?.connections.contains {
                 $0.chains.contains("GLOBAL")
@@ -214,6 +243,8 @@ final class AppModel {
         }
     }
     private(set) var recentlyClosedConnections: [ClosedConnectionRecord] = []
+    private(set) var flowLedger = FlowLedger(activeConnections: [])
+    private(set) var appRoutingFlowEntries: [UUID: FlowLedgerEntry] = [:]
     var routeTrafficEntries: [TrafficAttribution.Entry] = [] {
         didSet {
             proxyInspectorTrafficRevision &+= 1
@@ -254,7 +285,13 @@ final class AppModel {
         }
     }
     private(set) var degradedStreams: Set<LiveStream> = []
+    private(set) var liveStreamHealth: [LiveStream: LiveStreamHealth] = Dictionary(
+        uniqueKeysWithValues: LiveStream.allCases.map { ($0, .inactive) }
+    )
     private(set) var operations: Set<Operation> = []
+    private(set) var storageInitializationFailures: [StorageInitializationFailure] = []
+    private(set) var systemProxyGuardFailure: SystemProxyGuardFailure?
+    private(set) var systemProxyGuardLastVerifiedAt: Date?
 
     private let supervisor: CoreSupervisor
     private let binaryLocator: CoreBinaryLocator
@@ -295,11 +332,15 @@ final class AppModel {
     private var contextualProxyDelays: [ProxyDelayContextKey: Int] = [:]
     private var proxyProfileStructure: ProfileStructure = .empty
     private var trafficAttribution = TrafficAttribution()
+    private var flowLedgerRevision: UInt64 = 0
+    private var flowLedgerTask: Task<Void, Never>?
     private var prepared = false
     private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
     private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
     private var appRoutingActivityTask: Task<Void, Never>?
     private var appRoutingActivityCursor: UInt64 = 0
+    private(set) var appRoutingProviderStatusFailureCount = 0
+    private(set) var appRoutingProviderLastVerifiedAt: Date?
     private(set) var preparationInProgress = false
     private var shutdownInProgress = false
     private var startupPreparationErrorMessage: String?
@@ -344,29 +385,101 @@ final class AppModel {
         notificationsEnabled = preferenceDefaults.bool(forKey: Self.notificationsEnabledKey)
         launchAtLogin = LoginItemManager().isEnabled
 
-        if let layout = profileDirectoryLayout ?? (try? ProfileDirectoryLayout.applicationSupport()) {
-            profileLayout = layout
-            profileStore = profileStoreOverride ?? (try? ProfileStore(layout: layout))
-            if let overrideStore = try? RuntimeOverrideStore(profileLayout: layout) {
+        var initializationFailures: [StorageInitializationFailure] = []
+        let layout: ProfileDirectoryLayout?
+        if let profileDirectoryLayout {
+            layout = profileDirectoryLayout
+        } else {
+            do {
+                layout = try ProfileDirectoryLayout.applicationSupport()
+            } catch {
+                layout = nil
+                initializationFailures.append(
+                    StorageInitializationFailure(
+                        component: .applicationState,
+                        occurredAt: Date(),
+                        reason: error.localizedDescription,
+                        recoverySuggestion: "Restore access to the user Application Support folder, then relaunch MClash."
+                    )
+                )
+            }
+        }
+
+        profileLayout = layout
+        if let layout {
+            if let profileStoreOverride {
+                profileStore = profileStoreOverride
+            } else {
+                do {
+                    profileStore = try ProfileStore(layout: layout)
+                } catch {
+                    profileStore = nil
+                    initializationFailures.append(
+                        StorageInitializationFailure(
+                            component: .profiles,
+                            occurredAt: Date(),
+                            reason: error.localizedDescription,
+                            recoverySuggestion: "Restore read and write access to \(layout.profilesDirectory.path), then relaunch MClash."
+                        )
+                    )
+                }
+            }
+
+            do {
+                let overrideStore = try RuntimeOverrideStore(profileLayout: layout)
                 runtimeOverrideCoordinator = RuntimeOverrideActivationCoordinator(
                     overrideStore: overrideStore
                 )
-            } else {
+            } catch {
                 runtimeOverrideCoordinator = nil
+                initializationFailures.append(
+                    StorageInitializationFailure(
+                        component: .runtimeOverrides,
+                        occurredAt: Date(),
+                        reason: error.localizedDescription,
+                        recoverySuggestion: "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                    )
+                )
             }
-            systemProxyPreferencesStore = try? SystemProxyPreferencesStore(
-                profileLayout: layout
-            )
-            networkCaptureConfigurationStore = try? NetworkCaptureConfigurationStore(
-                profileLayout: layout
-            )
+
+            do {
+                systemProxyPreferencesStore = try SystemProxyPreferencesStore(
+                    profileLayout: layout
+                )
+            } catch {
+                systemProxyPreferencesStore = nil
+                initializationFailures.append(
+                    StorageInitializationFailure(
+                        component: .systemProxySettings,
+                        occurredAt: Date(),
+                        reason: error.localizedDescription,
+                        recoverySuggestion: "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                    )
+                )
+            }
+
+            do {
+                networkCaptureConfigurationStore = try NetworkCaptureConfigurationStore(
+                    profileLayout: layout
+                )
+            } catch {
+                networkCaptureConfigurationStore = nil
+                initializationFailures.append(
+                    StorageInitializationFailure(
+                        component: .appRoutingSettings,
+                        occurredAt: Date(),
+                        reason: error.localizedDescription,
+                        recoverySuggestion: "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                    )
+                )
+            }
         } else {
-            profileLayout = nil
             profileStore = nil
             runtimeOverrideCoordinator = nil
             systemProxyPreferencesStore = nil
             networkCaptureConfigurationStore = nil
         }
+        storageInitializationFailures = initializationFailures
 
         eventTask = Task { [weak self, events = supervisor.events] in
             for await event in events {
@@ -405,19 +518,59 @@ final class AppModel {
             guard !shutdownInProgress else { return }
             if let profileStore, let profileLayout {
                 if let runtimeOverrideCoordinator {
-                    runtimeOverrides = try await runtimeOverrideCoordinator.overrides()
+                    do {
+                        runtimeOverrides = try await runtimeOverrideCoordinator.overrides()
+                        clearStorageFailure(for: .runtimeOverrides)
+                    } catch {
+                        recordStorageFailure(
+                            component: .runtimeOverrides,
+                            error: error,
+                            recoverySuggestion: "Restore or remove the invalid runtime settings document, then relaunch MClash."
+                        )
+                        throw error
+                    }
                 }
                 if let systemProxyPreferencesStore {
-                    systemProxyPreferences = try await systemProxyPreferencesStore.load()
+                    do {
+                        systemProxyPreferences = try await systemProxyPreferencesStore.load()
+                        clearStorageFailure(for: .systemProxySettings)
+                    } catch {
+                        recordStorageFailure(
+                            component: .systemProxySettings,
+                            error: error,
+                            recoverySuggestion: "Restore or remove the invalid system proxy settings document, then relaunch MClash."
+                        )
+                        throw error
+                    }
                 }
                 if let networkCaptureConfigurationStore {
-                    networkCapturePreferences = try await networkCaptureConfigurationStore.load()
+                    do {
+                        networkCapturePreferences = try await networkCaptureConfigurationStore.load()
+                        clearStorageFailure(for: .appRoutingSettings)
+                    } catch {
+                        recordStorageFailure(
+                            component: .appRoutingSettings,
+                            error: error,
+                            recoverySuggestion: "Restore or remove the invalid App Routing settings document, then relaunch MClash."
+                        )
+                        throw error
+                    }
                     if networkCapturePreferences.enabled {
                         networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener()
                     }
                 }
-                profiles = try await profileStore.profiles()
-                activeProfileID = try await profileStore.activeProfileID()
+                do {
+                    profiles = try await profileStore.profiles()
+                    activeProfileID = try await profileStore.activeProfileID()
+                    clearStorageFailure(for: .profiles)
+                } catch {
+                    recordStorageFailure(
+                        component: .profiles,
+                        error: error,
+                        recoverySuggestion: "Restore read access to the Profiles and State folders, then relaunch MClash."
+                    )
+                    throw error
+                }
                 await refreshActiveProfileListenerPorts()
                 if let activeProfileID {
                     if runtimeOverrideCoordinator != nil {
@@ -553,6 +706,10 @@ final class AppModel {
 
     var systemProxyRecoveryRequired: Bool {
         guard hasSystemProxySnapshot else { return false }
+        // A guard failure means the currently intended proxy could not be
+        // verified. It is distinct from failing to restore the saved previous
+        // macOS configuration.
+        if systemProxyGuardFailure != nil { return false }
         if case .failed = systemProxyState { return true }
         return false
     }
@@ -982,9 +1139,14 @@ final class AppModel {
             }
 
             let activationFailure = errorMessage ?? "The new profile could not be started."
-            await supervisor.stop()
-            coreState = await supervisor.state()
-            stopControllerStreams()
+            guard await stopCore() else {
+                let stopFailure = errorMessage
+                    ?? "The candidate proxy core could not be confirmed stopped."
+                let message = "\(activationFailure) \(stopFailure)"
+                errorMessage = message
+                appendSupervisorLog(message)
+                throw AppModelError.profileActivationFailed(message)
+            }
 
             if let previousProfileID {
                 do {
@@ -1211,13 +1373,20 @@ final class AppModel {
         if isConnected || isBusy || hasSystemProxySnapshot {
             let disconnected = await performDisconnect()
             if !disconnected {
-                failures.append("The candidate core could not be stopped safely because macOS proxy settings were not restored.")
+                failures.append(
+                    "The candidate core could not be stopped safely: "
+                        + (errorMessage ?? "No additional error was reported.")
+                )
                 return failures
             }
         } else {
-            await supervisor.stop()
-            coreState = await supervisor.state()
-            stopControllerStreams()
+            guard await stopCore() else {
+                failures.append(
+                    "The candidate core could not be stopped safely: "
+                        + (errorMessage ?? "No additional error was reported.")
+                )
+                return failures
+            }
         }
 
         do {
@@ -1480,8 +1649,21 @@ final class AppModel {
         if systemProxyEnabled || hasSystemProxySnapshot {
             guard await performDisableSystemProxy() else { return false }
         }
-        await supervisor.stop()
+        return await stopCore()
+    }
+
+    @discardableResult
+    private func stopCore() async -> Bool {
+        let stopped = await supervisor.stop()
         coreState = await supervisor.state()
+        guard stopped else {
+            if case let .failed(message) = coreState {
+                errorMessage = message
+            } else {
+                errorMessage = "The proxy core could not be confirmed stopped."
+            }
+            return false
+        }
         stopControllerStreams()
         return true
     }
@@ -2086,6 +2268,8 @@ final class AppModel {
         }
 
         let generation = controllerGeneration
+        systemProxyGuardFailure = nil
+        systemProxyGuardLastVerifiedAt = nil
         systemProxyState = .enabling
         do {
             guard let httpPort = localHTTPProxyPort, let socksPort = localSOCKSProxyPort else {
@@ -2201,12 +2385,15 @@ final class AppModel {
         systemProxyGuardTask?.cancel()
         guard systemProxyPreferences.guardEnabled else {
             systemProxyGuardTask = nil
+            if systemProxyGuardFailure != nil {
+                systemProxyGuardFailure = nil
+                systemProxyState = .on
+            }
             return
         }
         let interval = systemProxyPreferences.guardIntervalSeconds
         let bypassDomains = systemProxyPreferences.effectiveBypassDomains
         systemProxyGuardTask = Task { @MainActor [weak self] in
-            var consecutiveFailures = 0
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(interval))
@@ -2215,30 +2402,90 @@ final class AppModel {
                 }
                 guard let self,
                       self.isConnected,
-                      self.systemProxyState == .on else { return }
-                do {
-                    let matches = try await self.systemProxyManager.configurationMatches(
-                        endpoints: endpoints,
-                        bypassDomains: bypassDomains
-                    )
-                    if !matches {
-                        try await self.systemProxyManager.apply(
-                            endpoints: endpoints,
-                            bypassDomains: bypassDomains
-                        )
-                        self.appendSupervisorLog(
-                            "System proxy guard restored externally changed settings."
-                        )
-                    }
-                    consecutiveFailures = 0
-                } catch {
-                    if consecutiveFailures == 0 {
-                        self.appendSupervisorLog(
-                            "System proxy guard could not verify settings: \(error.localizedDescription)"
-                        )
-                    }
-                    consecutiveFailures += 1
+                      self.systemProxyGuardCanVerify else { return }
+                await self.performSystemProxyGuardCheck(
+                    endpoints: endpoints,
+                    bypassDomains: bypassDomains
+                )
+            }
+        }
+    }
+
+    private var systemProxyGuardCanVerify: Bool {
+        switch systemProxyState {
+        case .on:
+            true
+        case .failed where systemProxyGuardFailure != nil:
+            true
+        case .off, .enabling, .disabling, .failed:
+            false
+        }
+    }
+
+    /// One complete verify-and-repair cycle. Kept internal so safety tests can
+    /// prove the state transitions without waiting for the periodic timer.
+    func performSystemProxyGuardCheck(
+        endpoints: LocalSystemProxyEndpoints,
+        bypassDomains: [String]
+    ) async {
+        guard systemProxyGuardCanVerify else { return }
+        do {
+            let matches = try await systemProxyManager.configurationMatches(
+                endpoints: endpoints,
+                bypassDomains: bypassDomains
+            )
+            guard systemProxyGuardCanVerify else { return }
+            if !matches {
+                try await systemProxyManager.apply(
+                    endpoints: endpoints,
+                    bypassDomains: bypassDomains
+                )
+                guard systemProxyGuardCanVerify else { return }
+                let repairedConfigurationMatches = try await systemProxyManager.configurationMatches(
+                    endpoints: endpoints,
+                    bypassDomains: bypassDomains
+                )
+                guard systemProxyGuardCanVerify else { return }
+                guard repairedConfigurationMatches else {
+                    throw AppModelError.systemProxyGuardVerificationFailed
                 }
+                appendSupervisorLog(
+                    "System proxy guard restored and verified externally changed settings."
+                )
+            }
+
+            systemProxyGuardLastVerifiedAt = Date()
+            if systemProxyGuardFailure != nil {
+                appendSupervisorLog("System proxy guard verification recovered.")
+                systemProxyGuardFailure = nil
+                systemProxyState = .on
+            }
+        } catch {
+            guard systemProxyGuardCanVerify else { return }
+            recordSystemProxyGuardFailure(error)
+        }
+    }
+
+    private func recordSystemProxyGuardFailure(_ error: any Error) {
+        let now = Date()
+        let previous = systemProxyGuardFailure
+        let count = (previous?.consecutiveFailures ?? 0) + 1
+        let reason = error.localizedDescription
+        systemProxyGuardFailure = SystemProxyGuardFailure(
+            consecutiveFailures: count,
+            firstFailureAt: previous?.firstFailureAt ?? now,
+            lastFailureAt: now,
+            reason: reason
+        )
+
+        if count == 1 {
+            appendSupervisorLog("System proxy guard could not verify settings: \(reason)")
+        }
+        if count >= Self.systemProxyGuardFailureThreshold {
+            let message = "MClash could not verify or restore the macOS system proxy after \(count) consecutive attempts. Last error: \(reason)"
+            systemProxyState = .failed(message)
+            if count == Self.systemProxyGuardFailureThreshold {
+                appendSupervisorLog(message)
             }
         }
     }
@@ -2254,6 +2501,8 @@ final class AppModel {
         let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
 
         let wasRecovering = systemProxyRecoveryRequired
+        systemProxyGuardFailure = nil
+        systemProxyGuardLastVerifiedAt = nil
         systemProxyState = .disabling
         do {
             if FileManager.default.fileExists(atPath: snapshotURL.path) {
@@ -2300,11 +2549,10 @@ final class AppModel {
                 return false
             }
         }
-        trafficTask?.cancel()
-        connectionsTask?.cancel()
-        apiLogTask?.cancel()
-        await supervisor.stop()
-        stopControllerStreams()
+        guard await stopCore() else {
+            shutdownInProgress = false
+            return false
+        }
         return true
     }
 
@@ -2322,10 +2570,7 @@ final class AppModel {
         if networkCaptureIsActive {
             _ = await performNetworkCaptureDeactivation()
         }
-        trafficTask?.cancel()
-        connectionsTask?.cancel()
-        apiLogTask?.cancel()
-        await supervisor.stop()
+        _ = await stopCore()
         stopControllerStreams()
     }
 
@@ -2344,6 +2589,7 @@ final class AppModel {
 
     func clearClosedConnectionHistory() {
         recentlyClosedConnections.removeAll(keepingCapacity: true)
+        scheduleFlowLedgerRefresh()
     }
 
     func clearAppRoutingActivity() async {
@@ -2354,6 +2600,7 @@ final class AppModel {
             appRoutingActivities.removeAll(keepingCapacity: true)
             appRoutingActivityCursor = 0
             appRoutingActivityError = nil
+            scheduleFlowLedgerRefresh()
         } catch {
             appRoutingActivityError = error.localizedDescription
         }
@@ -2796,6 +3043,11 @@ final class AppModel {
     private func startControllerStreams(_ client: MihomoAPIClient, generation: Int) {
         cancelControllerStreamTasks()
         degradedStreams = []
+        for stream in [LiveStream.traffic, .connections, .logs, .proxies] {
+            liveStreamHealth[stream] = .connecting(
+                previousSampleAt: liveStreamHealth[stream]?.lastReceivedAt
+            )
+        }
 
         trafficTask = Task { [weak self] in
             await self?.monitorTraffic(client, generation: generation)
@@ -2834,7 +3086,11 @@ final class AppModel {
             } catch {
                 guard streamShouldContinue(generation) else { return }
                 guard requestRevision == proxyRefreshRevision else { continue }
-                markStreamDegraded(.proxies)
+                markStreamDegraded(
+                    .proxies,
+                    error: error,
+                    attempt: consecutiveFailures + 1
+                )
                 if consecutiveFailures == 0 {
                     appendSupervisorLog(
                         "Proxy state refresh interrupted: \(error.localizedDescription)"
@@ -2872,7 +3128,7 @@ final class AppModel {
                 return
             } catch {
                 guard streamShouldContinue(generation) else { return }
-                markStreamDegraded(.traffic)
+                markStreamDegraded(.traffic, error: error, attempt: attempt + 1)
                 appendSupervisorLog("Traffic stream interrupted: \(error.localizedDescription)")
                 attempt += 1
                 if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
@@ -2897,7 +3153,7 @@ final class AppModel {
                 return
             } catch {
                 guard streamShouldContinue(generation) else { return }
-                markStreamDegraded(.connections)
+                markStreamDegraded(.connections, error: error, attempt: attempt + 1)
                 appendSupervisorLog("Connection stream interrupted: \(error.localizedDescription)")
                 attempt += 1
                 if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
@@ -2910,6 +3166,7 @@ final class AppModel {
         while streamShouldContinue(generation) {
             do {
                 let stream = try await client.logStream(minimumLevel: .info)
+                markStreamHealthy(.logs)
                 for try await entry in stream {
                     guard streamShouldContinue(generation) else { return }
                     markStreamHealthy(.logs)
@@ -2927,7 +3184,7 @@ final class AppModel {
                 return
             } catch {
                 guard streamShouldContinue(generation) else { return }
-                markStreamDegraded(.logs)
+                markStreamDegraded(.logs, error: error, attempt: attempt + 1)
                 appendSupervisorLog("Log stream interrupted: \(error.localizedDescription)")
                 attempt += 1
                 if !(await waitBeforeStreamRetry(attempt, generation: generation)) { return }
@@ -2940,13 +3197,21 @@ final class AppModel {
     }
 
     private func markStreamHealthy(_ stream: LiveStream) {
-        guard degradedStreams.contains(stream) else { return }
         degradedStreams.remove(stream)
+        var health = liveStreamHealth[stream] ?? .inactive
+        health.received()
+        liveStreamHealth[stream] = health
     }
 
-    private func markStreamDegraded(_ stream: LiveStream) {
-        guard !degradedStreams.contains(stream) else { return }
+    private func markStreamDegraded(
+        _ stream: LiveStream,
+        error: Error,
+        attempt: Int
+    ) {
         degradedStreams.insert(stream)
+        var health = liveStreamHealth[stream] ?? .inactive
+        health.failed(error, attempt: attempt)
+        liveStreamHealth[stream] = health
     }
 
     private func nextProxyRefreshRevision() -> Int {
@@ -2993,6 +3258,9 @@ final class AppModel {
         rulesErrorMessage = nil
         providersErrorMessage = nil
         degradedStreams = []
+        for stream in LiveStream.allCases {
+            liveStreamHealth[stream] = .inactive
+        }
         connections = nil
         trafficAttribution.reset()
         routeTrafficEntries = []
@@ -3003,12 +3271,21 @@ final class AppModel {
     private func startAppRoutingActivityMonitor() {
         appRoutingActivityTask?.cancel()
         appRoutingActivityCursor = 0
+        appRoutingProviderStatusFailureCount = 0
+        appRoutingProviderLastVerifiedAt = nil
         appRoutingActivities.removeAll(keepingCapacity: true)
         appRoutingActivityError = nil
+        scheduleFlowLedgerRefresh()
+        degradedStreams.remove(.appRouting)
+        liveStreamHealth[.appRouting] = .connecting(
+            previousSampleAt: liveStreamHealth[.appRouting]?.lastReceivedAt
+        )
         appRoutingActivityTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            var failureAttempt = 0
+            var successfulPollsSinceProviderCheck = 0
             while !Task.isCancelled {
-                guard case .on = networkCaptureState else { return }
+                guard case let .on(expectedRevision) = networkCaptureState else { return }
                 do {
                     var hasMore = true
                     while hasMore, !Task.isCancelled {
@@ -3027,12 +3304,39 @@ final class AppModel {
                         appRoutingActivityCursor = batch.nextCursor
                         hasMore = batch.hasMore
                     }
-                    appRoutingActivityError = nil
+                    failureAttempt = 0
+                    successfulPollsSinceProviderCheck += 1
+                    if successfulPollsSinceProviderCheck
+                        >= Self.appRoutingProviderStatusCheckInterval
+                    {
+                        successfulPollsSinceProviderCheck = 0
+                        _ = await verifyAppRoutingProviderRuntime(
+                            expectedRevision: expectedRevision,
+                            requireActiveCaptureState: true
+                        )
+                        if case .failed = networkCaptureState { return }
+                    } else if appRoutingProviderStatusFailureCount == 0 {
+                        appRoutingActivityError = nil
+                        markStreamHealthy(.appRouting)
+                    }
                     try await Task.sleep(for: .seconds(1))
                 } catch is CancellationError {
                     return
                 } catch {
+                    guard case .on = networkCaptureState else { return }
+                    failureAttempt += 1
                     appRoutingActivityError = error.localizedDescription
+                    markStreamDegraded(
+                        .appRouting,
+                        error: error,
+                        attempt: failureAttempt
+                    )
+                    if failureAttempt >= Self.appRoutingProviderFailureThreshold {
+                        let message = "MClash lost contact with the App Routing provider after \(failureAttempt) consecutive activity checks. Traffic capture can no longer be verified. Last error: \(error.localizedDescription)"
+                        networkCaptureState = .failed(message)
+                        appendSupervisorLog(message)
+                        return
+                    }
                     do {
                         try await Task.sleep(for: .seconds(2))
                     } catch {
@@ -3043,9 +3347,67 @@ final class AppModel {
         }
     }
 
+    /// Verifies the provider's actual runtime truth instead of trusting the
+    /// host-side state left by a previous successful enable operation.
+    @discardableResult
+    func verifyAppRoutingProviderRuntime(
+        expectedRevision: UInt64,
+        requireActiveCaptureState: Bool = false
+    ) async -> Bool {
+        if requireActiveCaptureState,
+           !networkCaptureState.isActive(revision: expectedRevision) {
+            return false
+        }
+        do {
+            let status = try await networkExtensionControl.providerRuntimeStatus()
+            if requireActiveCaptureState,
+               !networkCaptureState.isActive(revision: expectedRevision) {
+                return false
+            }
+            guard status.running,
+                  status.captureEnabled,
+                  status.revision == expectedRevision else {
+                throw AppRoutingProviderRuntimeError.stateMismatch(
+                    expectedRevision: expectedRevision,
+                    actualRevision: status.revision,
+                    running: status.running,
+                    captureEnabled: status.captureEnabled,
+                    providerMessage: status.message
+                )
+            }
+
+            appRoutingProviderStatusFailureCount = 0
+            appRoutingProviderLastVerifiedAt = Date()
+            appRoutingActivityError = nil
+            markStreamHealthy(.appRouting)
+            return true
+        } catch {
+            appRoutingProviderStatusFailureCount += 1
+            let count = appRoutingProviderStatusFailureCount
+            let reason = error.localizedDescription
+            appRoutingActivityError = "Provider verification failed: \(reason)"
+            markStreamDegraded(.appRouting, error: error, attempt: count)
+
+            if count >= Self.appRoutingProviderFailureThreshold {
+                let message = "App Routing is no longer verified after \(count) consecutive provider checks. Expected active revision \(expectedRevision). Last error: \(reason)"
+                networkCaptureState = .failed(message)
+                appendSupervisorLog(message)
+            } else if count == 1 {
+                appendSupervisorLog(
+                    "App Routing provider verification is retrying: \(reason)"
+                )
+            }
+            return false
+        }
+    }
+
     private func stopAppRoutingActivityMonitor() {
         appRoutingActivityTask?.cancel()
         appRoutingActivityTask = nil
+        appRoutingProviderStatusFailureCount = 0
+        appRoutingProviderLastVerifiedAt = nil
+        degradedStreams.remove(.appRouting)
+        liveStreamHealth[.appRouting] = .inactive
     }
 
     private func mergeAppRoutingActivities(_ updates: [AppRoutingActivity]) {
@@ -3064,6 +3426,39 @@ final class AppModel {
         if appRoutingActivities.count > 2_000 {
             appRoutingActivities.removeLast(appRoutingActivities.count - 2_000)
         }
+        scheduleFlowLedgerRefresh()
+    }
+
+    private func scheduleFlowLedgerRefresh() {
+        flowLedgerRevision &+= 1
+        let revision = flowLedgerRevision
+        let activeConnections = connections?.connections ?? []
+        let closedConnections = recentlyClosedConnections.map {
+            FlowLedgerClosedConnection(connection: $0.connection, closedAt: $0.closedAt)
+        }
+        let activities = appRoutingActivities
+
+        flowLedgerTask?.cancel()
+        flowLedgerTask = Task { @MainActor [weak self] in
+            let ledger = await Task.detached(priority: .utility) {
+                FlowLedger(
+                    activeConnections: activeConnections,
+                    recentlyClosedConnections: closedConnections,
+                    appRoutingActivities: activities
+                )
+            }.value
+            guard !Task.isCancelled,
+                  let self,
+                  self.flowLedgerRevision == revision else { return }
+            self.flowLedger = ledger
+            self.appRoutingFlowEntries = Dictionary(
+                uniqueKeysWithValues: ledger.entries.compactMap { entry -> (UUID, FlowLedgerEntry)? in
+                    guard case let .appRouting(identifier) = entry.id else { return nil }
+                    return (identifier, entry)
+                }
+            )
+            self.flowLedgerTask = nil
+        }
     }
 
     private func cancelControllerStreamTasks() {
@@ -3079,6 +3474,26 @@ final class AppModel {
 
     private func appendSupervisorLog(_ message: String) {
         appendCoreLog(CoreLogLine(stream: .supervisor, message: message))
+    }
+
+    private func recordStorageFailure(
+        component: StorageInitializationFailure.Component,
+        error: any Error,
+        recoverySuggestion: String
+    ) {
+        storageInitializationFailures.removeAll { $0.component == component }
+        storageInitializationFailures.append(
+            StorageInitializationFailure(
+                component: component,
+                occurredAt: Date(),
+                reason: error.localizedDescription,
+                recoverySuggestion: recoverySuggestion
+            )
+        )
+    }
+
+    private func clearStorageFailure(for component: StorageInitializationFailure.Component) {
+        storageInitializationFailures.removeAll { $0.component == component }
     }
 
     func applyProxyCollection(
@@ -3422,6 +3837,9 @@ final class AppModel {
     static let autoEnableSystemProxyKey = "network.autoEnableSystemProxy"
     static let closeConnectionsOnRoutingChangeKey = "network.closeConnectionsOnRoutingChange"
     static let notificationsEnabledKey = "application.notificationsEnabled"
+    static let systemProxyGuardFailureThreshold = 3
+    static let appRoutingProviderFailureThreshold = 3
+    static let appRoutingProviderStatusCheckInterval = 5
 }
 
 private extension AppModel.Operation {
@@ -3530,6 +3948,13 @@ private struct ProxyTopologyInputProxy: Equatable, Sendable {
     }
 }
 
+private extension AppModel.NetworkCaptureState {
+    func isActive(revision expectedRevision: UInt64) -> Bool {
+        guard case let .on(revision) = self else { return false }
+        return revision == expectedRevision
+    }
+}
+
 private enum AppModelError: LocalizedError {
     case profileStoreUnavailable
     case operationInProgress
@@ -3543,6 +3968,7 @@ private enum AppModelError: LocalizedError {
     case explicitLocalProxyListenersIncomplete
     case explicitLocalProxyListenersUnavailable([Int])
     case explicitLocalProxyListenerRejected(field: String, requested: Int, actual: Int)
+    case systemProxyGuardVerificationFailed
 
     var errorDescription: String? {
         switch self {
@@ -3570,6 +3996,33 @@ private enum AppModelError: LocalizedError {
             "The requested local proxy listener did not start on \(ports.map(String.init).joined(separator: ", ")). Choose available ports and try again."
         case let .explicitLocalProxyListenerRejected(field, requested, actual):
             "mihomo did not apply the requested \(field) listener port \(requested); it reported \(actual)."
+        case .systemProxyGuardVerificationFailed:
+            "The macOS system proxy still did not match MClash after reapplying it."
+        }
+    }
+}
+
+private enum AppRoutingProviderRuntimeError: LocalizedError {
+    case stateMismatch(
+        expectedRevision: UInt64,
+        actualRevision: UInt64,
+        running: Bool,
+        captureEnabled: Bool,
+        providerMessage: String?
+    )
+
+    var errorDescription: String? {
+        switch self {
+        case let .stateMismatch(
+            expectedRevision,
+            actualRevision,
+            running,
+            captureEnabled,
+            providerMessage
+        ):
+            let providerDetail = providerMessage.flatMap { $0.isEmpty ? nil : $0 }
+                .map { " Provider message: \($0)" } ?? ""
+            return "Provider reported running=\(running), captureEnabled=\(captureEnabled), revision=\(actualRevision); expected running=true, captureEnabled=true, revision=\(expectedRevision).\(providerDetail)"
         }
     }
 }

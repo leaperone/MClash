@@ -8,9 +8,12 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MClashLayout.sectionSpacing) {
+                OverviewOperationalSummary(model: model)
+                OverviewAttentionSummary(model: model)
                 OverviewNetworkStateSection(model: model, layout: layout)
                 OverviewLiveDataNotice(model: model)
                 OverviewMetricsSection(model: model, layout: layout)
+                OverviewFlowSummarySection(model: model, layout: layout)
                 primaryContent
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -55,6 +58,135 @@ struct OverviewView: View {
         let nextLayout = OverviewLayout(width: width)
         if layout != nextLayout {
             layout = nextLayout
+        }
+    }
+}
+
+private struct OverviewOperationalSummary: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            Image(systemName: symbol)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 44, height: 44)
+                .background(color.opacity(0.11), in: Circle())
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(model.operationalSnapshot.title)
+                    .font(.title2.weight(.semibold))
+                Text(model.operationalSnapshot.detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    statusPill(
+                        model.operationalSnapshot.captureSummary,
+                        symbol: "arrow.triangle.branch"
+                    )
+                    if model.isConnected {
+                        statusPill(
+                            "\(formattedCount(model.connections?.connections.count ?? 0)) active",
+                            symbol: "arrow.left.arrow.right"
+                        )
+                    }
+                    if model.liveDataIsDegraded {
+                        statusPill("Live data stale", symbol: "clock.badge.exclamationmark")
+                    }
+                }
+            }
+
+            Spacer(minLength: 20)
+
+            if !model.operationalIssues.isEmpty {
+                Button("Review \(model.operationalIssues.count) \(model.operationalIssues.count == 1 ? "Issue" : "Issues")") {
+                    model.selection = .attention
+                }
+                .buttonStyle(.borderedProminent)
+            } else if !model.isConnected {
+                Button("Connect") { Task { await model.connect() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canPerform(.connection) || model.activeProfile == nil)
+            }
+        }
+        .padding(18)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(color.opacity(0.18), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func statusPill(_ title: String, symbol: String) -> some View {
+        Label(title, systemImage: symbol)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.quaternary, in: Capsule())
+    }
+
+    private var color: Color {
+        switch model.operationalSnapshot.level {
+        case .active: .green
+        case .transitioning: .accentColor
+        case .attention: .orange
+        case .localOnly: .yellow
+        case .disconnected: .secondary
+        }
+    }
+
+    private var symbol: String {
+        switch model.operationalSnapshot.level {
+        case .active: "checkmark.shield.fill"
+        case .transitioning: "arrow.triangle.2.circlepath"
+        case .attention: "exclamationmark.triangle.fill"
+        case .localOnly: "cable.connector"
+        case .disconnected: "power"
+        }
+    }
+}
+
+private struct OverviewAttentionSummary: View {
+    @Bindable var model: AppModel
+
+    @ViewBuilder
+    var body: some View {
+        if let issue = model.operationalIssues.first {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: issue.severity == .error
+                    ? "exclamationmark.octagon.fill"
+                    : "exclamationmark.triangle.fill")
+                    .foregroundStyle(issue.severity == .error ? Color.red : Color.orange)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(issue.title)
+                        .font(.callout.weight(.semibold))
+                    Text(issue.consequence)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 16)
+
+                Button("Review") { model.selection = .attention }
+                    .controlSize(.small)
+            }
+            .padding(12)
+            .background(
+                (issue.severity == .error ? Color.red : Color.orange).opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .accessibilityElement(children: .contain)
         }
     }
 }
@@ -167,6 +299,28 @@ private struct OverviewNetworkStateSection: View {
                                     && (!model.isConnected || !model.controllerIsReady)
                             )
                     )
+                }
+
+                Divider()
+                    .padding(.leading, layout.stateRowsAreInline ? 58 : 16)
+
+                OverviewStateRow(
+                    title: "App Routing",
+                    status: appRoutingStatusTitle,
+                    description: appRoutingStatusDescription,
+                    symbol: appRoutingStatusSymbol,
+                    color: appRoutingStatusColor,
+                    isInline: layout.stateRowsAreInline
+                ) {
+                    Button(appRoutingActionTitle) {
+                        if case .failed = model.networkCaptureState {
+                            Task { await model.retryNetworkCaptureActivation() }
+                        } else {
+                            model.selection = .appRouting
+                        }
+                    }
+                    .controlSize(.large)
+                    .disabled(appRoutingRetryDisabled)
                 }
             }
             .padding(.horizontal, 16)
@@ -281,6 +435,75 @@ private struct OverviewNetworkStateSection: View {
         }
     }
 
+    private var appRoutingStatusTitle: String {
+        switch model.networkCaptureState {
+        case .off: "Off"
+        case .waitingForConnection: "Waiting"
+        case .enabling: "Starting"
+        case .awaitingUserApproval: "Approval Required"
+        case .on: "On"
+        case .disabling: "Stopping"
+        case .requiresReboot: "Restart Required"
+        case .failed: "Failed"
+        }
+    }
+
+    private var appRoutingStatusDescription: String {
+        let activeRules = model.networkCapturePreferences.snapshot.rules.filter(\.enabled).count
+        switch model.networkCaptureState {
+        case .off:
+            return "The Network Extension is not applying per-application traffic rules."
+        case .waitingForConnection:
+            return "\(activeRules) active \(activeRules == 1 ? "rule is" : "rules are") saved and will start after Mihomo connects."
+        case .enabling:
+            return "MClash is installing, configuring, and verifying the transparent network provider."
+        case .awaitingUserApproval:
+            return "macOS approval is required before application traffic can be intercepted."
+        case let .on(revision):
+            return "Provider revision \(revision) is applying \(activeRules) active \(activeRules == 1 ? "rule" : "rules")."
+        case .disabling:
+            return "MClash is stopping the provider and returning traffic handling to macOS."
+        case .requiresReboot:
+            return "macOS accepted the extension update and will activate it after a restart."
+        case let .failed(message):
+            return message
+        }
+    }
+
+    private var appRoutingStatusSymbol: String {
+        switch model.networkCaptureState {
+        case .on: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .awaitingUserApproval: "lock.shield.fill"
+        case .requiresReboot: "restart.circle.fill"
+        case .enabling, .disabling: "arrow.triangle.2.circlepath"
+        case .waitingForConnection: "pause.circle.fill"
+        case .off: "app.badge"
+        }
+    }
+
+    private var appRoutingStatusColor: Color {
+        switch model.networkCaptureState {
+        case .on: .green
+        case .failed: .red
+        case .awaitingUserApproval, .requiresReboot: .orange
+        case .enabling, .disabling: .accentColor
+        case .waitingForConnection, .off: .secondary
+        }
+    }
+
+    private var appRoutingActionTitle: String {
+        if case .failed = model.networkCaptureState { return "Retry" }
+        return "Manage"
+    }
+
+    private var appRoutingRetryDisabled: Bool {
+        if case .failed = model.networkCaptureState {
+            return !model.canPerform(.changeNetworkCapture)
+        }
+        return false
+    }
+
     private var connectionButtonTitle: String {
         if model.preparationInProgress { return "Preparing…" }
         switch model.coreState {
@@ -315,7 +538,7 @@ private struct OverviewLiveDataNotice: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Live data is reconnecting")
                         .font(.callout.weight(.medium))
-                    Text("Traffic, memory, or connection totals may be temporarily stale.")
+                    Text(degradedSummary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -333,6 +556,21 @@ private struct OverviewLiveDataNotice: View {
             .accessibilityElement(children: .contain)
         }
     }
+
+    private var degradedSummary: String {
+        let names = AppModel.LiveStream.allCases.compactMap { stream -> String? in
+            guard model.degradedStreams.contains(stream) else { return nil }
+            switch stream {
+            case .traffic: return "rates"
+            case .connections: return "connections"
+            case .logs: return "logs"
+            case .proxies: return "proxy state"
+            case .appRouting: return "App Routing activity"
+            }
+        }
+        guard !names.isEmpty else { return "Some live values may be temporarily stale." }
+        return names.joined(separator: ", ").capitalized + " may be temporarily stale."
+    }
 }
 
 private struct OverviewMetricsSection: View {
@@ -346,32 +584,32 @@ private struct OverviewMetricsSection: View {
             LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 16) {
                 OverviewMetricCell(
                     title: "Download",
-                    value: formattedByteRate(model.traffic.download),
+                    value: liveTrafficValue(model.traffic.download),
                     symbol: "arrow.down",
                     color: .blue
                 )
                 OverviewMetricCell(
                     title: "Upload",
-                    value: formattedByteRate(model.traffic.upload),
+                    value: liveTrafficValue(model.traffic.upload),
                     symbol: "arrow.up",
                     color: .orange
                 )
                 OverviewMetricCell(
                     title: "Connections",
-                    value: formattedCount(model.connections?.connections.count ?? 0),
+                    value: liveConnectionCount,
                     symbol: "arrow.left.arrow.right",
                     color: .primary
                 )
                 OverviewMetricCell(
-                    title: "Session Traffic",
+                    title: "Mihomo Session",
                     value: totalTraffic,
                     symbol: "sum",
                     color: .primary
                 )
                 OverviewMetricCell(
-                    title: "Memory",
-                    value: memoryUsage,
-                    symbol: "memorychip",
+                    title: "App Relays",
+                    value: formattedCount(activeAppRoutingRelayCount),
+                    symbol: "app.connected.to.app.below.fill",
                     color: .primary
                 )
             }
@@ -389,14 +627,146 @@ private struct OverviewMetricsSection: View {
     }
 
     private var totalTraffic: String {
-        formattedByteCount(
+        guard model.liveStreamHealth[.traffic]?.hasCurrentData == true else {
+            return model.isConnected ? "Stale" : "—"
+        }
+        return formattedByteCount(
             saturatingByteSum(model.traffic.uploadTotal, model.traffic.downloadTotal)
         )
     }
 
-    private var memoryUsage: String {
-        guard let memory = model.connections?.memory else { return "—" }
-        return formattedByteCount(Int64(clamping: memory), style: .memory)
+    private func liveTrafficValue(_ value: Int64) -> String {
+        guard model.liveStreamHealth[.traffic]?.hasCurrentData == true else {
+            return model.isConnected ? "Stale" : "—"
+        }
+        return formattedByteRate(value)
+    }
+
+    private var liveConnectionCount: String {
+        guard model.liveStreamHealth[.connections]?.hasCurrentData == true else {
+            return model.isConnected ? "Stale" : "—"
+        }
+        return formattedCount(model.connections?.connections.count ?? 0)
+    }
+
+    private var activeAppRoutingRelayCount: Int {
+        model.appRoutingActivities.lazy.filter { activity in
+            guard activity.endedAt == nil else { return false }
+            switch activity.relayState {
+            case .pending, .connecting, .ready, .relaying:
+                return true
+            case .notApplicable, .completed, .failed:
+                return false
+            }
+        }.count
+    }
+}
+
+private struct OverviewFlowSummarySection: View {
+    @Bindable var model: AppModel
+    let layout: OverviewLayout
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                OverviewSectionHeader(title: "Traffic at a Glance", symbol: "point.3.connected.trianglepath.dotted")
+                Spacer()
+                Button("Open Traffic") { model.selection = .connections }
+                    .controlSize(.small)
+            }
+
+            if model.flowLedger.entries.isEmpty {
+                Text(model.isConnected
+                    ? "Waiting for the first observed flow…"
+                    : "Connect to see which apps are active and where their traffic goes.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
+                    .background(
+                        Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+            } else {
+                let contentLayout = layout == .compact
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+
+                contentLayout {
+                    flowPanel(
+                        title: "Top Applications",
+                        rows: Array(model.flowLedger.applicationAggregates.prefix(4)).map {
+                            FlowSummaryRow(
+                                title: $0.application.displayName,
+                                detail: "\(formattedCount($0.activeCount)) active · \(formattedCount($0.entryCount)) observed",
+                                traffic: overviewTrafficTitle($0.traffic),
+                                partial: $0.traffic.notMeasuredAfterHandoffCount > 0
+                            )
+                        }
+                    )
+
+                    flowPanel(
+                        title: "Top Routes",
+                        rows: Array(model.flowLedger.routeAggregates.prefix(4)).map {
+                            FlowSummaryRow(
+                                title: overviewRouteTitle($0.route),
+                                detail: overviewRouteDetail($0.route, active: $0.activeCount),
+                                traffic: overviewTrafficTitle($0.traffic),
+                                partial: $0.traffic.notMeasuredAfterHandoffCount > 0
+                            )
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private func flowPanel(title: String, rows: [FlowSummaryRow]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+
+            Divider()
+
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.title)
+                            .font(.callout.weight(.medium))
+                            .lineLimit(1)
+                        Text(row.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 12)
+                    Text(row.traffic)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(row.partial ? Color.orange : Color.secondary)
+                        .help(row.partial
+                            ? "Measured bytes only. Some direct or fail-open payload continued outside MClash after handoff."
+                            : "Observed traffic")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+
+                if index < rows.count - 1 { Divider().padding(.leading, 14) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+    }
+
+    private struct FlowSummaryRow {
+        let title: String
+        let detail: String
+        let traffic: String
+        let partial: Bool
     }
 }
 
@@ -413,19 +783,19 @@ private struct OverviewTrafficSection: View {
 
             HStack(spacing: 18) {
                 OverviewTrafficLegendItem(
-                    title: "Download",
-                    value: formattedByteRate(downloadRate),
+                    title: trafficIsCurrent ? "Download" : "Download · stale",
+                    value: trafficIsCurrent ? formattedByteRate(downloadRate) : "—",
                     color: .blue
                 )
                 OverviewTrafficLegendItem(
-                    title: "Upload",
-                    value: formattedByteRate(uploadRate),
+                    title: trafficIsCurrent ? "Upload" : "Upload · stale",
+                    value: trafficIsCurrent ? formattedByteRate(uploadRate) : "—",
                     color: .orange
                 )
                 Spacer()
-                Text("Recent activity")
+                Text(trafficIsCurrent ? "Recent activity" : "Last received samples")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(trafficIsCurrent ? Color.secondary : Color.orange)
             }
 
             if samples.isEmpty {
@@ -507,10 +877,57 @@ private struct OverviewTrafficSection: View {
                 .frame(height: 250)
                 .accessibilityLabel("Recent network traffic")
                 .accessibilityValue(
-                    "Download \(formattedByteRate(downloadRate)), upload \(formattedByteRate(uploadRate))"
+                    trafficIsCurrent
+                        ? "Download \(formattedByteRate(downloadRate)), upload \(formattedByteRate(uploadRate))"
+                        : "Traffic data is stale"
                 )
             }
         }
+    }
+
+    private var trafficIsCurrent: Bool {
+        model.liveStreamHealth[.traffic]?.hasCurrentData == true
+    }
+}
+
+private func overviewTrafficTitle(_ aggregate: FlowLedgerTrafficAggregate) -> String {
+    let total = aggregate.exactTotalBytes > UInt64(Int64.max)
+        ? Int64.max
+        : Int64(aggregate.exactTotalBytes)
+    let measured = formattedByteCount(total)
+    return aggregate.notMeasuredAfterHandoffCount > 0 ? "\(measured)+" : measured
+}
+
+private func overviewRouteTitle(_ route: FlowLedgerRouteKey) -> String {
+    switch route {
+    case let .mihomo(rule, _, chain): return chain.last ?? rule ?? "Mihomo"
+    case let .unresolvedMihomo(rule): return rule.map { "Mihomo · \($0)" } ?? "Mihomo"
+    case .direct: return "Direct"
+    case .rejected: return "Rejected"
+    case .failOpen: return "Fail Open"
+    case .relayFailed: return "Relay Failed"
+    }
+}
+
+private func overviewRouteDetail(_ route: FlowLedgerRouteKey, active: Int) -> String {
+    let activeTitle = "\(formattedCount(active)) active"
+    switch route {
+    case let .mihomo(rule, payload, chain):
+        let ruleTitle = [rule, payload]
+            .compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " · ")
+        let path = chain.joined(separator: " → ")
+        return [activeTitle, ruleTitle.isEmpty ? path : ruleTitle]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    case .direct: return "\(activeTitle) · handed to macOS"
+    case .rejected: return "\(activeTitle) · blocked"
+    case .failOpen: return "\(activeTitle) · handed to macOS after failure"
+    case .relayFailed: return "\(activeTitle) · relay unavailable"
+    case .unresolvedMihomo: return "\(activeTitle) · awaiting route correlation"
     }
 }
 

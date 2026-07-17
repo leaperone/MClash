@@ -10,6 +10,17 @@ struct AppRoutingView: View {
         var id: Self { self }
     }
 
+    private enum ActivityFilter: String, CaseIterable, Identifiable {
+        case all = "All"
+        case active = "Active"
+        case viaMihomo = "Via Mihomo"
+        case direct = "Direct"
+        case rejected = "Rejected"
+        case failed = "Failed"
+
+        var id: Self { self }
+    }
+
     @Bindable var model: AppModel
 
     @State private var applicationCandidates: [ApplicationCaptureCandidate] = []
@@ -23,6 +34,9 @@ struct AppRoutingView: View {
     @State private var isRefreshingApplications = false
     @State private var workspace: Workspace = .rules
     @State private var activitySearchText = ""
+    @State private var activityFilter: ActivityFilter = .all
+    @State private var selectedActivityID: UUID?
+    @State private var activityInspectorPresented = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -79,6 +93,21 @@ struct AppRoutingView: View {
                 save(rule)
             }
         }
+        .inspector(isPresented: $activityInspectorPresented) {
+            if let activity = selectedActivity {
+                AppRoutingFlowInspector(
+                    activity: activity,
+                    ledgerEntry: model.appRoutingFlowEntries[activity.flowIdentifier]
+                )
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 460)
+            } else {
+                ContentUnavailableView(
+                    "Select an activity",
+                    systemImage: "sidebar.right",
+                    description: Text("Choose a flow to inspect every routing stage.")
+                )
+            }
+        }
     }
 
     private var statusHeader: some View {
@@ -117,6 +146,10 @@ struct AppRoutingView: View {
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 300)
+
+            if workspace == .activity {
+                activitySummary
+            }
 
             statusNotice
         }
@@ -176,6 +209,100 @@ struct AppRoutingView: View {
             }
         case .off, .enabling, .on, .disabling:
             EmptyView()
+        }
+    }
+
+    private var activitySummary: some View {
+        let recent = model.appRoutingActivities.filter {
+            $0.startedAt >= Date().addingTimeInterval(-60)
+        }
+        let active = recent.filter {
+            $0.endedAt == nil
+                && $0.relayState != .completed
+                && $0.relayState != .failed
+                && $0.relayState != .notApplicable
+        }.count
+        let viaMihomo = recent.filter {
+            if case .mihomo = $0.effectiveAction { return $0.relayState != .failed }
+            return false
+        }.count
+        let direct = recent.filter {
+            $0.effectiveAction == .direct || $0.effectiveAction == .failOpen
+        }.count
+        let rejected = recent.filter { $0.effectiveAction == .reject }.count
+        let failed = recent.filter { $0.relayState == .failed }.count
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 18) {
+                summaryMetric("Active", value: active, color: .green)
+                summaryMetric("Via Mihomo", value: viaMihomo, color: .accentColor)
+                summaryMetric("Direct / Handoff", value: direct, color: .secondary)
+                summaryMetric("Rejected", value: rejected, color: .red)
+                summaryMetric("Failed", value: failed, color: .orange)
+                Spacer(minLength: 12)
+                providerHeartbeat
+            }
+            Text("Flow outcomes started in the last minute. Direct and fail-open payload is not measured after macOS takes the flow back.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+    }
+
+    private func summaryMetric(_ title: String, value: Int, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(formattedCount(value))
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(color)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var providerHeartbeat: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Label(providerHeartbeatTitle, systemImage: providerHeartbeatSymbol)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(providerHeartbeatColor)
+            if let date = model.liveStreamHealth[.appRouting]?.lastReceivedAt {
+                Text("Verified \(date.formatted(.relative(presentation: .named)))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var providerHeartbeatTitle: String {
+        switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
+        case .live: "Provider verified"
+        case .connecting: "Verifying provider"
+        case .reconnecting: "Provider reconnecting"
+        case .stale: "Provider unverified"
+        case .inactive: "Provider inactive"
+        }
+    }
+
+    private var providerHeartbeatSymbol: String {
+        switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
+        case .live: "checkmark.circle.fill"
+        case .connecting, .reconnecting: "arrow.clockwise"
+        case .stale: "exclamationmark.triangle.fill"
+        case .inactive: "circle"
+        }
+    }
+
+    private var providerHeartbeatColor: Color {
+        switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
+        case .live: .green
+        case .connecting, .reconnecting: .orange
+        case .stale: .red
+        case .inactive: .secondary
         }
     }
 
@@ -296,12 +423,16 @@ struct AppRoutingView: View {
     }
 
     private var activityTable: some View {
-        Table(filteredActivities) {
+        Table(filteredActivities, selection: $selectedActivityID) {
             TableColumn("Application / Process") { activity in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activityApplicationName(activity))
                         .fontWeight(.medium)
                         .lineLimit(1)
+                        .onTapGesture(count: 2) {
+                            selectedActivityID = activity.flowIdentifier
+                            activityInspectorPresented = true
+                        }
                     Text("PID \(activity.source.processIdentifier)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -354,12 +485,7 @@ struct AppRoutingView: View {
             .width(min: 145, ideal: 220)
 
             TableColumn("Traffic") { activity in
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("↓ \(formattedActivityBytes(activity.downloadBytes))")
-                    Text("↑ \(formattedActivityBytes(activity.uploadBytes))")
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                activityTraffic(activity)
             }
             .width(min: 88, ideal: 105)
 
@@ -369,6 +495,9 @@ struct AppRoutingView: View {
                     .foregroundStyle(.secondary)
             }
             .width(min: 72, ideal: 86)
+        }
+        .onChange(of: selectedActivityID) { _, identifier in
+            if identifier == nil { activityInspectorPresented = false }
         }
     }
 
@@ -453,6 +582,14 @@ struct AppRoutingView: View {
 
     private var activityActionBar: some View {
         HStack(spacing: 10) {
+            Picker("Outcome", selection: $activityFilter) {
+                ForEach(ActivityFilter.allCases) { filter in
+                    Text(filter.rawValue).tag(filter)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 120)
+
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
             TextField("Filter app, destination, rule, or path", text: $activitySearchText)
@@ -477,6 +614,13 @@ struct AppRoutingView: View {
                 Task { await model.clearAppRoutingActivity() }
             }
             .disabled(model.appRoutingActivities.isEmpty)
+
+            Button {
+                activityInspectorPresented.toggle()
+            } label: {
+                Label("Inspect", systemImage: "sidebar.right")
+            }
+            .disabled(selectedActivity == nil)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -514,8 +658,9 @@ struct AppRoutingView: View {
     private var filteredActivities: [AppRoutingActivity] {
         let query = activitySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard !query.isEmpty else { return model.appRoutingActivities }
         return model.appRoutingActivities.filter { activity in
+            guard activityMatchesFilter(activity) else { return false }
+            guard !query.isEmpty else { return true }
             let fields = [
                 activityApplicationName(activity),
                 activity.source.executablePath,
@@ -526,6 +671,34 @@ struct AppRoutingView: View {
                 mihomoPath(activity),
             ].compactMap { $0?.lowercased() }
             return fields.contains { $0.contains(query) }
+        }
+    }
+
+    private var selectedActivity: AppRoutingActivity? {
+        guard let selectedActivityID else { return nil }
+        return model.appRoutingActivities.first { $0.flowIdentifier == selectedActivityID }
+    }
+
+    private func activityMatchesFilter(_ activity: AppRoutingActivity) -> Bool {
+        switch activityFilter {
+        case .all:
+            return true
+        case .active:
+            return activity.endedAt == nil
+                && activity.relayState != .completed
+                && activity.relayState != .failed
+        case .viaMihomo:
+            if case .mihomo = activity.effectiveAction {
+                return activity.relayState != .failed
+            }
+            return false
+        case .direct:
+            return activity.effectiveAction == .direct
+                || activity.effectiveAction == .failOpen
+        case .rejected:
+            return activity.effectiveAction == .reject
+        case .failed:
+            return activity.relayState == .failed
         }
     }
 
@@ -608,43 +781,48 @@ struct AppRoutingView: View {
 
     private func mihomoPath(_ activity: AppRoutingActivity) -> String {
         guard case .mihomo = activity.effectiveAction else { return "—" }
-        guard let connection = matchingMihomoConnection(activity) else {
+        guard let entry = model.appRoutingFlowEntries[activity.flowIdentifier],
+              let route = entry.mihomoRoute else {
             return activity.relayState == .failed ? "Relay failed" : "Waiting for Mihomo metadata"
         }
-        let rule = [connection.rule, connection.rulePayload]
-            .filter { !$0.isEmpty }
+        let rule = [route.rule, route.rulePayload]
+            .compactMap { $0 }
             .joined(separator: " · ")
-        let chain = connection.chains.joined(separator: " → ")
+        let chain = route.chain.joined(separator: " → ")
         return [rule, chain].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
-    private func matchingMihomoConnection(
+    @ViewBuilder
+    private func activityTraffic(_ activity: AppRoutingActivity) -> some View {
+        let entry = model.appRoutingFlowEntries[activity.flowIdentifier]
+        switch entry?.upload ?? fallbackUploadMeasurement(activity) {
+        case .notMeasuredAfterHandoff:
+            Label("Not measured", systemImage: "arrow.uturn.right")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("MClash recorded the decision, then handed the flow back to macOS. Payload bytes are not observable after handoff.")
+        case .notApplicable:
+            Text("No payload")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("The flow was rejected before application payload was relayed.")
+        case .exact:
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("↓ \(formattedActivityBytes(activity.downloadBytes))")
+                Text("↑ \(formattedActivityBytes(activity.uploadBytes))")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func fallbackUploadMeasurement(
         _ activity: AppRoutingActivity
-    ) -> MihomoConnection? {
-        let active = model.connections?.connections ?? []
-        let closed = model.recentlyClosedConnections.map(\.connection)
-        return (active + closed).first { connection in
-            let metadata = connection.metadata
-            guard metadata.inboundName == NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName
-                    || metadata.inboundName == NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName
-            else { return false }
-            if let port = metadata.destinationPort,
-               port != String(activity.destination.port) { return false }
-            if let relayLocalPort = activity.relayLocalPort,
-               metadata.sourcePort != String(relayLocalPort) { return false }
-            if let network = metadata.network?.lowercased(),
-               network != activity.transportProtocol.rawValue { return false }
-            if let connectionStart = ISO8601DateFormatter().date(from: connection.start),
-               abs(connectionStart.timeIntervalSince(activity.startedAt)) > 15 {
-                return false
-            }
-            let expected = [activity.destination.hostname, activity.destination.ipAddress]
-                .compactMap { $0?.lowercased() }
-            let actual = [metadata.host, metadata.destinationIP, metadata.remoteDestination]
-                .compactMap { $0?.lowercased() }
-            return expected.isEmpty || expected.contains { value in
-                actual.contains { $0 == value || $0.hasPrefix("\(value):") }
-            }
+    ) -> FlowLedgerByteMeasurement {
+        switch activity.effectiveAction {
+        case .direct, .failOpen: .notMeasuredAfterHandoff
+        case .reject: .notApplicable
+        case .mihomo: .exact(activity.uploadBytes)
         }
     }
 
@@ -976,6 +1154,253 @@ struct AppRoutingView: View {
         case .direct: .secondary
         case .reject: .red
         case .mihomo: .accentColor
+        }
+    }
+}
+
+private struct AppRoutingFlowInspector: View {
+    let activity: AppRoutingActivity
+    let ledgerEntry: FlowLedgerEntry?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(applicationName)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(destination)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    inspectorSection("Route Pipeline") {
+                        pipelineStage("Application", value: applicationName, symbol: "app")
+                        pipelineStage("Capture", value: "App Routing", symbol: "network.badge.shield.half.filled")
+                        pipelineStage(
+                            "App Rule",
+                            value: activity.matchedRuleIdentifier ?? "Built-in / default decision",
+                            symbol: "list.number"
+                        )
+                        pipelineStage(
+                            "App Decision",
+                            value: outcomeTitle,
+                            symbol: outcomeSymbol
+                        )
+                        if let route = ledgerEntry?.mihomoRoute {
+                            pipelineStage(
+                                "Mihomo Rule",
+                                value: [route.rule, route.rulePayload]
+                                    .compactMap { $0 }
+                                    .joined(separator: " · "),
+                                symbol: "list.bullet.rectangle"
+                            )
+                            pipelineStage(
+                                "Proxy Path",
+                                value: route.chain.isEmpty
+                                    ? "No proxy chain reported"
+                                    : route.chain.joined(separator: " → "),
+                                symbol: "point.3.connected.trianglepath.dotted"
+                            )
+                        } else if case .mihomo = activity.effectiveAction {
+                            pipelineStage(
+                                "Mihomo Metadata",
+                                value: "Waiting for an associated Mihomo connection",
+                                symbol: "clock"
+                            )
+                        }
+                        pipelineStage("Destination", value: destination, symbol: "scope")
+                    }
+
+                    inspectorSection("Traffic") {
+                        detailRow("Download", value: measurementTitle(downloadMeasurement))
+                        detailRow("Upload", value: measurementTitle(uploadMeasurement))
+                        if isUnmeasuredAfterHandoff {
+                            Label(
+                                "MClash recorded the routing decision, then returned this flow to macOS. Payload bytes after that handoff are not observable.",
+                                systemImage: "info.circle"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    inspectorSection("Lifecycle") {
+                        detailRow("Protocol", value: activity.transportProtocol.rawValue.uppercased())
+                        detailRow("Relay", value: relayStateTitle)
+                        detailRow(
+                            "Started",
+                            value: activity.startedAt.formatted(date: .abbreviated, time: .standard)
+                        )
+                        if let endedAt = activity.endedAt {
+                            detailRow(
+                                "Ended",
+                                value: endedAt.formatted(date: .abbreviated, time: .standard)
+                            )
+                            detailRow(
+                                "Duration",
+                                value: Duration.seconds(endedAt.timeIntervalSince(activity.startedAt)).formatted()
+                            )
+                        }
+                        detailRow("PID", value: String(activity.source.processIdentifier))
+                        if let path = activity.source.executablePath {
+                            detailRow("Executable", value: path)
+                        }
+                        if let identifier = activity.source.bundleIdentifier {
+                            detailRow("Bundle ID", value: identifier)
+                        }
+                    }
+
+                    if let error = activity.relayError, !error.isEmpty {
+                        inspectorSection("Failure") {
+                            Text(error)
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("App Routing flow from \(applicationName) to \(destination)")
+    }
+
+    private func inspectorSection<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            VStack(alignment: .leading, spacing: 9) {
+                content()
+            }
+        }
+    }
+
+    private func pipelineStage(_ title: String, value: String, symbol: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value.isEmpty ? "Unavailable" : value)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func detailRow(_ title: String, value: String) -> some View {
+        LabeledContent(title) {
+            Text(value)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+        .font(.callout)
+    }
+
+    private var applicationName: String {
+        if let name = ledgerEntry?.application.displayName { return name }
+        if let path = activity.source.executablePath {
+            return URL(fileURLWithPath: path).lastPathComponent
+        }
+        return activity.source.bundleIdentifier
+            ?? activity.source.signingIdentifier
+            ?? "Process \(activity.source.processIdentifier)"
+    }
+
+    private var destination: String {
+        let host = activity.destination.hostname
+            ?? activity.destination.ipAddress
+            ?? "Unknown destination"
+        return activity.destination.port > 0 ? "\(host):\(activity.destination.port)" : host
+    }
+
+    private var outcomeTitle: String {
+        switch ledgerEntry?.outcome {
+        case .viaMihomo: "Via Mihomo"
+        case .direct: "Direct · handed back to macOS"
+        case .rejected: "Rejected"
+        case .failOpen: "Fail-open · handed back to macOS"
+        case .relayFailed: "Relay failed"
+        case nil:
+            switch activity.effectiveAction {
+            case .direct: "Direct"
+            case .reject: "Rejected"
+            case .failOpen: "Fail-open"
+            case .mihomo: "Via Mihomo"
+            }
+        }
+    }
+
+    private var outcomeSymbol: String {
+        switch ledgerEntry?.outcome {
+        case .viaMihomo: "point.3.connected.trianglepath.dotted"
+        case .direct: "arrow.right"
+        case .rejected: "xmark.octagon.fill"
+        case .failOpen: "arrow.uturn.right"
+        case .relayFailed: "exclamationmark.triangle.fill"
+        case nil: "questionmark.circle"
+        }
+    }
+
+    private var uploadMeasurement: FlowLedgerByteMeasurement {
+        ledgerEntry?.upload ?? fallbackMeasurement
+    }
+
+    private var downloadMeasurement: FlowLedgerByteMeasurement {
+        ledgerEntry?.download ?? fallbackMeasurement
+    }
+
+    private var fallbackMeasurement: FlowLedgerByteMeasurement {
+        switch activity.effectiveAction {
+        case .direct, .failOpen: .notMeasuredAfterHandoff
+        case .reject: .notApplicable
+        case .mihomo: .exact(0)
+        }
+    }
+
+    private func measurementTitle(_ measurement: FlowLedgerByteMeasurement) -> String {
+        switch measurement {
+        case let .exact(bytes):
+            ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+        case .notMeasuredAfterHandoff:
+            "Not measured after handoff"
+        case .notApplicable:
+            "No payload relayed"
+        }
+    }
+
+    private var isUnmeasuredAfterHandoff: Bool {
+        uploadMeasurement == .notMeasuredAfterHandoff
+            || downloadMeasurement == .notMeasuredAfterHandoff
+    }
+
+    private var relayStateTitle: String {
+        switch activity.relayState {
+        case .notApplicable: "Not applicable"
+        case .pending: "Pending"
+        case .connecting: "Connecting"
+        case .ready: "Ready"
+        case .relaying: "Relaying"
+        case .completed: "Completed"
+        case .failed: "Failed"
         }
     }
 }

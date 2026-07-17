@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import MClashApp
@@ -163,6 +164,29 @@ struct CoreSupervisorTests {
         }
     }
 
+    @Test("A process still alive after forced termination leaves an explicit failed state")
+    func stopFailureLeavesFailedState() async throws {
+        let fixture = try StubbornCoreFixture()
+        defer { fixture.cleanup() }
+        try await fixture.start()
+
+        let stopped = await fixture.supervisor.stop()
+
+        #expect(!stopped)
+        guard case let .failed(message) = await fixture.supervisor.state() else {
+            Issue.record("Expected a failed core state after the stop deadline")
+            return
+        }
+        #expect(message.contains("did not stop"))
+        #expect(message.contains("PID"))
+
+        fixture.allowForcedTermination()
+        let cleanedUp = await fixture.supervisor.stop()
+        #expect(cleanedUp)
+        if cleanedUp { fixture.confirmStopped() }
+        #expect(await fixture.supervisor.state() == .stopped)
+    }
+
     private func missingConfiguration() -> CoreLaunchConfiguration {
         let root = FileManager.default.temporaryDirectory
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)
@@ -173,5 +197,124 @@ struct CoreSupervisorTests {
             controllerPort: 19_099,
             secret: "test-secret"
         )
+    }
+}
+
+final class StubbornCoreFixture: @unchecked Sendable {
+    let supervisor: CoreSupervisor
+    private let root: URL
+    private let configuration: CoreLaunchConfiguration
+    private let terminationGate: ForcedTerminationGate
+    private let readyURL: URL
+
+    init() throws {
+        let terminationGate = ForcedTerminationGate()
+        self.terminationGate = terminationGate
+        root = FileManager.default.temporaryDirectory
+            .appending(path: "mclash-stubborn-core-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let readyURL = root.appending(path: "ready")
+        self.readyURL = readyURL
+        let executable = root.appending(path: "stubborn-core")
+        try Data(
+            """
+            #!/bin/sh
+            if [ "$1" = "-t" ]; then
+              exit 0
+            fi
+            trap '' TERM
+            printf '%s' "$$" > '\(readyURL.path)'
+            while :; do :; done
+            """.utf8
+        ).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+
+        let configurationURL = root.appending(path: "profile.yaml")
+        try Data("mixed-port: 7890\n".utf8).write(to: configurationURL)
+        let policy = CoreStopPolicy(
+            gracefulPollAttempts: 5,
+            gracefulPollInterval: .milliseconds(10),
+            forcedPollAttempts: 5,
+            forcedPollInterval: .milliseconds(10),
+            forceTerminate: { [terminationGate] processIdentifier in
+                terminationGate.forceTerminate(processIdentifier)
+            }
+        )
+        supervisor = CoreSupervisor(
+            stopPolicy: policy,
+            readinessProbe: { _ in
+                for _ in 0..<100 {
+                    if FileManager.default.fileExists(atPath: readyURL.path) {
+                        return "test-core"
+                    }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                throw CoreSupervisorError.readinessTimedOut
+            }
+        )
+        configuration = CoreLaunchConfiguration(
+            binaryURL: executable,
+            homeDirectory: root.appending(path: "home", directoryHint: .isDirectory),
+            configURL: configurationURL,
+            controllerPort: 19_095,
+            secret: "test-secret"
+        )
+    }
+
+    func start() async throws {
+        try await supervisor.start(configuration)
+    }
+
+    func allowForcedTermination() {
+        terminationGate.allowForcedTermination()
+    }
+
+    func confirmStopped() {
+        terminationGate.confirmStopped()
+        try? FileManager.default.removeItem(at: readyURL)
+    }
+
+    func cleanup() {
+        terminationGate.cleanup()
+        if let processIdentifier = try? String(contentsOf: readyURL, encoding: .utf8),
+           let processIdentifier = Int32(processIdentifier) {
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
+        try? FileManager.default.removeItem(at: root)
+    }
+}
+
+private final class ForcedTerminationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var forcedTerminationAllowed = false
+    private var processIdentifier: Int32?
+
+    func forceTerminate(_ processIdentifier: Int32) {
+        let shouldTerminate = lock.withLock {
+            self.processIdentifier = processIdentifier
+            return forcedTerminationAllowed
+        }
+        if shouldTerminate {
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
+    }
+
+    func allowForcedTermination() {
+        lock.withLock { forcedTerminationAllowed = true }
+    }
+
+    func confirmStopped() {
+        lock.withLock { processIdentifier = nil }
+    }
+
+    func cleanup() {
+        let processIdentifier = lock.withLock { self.processIdentifier }
+        if let processIdentifier {
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
     }
 }

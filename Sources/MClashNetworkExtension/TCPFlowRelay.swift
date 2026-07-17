@@ -61,7 +61,7 @@ final class TCPFlowRelay: @unchecked Sendable {
     private let destination: SOCKS5Endpoint
     private let queue: DispatchQueue
     private let completion: @Sendable (UUID) -> Void
-    private let activityObserver: @Sendable (AppRoutingRelaySnapshot) -> Void
+    private let activityReporter: AppRoutingRelayActivityReporter
 
     private var connection: NWConnection?
     private var handshakeTimeout: DispatchWorkItem?
@@ -86,9 +86,13 @@ final class TCPFlowRelay: @unchecked Sendable {
         self.flow = flow
         self.proxy = proxy
         self.destination = destination
-        self.activityObserver = activityObserver
         self.completion = completion
-        queue = DispatchQueue(label: "one.leaper.mclash.tcp-relay.\(id.uuidString)")
+        let queue = DispatchQueue(label: "one.leaper.mclash.tcp-relay.\(id.uuidString)")
+        self.queue = queue
+        activityReporter = AppRoutingRelayActivityReporter(
+            queue: queue,
+            observer: activityObserver
+        )
     }
 
     func start() {
@@ -442,7 +446,7 @@ final class TCPFlowRelay: @unchecked Sendable {
     }
 
     private func report(_ state: AppRoutingRelayState, error: String? = nil) {
-        activityObserver(AppRoutingRelaySnapshot(
+        activityReporter.report(AppRoutingRelaySnapshot(
             state: state,
             uploadBytes: uploadBytes,
             downloadBytes: downloadBytes,

@@ -67,6 +67,7 @@ enum CoreSupervisorError: LocalizedError, Equatable {
     case configurationValidationTimedOut
     case launchFailed(String)
     case readinessTimedOut
+    case stopTimedOut(processIdentifier: Int32)
 
     var errorDescription: String? {
         switch self {
@@ -86,6 +87,8 @@ enum CoreSupervisorError: LocalizedError, Equatable {
             "The proxy core could not be launched.\n\(details)"
         case .readinessTimedOut:
             "The proxy core launched but did not become ready in time."
+        case let .stopTimedOut(processIdentifier):
+            "The proxy core process (PID \(processIdentifier)) did not stop after termination and forced termination were requested."
         }
     }
 }

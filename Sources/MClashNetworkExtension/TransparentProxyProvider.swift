@@ -228,7 +228,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                     activityBatch: batch
                 )
             case .clearActivity:
-                activities.removeAll()
+                activities.removeHistory()
                 response = runtime.apply(request)
             case .quiesce:
                 flowDecisionCoordinator.quiesce()

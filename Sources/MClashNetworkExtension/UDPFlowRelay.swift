@@ -284,7 +284,7 @@ final class UDPFlowRelay: @unchecked Sendable {
     private let proxy: ProviderSOCKSConfiguration
     private let queue: DispatchQueue
     private let completion: @Sendable (UUID) -> Void
-    private let activityObserver: @Sendable (AppRoutingRelaySnapshot) -> Void
+    private let activityReporter: AppRoutingRelayActivityReporter
 
     private var controlConnection: NWConnection?
     private var udpConnection: NWConnection?
@@ -310,9 +310,13 @@ final class UDPFlowRelay: @unchecked Sendable {
     ) {
         self.flow = flow
         self.proxy = proxy
-        self.activityObserver = activityObserver
         self.completion = completion
-        queue = DispatchQueue(label: "one.leaper.mclash.udp-relay.\(id.uuidString)")
+        let queue = DispatchQueue(label: "one.leaper.mclash.udp-relay.\(id.uuidString)")
+        self.queue = queue
+        activityReporter = AppRoutingRelayActivityReporter(
+            queue: queue,
+            observer: activityObserver
+        )
     }
 
     func start() {
@@ -800,7 +804,7 @@ final class UDPFlowRelay: @unchecked Sendable {
     }
 
     private func report(_ state: AppRoutingRelayState, error: String? = nil) {
-        activityObserver(AppRoutingRelaySnapshot(
+        activityReporter.report(AppRoutingRelaySnapshot(
             state: state,
             uploadBytes: uploadBytes,
             downloadBytes: downloadBytes,

@@ -1,6 +1,24 @@
 import Darwin
 import Foundation
 
+struct CoreStopPolicy: Sendable {
+    let gracefulPollAttempts: Int
+    let gracefulPollInterval: Duration
+    let forcedPollAttempts: Int
+    let forcedPollInterval: Duration
+    let forceTerminate: @Sendable (Int32) -> Void
+
+    static let live = CoreStopPolicy(
+        gracefulPollAttempts: 30,
+        gracefulPollInterval: .milliseconds(100),
+        forcedPollAttempts: 20,
+        forcedPollInterval: .milliseconds(50),
+        forceTerminate: { processIdentifier in
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
+    )
+}
+
 actor CoreSupervisor {
     nonisolated let events: AsyncStream<CoreEvent>
 
@@ -155,15 +173,23 @@ actor CoreSupervisor {
     private let crashWindow: TimeInterval = 10 * 60
     private let validationTimeout: TimeInterval
     private let maximumValidationOutputBytesPerStream: Int
+    private let stopPolicy: CoreStopPolicy
+    private let readinessProbe: (@Sendable (CoreLaunchConfiguration) async throws -> String)?
 
     init(
         validationTimeout: TimeInterval = 15,
-        maximumValidationOutputBytesPerStream: Int = 64 * 1_024
+        maximumValidationOutputBytesPerStream: Int = 64 * 1_024,
+        stopPolicy: CoreStopPolicy = .live,
+        readinessProbe: (@Sendable (CoreLaunchConfiguration) async throws -> String)? = nil
     ) {
         precondition(validationTimeout > 0)
         precondition(maximumValidationOutputBytesPerStream > 0)
+        precondition(stopPolicy.gracefulPollAttempts >= 0)
+        precondition(stopPolicy.forcedPollAttempts >= 0)
         self.validationTimeout = validationTimeout
         self.maximumValidationOutputBytesPerStream = maximumValidationOutputBytesPerStream
+        self.stopPolicy = stopPolicy
+        self.readinessProbe = readinessProbe
         let pair = AsyncStream<CoreEvent>.makeStream(
             of: CoreEvent.self,
             bufferingPolicy: .bufferingNewest(500)
@@ -184,38 +210,52 @@ actor CoreSupervisor {
         try await start(configuration, validatesConfiguration: true)
     }
 
-    func stop() async {
+    @discardableResult
+    func stop() async -> Bool {
         desiredRunGeneration &+= 1
         pendingRestartToken = nil
         validationProcessControl?.cancel()
 
         guard let managedProcess else {
             transition(to: .stopped)
-            return
+            return true
         }
 
         expectedStopIDs.insert(managedProcess.id)
         transition(to: .stopping)
         managedProcess.process.terminate()
 
-        for _ in 0..<30 where managedProcess.process.isRunning {
-            try? await Task.sleep(for: .milliseconds(100))
-        }
+        _ = await waitForExit(
+            of: managedProcess.process,
+            attempts: stopPolicy.gracefulPollAttempts,
+            interval: stopPolicy.gracefulPollInterval
+        )
 
         if managedProcess.process.isRunning {
-            kill(managedProcess.process.processIdentifier, SIGKILL)
-            for _ in 0..<20 where managedProcess.process.isRunning {
-                try? await Task.sleep(for: .milliseconds(50))
-            }
+            stopPolicy.forceTerminate(managedProcess.process.processIdentifier)
+            _ = await waitForExit(
+                of: managedProcess.process,
+                attempts: stopPolicy.forcedPollAttempts,
+                interval: stopPolicy.forcedPollInterval
+            )
         }
 
-        if self.managedProcess?.id == managedProcess.id,
-           !managedProcess.process.isRunning {
+        guard !managedProcess.process.isRunning else {
+            let error = CoreSupervisorError.stopTimedOut(
+                processIdentifier: managedProcess.process.processIdentifier
+            )
+            emitLog(error.localizedDescription, stream: .supervisor)
+            transition(to: .failed(error.localizedDescription))
+            return false
+        }
+
+        if self.managedProcess?.id == managedProcess.id {
             self.managedProcess = nil
             expectedStopIDs.remove(managedProcess.id)
             cleanup(managedProcess)
             transition(to: .stopped)
         }
+        return true
     }
 
     func validate(_ configuration: CoreLaunchConfiguration) async throws {
@@ -329,7 +369,12 @@ actor CoreSupervisor {
         }
 
         do {
-            let version = try await waitUntilReady(configuration)
+            let version: String
+            if let readinessProbe {
+                version = try await readinessProbe(configuration)
+            } else {
+                version = try await waitUntilReady(configuration)
+            }
             guard runGeneration == desiredRunGeneration,
                   managedProcess?.id == managed.id,
                   process.isRunning else {
@@ -500,6 +545,17 @@ actor CoreSupervisor {
         managed.standardError.fileHandleForReading.readabilityHandler = nil
         try? managed.standardOutput.fileHandleForReading.close()
         try? managed.standardError.fileHandleForReading.close()
+    }
+
+    private func waitForExit(
+        of process: Process,
+        attempts: Int,
+        interval: Duration
+    ) async -> Bool {
+        for _ in 0..<attempts where process.isRunning {
+            try? await Task.sleep(for: interval)
+        }
+        return !process.isRunning
     }
 
     private func transition(to state: CoreRunState) {

@@ -71,6 +71,7 @@ struct NetworkExtensionControlTests {
             "transparent.configure",
             "transparent.reload",
             "transparent.start",
+            "transparent.status",
             "dns.configure",
             "dns.reload",
         ])
@@ -166,6 +167,103 @@ struct NetworkExtensionControlTests {
         let state = await service.currentState()
         #expect(state.phase == .failed)
     }
+
+    @Test("Same revision fast path verifies the live provider")
+    func sameRevisionFastPathVerifiesProvider() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        let configuration = NetworkExtensionRuntimeConfiguration(
+            revision: 12,
+            dnsEnabled: true
+        )
+
+        _ = try await service.enable(configuration)
+        await recorder.removeAll()
+
+        let result = try await service.enable(configuration)
+
+        #expect(result == .running)
+        #expect(await recorder.snapshot() == ["transparent.status"])
+    }
+
+    @Test("Provider state drift forces a controlled restart")
+    func providerStateDriftForcesRestart() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        let configuration = NetworkExtensionRuntimeConfiguration(
+            revision: 13,
+            dnsEnabled: true
+        )
+
+        _ = try await service.enable(configuration)
+        await recorder.removeAll()
+        await recorder.enqueueProviderStatuses([
+            TransparentProxyProviderStatus(
+                revision: 13,
+                running: false,
+                captureEnabled: false,
+                failOpen: true
+            ),
+        ])
+
+        let result = try await service.enable(configuration)
+
+        #expect(result == .running)
+        #expect(await recorder.snapshot() == [
+            "transparent.status",
+            "dns.disable",
+            "transparent.stop",
+            "system.activate",
+            "transparent.configure",
+            "transparent.reload",
+            "transparent.start",
+            "transparent.status",
+            "dns.configure",
+            "dns.reload",
+        ])
+    }
+
+    @Test("Disable checks persisted managers when actor state is inactive")
+    func inactiveDisableStillStopsPersistedManager() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+
+        try await service.disable()
+
+        #expect(await recorder.snapshot() == ["dns.disable", "transparent.stop"])
+        #expect(await service.currentState().phase == .inactive)
+    }
+
+    @Test("Provider runtime status is available to the host")
+    func providerRuntimeStatusIsExposed() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        _ = try await service.enable(NetworkExtensionRuntimeConfiguration(revision: 21))
+        await recorder.removeAll()
+
+        let status = try await service.providerRuntimeStatus()
+
+        #expect(status.running)
+        #expect(status.captureEnabled)
+        #expect(status.revision == 21)
+        #expect(await recorder.snapshot() == ["transparent.status"])
+    }
 }
 
 private final class NetworkExtensionProgressRecorder: @unchecked Sendable {
@@ -184,6 +282,7 @@ private final class NetworkExtensionProgressRecorder: @unchecked Sendable {
 private actor NetworkExtensionOperationRecorder {
     private var operations: [String] = []
     private var configuredRevision: UInt64 = 0
+    private var providerStatuses: [TransparentProxyProviderStatus] = []
 
     func append(_ operation: String) {
         operations.append(operation)
@@ -203,6 +302,15 @@ private actor NetworkExtensionOperationRecorder {
 
     func revision() -> UInt64 {
         configuredRevision
+    }
+
+    func enqueueProviderStatuses(_ statuses: [TransparentProxyProviderStatus]) {
+        providerStatuses.append(contentsOf: statuses)
+    }
+
+    func nextProviderStatus() -> TransparentProxyProviderStatus? {
+        guard !providerStatuses.isEmpty else { return nil }
+        return providerStatuses.removeFirst()
     }
 }
 
@@ -256,6 +364,8 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
     }
 
     func providerStatus() async throws -> TransparentProxyProviderStatus {
+        await recorder.append("transparent.status")
+        if let status = await recorder.nextProviderStatus() { return status }
         if let statusOverride { return statusOverride }
         let revision = await recorder.revision()
         return TransparentProxyProviderStatus(

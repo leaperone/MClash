@@ -25,6 +25,7 @@ struct ContentView: View {
                 }
 
                 Section("Diagnostics") {
+                    destinationRow(.attention)
                     destinationRow(.logs)
                 }
 
@@ -35,6 +36,9 @@ struct ContentView: View {
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 176, ideal: 206, max: 240)
             .navigationTitle("MClash")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                SidebarOperationalStatus(model: model)
+            }
         } detail: {
             VStack(spacing: 0) {
                 if let errorMessage = activeErrorMessage {
@@ -98,8 +102,12 @@ struct ContentView: View {
     }
 
     private func destinationRow(_ destination: AppModel.Destination) -> some View {
-        Label(destination.title, systemImage: destination.symbol)
-            .tag(destination)
+        HStack(spacing: 8) {
+            Label(destination.title, systemImage: destination.symbol)
+            Spacer(minLength: 4)
+            destinationAccessory(destination)
+        }
+        .tag(destination)
     }
 
     private var activeErrorMessage: String? {
@@ -163,10 +171,115 @@ struct ContentView: View {
             ProvidersView(model: model)
         case .connections:
             ConnectionsView(model: model)
+        case .attention:
+            AttentionView(model: model)
         case .logs:
             LogsView(model: model)
         case .settings:
             SettingsView(model: model, applicationUpdater: applicationUpdater)
+        }
+    }
+
+    @ViewBuilder
+    private func destinationAccessory(_ destination: AppModel.Destination) -> some View {
+        switch destination {
+        case .attention where !model.operationalIssues.isEmpty:
+            Text(formattedCount(model.operationalIssues.count))
+                .font(.caption2.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.red, in: Capsule())
+                .accessibilityLabel("\(model.operationalIssues.count) items need attention")
+        case .connections where model.isConnected:
+            Text(formattedCount(model.connections?.connections.count ?? 0))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(
+                    "\(model.connections?.connections.count ?? 0) active connections"
+                )
+        case .appRouting:
+            Circle()
+                .fill(appRoutingAccessoryColor)
+                .frame(width: 7, height: 7)
+                .accessibilityLabel(appRoutingAccessoryLabel)
+        default:
+            EmptyView()
+        }
+    }
+
+    private var appRoutingAccessoryColor: Color {
+        switch model.networkCaptureState {
+        case .on: .green
+        case .failed: .red
+        case .awaitingUserApproval, .requiresReboot: .orange
+        case .enabling, .disabling: .accentColor
+        case .off, .waitingForConnection: .secondary.opacity(0.5)
+        }
+    }
+
+    private var appRoutingAccessoryLabel: String {
+        switch model.networkCaptureState {
+        case .on: "App Routing on"
+        case .failed: "App Routing failed"
+        case .awaitingUserApproval: "App Routing needs approval"
+        case .requiresReboot: "App Routing requires restart"
+        case .enabling: "App Routing starting"
+        case .disabling: "App Routing stopping"
+        case .waitingForConnection: "App Routing waiting for connection"
+        case .off: "App Routing off"
+        }
+    }
+}
+
+private struct SidebarOperationalStatus: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        Button {
+            model.selection = model.operationalIssues.isEmpty ? .overview : .attention
+        } label: {
+            HStack(alignment: .top, spacing: 9) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 9, height: 9)
+                    .padding(.top, 4)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.operationalSnapshot.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text(model.operationalSnapshot.captureSummary)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+        .help(model.operationalSnapshot.detail)
+        .accessibilityLabel(
+            "\(model.operationalSnapshot.title), \(model.operationalSnapshot.captureSummary)"
+        )
+    }
+
+    private var statusColor: Color {
+        switch model.operationalSnapshot.level {
+        case .active: .green
+        case .transitioning: .accentColor
+        case .attention: .orange
+        case .localOnly: .yellow
+        case .disconnected: .secondary
         }
     }
 }

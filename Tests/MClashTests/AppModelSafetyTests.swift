@@ -1,9 +1,166 @@
 import Foundation
+import MClashNetworkShared
 import Testing
 @testable import MClashApp
 
 @Suite("App model network safety")
 struct AppModelSafetyTests {
+    @MainActor
+    @Test("Storage initialization failures remain visible instead of looking like empty data")
+    func storageInitializationFailuresAreDurableOperationalIssues() throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "mclash-unavailable-storage-\(UUID().uuidString)"
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("not a directory".utf8).write(to: root)
+
+        let model = AppModel(
+            profileDirectoryLayout: ProfileDirectoryLayout(rootDirectory: root)
+        )
+
+        let components = Set(model.storageInitializationFailures.map(\.component))
+        #expect(components.contains(.profiles))
+        #expect(components.contains(.runtimeOverrides))
+        #expect(components.contains(.systemProxySettings))
+        #expect(components.contains(.appRoutingSettings))
+        #expect(model.profiles.isEmpty)
+
+        let profileIssue = try #require(
+            model.operationalIssues.first { $0.id == "storage.profiles" }
+        )
+        #expect(profileIssue.severity == .error)
+        #expect(profileIssue.consequence.contains("does not mean your profiles were deleted"))
+        #expect(profileIssue.technicalDetail?.contains("Recovery:") == true)
+
+        model.errorMessage = "An unrelated transient error"
+        #expect(model.operationalIssues.contains { $0.id == "storage.profiles" })
+    }
+
+    @MainActor
+    @Test("Invalid saved settings remain a durable operational issue after startup")
+    func invalidSavedSettingsDoNotCollapseIntoTransientErrorMessage() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "mclash-invalid-runtime-settings-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        try layout.createDirectories()
+        let storageLayout = RuntimeOverrideStorageLayout(applicationRoot: root)
+        try FileManager.default.createDirectory(
+            at: storageLayout.settingsDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data(#"{"schemaVersion":999,"overrides":{}}"#.utf8)
+            .write(to: storageLayout.overridesURL)
+        let model = AppModel(profileDirectoryLayout: layout)
+
+        await model.prepare()
+
+        #expect(
+            model.storageInitializationFailures.contains {
+                $0.component == .runtimeOverrides
+            }
+        )
+        #expect(model.operationalIssues.contains { $0.id == "storage.runtime-overrides" })
+        model.errorMessage = nil
+        #expect(model.operationalIssues.contains { $0.id == "storage.runtime-overrides" })
+    }
+
+    @MainActor
+    @Test("System proxy guard becomes unverified after repeated failures and recovers")
+    func systemProxyGuardFailureIsPersistentAndRecoverable() async throws {
+        let endpoints = try LocalSystemProxyEndpoints(
+            http: SystemProxyEndpoint(port: 7890),
+            https: SystemProxyEndpoint(port: 7890),
+            socks: SystemProxyEndpoint(port: 7891)
+        )
+        let backend = GuardVerificationBackend(
+            endpoints: endpoints,
+            failedReads: AppModel.systemProxyGuardFailureThreshold
+        )
+        let model = AppModel(
+            systemProxyManager: SystemProxyManager(backend: backend)
+        )
+        model.systemProxyState = .on
+
+        for expectedCount in 1...AppModel.systemProxyGuardFailureThreshold {
+            await model.performSystemProxyGuardCheck(
+                endpoints: endpoints,
+                bypassDomains: []
+            )
+            #expect(model.systemProxyGuardFailure?.consecutiveFailures == expectedCount)
+        }
+
+        guard case let .failed(message) = model.systemProxyState else {
+            Issue.record("Expected repeated guard failures to leave the proxy unverified")
+            return
+        }
+        #expect(message.contains("3 consecutive attempts"))
+        let guardIssue = try #require(
+            model.operationalIssues.first { $0.id == "system-proxy.guard" }
+        )
+        #expect(guardIssue.primaryActionTitle == "Turn Off & Restore")
+        #expect(guardIssue.primaryAction == .restoreSystemProxy)
+        #expect(model.errorMessage == nil)
+
+        await model.performSystemProxyGuardCheck(
+            endpoints: endpoints,
+            bypassDomains: []
+        )
+
+        #expect(model.systemProxyState == .on)
+        #expect(model.systemProxyGuardFailure == nil)
+        #expect(model.systemProxyGuardLastVerifiedAt != nil)
+        #expect(!model.operationalIssues.contains { $0.id == "system-proxy.guard" })
+    }
+
+    @MainActor
+    @Test("App Routing provider drift must be consecutive before capture is declared failed")
+    func appRoutingProviderRuntimeDriftIsVerified() async throws {
+        let revision: UInt64 = 42
+        let mismatched = TransparentProxyProviderStatus(
+            revision: 41,
+            running: true,
+            captureEnabled: true,
+            failOpen: true
+        )
+        let healthy = TransparentProxyProviderStatus(
+            revision: revision,
+            running: true,
+            captureEnabled: true,
+            failOpen: true
+        )
+        let control = AppRoutingRuntimeStatusControl(
+            statuses: [mismatched, mismatched, healthy, mismatched, mismatched, mismatched]
+        )
+        let model = AppModel(networkExtensionControl: control)
+
+        #expect(!(await model.verifyAppRoutingProviderRuntime(expectedRevision: revision)))
+        #expect(!(await model.verifyAppRoutingProviderRuntime(expectedRevision: revision)))
+        #expect(model.appRoutingProviderStatusFailureCount == 2)
+        #expect(model.degradedStreams.contains(.appRouting))
+
+        #expect(await model.verifyAppRoutingProviderRuntime(expectedRevision: revision))
+        #expect(model.appRoutingProviderStatusFailureCount == 0)
+        #expect(model.appRoutingProviderLastVerifiedAt != nil)
+        #expect(!model.degradedStreams.contains(.appRouting))
+
+        #expect(!(await model.verifyAppRoutingProviderRuntime(expectedRevision: revision)))
+        #expect(!(await model.verifyAppRoutingProviderRuntime(expectedRevision: revision)))
+        #expect(!(await model.verifyAppRoutingProviderRuntime(expectedRevision: revision)))
+
+        guard case let .failed(message) = model.networkCaptureState else {
+            Issue.record("Expected repeated provider drift to fail App Routing")
+            return
+        }
+        #expect(message.contains("3 consecutive provider checks"))
+        #expect(message.contains("Expected active revision 42"))
+        #expect(model.errorMessage == nil)
+        #expect(model.operationalIssues.contains { $0.id == "app-routing.failed" })
+        #expect(await control.providerStatusRequestCount == 6)
+    }
+
     @MainActor
     @Test("A failed proxy activation without a snapshot does not lock the application")
     func failedActivationWithoutSnapshotIsDismissible() throws {
@@ -98,6 +255,57 @@ struct AppModelSafetyTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.snapshotURL.path))
         #expect(fixture.model.systemProxyState == .off)
         #expect(fixture.backend.applyCount == 1)
+    }
+
+    @MainActor
+    @Test("Disconnect keeps a failed state when the core cannot be stopped")
+    func disconnectReportsCoreStopFailure() async throws {
+        let coreFixture = try StubbornCoreFixture()
+        defer { coreFixture.cleanup() }
+        try await coreFixture.start()
+        let model = AppModel(supervisor: coreFixture.supervisor)
+
+        await model.disconnect()
+
+        guard case let .failed(message) = model.coreState else {
+            Issue.record("Expected disconnect to retain the core stop failure")
+            return
+        }
+        #expect(message.contains("did not stop"))
+        #expect(model.errorMessage == message)
+
+        coreFixture.allowForcedTermination()
+        let cleanedUp = await coreFixture.supervisor.stop()
+        #expect(cleanedUp)
+        if cleanedUp { coreFixture.confirmStopped() }
+    }
+
+    @MainActor
+    @Test("Shutdown is cancelled when the core cannot be stopped")
+    func shutdownReportsCoreStopFailure() async throws {
+        let coreFixture = try StubbornCoreFixture()
+        defer { coreFixture.cleanup() }
+        try await coreFixture.start()
+        let fixture = try Fixture(
+            failsRestore: false,
+            supervisor: coreFixture.supervisor
+        )
+        defer { fixture.cleanup() }
+
+        let canTerminate = await fixture.model.shutdown()
+
+        #expect(!canTerminate)
+        guard case let .failed(message) = fixture.model.coreState else {
+            Issue.record("Expected shutdown to retain the core stop failure")
+            return
+        }
+        #expect(message.contains("did not stop"))
+        #expect(fixture.model.errorMessage == message)
+
+        coreFixture.allowForcedTermination()
+        let cleanedUp = await coreFixture.supervisor.stop()
+        #expect(cleanedUp)
+        if cleanedUp { coreFixture.confirmStopped() }
     }
 
     @MainActor
@@ -367,7 +575,11 @@ private struct Fixture {
     let backend: RestoreBackend
     let model: AppModel
 
-    init(failsRestore: Bool, restoreDelay: TimeInterval = 0) throws {
+    init(
+        failsRestore: Bool,
+        restoreDelay: TimeInterval = 0,
+        supervisor: CoreSupervisor = CoreSupervisor()
+    ) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "mclash-app-model-\(UUID().uuidString)", directoryHint: .isDirectory)
         let layout = ProfileDirectoryLayout(rootDirectory: root)
@@ -386,6 +598,7 @@ private struct Fixture {
             .write(to: snapshotURL, options: .atomic)
 
         model = AppModel(
+            supervisor: supervisor,
             systemProxyManager: manager,
             profileDirectoryLayout: layout
         )
@@ -427,4 +640,95 @@ private final class RestoreBackend: SystemProxyBackend, @unchecked Sendable {
         }
         if failsRestore { throw SystemProxyError.applyFailed }
     }
+}
+
+private final class GuardVerificationBackend: SystemProxyBackend, @unchecked Sendable {
+    private let lock = NSLock()
+    private let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+    private let matchingState: SystemProxyServiceState
+    private var remainingFailedReads: Int
+
+    init(endpoints: LocalSystemProxyEndpoints, failedReads: Int) {
+        remainingFailedReads = failedReads
+        matchingState = try! SystemProxyServiceState(
+            service: service,
+            protocolExists: true,
+            configuration: [
+                SystemProxyKeys.httpEnable: .integer(1),
+                SystemProxyKeys.httpHost: .string(endpoints.http.host),
+                SystemProxyKeys.httpPort: .integer(Int64(endpoints.http.port)),
+                SystemProxyKeys.httpsEnable: .integer(1),
+                SystemProxyKeys.httpsHost: .string(endpoints.https.host),
+                SystemProxyKeys.httpsPort: .integer(Int64(endpoints.https.port)),
+                SystemProxyKeys.socksEnable: .integer(1),
+                SystemProxyKeys.socksHost: .string(endpoints.socks.host),
+                SystemProxyKeys.socksPort: .integer(Int64(endpoints.socks.port)),
+                SystemProxyKeys.exceptionsList: .array([]),
+            ]
+        )
+    }
+
+    func enabledNetworkServices() throws -> [SystemProxyNetworkService] {
+        [service]
+    }
+
+    func proxyStates(
+        for services: [SystemProxyNetworkService]
+    ) throws -> [SystemProxyServiceState] {
+        try lock.withLock {
+            if remainingFailedReads > 0 {
+                remainingFailedReads -= 1
+                throw SystemProxyError.preferencesUnavailable
+            }
+            return [matchingState]
+        }
+    }
+
+    func applyProxyStates(_ states: [SystemProxyServiceState]) throws {}
+}
+
+private actor AppRoutingRuntimeStatusControl: NetworkExtensionControlling {
+    private var statuses: [TransparentProxyProviderStatus]
+    private(set) var providerStatusRequestCount = 0
+
+    init(statuses: [TransparentProxyProviderStatus]) {
+        self.statuses = statuses
+    }
+
+    func enable(
+        _ configuration: NetworkExtensionRuntimeConfiguration,
+        progress reportProgress: @escaping @Sendable (NetworkExtensionEnableProgress) -> Void
+    ) async throws -> NetworkExtensionEnableOutcome {
+        .running
+    }
+
+    func disable() async throws {}
+
+    func uninstall() async throws -> NetworkExtensionUninstallOutcome {
+        .uninstalled
+    }
+
+    func currentState() async -> NetworkExtensionControlState {
+        .inactive
+    }
+
+    func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus {
+        providerStatusRequestCount += 1
+        guard !statuses.isEmpty else { throw SystemProxyError.preferencesUnavailable }
+        return statuses.removeFirst()
+    }
+
+    func appRoutingActivity(
+        after cursor: UInt64,
+        limit: Int
+    ) async throws -> AppRoutingActivityBatch {
+        AppRoutingActivityBatch(
+            activities: [],
+            nextCursor: cursor,
+            droppedBeforeSequence: nil,
+            hasMore: false
+        )
+    }
+
+    func clearAppRoutingActivity() async throws {}
 }
