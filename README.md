@@ -75,8 +75,9 @@ the unpacked, executable artifacts live in `Support/mihomo-alpha.sha256`.
 Both Apple Silicon and Intel use the same artifact-selection code. The first
 release target is Apple Silicon; every supported architecture must have a
 separately reviewed raw hash in the manifest before its core can be fetched.
-The current Apple Silicon artifact is verified before every application build
-and integration run:
+The reviewed Apple Silicon artifact is committed as an explicit release input
+because the upstream Alpha release tag is mutable. It is verified against the
+recorded unpacked SHA-256 before every application build and integration run:
 
 ```sh
 ./scripts/verify-mihomo-alpha.sh
@@ -86,10 +87,11 @@ and integration run:
 The second command intentionally fails until an independently reviewed Intel
 hash and artifact are added in a dedicated release change.
 
-`fetch-mihomo-alpha.sh` fetches the pinned version rather than following the
-moving `version.txt`, verifies the selected archive against upstream
-`checksums.txt`, and refuses to download or replace an artifact unless its
-unpacked hash was already reviewed and committed to the manifest.
+`fetch-mihomo-alpha.sh` is a guarded recovery path for as long as the pinned
+asset remains available upstream. It never follows the moving `version.txt`,
+verifies the selected archive against upstream `checksums.txt`, and refuses to
+replace an artifact unless its unpacked hash was already reviewed and committed
+to the manifest.
 The built application's Info.plist also records the pinned core version and
 pre-signing upstream binary hash as `MClashMihomoAlphaVersion` and
 `MClashMihomoAlphaRawSHA256`.

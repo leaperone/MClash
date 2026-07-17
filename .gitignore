@@ -16,8 +16,10 @@ xcuserdata/
 *.pem
 *.provisionprofile
 
-# Downloaded upstream core binaries are reproducible via scripts/fetch-mihomo-alpha.sh.
+# Only reviewed release inputs may be committed. Other downloaded architectures
+# remain local until their hashes and distribution policy are approved.
 Sources/MClashApp/Resources/Core/mihomo-alpha-*
+!Sources/MClashApp/Resources/Core/mihomo-alpha-darwin-arm64
 
 # Local diagnostics and scratch files.
 .tmp-*/
