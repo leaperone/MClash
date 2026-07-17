@@ -2,6 +2,17 @@
 set -euo pipefail
 
 repo_root="${0:A:h:h}"
+
+# GitHub-hosted runners provide a complete Xcode toolchain, where SwiftPM is
+# the stable way to locate Swift Testing and binary-target dependencies. The
+# direct path below remains the fallback for standalone Command Line Tools,
+# whose PackageDescription dylib can be out of sync with its Swift interface.
+if [[ "${CI:-}" == "true" ]]; then
+  cd "${repo_root}"
+  swift test --configuration debug
+  exit 0
+fi
+
 build_dir="${repo_root}/.build/direct-tests"
 sparkle_framework_dir="${SPARKLE_FRAMEWORK_DIR:-$("${repo_root}/scripts/fetch-sparkle-tools.sh")}"
 developer_dir="${DEVELOPER_DIR:-$(xcode-select -p)}"
