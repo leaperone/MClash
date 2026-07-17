@@ -5,9 +5,36 @@ repo_root="${0:A:h:h}"
 build_dir="${repo_root}/.build/direct-tests"
 sparkle_framework_dir="${SPARKLE_FRAMEWORK_DIR:-$("${repo_root}/scripts/fetch-sparkle-tools.sh")}"
 developer_dir="${DEVELOPER_DIR:-$(xcode-select -p)}"
-frameworks="${developer_dir}/Library/Developer/Frameworks"
-plugins="${developer_dir}/usr/lib/swift/host/plugins/testing"
-testing_interop="${developer_dir}/Library/Developer/usr/lib"
+runtime_resource_path="$(swiftc -print-target-info | \
+  plutil -extract paths.runtimeResourcePath raw -o - -)"
+plugins="${runtime_resource_path}/host/plugins/testing"
+
+frameworks=""
+for candidate in \
+  "${developer_dir}/Library/Developer/Frameworks" \
+  "${developer_dir}/Platforms/MacOSX.platform/Developer/Library/Frameworks"
+do
+  if [[ -d "${candidate}/Testing.framework" ]]; then
+    frameworks="${candidate}"
+    break
+  fi
+done
+
+testing_interop=""
+for candidate in \
+  "${developer_dir}/Library/Developer/usr/lib" \
+  "${developer_dir}/Platforms/MacOSX.platform/Developer/usr/lib"
+do
+  if [[ -f "${candidate}/lib_TestingInterop.dylib" ]]; then
+    testing_interop="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${frameworks}" || ! -d "${plugins}" || -z "${testing_interop}" ]]; then
+  print -u2 "Unable to locate Swift Testing support in ${developer_dir}."
+  exit 1
+fi
 
 rm -rf "${build_dir}"
 mkdir -p "${build_dir}"
