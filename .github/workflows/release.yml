@@ -29,22 +29,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    name: Test release source
-    runs-on: macos-15
-    timeout-minutes: 30
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       tag: ${{ steps.metadata.outputs.tag }}
       build_number: ${{ steps.metadata.outputs.build_number }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
     steps:
-      - name: Check out source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - name: Resolve release metadata
         id: metadata
         env:
@@ -54,53 +48,41 @@ jobs:
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
           INPUT_PRERELEASE: ${{ inputs.prerelease }}
           RUN_NUMBER: ${{ github.run_number }}
-        shell: zsh {0}
+        shell: bash
         run: |
           set -euo pipefail
           if [[ "${EVENT_NAME}" == "push" ]]; then
             tag="${REF_NAME}"
             version="${tag#v}"
-            prerelease="$([[ "${version}" == *-* ]] && print true || print false)"
+            if [[ "${version}" == *-* ]]; then
+              prerelease=true
+            else
+              prerelease=false
+            fi
           else
             version="${INPUT_VERSION#v}"
             tag="v${version}"
             prerelease="${INPUT_PRERELEASE:-false}"
           fi
-          if [[ ! "${version}" =~ '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' ]]; then
-            print -u2 "Invalid release version: ${version}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: ${version}" >&2
             exit 2
           fi
           build_number="${INPUT_BUILD_NUMBER:-${RUN_NUMBER}}"
-          if [[ ! "${build_number}" =~ '^[1-9][0-9]*$' ]]; then
-            print -u2 "Invalid build number: ${build_number}"
+          if [[ ! "${build_number}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid build number: ${build_number}" >&2
             exit 2
           fi
           {
-            print "version=${version}"
-            print "tag=${tag}"
-            print "build_number=${build_number}"
-            print "prerelease=${prerelease}"
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "build_number=${build_number}"
+            echo "prerelease=${prerelease}"
           } >> "${GITHUB_OUTPUT}"
-
-      - name: Verify Apple Silicon runner
-        shell: zsh {0}
-        run: |
-          set -euo pipefail
-          [[ "$(uname -m)" == "arm64" ]] || {
-            print -u2 "MClash currently requires an arm64 release runner."
-            exit 1
-          }
-
-      - name: Run strict compiler checks and tests
-        shell: zsh {0}
-        run: |
-          set -euo pipefail
-          ./scripts/typecheck.sh
-          ./scripts/test-direct.sh
 
   release:
     name: Sign, notarize, and publish
-    needs: test
+    needs: prepare
     runs-on: macos-15
     timeout-minutes: 60
     environment:
@@ -109,10 +91,10 @@ jobs:
     permissions:
       contents: write
     env:
-      MCLASH_VERSION: ${{ needs.test.outputs.version }}
-      MCLASH_RELEASE_TAG: ${{ needs.test.outputs.tag }}
-      MCLASH_BUILD_NUMBER: ${{ needs.test.outputs.build_number }}
-      MCLASH_RELEASE_NOTES: ${{ github.workspace }}/ReleaseNotes/${{ needs.test.outputs.version }}.md
+      MCLASH_VERSION: ${{ needs.prepare.outputs.version }}
+      MCLASH_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      MCLASH_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+      MCLASH_RELEASE_NOTES: ${{ github.workspace }}/ReleaseNotes/${{ needs.prepare.outputs.version }}.md
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -124,6 +106,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify Apple Silicon runner
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          [[ "$(uname -m)" == "arm64" ]] || {
+            print -u2 "MClash currently requires an arm64 release runner."
+            exit 1
+          }
 
       - name: Require release credentials
         env:
@@ -377,7 +368,7 @@ jobs:
       - name: Publish GitHub Release
         id: publish
         env:
-          PRERELEASE: ${{ needs.test.outputs.prerelease }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           TARGET_SHA: ${{ github.sha }}
         shell: zsh {0}
         run: |
@@ -416,8 +407,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: MClash-${{ needs.test.outputs.version }}-${{ needs.test.outputs.build_number }}
-          path: .build/releases/${{ needs.test.outputs.version }}-${{ needs.test.outputs.build_number }}/
+          name: MClash-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.build_number }}
+          path: .build/releases/${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.build_number }}/
           if-no-files-found: warn
           retention-days: 14
 

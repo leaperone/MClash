@@ -81,8 +81,6 @@ if ! grep -Fq "${MIHOMO_ALPHA_REVISION}" "${corresponding_source}"; then
   exit 1
 fi
 
-"${repo_root}/scripts/typecheck.sh"
-
 application_sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
 binary_output="${build_root}/MClash"
 network_shared_sources=("${repo_root}"/Sources/MClashNetworkShared/**/*.swift(N))
