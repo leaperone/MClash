@@ -19,6 +19,12 @@ do
     break
   fi
 done
+if [[ -z "${frameworks}" ]]; then
+  testing_framework="$(find "${developer_dir}" -type d -name Testing.framework -print -quit 2>/dev/null)"
+  if [[ -n "${testing_framework}" ]]; then
+    frameworks="${testing_framework:h}"
+  fi
+fi
 
 testing_interop=""
 for candidate in \
@@ -30,6 +36,12 @@ do
     break
   fi
 done
+if [[ -z "${testing_interop}" ]]; then
+  testing_interop_library="$(find "${developer_dir}" -type f -name lib_TestingInterop.dylib -print -quit 2>/dev/null)"
+  if [[ -n "${testing_interop_library}" ]]; then
+    testing_interop="${testing_interop_library:h}"
+  fi
+fi
 
 if [[ -z "${frameworks}" || ! -d "${plugins}" || -z "${testing_interop}" ]]; then
   print -u2 "Unable to locate Swift Testing support in ${developer_dir}."
