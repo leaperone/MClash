@@ -47,6 +47,7 @@ fi
 
 application_sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
 binary_output="${build_root}/MClash"
+mkdir -p "${build_root}"
 swiftc \
   -parse-as-library \
   -swift-version 6 \
