@@ -115,7 +115,9 @@ private struct OverviewNetworkStateSection: View {
                         Task { await model.toggleConnection() }
                     } label: {
                         HStack(spacing: 7) {
-                            if model.isBusy || model.isPerforming(.connection) {
+                            if model.preparationInProgress
+                                || model.isBusy
+                                || model.isPerforming(.connection) {
                                 ProgressView()
                                     .controlSize(.small)
                             }
@@ -140,13 +142,21 @@ private struct OverviewNetworkStateSection: View {
                     color: systemProxyStatusColor,
                     isInline: layout.stateRowsAreInline
                 ) {
-                    Button(systemProxyActionTitle) {
+                    Button {
                         Task {
                             if model.systemProxyRecoveryRequired {
                                 await model.disableSystemProxy()
                             } else {
                                 await model.setSystemProxyEnabled(!model.systemProxyEnabled)
                             }
+                        }
+                    } label: {
+                        HStack(spacing: 7) {
+                            if model.isPerforming(.changeSystemProxy) {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(systemProxyActionTitle)
                         }
                     }
                     .controlSize(.large)
@@ -168,48 +178,54 @@ private struct OverviewNetworkStateSection: View {
     }
 
     private var coreStatusTitle: String {
+        if model.preparationInProgress { return "Preparing" }
         switch model.coreState {
-        case .stopped: "Stopped"
-        case .validating: "Checking"
-        case .starting: "Starting"
-        case .running: "Running"
-        case .stopping: "Stopping"
-        case .failed: "Failed"
+        case .stopped: return "Stopped"
+        case .validating: return "Checking"
+        case .starting: return "Starting"
+        case .running: return "Running"
+        case .stopping: return "Stopping"
+        case .failed: return "Failed"
         }
     }
 
     private var coreStatusDescription: String {
+        if model.preparationInProgress {
+            return "MClash is loading profiles, checking saved network state, and preparing the last session."
+        }
         switch model.coreState {
         case .stopped:
-            "The local proxy core is not running. Choose a profile, then connect when needed."
+            return "The local proxy core is not running. Choose a profile, then connect when needed."
         case .validating:
-            "MClash is validating the active profile before changing network state."
+            return "MClash is validating the active profile before changing network state."
         case .starting:
-            "The core is opening its local proxy ports and controller."
+            return "The core is opening its local proxy ports and controller."
         case let .running(session):
-            "The bundled Alpha core is healthy and has been running since \(session.startedAt.formatted(date: .omitted, time: .shortened))."
+            return "The bundled Alpha core is healthy and has been running since \(session.startedAt.formatted(date: .omitted, time: .shortened))."
         case .stopping:
-            "MClash is shutting down the core and restoring network state."
+            return "MClash is shutting down the core and restoring network state."
         case .failed:
-            "The core could not reach a healthy running state. Review the error and logs before retrying."
+            return "The core could not reach a healthy running state. Review the error and logs before retrying."
         }
     }
 
     private var coreStatusSymbol: String {
+        if model.preparationInProgress { return "arrow.triangle.2.circlepath" }
         switch model.coreState {
-        case .running: "checkmark.circle.fill"
-        case .failed: "exclamationmark.triangle.fill"
-        case .validating, .starting, .stopping: "arrow.triangle.2.circlepath"
-        case .stopped: "stop.circle"
+        case .running: return "checkmark.circle.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .validating, .starting, .stopping: return "arrow.triangle.2.circlepath"
+        case .stopped: return "stop.circle"
         }
     }
 
     private var coreStatusColor: Color {
+        if model.preparationInProgress { return .orange }
         switch model.coreState {
-        case .running: .green
-        case .failed: .red
-        case .validating, .starting, .stopping: .orange
-        case .stopped: .secondary
+        case .running: return .green
+        case .failed: return .red
+        case .validating, .starting, .stopping: return .orange
+        case .stopped: return .secondary
         }
     }
 
@@ -258,15 +274,20 @@ private struct OverviewNetworkStateSection: View {
 
     private var systemProxyActionTitle: String {
         if model.systemProxyRecoveryRequired { return "Restore" }
-        return model.systemProxyEnabled ? "Turn Off" : "Turn On"
+        switch model.systemProxyState {
+        case .enabling: return "Turning On…"
+        case .disabling: return "Turning Off…"
+        default: return model.systemProxyEnabled ? "Turn Off" : "Turn On"
+        }
     }
 
     private var connectionButtonTitle: String {
+        if model.preparationInProgress { return "Preparing…" }
         switch model.coreState {
-        case .running, .starting: "Disconnect"
-        case .stopping: "Stopping…"
-        case .validating: "Checking…"
-        default: "Connect"
+        case .running, .starting: return "Disconnect"
+        case .stopping: return "Stopping…"
+        case .validating: return "Checking…"
+        default: return "Connect"
         }
     }
 
@@ -521,14 +542,18 @@ private struct OverviewSessionDetailsSection: View {
 
                 detailDivider
 
-                OverviewDetailRow(title: "Primary Group", presentation: presentation) {
+                OverviewDetailRow(title: routingSummaryTitle, presentation: presentation) {
                     HStack(spacing: 10) {
-                        Text(primaryGroupSelection)
+                        Text(routingSummary)
                             .lineLimit(1)
-                            .help(primaryGroupSelection)
-                        Button("Choose…") { model.selection = .proxies }
+                            .help(routingSummary)
+                        if routingMode.lowercased() != "direct" {
+                            Button(routingMode.lowercased() == "global" ? "Choose…" : "Inspect…") {
+                                model.selection = .proxies
+                            }
                             .controlSize(.small)
                             .disabled(!model.controllerIsReady)
+                        }
                     }
                 }
 
@@ -594,11 +619,31 @@ private struct OverviewSessionDetailsSection: View {
         }
     }
 
-    private var primaryGroupSelection: String {
+    private var routingSummaryTitle: String {
+        switch model.runtimeConfig?.mode.lowercased() {
+        case "global": "Global Route"
+        case "rule": "Rule Routing"
+        case "direct": "Routing"
+        default: "Routing"
+        }
+    }
+
+    private var routingSummary: String {
+        switch model.runtimeConfig?.mode.lowercased() {
+        case "direct":
+            return "Direct · proxy groups bypassed"
+        case "rule":
+            return "Rules choose a route per connection"
+        case "global":
+            break
+        default:
+            return "Unavailable"
+        }
+
         let global = model.proxyGroups.first {
             $0.name.caseInsensitiveCompare("GLOBAL") == .orderedSame
         }
-        guard let group = global ?? model.proxyGroups.first else { return "Unavailable" }
+        guard let group = global else { return "Global route unavailable" }
         return "\(group.name) → \(group.now ?? "Not selected")"
     }
 }

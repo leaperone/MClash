@@ -12,10 +12,10 @@ struct ProxiesView: View {
     @SceneStorage private var serializedSearchTextByGroup: String
     @State private var hasRestoredSearchState = false
     @SceneStorage private var inspectorPresented: Bool
+    @State private var inspectorPopoverPresented = false
     @State private var groupNavigatorPresented = false
-    @State private var workspaceLayout: ProxyWorkspaceLayout = .compact
+    @State private var measuredWorkspaceWidth: CGFloat = 0
     @State private var inspectorPresentation: ProxyInspectorPresentation = .popover
-    @State private var workspaceLayoutIsResolved = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(model: AppModel) {
@@ -33,7 +33,7 @@ struct ProxiesView: View {
             "mclash.proxies.\(stateScope).searches"
         )
         _inspectorPresented = SceneStorage(
-            wrappedValue: false,
+            wrappedValue: true,
             "mclash.proxies.\(stateScope).inspectorPresented"
         )
     }
@@ -43,10 +43,11 @@ struct ProxiesView: View {
 
         Group {
             if !model.isConnected {
-                ContentUnavailableView(
-                    "Connect to view proxies",
+                DisconnectedUnavailableView(
+                    model: model,
+                    title: "Connect to view proxies",
                     systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("Proxy groups are read from the active Alpha core at runtime.")
+                    description: "Proxy groups are read from the active Alpha core at runtime."
                 )
             } else if model.controllerState == .loading || model.controllerState == .idle {
                 VStack(spacing: 12) {
@@ -63,26 +64,32 @@ struct ProxiesView: View {
                     Button("Reconnect") { Task { await model.restartConnection() } }
                     Button("View Logs") { model.selection = .logs }
                 }
-            } else if routingMode == "direct" {
-                ContentUnavailableView(
-                    "Direct routing is active",
-                    systemImage: "arrow.right",
-                    description: Text(
-                        "Connections bypass proxy groups until Rule or Global mode is selected."
-                    )
-                )
-            } else if groups.available.isEmpty {
-                ContentUnavailableView(
-                    "No selectable groups",
-                    systemImage: "tray",
-                    description: Text(
-                        routingMode == "global"
-                            ? "The active core did not expose the GLOBAL group."
-                            : "The active configuration did not expose a selectable proxy group."
-                    )
-                )
             } else {
-                proxyWorkspace(groups: groups)
+                VStack(spacing: 0) {
+                    routingControlsBar
+
+                    if routingMode == "direct" {
+                        ContentUnavailableView(
+                            "Direct routing is active",
+                            systemImage: "arrow.right",
+                            description: Text(
+                                "Connections bypass proxy groups until Rule or Global mode is selected."
+                            )
+                        )
+                    } else if groups.available.isEmpty {
+                        ContentUnavailableView(
+                            "No selectable groups",
+                            systemImage: "tray",
+                            description: Text(
+                                routingMode == "global"
+                                    ? "The active core did not expose the GLOBAL group."
+                                    : "The active configuration did not expose a selectable proxy group."
+                            )
+                        )
+                    } else {
+                        proxyWorkspace(groups: groups)
+                    }
+                }
             }
         }
         .navigationTitle("Proxies")
@@ -92,7 +99,7 @@ struct ProxiesView: View {
             if model.controllerIsReady,
                model.localHTTPProxyAddress != nil || model.localSOCKSProxyAddress != nil {
                 HStack(spacing: 14) {
-                    if workspaceLayout == .compact {
+                    if usesCompactChrome {
                         compactEndpointLabel
                     } else {
                         localEndpointLabels
@@ -118,19 +125,19 @@ struct ProxiesView: View {
         .onChange(of: model.runtimeConfig?.mode) { _, _ in
             normalizeSelection(groups: groups)
         }
+        .onChange(of: workspaceMode) { _, _ in
+            updateWorkspaceWidth(measuredWorkspaceWidth)
+        }
+        .onChange(of: inspectorPresentation) { _, presentation in
+            if presentation == .attached {
+                inspectorPopoverPresented = false
+            }
+        }
         .onChange(of: selectedGroupName) { _, name in
             guard let name, let group = model.proxiesByName[name] else { return }
             focusedNodeName = group.now ?? group.all.first
         }
         .toolbar {
-            if model.controllerIsReady,
-               workspaceLayout == .split || routingMode == "direct" || groups.available.isEmpty {
-                ToolbarItemGroup {
-                    routingModePicker(width: 190)
-                    systemProxyToggle
-                }
-            }
-
             if model.controllerIsReady,
                routingMode != "direct",
                 let group = selectedGroup(in: groups) {
@@ -152,37 +159,33 @@ struct ProxiesView: View {
 
     private func proxyWorkspace(groups: ProxyGroupPartitionSnapshot) -> some View {
         VStack(spacing: 0) {
-            if workspaceLayout == .compact {
-                compactRoutingControls
+            ProxyDataWarningBanner(model: model)
+            if !model.degradedStreams.isEmpty {
                 Divider()
             }
 
-            ProxyDataWarningBanner(model: model)
-            Divider()
-
-            if workspaceLayout == .compact {
-                VStack(spacing: 0) {
-                    compactGroupPicker(groups: groups)
-                    Divider()
-                    groupDetail(groups: groups)
-                }
-            } else {
-                HSplitView {
-                    groupSidebar(groups: groups)
-                        .frame(minWidth: 190, idealWidth: 220, maxWidth: 270)
-
-                    groupDetail(groups: groups)
-                        .frame(minWidth: 420, maxWidth: .infinity)
+            Group {
+                switch workspaceMode {
+                case .list:
+                    proxyListWorkspace(groups: groups)
+                case .topology:
+                    proxyTopologyWorkspace(groups: groups)
                 }
             }
+            .transition(.opacity)
+            .animation(
+                .easeOut(duration: reduceMotion ? 0.12 : 0.18),
+                value: workspaceMode
+            )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
         .background {
             GeometryReader { geometry in
                 Color.clear
-                    .onAppear { updateWorkspaceLayout(geometry.size.width) }
+                    .onAppear { updateWorkspaceWidth(geometry.size.width) }
                     .onChange(of: geometry.size.width) { _, width in
-                        updateWorkspaceLayout(width)
+                        updateWorkspaceWidth(width)
                     }
             }
         }
@@ -193,7 +196,65 @@ struct ProxiesView: View {
                 focusedNodeName: focusedNodeName,
                 openGroup: openGroup
             )
-            .inspectorColumnWidth(min: 220, ideal: 280, max: 340)
+            .inspectorColumnWidth(min: 280, ideal: 340, max: 420)
+        }
+    }
+
+    private func proxyListWorkspace(groups: ProxyGroupPartitionSnapshot) -> some View {
+        GeometryReader { geometry in
+            let sidebarWidth = ProxyWorkspaceSizing.groupSidebarWidth(
+                for: geometry.size.width
+            )
+            let nodeWidth = ProxyWorkspaceSizing.detailWidth(
+                for: geometry.size.width,
+                sidebarWidth: sidebarWidth
+            )
+
+            HStack(spacing: 0) {
+                groupSidebar(groups: groups)
+                    .frame(width: sidebarWidth)
+
+                Divider()
+
+                listGroupDetail(groups: groups)
+                    .frame(width: nodeWidth)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityLabel("Proxy groups and nodes")
+    }
+
+    @ViewBuilder
+    private func proxyTopologyWorkspace(groups: ProxyGroupPartitionSnapshot) -> some View {
+        if usesCompactTopologyNavigation {
+            VStack(spacing: 0) {
+                compactGroupPicker(groups: groups)
+                Divider()
+                topologyGroupDetail(groups: groups)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else {
+            GeometryReader { geometry in
+                let sidebarWidth = ProxyWorkspaceSizing.groupSidebarWidth(
+                    for: geometry.size.width
+                )
+                let canvasWidth = ProxyWorkspaceSizing.detailWidth(
+                    for: geometry.size.width,
+                    sidebarWidth: sidebarWidth
+                )
+
+                HStack(spacing: 0) {
+                    groupSidebar(groups: groups)
+                        .frame(width: sidebarWidth)
+
+                    Divider()
+
+                    topologyGroupDetail(groups: groups)
+                        .frame(width: canvasWidth)
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
         }
     }
 
@@ -204,25 +265,72 @@ struct ProxiesView: View {
             Text("Direct").tag("direct")
         }
         .pickerStyle(.segmented)
+        .labelsHidden()
         .frame(width: width)
         .disabled(!model.canPerform(.changeMode))
     }
 
-    private var compactRoutingControls: some View {
-        HStack(spacing: 12) {
-            routingModePicker(width: 210)
-            Spacer(minLength: 8)
-            systemProxyToggle
+    private var routingControlsBar: some View {
+        Group {
+            if usesCompactChrome {
+                VStack(alignment: .leading, spacing: 10) {
+                    routingModeControl
+                    Divider()
+                    systemProxyControl
+                }
+            } else {
+                HStack(alignment: .center, spacing: 18) {
+                    routingModeControl
+                    Divider()
+                        .frame(height: 38)
+                    systemProxyControl
+                    Spacer(minLength: 0)
+                }
+            }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 9)
+        .padding(.vertical, 10)
         .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
-    private var systemProxyToggle: some View {
-        Toggle("System Proxy", isOn: systemProxyBinding)
+    private var routingModeControl: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 7) {
+                Text("Routing Mode")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if model.pendingMode != nil {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Applying…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            routingModePicker(width: usesCompactChrome ? 250 : 210)
+        }
+    }
+
+    private var systemProxyControl: some View {
+        Toggle(isOn: systemProxyBinding) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("macOS System Proxy")
+                Text(systemProxyControlSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
             .toggleStyle(.switch)
             .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
+            .accessibilityHint("Routes macOS HTTP, HTTPS, and SOCKS traffic through MClash")
+    }
+
+    private var systemProxyControlSubtitle: String {
+        if let pending = model.pendingSystemProxyEnabled {
+            return pending ? "Turning on…" : "Turning off…"
+        }
+        return model.systemProxyEnabled ? "macOS apps are routed through MClash" : "Core only; macOS routing is off"
     }
 
     private var localEndpointLabels: some View {
@@ -268,12 +376,12 @@ struct ProxiesView: View {
     private func inspectorButton(group: MihomoProxy) -> some View {
         if inspectorPresentation == .popover {
             Button {
-                inspectorPresented.toggle()
+                inspectorPopoverPresented.toggle()
             } label: {
                 Label("Inspector", systemImage: "sidebar.right")
             }
-            .help(inspectorPresented ? "Hide Inspector" : "Show Inspector")
-            .popover(isPresented: $inspectorPresented, arrowEdge: .top) {
+            .help(inspectorPopoverPresented ? "Hide Inspector" : "Show Inspector")
+            .popover(isPresented: $inspectorPopoverPresented, arrowEdge: .top) {
                 ProxyInspectorView(
                     model: model,
                     group: group,
@@ -295,7 +403,10 @@ struct ProxiesView: View {
     private var attachedInspectorBinding: Binding<Bool> {
         Binding(
             get: { inspectorPresented && inspectorPresentation == .attached },
-            set: { inspectorPresented = $0 }
+            set: { presented in
+                guard inspectorPresentation == .attached else { return }
+                inspectorPresented = presented
+            }
         )
     }
 
@@ -304,10 +415,8 @@ struct ProxiesView: View {
             groupSections(groups: groups)
         }
         .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
         .contentMargins(.vertical, 8, for: .scrollContent)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .accessibilityLabel("Proxy groups with nested groups first")
+        .accessibilityLabel("Proxy groups in routing presentation order")
     }
 
     private func compactGroupPicker(groups: ProxyGroupPartitionSnapshot) -> some View {
@@ -351,7 +460,6 @@ struct ProxiesView: View {
         .controlSize(.regular)
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
-        .background(.bar)
         .help(current?.name ?? "Choose a proxy group")
         .popover(isPresented: $groupNavigatorPresented, arrowEdge: .bottom) {
             List(selection: compactGroupSelectionBinding) {
@@ -413,43 +521,13 @@ struct ProxiesView: View {
     }
 
     @ViewBuilder
-    private func groupDetail(groups: ProxyGroupPartitionSnapshot) -> some View {
+    private func listGroupDetail(groups: ProxyGroupPartitionSnapshot) -> some View {
         if let group = selectedGroup(in: groups) {
             VStack(spacing: 0) {
-                groupHeader(group)
-
-                if let fixed = group.fixedOverride,
-                   group.groupBehavior?.supportsClearingOverride == true {
-                    automaticOverrideBanner(group: group, fixed: fixed)
-                }
-
-                Divider()
-
-                switch workspaceMode {
-                case .list:
-                    proxyNodeList(group)
-                        .transition(.opacity)
-                case .topology:
-                    ProxyTopologyCanvas(
-                        topology: model.proxyTopology,
-                        rootGroup: group.name,
-                        selectedPath: model.proxySelectionPaths[group.name],
-                        delays: model.proxyDelayMap(for: group.name),
-                        stateScope: stateScope,
-                        focusedNodeName: $focusedNodeName,
-                        openGroup: openGroup,
-                        showGroupList: { name in
-                            openGroup(name)
-                            workspaceMode = .list
-                        }
-                    )
-                    .transition(.opacity)
-                }
+                groupDetailHeader(group)
+                proxyNodeList(group)
             }
-            .animation(
-                reduceMotion ? nil : .easeOut(duration: 0.18),
-                value: workspaceMode
-            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .windowBackgroundColor))
         } else {
             ContentUnavailableView(
@@ -458,6 +536,49 @@ struct ProxiesView: View {
                 description: Text("Select a group to inspect its route and nodes.")
             )
         }
+    }
+
+    @ViewBuilder
+    private func topologyGroupDetail(groups: ProxyGroupPartitionSnapshot) -> some View {
+        if let group = selectedGroup(in: groups) {
+            VStack(spacing: 0) {
+                groupDetailHeader(group)
+                ProxyTopologyCanvas(
+                    topology: model.proxyTopology,
+                    rootGroup: group.name,
+                    selectedPath: model.proxySelectionPaths[group.name],
+                    delays: model.proxyDelayMap(for: group.name),
+                    stateScope: stateScope,
+                    focusedNodeName: $focusedNodeName,
+                    openGroup: openGroup,
+                    showGroupList: { name in
+                        openGroup(name)
+                        workspaceMode = .list
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
+        } else {
+            ContentUnavailableView(
+                "Choose a proxy group",
+                systemImage: "sidebar.left",
+                description: Text("Select a group to inspect its route topology.")
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func groupDetailHeader(_ group: MihomoProxy) -> some View {
+        groupHeader(group)
+
+        if let fixed = group.fixedOverride,
+           group.groupBehavior?.supportsClearingOverride == true {
+            automaticOverrideBanner(group: group, fixed: fixed)
+        }
+
+        Divider()
     }
 
     private func groupHeader(_ group: MihomoProxy) -> some View {
@@ -625,14 +746,14 @@ struct ProxiesView: View {
 
     private var modeBinding: Binding<String> {
         Binding(
-            get: { routingMode },
+            get: { model.pendingMode ?? routingMode },
             set: { mode in Task { await model.setMode(mode) } }
         )
     }
 
     private var systemProxyBinding: Binding<Bool> {
         Binding(
-            get: { model.systemProxyEnabled },
+            get: { model.pendingSystemProxyEnabled ?? model.systemProxyEnabled },
             set: { enabled in Task { await model.setSystemProxyEnabled(enabled) } }
         )
     }
@@ -749,25 +870,27 @@ struct ProxiesView: View {
         focusedNodeName = model.proxiesByName[name]?.now
     }
 
-    private func updateWorkspaceLayout(_ width: CGFloat) {
+    private var usesCompactChrome: Bool {
+        measuredWorkspaceWidth > 0 && measuredWorkspaceWidth < 640
+    }
+
+    private var usesCompactTopologyNavigation: Bool {
+        measuredWorkspaceWidth == 0 || measuredWorkspaceWidth < 920
+    }
+
+    private func updateWorkspaceWidth(_ width: CGFloat) {
         guard width > 0 else { return }
 
-        let next = ProxyWorkspaceLayout(width: width)
-        let nextInspectorPresentation = ProxyInspectorPresentation(width: width)
-        if !workspaceLayoutIsResolved {
-            workspaceLayout = next
-            inspectorPresentation = nextInspectorPresentation
-            workspaceLayoutIsResolved = true
-            return
-        }
+        measuredWorkspaceWidth = width
+        let reconstructedFullWidth = width
+            + (inspectorPresented && inspectorPresentation == .attached ? 340 : 0)
+        let nextInspectorPresentation = inspectorPresentation.presentation(
+            forFullWidth: reconstructedFullWidth,
+            workspaceMode: workspaceMode
+        )
 
-        if workspaceLayout != next || inspectorPresentation != nextInspectorPresentation {
-            let presentationChanged = inspectorPresentation != nextInspectorPresentation
-            workspaceLayout = next
+        if inspectorPresentation != nextInspectorPresentation {
             inspectorPresentation = nextInspectorPresentation
-            if inspectorPresented, presentationChanged {
-                inspectorPresented = false
-            }
         }
     }
 
@@ -798,12 +921,15 @@ struct ProxiesView: View {
 
 }
 
-private enum ProxyWorkspaceLayout: Equatable {
-    case compact
-    case split
+struct ProxyWorkspaceSizing {
+    static let dividerWidth: CGFloat = 1
 
-    init(width: CGFloat) {
-        self = width < 860 ? .compact : .split
+    static func groupSidebarWidth(for workspaceWidth: CGFloat) -> CGFloat {
+        min(240, max(190, workspaceWidth * 0.22))
+    }
+
+    static func detailWidth(for workspaceWidth: CGFloat, sidebarWidth: CGFloat) -> CGFloat {
+        max(0, workspaceWidth - sidebarWidth - dividerWidth)
     }
 }
 
@@ -811,8 +937,16 @@ private enum ProxyInspectorPresentation: Equatable {
     case popover
     case attached
 
-    init(width: CGFloat) {
-        self = width < 940 ? .popover : .attached
+    func presentation(forFullWidth width: CGFloat, workspaceMode: ProxyWorkspaceMode) -> Self {
+        let attachWidth: CGFloat = workspaceMode == .list ? 1_180 : 1_360
+        let detachWidth: CGFloat = workspaceMode == .list ? 1_060 : 1_240
+
+        switch self {
+        case .popover:
+            return width >= attachWidth ? Self.attached : Self.popover
+        case .attached:
+            return width < detachWidth ? Self.popover : Self.attached
+        }
     }
 }
 
@@ -823,11 +957,15 @@ private enum ProxyWorkspaceMode: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-private struct ProxyGroupPartitionSnapshot {
+struct ProxyGroupPartitionSnapshot {
     let available: [MihomoProxy]
     let roots: [MihomoProxy]
     let nested: [MihomoProxy]
     let special: [MihomoProxy]
+
+    var orderedForPresentation: [MihomoProxy] {
+        nested + roots + special
+    }
 
     @MainActor
     init(model: AppModel, routingMode: String) {
@@ -978,6 +1116,7 @@ private struct ProxyNodeListContent: View {
                 nodeName: nodeName,
                 isSelected: group.now == nodeName,
                 isFixed: group.fixedOverride == nodeName,
+                isPending: model.pendingProxySelections[group.name] == nodeName,
                 isAlive: model.proxyAlive(for: nodeName, in: group.name),
                 delay: model.proxyDelay(for: nodeName, in: group.name),
                 supportsSelection: group.groupBehavior?.supportsSelectionUpdate == true,
@@ -1011,6 +1150,7 @@ private struct ProxyNodeListRow: View {
     let nodeName: String
     let isSelected: Bool
     let isFixed: Bool
+    let isPending: Bool
     let isAlive: Bool?
     let delay: Int?
     let supportsSelection: Bool
@@ -1045,7 +1185,7 @@ private struct ProxyNodeListRow: View {
 
     private var selectionButton: some View {
         Button(action: onSelect) {
-            if selectionInProgress, isSelected {
+            if isPending {
                 ProgressView()
                     .controlSize(.small)
                     .frame(width: 18, height: 18)
@@ -1133,6 +1273,7 @@ private struct ProxyNodeListRow: View {
 
     private var selectionHelp: String {
         if !supportsSelection { return "This group does not support manual node selection" }
+        if isPending { return "Switching to \(nodeName)" }
         if !canSelect { return "Proxy selection is temporarily unavailable" }
         if isFixed { return "Pinned automatic preference" }
         return isSelected ? "Currently selected" : "Select \(nodeName)"
@@ -1165,6 +1306,7 @@ private struct ProxyNodeListRow: View {
 
 struct ProxyPathStrip: View {
     let path: ProxySelectionPath
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1183,7 +1325,7 @@ struct ProxyPathStrip: View {
                         .padding(.vertical, 4)
                         .background(
                             index == path.route.count - 1
-                                ? Color.accentColor.opacity(0.13)
+                                ? Color.accentColor.opacity(contrast == .increased ? 0.22 : 0.13)
                                 : Color(nsColor: .controlBackgroundColor),
                             in: Capsule()
                         )

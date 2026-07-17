@@ -376,7 +376,7 @@ private struct LogLineRow: View {
                             .foregroundStyle(sourceColor)
                         Text(line.timestamp, format: .dateTime.hour().minute().second())
                             .monospacedDigit()
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                     .font(.caption)
 
@@ -388,7 +388,7 @@ private struct LogLineRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(line.timestamp, format: .dateTime.hour().minute().second())
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .frame(width: 72, alignment: .trailing)
 
                     Label(sourceTitle, systemImage: sourceSymbol)

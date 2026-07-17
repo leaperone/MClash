@@ -75,8 +75,9 @@ before testing failure scenarios.
   server-confirmed mode. With the default Settings option enabled, confirm old
   connections close so the new route takes effect immediately; disable the
   option and confirm existing connections are preserved.
-- In the menu bar popup, confirm Rule shows only relevant rule groups, Global
-  shows only GLOBAL, and Direct hides proxy-group controls entirely.
+- In the menu bar popup, confirm Rule uses the same **Nested Groups → Entry
+  Groups → Special Groups** order as the Proxies tab, Global shows only
+  GLOBAL, and Direct hides proxy-group controls entirely.
 - Switch among at least three profiles. When connected, confirm MClash validates
   before interruption, reconnects automatically, and restores system proxy only
   after the new controller is ready.
@@ -91,18 +92,28 @@ before testing failure scenarios.
 - Proxies: confirm Rule groups follow the subscription YAML order rather than
   alphabetical order. Global must show only GLOBAL, and Direct must show a
   clear bypass state instead of irrelevant node controls.
-- Proxies: confirm **Nested Groups** is the first Sidebar section. Resize the
-  detail area until node rows and group controls enter their compact layouts;
-  long names must remain distinguishable and available in help text.
+- Proxies: confirm the Sidebar follows **Nested Groups → Entry Groups → Special
+  Groups**. Resize the detail area to the minimum width; List must still show
+  the group Sidebar and node list, and long names must remain distinguishable
+  and available in help text.
+- Proxies: at default and wide window widths, confirm the group and node columns
+  consume the complete workspace without an unused blank region. On a wide
+  window, open Inspector and confirm it forms a stable third column without
+  hiding the group Sidebar or leaving a gap between nodes and details.
+- Resize the main window below 900×600 points. Confirm AppKit enforces that
+  minimum content size and every destination remains usable at the boundary.
 - Proxies: with a large subscription and live connections, enter and leave the
   tab repeatedly, scroll the node list, and remain on the page for at least
   three five-second proxy refresh cycles. The window, spinner, scrolling, and
-  sidebar selection must remain responsive. Inspector should start closed and
-  opening it must not stall live updates.
-- Proxies: switch between **List** and **Topology**. Confirm nested groups appear
-  once, the highlighted route follows `group → child group → final node`,
-  dialer dependencies use a distinct dashed connection, and large groups use a
-  “more nodes” summary instead of rendering every node at once.
+  sidebar selection must remain responsive. Inspector should start as the third
+  column on a wide window and remain closed on a narrow window; showing either
+  presentation must not stall live updates.
+- Proxies: switch between **List** and **Topology**. Confirm List retains its
+  two-column structure while the independently rendered Topology may use a
+  compact group navigator at narrower widths. Confirm nested groups appear once,
+  the highlighted route follows `group → child group → final node`, dialer
+  dependencies use a distinct dashed connection, and large groups use a “more
+  nodes” summary instead of rendering every node at once.
 - Proxies: select a nested group from the Sidebar, from a list-row chevron, and
   by double-clicking a topology group. Confirm the List, Topology, and Inspector
   stay synchronized and the current route remains readable with long names.
@@ -156,6 +167,24 @@ before testing failure scenarios.
 - Test offline startup, subscription HTTP errors, provider update errors, delay
   timeouts, and controller degradation. Confirm errors remain dismissible and
   do not leave an invisible modal layer.
+
+## 7. Signed application updates
+
+- Install a notarized release in `/Applications`, then choose **MClash > Check
+  for Updates…**. Confirm Sparkle presents its native result and never opens a
+  browser as the primary update path.
+- Toggle automatic checks and automatic downloads in Settings, relaunch, and
+  confirm both choices persist.
+- For an update test, run MClash with the core connected and macOS System Proxy
+  enabled. Accept **Install and Relaunch** and confirm MClash restores the prior
+  network proxy state, stops mihomo, installs the signed update, and relaunches.
+- Simulate a system-proxy restoration failure before accepting the update.
+  Confirm MClash cancels termination and Sparkle does not replace the running
+  application until restoration succeeds or the user explicitly chooses to
+  quit anyway.
+- Inspect the shipped `Info.plist` and confirm `SUFeedURL` targets the current
+  repository, `SUPublicEDKey` is populated, and the downloaded archive's
+  EdDSA signature is accepted. An unsigned or modified archive must fail.
 
 ## Release sign-off
 

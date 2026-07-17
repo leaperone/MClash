@@ -31,4 +31,13 @@ struct UIFoundationTests {
         #expect(formattedCount(0) == "0")
         #expect(formattedCount(12_345) != "12345")
     }
+
+    @Test("Runtime timestamps reject provider zero values")
+    func runtimeTimestampValidation() {
+        #expect(parsedRuntimeTimestamp("0001-01-01T00:00:00Z") == nil)
+        #expect(parsedRuntimeTimestamp("not-a-date") == nil)
+
+        let timestamp = parsedRuntimeTimestamp("2026-07-16T08:00:00+08:00")
+        #expect(timestamp != nil)
+    }
 }

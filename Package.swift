@@ -9,11 +9,24 @@ let package = Package(
     products: [
         .executable(name: "MClash", targets: ["MClashApp"])
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/sparkle-project/Sparkle",
+            exact: "2.9.4"
+        )
+    ],
     targets: [
         .executableTarget(
             name: "MClashApp",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             path: "Sources/MClashApp",
-            resources: [.process("Resources")]
+            resources: [.process("Resources")],
+            linkerSettings: [
+                .linkedFramework("ServiceManagement"),
+                .linkedFramework("UserNotifications"),
+            ]
         ),
         .testTarget(
             name: "MClashTests",

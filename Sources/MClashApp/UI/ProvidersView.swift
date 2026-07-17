@@ -3,14 +3,16 @@ import SwiftUI
 struct ProvidersView: View {
     @Bindable var model: AppModel
     @State private var layout: ProvidersLayout = .wide
+    @State private var hasCompletedInitialLoad = false
 
     var body: some View {
         Group {
             if !model.isConnected {
-                ContentUnavailableView(
-                    "Connect to manage providers",
+                DisconnectedUnavailableView(
+                    model: model,
+                    title: "Connect to manage providers",
                     systemImage: "shippingbox",
-                    description: Text("Provider status and update controls come from the active core.")
+                    description: "Provider status and update controls come from the active core."
                 )
             } else if case let .degraded(message) = model.controllerState {
                 ContentUnavailableView {
@@ -22,7 +24,8 @@ struct ProvidersView: View {
                         .disabled(!model.canPerform(.connection))
                     Button("View Logs") { model.selection = .logs }
                 }
-            } else if model.isPerforming(.refreshProviders), allProvidersAreEmpty {
+            } else if allProvidersAreEmpty,
+                      model.isPerforming(.refreshProviders) || !hasCompletedInitialLoad {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Loading providers…")
@@ -108,7 +111,12 @@ struct ProvidersView: View {
             }
         }
         .task(id: model.controllerIsReady) {
+            guard model.controllerIsReady else {
+                hasCompletedInitialLoad = false
+                return
+            }
             await loadProvidersWhenAvailable()
+            hasCompletedInitialLoad = true
         }
         .toolbar {
             Button {
@@ -233,8 +241,11 @@ private struct ProxyProviderRow: View {
                 Task { await model.healthCheckProxyProvider(provider.name) }
             } label: {
                 if model.isPerforming(.healthCheckProxyProvider(provider.name)) {
-                    ProgressView()
-                        .controlSize(.small)
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking…")
+                    }
                 } else {
                     Label("Health Check", systemImage: "speedometer")
                 }
@@ -248,8 +259,11 @@ private struct ProxyProviderRow: View {
                 Task { await model.updateProxyProvider(provider.name) }
             } label: {
                 if model.isPerforming(.updateProxyProvider(provider.name)) {
-                    ProgressView()
-                        .controlSize(.small)
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Updating…")
+                    }
                 } else {
                     Label("Update", systemImage: "arrow.clockwise")
                 }
@@ -274,7 +288,7 @@ private struct ProxyProviderRow: View {
             "\(formattedCount(provider.proxies.count)) nodes",
             "\(formattedCount(alive)) available",
         ]
-        if let updatedAt = provider.updatedAt, let date = providerDate(updatedAt) {
+        if let updatedAt = provider.updatedAt, let date = parsedRuntimeTimestamp(updatedAt) {
             parts.append("updated \(date.formatted(.relative(presentation: .named)))")
         }
         return parts.joined(separator: " · ")
@@ -342,8 +356,11 @@ private struct RuleProviderRow: View {
             Task { await model.updateRuleProvider(provider.name) }
         } label: {
             if model.isPerforming(.updateRuleProvider(provider.name)) {
-                ProgressView()
-                    .controlSize(.small)
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Updating…")
+                }
             } else {
                 Label("Update", systemImage: "arrow.clockwise")
             }
@@ -353,16 +370,9 @@ private struct RuleProviderRow: View {
     }
 
     private var updatedLabel: String {
-        guard let date = providerDate(provider.updatedAt) else {
-            return provider.updatedAt
+        guard let date = parsedRuntimeTimestamp(provider.updatedAt) else {
+            return "Not updated yet"
         }
         return date.formatted(.relative(presentation: .named))
     }
-}
-
-private func providerDate(_ value: String) -> Date? {
-    let fractional = ISO8601DateFormatter()
-    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = fractional.date(from: value) { return date }
-    return ISO8601DateFormatter().date(from: value)
 }

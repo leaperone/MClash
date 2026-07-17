@@ -10,6 +10,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func registerMainWindow(_ window: NSWindow) {
         window.identifier = NSUserInterfaceItemIdentifier("MClash.MainWindow")
+        window.contentMinSize = NSSize(
+            width: MClashLayout.mainWindowMinimumWidth,
+            height: MClashLayout.mainWindowMinimumHeight
+        )
         mainWindow = window
         guard shouldPresentInitialMainWindow else { return }
         shouldPresentInitialMainWindow = false
@@ -68,7 +72,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         return alert
     }
 
-    private func showMainWindow() {
+    func showMainWindow() {
         guard let mainWindow else {
             shouldPresentInitialMainWindow = true
             return

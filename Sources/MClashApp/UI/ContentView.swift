@@ -2,9 +2,11 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var model: AppModel
+    @Bindable var applicationUpdater: ApplicationUpdater
     @AppStorage("mclash.navigation.destination") private var restoredDestinationRawValue =
         AppModel.Destination.overview.rawValue
     @State private var hasRestoredDestination = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         NavigationSplitView {
@@ -23,6 +25,10 @@ struct ContentView: View {
 
                 Section("Diagnostics") {
                     destinationRow(.logs)
+                }
+
+                Section("Application") {
+                    destinationRow(.settings)
                 }
             }
             .listStyle(.sidebar)
@@ -47,7 +53,7 @@ struct ContentView: View {
                             ? nil
                             : { model.errorMessage = nil }
                     )
-                    .transition(.opacity)
+                    .transition(errorTransition)
                 }
                 destinationView
             }
@@ -59,6 +65,29 @@ struct ContentView: View {
         .onChange(of: model.selection) { _, destination in
             guard let destination else { return }
             restoredDestinationRawValue = destination.rawValue
+        }
+        .animation(
+            reduceMotion
+                ? .easeOut(duration: 0.14)
+                : .spring(response: 0.3, dampingFraction: 1),
+            value: activeErrorMessage
+        )
+        .alert(
+            "Import Subscription?",
+            isPresented: pendingSubscriptionImportIsPresented,
+            presenting: model.pendingSubscriptionImport
+        ) { request in
+            Button("Cancel", role: .cancel) {
+                model.cancelPendingSubscriptionImport()
+            }
+            Button("Import") {
+                Task { await model.confirmPendingSubscriptionImport(request) }
+            }
+        } message: { request in
+            Text(
+                "Download a subscription from \(request.displayHost)? "
+                    + "It will be added to Profiles without changing your active route."
+            )
         }
     }
 
@@ -72,6 +101,24 @@ struct ContentView: View {
             return message
         }
         return model.errorMessage
+    }
+
+    private var pendingSubscriptionImportIsPresented: Binding<Bool> {
+        Binding(
+            get: { model.pendingSubscriptionImport != nil },
+            // Alert actions own the pending request. Keeping the setter inert
+            // prevents SwiftUI's automatic dismissal from racing the async
+            // confirmation action before it consumes the request.
+            set: { _ in }
+        )
+    }
+
+    private var errorTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .asymmetric(
+            insertion: .offset(y: -8).combined(with: .opacity),
+            removal: .opacity
+        )
     }
 
     private func restoreDestination() {
@@ -110,6 +157,8 @@ struct ContentView: View {
             ConnectionsView(model: model)
         case .logs:
             LogsView(model: model)
+        case .settings:
+            SettingsView(model: model, applicationUpdater: applicationUpdater)
         }
     }
 }

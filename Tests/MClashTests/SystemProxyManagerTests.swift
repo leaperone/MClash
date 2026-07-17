@@ -101,6 +101,40 @@ struct SystemProxyManagerTests {
         #expect(backend.currentStates == originalStates)
     }
 
+    @Test("Custom bypass domains are applied and guard comparison detects drift")
+    func appliesBypassAndDetectsDrift() async throws {
+        let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+        let state = try SystemProxyServiceState(
+            service: service,
+            protocolExists: true,
+            configuration: originalConfiguration
+        )
+        let backend = FakeSystemProxyBackend(enabledServices: [service], states: [state])
+        let manager = SystemProxyManager(backend: backend)
+        let endpoints = try LocalSystemProxyEndpoints(mixedPort: 7_890)
+        let bypass = ["localhost", "*.local", "example.internal"]
+
+        try await manager.apply(endpoints: endpoints, bypassDomains: bypass)
+
+        let configuration = try #require(backend.currentStates.first?.configuration)
+        #expect(
+            configuration[SystemProxyKeys.exceptionsList]
+                == .array(bypass.map(SystemProxyPropertyValue.string))
+        )
+        #expect(
+            try await manager.configurationMatches(
+                endpoints: endpoints,
+                bypassDomains: bypass
+            )
+        )
+        #expect(
+            try await !manager.configurationMatches(
+                endpoints: try LocalSystemProxyEndpoints(mixedPort: 7_891),
+                bypassDomains: bypass
+            )
+        )
+    }
+
     @Test("Codable snapshot persists and reloads all supported property-list types")
     func persistenceRoundTrip() async throws {
         let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")

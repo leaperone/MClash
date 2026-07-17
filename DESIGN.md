@@ -134,7 +134,12 @@ MClash is flat by default. Depth comes from native window chrome, sidebar/conten
 - **Responsive Structure:** Overview-style dashboards use a main/secondary
   column on wide windows and return to one column when either side would become
   unreadable. Controls hide or consolidate secondary metadata before truncating
-  the primary label.
+  the primary label. The main window enforces a 900×600-point minimum content
+  size. Proxies List always preserves its group Sidebar and node list at that
+  boundary; the node list flexes to consume all remaining workspace instead of
+  leaving a decorative blank column. A wide Inspector forms a third useful
+  column. Topology is a separate rendering strategy: it may replace its Sidebar
+  with a compact group navigator when the canvas needs the horizontal space.
 
 ### Inputs / Fields
 

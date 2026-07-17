@@ -95,7 +95,10 @@ public actor ProfileStore {
             eTag: response.eTag,
             lastModified: response.lastModified,
             lastCheckedAt: checkedAt,
-            lastSuccessfulUpdateAt: checkedAt
+            lastSuccessfulUpdateAt: checkedAt,
+            providerSuggestedUpdateIntervalHours: response.suggestedUpdateIntervalHours,
+            usage: response.usage,
+            webPageURL: response.webPageURL
         )
         return try createProfile(name: name, yaml: data, origin: .remote(remote))
     }
@@ -156,6 +159,71 @@ public actor ProfileStore {
             preferredName: "active-profile.json"
         )
         try await replacer.commit(receipt)
+    }
+
+    @discardableResult
+    public func renameProfile(_ id: ProfileID, to name: String) async throws -> ProfileMetadata {
+        var profile = try metadata(for: id)
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { throw ProfileStoreError.emptyProfileName }
+        profile.name = normalizedName
+        profile.updatedAt = now()
+        try await persistMetadata(profile, preferredName: "profile-metadata.json")
+        return profile
+    }
+
+    @discardableResult
+    public func updateRemoteProfileSettings(
+        _ id: ProfileID,
+        name: String,
+        subscriptionURL: URL,
+        automaticUpdatesEnabled: Bool,
+        updateIntervalHours: Int?
+    ) async throws -> ProfileMetadata {
+        try validateRemoteURL(subscriptionURL)
+        if let updateIntervalHours, !(1...8_760).contains(updateIntervalHours) {
+            throw ProfileStoreError.invalidUpdateInterval
+        }
+
+        var profile = try metadata(for: id)
+        guard case var .remote(remote) = profile.origin else {
+            throw ProfileStoreError.profileIsNotRemote(id)
+        }
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { throw ProfileStoreError.emptyProfileName }
+
+        if remote.url != subscriptionURL {
+            remote = RemoteSubscriptionMetadata(
+                url: subscriptionURL,
+                automaticUpdatesEnabled: automaticUpdatesEnabled,
+                updateIntervalHours: updateIntervalHours
+            )
+        } else {
+            remote.automaticUpdatesEnabled = automaticUpdatesEnabled
+            remote.updateIntervalHours = updateIntervalHours
+        }
+        profile.name = normalizedName
+        profile.origin = .remote(remote)
+        profile.updatedAt = now()
+        try await persistMetadata(profile, preferredName: "subscription-settings.json")
+        return profile
+    }
+
+    public func remoteProfileIDs() throws -> [ProfileID] {
+        try profiles().compactMap { profile in
+            guard case .remote = profile.origin else { return nil }
+            return profile.id
+        }
+    }
+
+    public func remoteProfileIDsDueForAutomaticUpdate(at date: Date) throws -> [ProfileID] {
+        try profiles().compactMap { profile in
+            guard case let .remote(remote) = profile.origin,
+                  remote.isAutomaticUpdateDue(at: date) else {
+                return nil
+            }
+            return profile.id
+        }
     }
 
     public func stageRuntimeConfiguration(for id: ProfileID) async throws -> URL {
@@ -245,6 +313,11 @@ public actor ProfileStore {
         if response.statusCode == 304 {
             remote.eTag = response.eTag ?? remote.eTag
             remote.lastModified = response.lastModified ?? remote.lastModified
+            remote.providerSuggestedUpdateIntervalHours =
+                response.suggestedUpdateIntervalHours
+                ?? remote.providerSuggestedUpdateIntervalHours
+            remote.usage = response.usage ?? remote.usage
+            remote.webPageURL = response.webPageURL ?? remote.webPageURL
             profile.origin = .remote(remote)
             let metadataReceipt = try await replaceEncoded(
                 profile,
@@ -282,6 +355,11 @@ public actor ProfileStore {
             remote.eTag = response.eTag
             remote.lastModified = response.lastModified
             remote.lastSuccessfulUpdateAt = checkedAt
+            remote.providerSuggestedUpdateIntervalHours =
+                response.suggestedUpdateIntervalHours
+                ?? remote.providerSuggestedUpdateIntervalHours
+            remote.usage = response.usage ?? remote.usage
+            remote.webPageURL = response.webPageURL ?? remote.webPageURL
             profile.origin = .remote(remote)
             profile.updatedAt = checkedAt
 
@@ -402,6 +480,18 @@ public actor ProfileStore {
         }
     }
 
+    private func persistMetadata(
+        _ metadata: ProfileMetadata,
+        preferredName: String
+    ) async throws {
+        let receipt = try await replaceEncoded(
+            metadata,
+            at: layout.metadataURL(for: metadata.id),
+            preferredName: preferredName
+        )
+        try await replacer.commit(receipt)
+    }
+
     private func encode<T: Encodable>(_ value: T) throws -> Data {
         try encoder.encode(value)
     }
@@ -442,6 +532,7 @@ public enum ProfileStoreError: Error, Equatable, Sendable {
     case unexpectedHTTPStatus(Int)
     case emptyConfiguration
     case emptyProfileName
+    case invalidUpdateInterval
 }
 
 extension ProfileStoreError: LocalizedError {
@@ -465,6 +556,8 @@ extension ProfileStoreError: LocalizedError {
             "The profile configuration is empty."
         case .emptyProfileName:
             "Enter a name for the profile."
+        case .invalidUpdateInterval:
+            "Subscription update intervals must be between 1 and 8,760 hours."
         }
     }
 }

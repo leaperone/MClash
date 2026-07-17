@@ -18,6 +18,12 @@ final class AppModel {
         let upload: Int64
     }
 
+    struct ClosedConnectionRecord: Identifiable {
+        let id = UUID()
+        let connection: MihomoConnection
+        let closedAt: Date
+    }
+
     private struct StoredProfileSnapshot {
         let metadata: ProfileMetadata
         let configurationData: Data
@@ -49,9 +55,16 @@ final class AppModel {
         case connection
         case importProfile
         case addRemoteProfile
+        case updateProfile(ProfileID)
         case activateProfile(ProfileID)
         case refreshProfile(ProfileID)
+        case refreshAllProfiles
         case removeProfile(ProfileID)
+        case changeRuntimeSettings
+        case changeSystemProxySettings
+        case changeApplicationSettings
+        case exportBackup
+        case restoreBackup
         case changeMode
         case changeSystemProxy
         case selectProxy(String)
@@ -75,6 +88,7 @@ final class AppModel {
         case providers
         case connections
         case logs
+        case settings
 
         var id: Self { self }
 
@@ -87,6 +101,7 @@ final class AppModel {
             case .providers: "Providers"
             case .connections: "Connections"
             case .logs: "Logs"
+            case .settings: "Settings"
             }
         }
 
@@ -99,6 +114,7 @@ final class AppModel {
             case .providers: "shippingbox"
             case .connections: "arrow.left.arrow.right"
             case .logs: "text.alignleft"
+            case .settings: "gearshape"
             }
         }
     }
@@ -111,6 +127,7 @@ final class AppModel {
     var profiles: [ProfileMetadata] = []
     var activeProfileID: ProfileID?
     var runtimeConfig: MihomoConfig?
+    private(set) var runtimeOverrides: RuntimeOverrides = .empty
     var proxyGroups: [MihomoProxy] = []
     var proxiesByName: [String: MihomoProxy] = [:]
     var proxyTopology: ProxyTopology = .empty
@@ -130,6 +147,7 @@ final class AppModel {
     var trafficHistory: [TrafficSample] = []
     var connections: MihomoConnectionSnapshot? {
         didSet {
+            recordClosedConnections(previous: oldValue, current: connections)
             proxyInspectorTrafficRevision &+= 1
             connectionsUseGlobalProxy = connections?.connections.contains {
                 $0.chains.contains("GLOBAL")
@@ -137,6 +155,7 @@ final class AppModel {
             updateGlobalProxyGroupRelevance()
         }
     }
+    private(set) var recentlyClosedConnections: [ClosedConnectionRecord] = []
     var routeTrafficEntries: [TrafficAttribution.Entry] = [] {
         didSet {
             proxyInspectorTrafficRevision &+= 1
@@ -145,7 +164,19 @@ final class AppModel {
     private(set) var proxyInspectorTrafficRevision: UInt64 = 0
     private(set) var globalProxyGroupIsRelevant = false
     var systemProxyState: SystemProxyState = .off
+    private(set) var systemProxyPreferences: SystemProxyPreferences = .defaults
+    private(set) var launchAtLogin = false
+    private(set) var notificationsEnabled = false
     var controllerState: ControllerState = .idle
+    private(set) var pendingSubscriptionImport: SubscriptionImportRequest?
+    private(set) var pendingMode: String?
+    private(set) var pendingSystemProxyEnabled: Bool?
+    private(set) var pendingProxySelections: [String: String] = [:]
+    var autoConnectOnLaunch: Bool {
+        didSet {
+            preferenceDefaults.set(autoConnectOnLaunch, forKey: Self.autoConnectOnLaunchKey)
+        }
+    }
     var autoEnableSystemProxy: Bool {
         didSet {
             preferenceDefaults.set(autoEnableSystemProxy, forKey: Self.autoEnableSystemProxyKey)
@@ -167,9 +198,13 @@ final class AppModel {
     private let secretStore: any CoreSecretProviding
     private let profileStore: ProfileStore?
     private let profileLayout: ProfileDirectoryLayout?
+    private let runtimeOverrideCoordinator: RuntimeOverrideActivationCoordinator?
+    private let systemProxyPreferencesStore: SystemProxyPreferencesStore?
     private let systemProxyManager: SystemProxyManager
     private let localPortProbe: LocalPortProbe
     private let preferenceDefaults: UserDefaults
+    private let profileBackupService = ProfileBackupService()
+    private let notificationCenter = AppNotificationCenter()
     private var managedMixedPort: Int?
     private var rulesUseGlobalProxy = false
     private var connectionsUseGlobalProxy = false
@@ -181,11 +216,13 @@ final class AppModel {
     private var connectionsTask: Task<Void, Never>?
     private var apiLogTask: Task<Void, Never>?
     private var proxyRefreshTask: Task<Void, Never>?
+    private var subscriptionUpdateTask: Task<Void, Never>?
     private var controllerGeneration = 0
     private var proxyRefreshRevision = 0
     private var proxyTopologyInput: ProxyTopologyInput?
     private var systemProxyEnableOperation: (id: UUID, task: Task<Void, Never>)?
     private var systemProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
+    private var systemProxyGuardTask: Task<Void, Never>?
     private var crashProxyRestoreOperation: (id: UUID, task: Task<Bool, Never>)?
     private var shouldReenableSystemProxyAfterCrash = false
     private var contextualProxyDelays: [ProxyDelayContextKey: Int] = [:]
@@ -213,6 +250,11 @@ final class AppModel {
         self.systemProxyManager = systemProxyManager
         self.localPortProbe = localPortProbe
         self.preferenceDefaults = preferenceDefaults
+        if preferenceDefaults.object(forKey: Self.autoConnectOnLaunchKey) == nil {
+            autoConnectOnLaunch = true
+        } else {
+            autoConnectOnLaunch = preferenceDefaults.bool(forKey: Self.autoConnectOnLaunchKey)
+        }
         if preferenceDefaults.object(forKey: Self.autoEnableSystemProxyKey) == nil {
             autoEnableSystemProxy = true
         } else {
@@ -225,13 +267,27 @@ final class AppModel {
                 forKey: Self.closeConnectionsOnRoutingChangeKey
             )
         }
+        notificationsEnabled = preferenceDefaults.bool(forKey: Self.notificationsEnabledKey)
+        launchAtLogin = LoginItemManager().isEnabled
 
         if let layout = profileDirectoryLayout ?? (try? ProfileDirectoryLayout.applicationSupport()) {
             profileLayout = layout
             profileStore = profileStoreOverride ?? (try? ProfileStore(layout: layout))
+            if let overrideStore = try? RuntimeOverrideStore(profileLayout: layout) {
+                runtimeOverrideCoordinator = RuntimeOverrideActivationCoordinator(
+                    overrideStore: overrideStore
+                )
+            } else {
+                runtimeOverrideCoordinator = nil
+            }
+            systemProxyPreferencesStore = try? SystemProxyPreferencesStore(
+                profileLayout: layout
+            )
         } else {
             profileLayout = nil
             profileStore = nil
+            runtimeOverrideCoordinator = nil
+            systemProxyPreferencesStore = nil
         }
 
         eventTask = Task { [weak self, events = supervisor.events] in
@@ -270,11 +326,26 @@ final class AppModel {
             try Task.checkCancellation()
             guard !shutdownInProgress else { return }
             if let profileStore, let profileLayout {
+                if let runtimeOverrideCoordinator {
+                    runtimeOverrides = try await runtimeOverrideCoordinator.overrides()
+                }
+                if let systemProxyPreferencesStore {
+                    systemProxyPreferences = try await systemProxyPreferencesStore.load()
+                }
                 profiles = try await profileStore.profiles()
                 activeProfileID = try await profileStore.activeProfileID()
-                if activeProfileID != nil,
-                   FileManager.default.fileExists(atPath: profileLayout.runtimeConfigurationURL.path) {
-                    activeConfigURL = profileLayout.runtimeConfigurationURL
+                if let activeProfileID {
+                    if runtimeOverrideCoordinator != nil {
+                        let activation = try await activateStoredProfile(
+                            activeProfileID,
+                            validator: try makeProfileValidator()
+                        )
+                        activeConfigURL = activation.configurationURL
+                    } else if FileManager.default.fileExists(
+                        atPath: profileLayout.runtimeConfigurationURL.path
+                    ) {
+                        activeConfigURL = profileLayout.runtimeConfigurationURL
+                    }
                 }
 
                 try Task.checkCancellation()
@@ -302,6 +373,7 @@ final class AppModel {
             try Task.checkCancellation()
             guard !shutdownInProgress else { return }
             prepared = true
+            startSubscriptionUpdateScheduler()
         } catch is CancellationError {
             return
         } catch {
@@ -313,7 +385,8 @@ final class AppModel {
     }
 
     private func connectActiveProfileAtLaunchIfAvailable() async {
-        guard let activeProfileID,
+        guard autoConnectOnLaunch,
+              let activeProfileID,
               profiles.contains(where: { $0.id == activeProfileID }),
               let activeConfigURL,
               FileManager.default.fileExists(atPath: activeConfigURL.path),
@@ -435,7 +508,7 @@ final class AppModel {
         if case .disabling = systemProxyState, operation != .changeSystemProxy { return false }
         if operations.contains(operation) { return false }
         if operation.serializesNetworkState {
-            if operation == .connection {
+            if operation == .connection || operation == .changeSystemProxy {
                 if operations.contains(where: \.serializesNetworkState) { return false }
             } else if operations.contains(where: { $0.serializesNetworkState || $0.isCoreBound }) {
                 return false
@@ -475,7 +548,7 @@ final class AppModel {
         }
     }
 
-    func addRemoteProfile(name: String, url: URL) async throws {
+    func addRemoteProfile(name: String, url: URL, activate: Bool = true) async throws {
         guard begin(.addRemoteProfile) else {
             throw AppModelError.operationInProgress
         }
@@ -493,7 +566,9 @@ final class AppModel {
                 validator: validator
             )
             profiles = try await profileStore.profiles()
-            try await performActivateProfile(profile.id)
+            if activate {
+                try await performActivateProfile(profile.id)
+            }
         } catch {
             appendSupervisorLog(
                 "Subscription add failed: "
@@ -514,6 +589,198 @@ final class AppModel {
         } catch {
             appendSupervisorLog("Profile activation failed: \(error.localizedDescription)")
             throw error
+        }
+    }
+
+    func updateProfile(
+        _ id: ProfileID,
+        name: String,
+        subscriptionURL: URL? = nil,
+        automaticUpdatesEnabled: Bool = true,
+        updateIntervalHours: Int? = nil
+    ) async throws {
+        guard begin(.updateProfile(id)) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.updateProfile(id)) }
+
+        guard let profileStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        guard let profile = profiles.first(where: { $0.id == id }) else {
+            throw ProfileStoreError.profileNotFound(id)
+        }
+
+        switch profile.origin {
+        case .remote:
+            guard let subscriptionURL else {
+                throw ProfileStoreError.invalidSubscriptionURL
+            }
+            _ = try await profileStore.updateRemoteProfileSettings(
+                id,
+                name: name,
+                subscriptionURL: subscriptionURL,
+                automaticUpdatesEnabled: automaticUpdatesEnabled,
+                updateIntervalHours: updateIntervalHours
+            )
+        case .local, .imported:
+            _ = try await profileStore.renameProfile(id, to: name)
+        }
+        profiles = try await profileStore.profiles()
+        errorMessage = nil
+    }
+
+    func handleIncomingURL(_ url: URL) async {
+        do {
+            let request = try SubscriptionURLRouter.parse(url)
+            pendingSubscriptionImport = request
+            selection = .profiles
+        } catch {
+            let message = error.localizedDescription
+            errorMessage = message
+            appendSupervisorLog("Subscription URL import failed: \(message)")
+        }
+    }
+
+    func cancelPendingSubscriptionImport() {
+        pendingSubscriptionImport = nil
+    }
+
+    func confirmPendingSubscriptionImport(_ request: SubscriptionImportRequest) async {
+        guard pendingSubscriptionImport == request else { return }
+        pendingSubscriptionImport = nil
+
+        do {
+            try await addRemoteProfile(name: request.name, url: request.url, activate: false)
+            selection = .profiles
+            errorMessage = nil
+        } catch {
+            let message = redactedSubscriptionMessage(
+                error.localizedDescription,
+                url: request.url
+            )
+            errorMessage = message
+            appendSupervisorLog("Confirmed subscription import failed: \(message)")
+        }
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) throws {
+        guard begin(.changeApplicationSettings) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.changeApplicationSettings) }
+        try LoginItemManager().setEnabled(enabled)
+        launchAtLogin = LoginItemManager().isEnabled
+    }
+
+    func setNotificationsEnabled(_ enabled: Bool) async {
+        guard begin(.changeApplicationSettings) else { return }
+        defer { end(.changeApplicationSettings) }
+        if enabled {
+            do {
+                notificationsEnabled = try await notificationCenter.requestAuthorization()
+                if !notificationsEnabled {
+                    errorMessage = "macOS notification permission was not granted."
+                }
+            } catch {
+                notificationsEnabled = false
+                errorMessage = error.localizedDescription
+            }
+        } else {
+            notificationsEnabled = false
+        }
+        preferenceDefaults.set(
+            notificationsEnabled,
+            forKey: Self.notificationsEnabledKey
+        )
+    }
+
+    func exportBackup() async {
+        guard begin(.exportBackup) else { return }
+        defer { end(.exportBackup) }
+        guard let profileLayout else {
+            errorMessage = "The application state directory is unavailable."
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = "Export MClash Backup"
+        panel.prompt = "Export"
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "MClash-\(Date().ISO8601Format().prefix(10)).mclashbackup"
+        guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+
+        do {
+            try await profileBackupService.exportBackup(
+                from: profileLayout,
+                to: destinationURL
+            )
+            errorMessage = nil
+        } catch {
+            recordOperationFailure(error, context: "Backup export")
+        }
+    }
+
+    func restoreBackup() async {
+        guard begin(.restoreBackup) else { return }
+        defer { end(.restoreBackup) }
+        guard let profileLayout, let profileStore else {
+            errorMessage = "The application state directory is unavailable."
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Restore MClash Backup"
+        panel.prompt = "Restore"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let backupURL = panel.url else { return }
+
+        let shouldReconnect = isConnected || isBusy
+        let shouldRestoreSystemProxy = systemProxyEnabled
+        if shouldReconnect, !(await performDisconnect()) { return }
+
+        do {
+            _ = try await profileBackupService.restoreBackup(
+                from: backupURL,
+                to: profileLayout
+            )
+            if let runtimeOverrideCoordinator {
+                runtimeOverrides = try await runtimeOverrideCoordinator.overrides()
+            } else {
+                runtimeOverrides = .empty
+            }
+            if let systemProxyPreferencesStore {
+                systemProxyPreferences = try await systemProxyPreferencesStore.load()
+            } else {
+                systemProxyPreferences = .defaults
+            }
+            profiles = try await profileStore.profiles()
+            activeProfileID = try await profileStore.activeProfileID()
+            activeConfigURL = nil
+            if let activeProfileID {
+                let activation = try await activateStoredProfile(
+                    activeProfileID,
+                    validator: try makeProfileValidator()
+                )
+                activeConfigURL = activation.configurationURL
+            }
+            if shouldReconnect, activeConfigURL != nil {
+                let connected = await performConnect()
+                if connected, shouldRestoreSystemProxy {
+                    await performEnableSystemProxy()
+                }
+            }
+            errorMessage = nil
+        } catch {
+            recordOperationFailure(error, context: "Backup restore")
+            if shouldReconnect, activeConfigURL != nil {
+                _ = await performConnect()
+                if isConnected, shouldRestoreSystemProxy {
+                    await performEnableSystemProxy()
+                }
+            }
         }
     }
 
@@ -545,9 +812,9 @@ final class AppModel {
         let previousProfileID = activeProfileID
         let activation: RuntimeConfigurationActivation
         do {
-            activation = try await profileStore.activateProfile(
+            activation = try await activateStoredProfile(
                 id,
-                validator: AcceptingProfileValidator()
+                validator: validator
             )
         } catch {
             if shouldReconnect {
@@ -585,7 +852,7 @@ final class AppModel {
                             configurationData: rollbackSnapshot.configurationData
                         )
                     }
-                    let rollback = try await profileStore.activateProfile(
+                    let rollback = try await activateStoredProfile(
                         previousProfileID,
                         validator: try makeProfileValidator()
                     )
@@ -611,9 +878,84 @@ final class AppModel {
         }
     }
 
+    private func activateStoredProfile(
+        _ id: ProfileID,
+        validator: any ProfileValidating
+    ) async throws -> RuntimeConfigurationActivation {
+        guard let profileStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        if let runtimeOverrideCoordinator {
+            return try await runtimeOverrideCoordinator.activateProfile(
+                id,
+                in: profileStore,
+                validator: validator
+            )
+        }
+        return try await profileStore.activateProfile(id, validator: validator)
+    }
+
+    func applyRuntimeOverrides(_ overrides: RuntimeOverrides) async throws {
+        guard begin(.changeRuntimeSettings) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.changeRuntimeSettings) }
+
+        guard let runtimeOverrideCoordinator else {
+            throw AppModelError.profileStoreUnavailable
+        }
+
+        let previousOverrides = runtimeOverrides
+        try await runtimeOverrideCoordinator.save(overrides)
+        do {
+            runtimeOverrides = overrides
+            if let activeProfileID {
+                try await performActivateProfile(activeProfileID, force: true)
+            }
+            errorMessage = nil
+        } catch {
+            do {
+                try await runtimeOverrideCoordinator.save(previousOverrides)
+                runtimeOverrides = previousOverrides
+            } catch {
+                appendSupervisorLog(
+                    "Restoring runtime settings failed: \(error.localizedDescription)"
+                )
+            }
+            throw error
+        }
+    }
+
+    func resetRuntimeOverrides() async throws {
+        try await applyRuntimeOverrides(.empty)
+    }
+
     func refreshProfile(_ id: ProfileID) async {
         guard begin(.refreshProfile(id)) else { return }
         defer { end(.refreshProfile(id)) }
+
+        await performRefreshProfile(id)
+    }
+
+    func refreshAllProfiles() async {
+        guard begin(.refreshAllProfiles) else { return }
+        defer { end(.refreshAllProfiles) }
+
+        guard let profileStore else { return }
+        do {
+            let ids = try await profileStore.remoteProfileIDs()
+            for id in ids {
+                try Task.checkCancellation()
+                await performRefreshProfile(id)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            recordOperationFailure(error, context: "Subscription refresh")
+        }
+    }
+
+    private func performRefreshProfile(_ id: ProfileID) async {
 
         guard let profileStore else { return }
         let subscriptionURL = profiles.first(where: { $0.id == id }).flatMap { profile -> URL? in
@@ -668,6 +1010,41 @@ final class AppModel {
             )
             errorMessage = message
             appendSupervisorLog("Subscription refresh failed: \(message)")
+        }
+    }
+
+    private func startSubscriptionUpdateScheduler() {
+        subscriptionUpdateTask?.cancel()
+        subscriptionUpdateTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.refreshDueProfiles()
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(15 * 60))
+                } catch {
+                    return
+                }
+                await self.refreshDueProfiles()
+            }
+        }
+    }
+
+    private func refreshDueProfiles() async {
+        guard !shutdownInProgress,
+              let profileStore,
+              begin(.refreshAllProfiles) else { return }
+        defer { end(.refreshAllProfiles) }
+
+        do {
+            let ids = try await profileStore.remoteProfileIDsDueForAutomaticUpdate(at: Date())
+            for id in ids {
+                try Task.checkCancellation()
+                await performRefreshProfile(id)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            appendSupervisorLog("Automatic subscription refresh failed: \(error.localizedDescription)")
         }
     }
 
@@ -777,7 +1154,11 @@ final class AppModel {
 
     func setMode(_ mode: String) async {
         guard begin(.changeMode) else { return }
-        defer { end(.changeMode) }
+        pendingMode = mode
+        defer {
+            pendingMode = nil
+            end(.changeMode)
+        }
 
         guard let apiClient else { return }
         let generation = controllerGeneration
@@ -796,7 +1177,11 @@ final class AppModel {
 
     func selectProxy(group: String, proxy: String) async -> Bool {
         guard begin(.selectProxy(group)) else { return false }
-        defer { end(.selectProxy(group)) }
+        pendingProxySelections[group] = proxy
+        defer {
+            pendingProxySelections[group] = nil
+            end(.selectProxy(group))
+        }
 
         guard let apiClient,
               let groupModel = proxiesByName[group],
@@ -1052,7 +1437,11 @@ final class AppModel {
 
     func toggleSystemProxy() async {
         guard begin(.changeSystemProxy) else { return }
-        defer { end(.changeSystemProxy) }
+        pendingSystemProxyEnabled = !systemProxyEnabled
+        defer {
+            pendingSystemProxyEnabled = nil
+            end(.changeSystemProxy)
+        }
 
         if systemProxyEnabled {
             shouldReenableSystemProxyAfterCrash = false
@@ -1065,7 +1454,11 @@ final class AppModel {
     func setSystemProxyEnabled(_ enabled: Bool) async {
         guard enabled != systemProxyEnabled else { return }
         guard begin(.changeSystemProxy) else { return }
-        defer { end(.changeSystemProxy) }
+        pendingSystemProxyEnabled = enabled
+        defer {
+            pendingSystemProxyEnabled = nil
+            end(.changeSystemProxy)
+        }
 
         if enabled {
             await performEnableSystemProxy()
@@ -1077,7 +1470,11 @@ final class AppModel {
 
     func enableSystemProxy() async {
         guard begin(.changeSystemProxy) else { return }
-        defer { end(.changeSystemProxy) }
+        pendingSystemProxyEnabled = true
+        defer {
+            pendingSystemProxyEnabled = nil
+            end(.changeSystemProxy)
+        }
         await performEnableSystemProxy()
     }
 
@@ -1125,6 +1522,7 @@ final class AppModel {
             let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
             try await systemProxyManager.activate(
                 endpoints: endpoints,
+                bypassDomains: systemProxyPreferences.effectiveBypassDomains,
                 savingSnapshotTo: snapshotURL
             )
             guard generation == controllerGeneration, isConnected else {
@@ -1132,6 +1530,7 @@ final class AppModel {
                 return
             }
             systemProxyState = .on
+            startSystemProxyGuard(endpoints: endpoints)
             appendSupervisorLog(
                 "System proxy enabled: HTTP 127.0.0.1:\(httpPort), SOCKS5 127.0.0.1:\(socksPort)."
             )
@@ -1154,13 +1553,19 @@ final class AppModel {
 
     func disableSystemProxy() async {
         guard begin(.changeSystemProxy) else { return }
-        defer { end(.changeSystemProxy) }
+        pendingSystemProxyEnabled = false
+        defer {
+            pendingSystemProxyEnabled = nil
+            end(.changeSystemProxy)
+        }
         shouldReenableSystemProxyAfterCrash = false
         await performDisableSystemProxy()
     }
 
     @discardableResult
     private func performDisableSystemProxy() async -> Bool {
+        systemProxyGuardTask?.cancel()
+        systemProxyGuardTask = nil
         if let operation = systemProxyRestoreOperation {
             return await operation.task.value
         }
@@ -1176,6 +1581,89 @@ final class AppModel {
             systemProxyRestoreOperation = nil
         }
         return result
+    }
+
+    func applySystemProxyPreferences(
+        _ preferences: SystemProxyPreferences
+    ) async throws {
+        guard begin(.changeSystemProxySettings) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.changeSystemProxySettings) }
+        guard let systemProxyPreferencesStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+
+        let preferences = try preferences.validated()
+        try await systemProxyPreferencesStore.save(preferences)
+        systemProxyPreferences = preferences
+
+        if systemProxyEnabled, let endpoints = currentSystemProxyEndpoints() {
+            try await systemProxyManager.apply(
+                endpoints: endpoints,
+                bypassDomains: preferences.effectiveBypassDomains
+            )
+            startSystemProxyGuard(endpoints: endpoints)
+        } else {
+            systemProxyGuardTask?.cancel()
+            systemProxyGuardTask = nil
+        }
+    }
+
+    private func currentSystemProxyEndpoints() -> LocalSystemProxyEndpoints? {
+        guard let httpPort = localHTTPProxyPort,
+              let socksPort = localSOCKSProxyPort else { return nil }
+        return try? LocalSystemProxyEndpoints(
+            http: SystemProxyEndpoint(port: httpPort),
+            https: SystemProxyEndpoint(port: httpPort),
+            socks: SystemProxyEndpoint(port: socksPort)
+        )
+    }
+
+    private func startSystemProxyGuard(endpoints: LocalSystemProxyEndpoints) {
+        systemProxyGuardTask?.cancel()
+        guard systemProxyPreferences.guardEnabled else {
+            systemProxyGuardTask = nil
+            return
+        }
+        let interval = systemProxyPreferences.guardIntervalSeconds
+        let bypassDomains = systemProxyPreferences.effectiveBypassDomains
+        systemProxyGuardTask = Task { @MainActor [weak self] in
+            var consecutiveFailures = 0
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(interval))
+                } catch {
+                    return
+                }
+                guard let self,
+                      self.isConnected,
+                      self.systemProxyState == .on else { return }
+                do {
+                    let matches = try await self.systemProxyManager.configurationMatches(
+                        endpoints: endpoints,
+                        bypassDomains: bypassDomains
+                    )
+                    if !matches {
+                        try await self.systemProxyManager.apply(
+                            endpoints: endpoints,
+                            bypassDomains: bypassDomains
+                        )
+                        self.appendSupervisorLog(
+                            "System proxy guard restored externally changed settings."
+                        )
+                    }
+                    consecutiveFailures = 0
+                } catch {
+                    if consecutiveFailures == 0 {
+                        self.appendSupervisorLog(
+                            "System proxy guard could not verify settings: \(error.localizedDescription)"
+                        )
+                    }
+                    consecutiveFailures += 1
+                }
+            }
+        }
     }
 
     @discardableResult
@@ -1212,6 +1700,10 @@ final class AppModel {
     @discardableResult
     func shutdown() async -> Bool {
         shutdownInProgress = true
+        subscriptionUpdateTask?.cancel()
+        subscriptionUpdateTask = nil
+        systemProxyGuardTask?.cancel()
+        systemProxyGuardTask = nil
         await cancelStartupPreparation()
         shouldReenableSystemProxyAfterCrash = false
         if let operation = systemProxyEnableOperation {
@@ -1236,6 +1728,10 @@ final class AppModel {
 
     func forceShutdown() async {
         shutdownInProgress = true
+        subscriptionUpdateTask?.cancel()
+        subscriptionUpdateTask = nil
+        systemProxyGuardTask?.cancel()
+        systemProxyGuardTask = nil
         await cancelStartupPreparation()
         shouldReenableSystemProxyAfterCrash = false
         if let operation = systemProxyEnableOperation {
@@ -1261,6 +1757,33 @@ final class AppModel {
         logs.removeAll(keepingCapacity: true)
     }
 
+    func clearClosedConnectionHistory() {
+        recentlyClosedConnections.removeAll(keepingCapacity: true)
+    }
+
+    private func recordClosedConnections(
+        previous: MihomoConnectionSnapshot?,
+        current: MihomoConnectionSnapshot?
+    ) {
+        guard let previous else { return }
+        let currentIDs = Set(current?.connections.map(\.id) ?? [])
+        let closed = previous.connections.filter { !currentIDs.contains($0.id) }
+        guard !closed.isEmpty else { return }
+
+        let closedIDs = Set(closed.map(\.id))
+        recentlyClosedConnections.removeAll { closedIDs.contains($0.connection.id) }
+        let timestamp = Date()
+        recentlyClosedConnections.insert(
+            contentsOf: closed.map {
+                ClosedConnectionRecord(connection: $0, closedAt: timestamp)
+            },
+            at: 0
+        )
+        if recentlyClosedConnections.count > 500 {
+            recentlyClosedConnections.removeLast(recentlyClosedConnections.count - 500)
+        }
+    }
+
     private func receive(_ event: CoreEvent) {
         switch event {
         case let .stateChanged(state):
@@ -1278,6 +1801,15 @@ final class AppModel {
             coreState = state
             if case let .failed(message) = state {
                 errorMessage = message
+                if notificationsEnabled {
+                    Task { [notificationCenter] in
+                        await notificationCenter.post(
+                            identifier: "mclash-core-failed",
+                            title: "MClash Needs Attention",
+                            body: message
+                        )
+                    }
+                }
                 let shouldReenable = systemProxyEnabled
                 stopControllerStreams()
                 if shouldReenable || hasSystemProxySnapshot {
@@ -2064,8 +2596,10 @@ final class AppModel {
         )
     }
 
+    static let autoConnectOnLaunchKey = "network.autoConnectOnLaunch"
     static let autoEnableSystemProxyKey = "network.autoEnableSystemProxy"
     static let closeConnectionsOnRoutingChangeKey = "network.closeConnectionsOnRoutingChange"
+    static let notificationsEnabledKey = "application.notificationsEnabled"
 }
 
 private extension AppModel.Operation {
@@ -2074,9 +2608,16 @@ private extension AppModel.Operation {
         case .connection,
              .importProfile,
              .addRemoteProfile,
+             .updateProfile,
              .activateProfile,
              .refreshProfile,
+             .refreshAllProfiles,
              .removeProfile,
+             .changeRuntimeSettings,
+             .changeSystemProxySettings,
+             .changeApplicationSettings,
+             .exportBackup,
+             .restoreBackup,
              .changeSystemProxy:
             true
         case .changeMode,
@@ -2113,9 +2654,16 @@ private extension AppModel.Operation {
         case .connection,
              .importProfile,
              .addRemoteProfile,
+             .updateProfile,
              .activateProfile,
              .refreshProfile,
+             .refreshAllProfiles,
              .removeProfile,
+             .changeRuntimeSettings,
+             .changeSystemProxySettings,
+             .changeApplicationSettings,
+             .exportBackup,
+             .restoreBackup,
              .changeSystemProxy:
             false
         }

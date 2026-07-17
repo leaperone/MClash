@@ -4,12 +4,16 @@ import SwiftUI
 struct MenuBarContent: View {
     @Bindable var model: AppModel
     @Environment(\.openWindow) private var openWindow
+    @State private var pickerGroupName: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     statusHeader
+                    if model.isConnected {
+                        liveMetrics
+                    }
                     primaryAction
 
                     Divider()
@@ -36,7 +40,7 @@ struct MenuBarContent: View {
         }
         // MenuBarExtra windows cannot infer a useful intrinsic height from ScrollView content.
         // An explicit popover size keeps the entire quick-control surface visible on every launch.
-        .frame(width: 360, height: 440)
+        .frame(width: 360, height: popoverHeight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("MClash quick controls")
     }
@@ -59,6 +63,41 @@ struct MenuBarContent: View {
             }
 
             Spacer(minLength: 8)
+        }
+    }
+
+    private var liveMetrics: some View {
+        HStack(spacing: 14) {
+            metricLabel(
+                formattedByteRate(model.traffic.download),
+                symbol: "arrow.down",
+                color: .blue
+            )
+            metricLabel(
+                formattedByteRate(model.traffic.upload),
+                symbol: "arrow.up",
+                color: .purple
+            )
+            Spacer(minLength: 4)
+            metricLabel(
+                formattedCount(model.connections?.connections.count ?? 0),
+                symbol: "arrow.left.arrow.right",
+                color: .secondary
+            )
+        }
+        .font(.caption.monospacedDigit())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Download \(formattedByteRate(model.traffic.download)), upload \(formattedByteRate(model.traffic.upload)), "
+                + "\(formattedCount(model.connections?.connections.count ?? 0)) active connections"
+        )
+    }
+
+    private func metricLabel(_ value: String, symbol: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+            Text(value)
         }
     }
 
@@ -147,9 +186,9 @@ struct MenuBarContent: View {
             Divider()
 
             Toggle(
-                "Use macOS System Proxy",
+                "macOS System Proxy",
                 isOn: Binding(
-                    get: { model.systemProxyEnabled },
+                    get: { model.pendingSystemProxyEnabled ?? model.systemProxyEnabled },
                     set: { enabled in Task { await model.setSystemProxyEnabled(enabled) } }
                 )
             )
@@ -171,6 +210,20 @@ struct MenuBarContent: View {
                     !model.controllerIsReady
                         || !model.canPerform(.changeMode)
                 )
+
+                if model.pendingMode != nil || model.pendingSystemProxyEnabled != nil {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(pendingRoutingTitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if !quickRouteGroups.isEmpty {
+                quickRoutes
             }
 
             if model.controllerState == .loading {
@@ -246,7 +299,9 @@ struct MenuBarContent: View {
             }
             .keyboardShortcut("o")
 
-            SettingsLink { Text("Settings…") }
+            Button("Settings…") {
+                showMainWindow(destination: .settings)
+            }
 
             Spacer()
 
@@ -259,9 +314,83 @@ struct MenuBarContent: View {
 
     private var modeBinding: Binding<String> {
         Binding(
-            get: { model.runtimeConfig?.mode ?? "rule" },
+            get: { model.pendingMode ?? model.runtimeConfig?.mode ?? "rule" },
             set: { mode in Task { await model.setMode(mode) } }
         )
+    }
+
+    private var quickRoutes: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Quick Routes")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(quickRouteGroups, id: \.name) { group in
+                Button {
+                    pickerGroupName = group.name
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(group.name)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        if model.pendingProxySelections[group.name] != nil {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text(group.fixedOverride ?? group.now ?? "Choose…")
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .popover(isPresented: pickerBinding(for: group.name), arrowEdge: .trailing) {
+                    ProxyNodePicker(
+                        model: model,
+                        group: group,
+                        isPresented: pickerBinding(for: group.name)
+                    )
+                }
+            }
+
+            Button("Manage All Routes…") {
+                showMainWindow(destination: .proxies)
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private var quickRouteGroups: [MihomoProxy] {
+        let mode = (model.pendingMode ?? model.runtimeConfig?.mode ?? "rule").lowercased()
+        guard mode != "direct" else { return [] }
+        return Array(
+            ProxyGroupPartitionSnapshot(model: model, routingMode: mode)
+                .orderedForPresentation
+                .prefix(3)
+        )
+    }
+
+    private func pickerBinding(for groupName: String) -> Binding<Bool> {
+        Binding(
+            get: { pickerGroupName == groupName },
+            set: { isPresented in
+                pickerGroupName = isPresented ? groupName : nil
+            }
+        )
+    }
+
+    private var pendingRoutingTitle: String {
+        if let mode = model.pendingMode {
+            return "Switching to \(mode.capitalized)…"
+        }
+        if let enabled = model.pendingSystemProxyEnabled {
+            return enabled ? "Turning on System Proxy…" : "Turning off System Proxy…"
+        }
+        return "Applying routing change…"
     }
 
     private var issueMessage: String? {
@@ -301,49 +430,67 @@ struct MenuBarContent: View {
     }
 
     private var statusTitle: String {
+        if model.preparationInProgress {
+            return "Preparing MClash"
+        }
         switch model.coreState {
         case .running:
             switch model.controllerState {
-            case .ready: "Connected"
-            case .loading: "Preparing Controls"
-            case .degraded: "Connected with an Issue"
-            case .idle: "Connected"
+            case .ready: return model.systemProxyEnabled ? "Connected" : "Core Running"
+            case .loading: return "Preparing Controls"
+            case .degraded: return "Connected with an Issue"
+            case .idle: return "Connected"
             }
         default:
-            model.statusTitle
+            return model.statusTitle
         }
     }
 
     private var statusSubtitle: String {
+        if model.preparationInProgress {
+            return "Checking profiles and network state"
+        }
         if let profile = model.activeProfile {
-            return profile.name
+            return model.isConnected && !model.systemProxyEnabled
+                ? "\(profile.name) · System Proxy off"
+                : profile.name
         }
         return "No active profile"
     }
 
     private var statusSymbol: String {
+        if model.preparationInProgress { return "arrow.triangle.2.circlepath" }
         switch model.coreState {
         case .running:
-            model.controllerIsReady ? "checkmark.shield.fill" : "ellipsis.circle.fill"
+            if model.controllerIsReady, model.systemProxyEnabled {
+                return "checkmark.shield.fill"
+            } else if model.controllerIsReady {
+                return "network"
+            } else {
+                return "ellipsis.circle.fill"
+            }
         case .failed:
-            "exclamationmark.triangle.fill"
+            return "exclamationmark.triangle.fill"
         case .validating, .starting, .stopping:
-            "arrow.triangle.2.circlepath"
+            return "arrow.triangle.2.circlepath"
         case .stopped:
-            "pause.circle.fill"
+            return "pause.circle.fill"
         }
     }
 
     private var statusColor: Color {
+        if model.preparationInProgress { return .orange }
         switch model.coreState {
         case .running:
-            model.controllerIsReady ? .green : .orange
+            return model.controllerIsReady
+                ? (model.systemProxyEnabled ? .green : .secondary)
+                : .orange
         case .failed:
-            .red
+            return .red
         case .validating, .starting, .stopping:
-            .orange
+            return .orange
         case .stopped:
-            .secondary
+            return .secondary
         }
     }
 
@@ -351,5 +498,11 @@ struct MenuBarContent: View {
         model.selection = destination
         openWindow(id: "main")
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    private var popoverHeight: CGFloat {
+        if issueMessage != nil { return 440 }
+        if !quickRouteGroups.isEmpty { return 440 }
+        return model.isConnected ? 340 : 280
     }
 }

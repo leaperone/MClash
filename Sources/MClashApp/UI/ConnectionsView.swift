@@ -10,6 +10,8 @@ struct ConnectionsView: View {
     @SceneStorage("mclash.connections.sortDescending") private var storedSortDescending = false
     @State private var hasRestoredSortOrder = false
     @State private var inspectorPresented = false
+    @State private var confirmingCloseAll = false
+    @State private var showingClosedHistory = false
 
     var body: some View {
         let presentation = ConnectionPresentationSnapshot(
@@ -21,11 +23,18 @@ struct ConnectionsView: View {
 
         Group {
             if !model.isConnected {
-                ContentUnavailableView(
-                    "Connect to inspect traffic",
+                DisconnectedUnavailableView(
+                    model: model,
+                    title: "Connect to inspect traffic",
                     systemImage: "arrow.left.arrow.right",
-                    description: Text("Live connections are streamed from the local Alpha controller.")
+                    description: "Live connections are streamed from the local Alpha controller."
                 )
+            } else if model.connections == nil {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading active connections…")
+                        .foregroundStyle(.secondary)
+                }
             } else if !presentation.hasConnections {
                 ContentUnavailableView(
                     "No active connections",
@@ -70,6 +79,20 @@ struct ConnectionsView: View {
                 inspectorPresented = false
             }
         }
+        .confirmationDialog(
+            "Close all (formattedCount(presentation.totalConnectionCount)) active connections?",
+            isPresented: $confirmingCloseAll
+        ) {
+            Button("Close All Connections", role: .destructive) {
+                Task { await model.closeAllConnections() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Apps may reconnect automatically. This affects every active connection, not only the current search results.")
+        }
+        .sheet(isPresented: $showingClosedHistory) {
+            ClosedConnectionsHistoryView(model: model)
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if model.errorMessage == nil,
                model.degradedStreams.contains(.connections) {
@@ -89,6 +112,16 @@ struct ConnectionsView: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                Button {
+                    showingClosedHistory = true
+                } label: {
+                    Label(
+                        "Recently Closed",
+                        systemImage: "clock.arrow.circlepath"
+                    )
+                }
+                .help("View up to 500 recently closed connections")
+
                 Text(presentation.connectionCountLabel)
                     .foregroundStyle(.secondary)
 
@@ -113,7 +146,7 @@ struct ConnectionsView: View {
                 .help(inspectorPresented ? "Hide Connection Inspector" : "Show Connection Inspector")
 
                 Button {
-                    Task { await model.closeAllConnections() }
+                    confirmingCloseAll = true
                 } label: {
                     if model.isPerforming(.closeAllConnections) {
                         ProgressView()
@@ -233,6 +266,74 @@ struct ConnectionsView: View {
                 description: Text("Choose a row to inspect its route, process, addresses, and metadata.")
             )
         }
+    }
+}
+
+private struct ClosedConnectionsHistoryView: View {
+    @Bindable var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Recently Closed Connections")
+                        .font(.title2.weight(.semibold))
+                    Text("The newest 500 connections closed during this app session.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Clear", role: .destructive) {
+                    model.clearClosedConnectionHistory()
+                }
+                .disabled(model.recentlyClosedConnections.isEmpty)
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+
+            Divider()
+
+            if model.recentlyClosedConnections.isEmpty {
+                ContentUnavailableView(
+                    "No Closed Connections",
+                    systemImage: "clock",
+                    description: Text("Connections will appear here after they close.")
+                )
+            } else {
+                Table(model.recentlyClosedConnections) {
+                    TableColumn("Destination") { record in
+                        Text(connectionDestination(record.connection))
+                            .lineLimit(1)
+                    }
+                    TableColumn("Process") { record in
+                        Text(nonEmpty(record.connection.metadata.process) ?? "—")
+                            .lineLimit(1)
+                    }
+                    TableColumn("Node / Chain") { record in
+                        Text(record.connection.chains.joined(separator: " → "))
+                            .lineLimit(1)
+                    }
+                    TableColumn("Traffic") { record in
+                        Text(
+                            formattedByteCount(totalTraffic(record.connection))
+                        )
+                        .monospacedDigit()
+                    }
+                    TableColumn("Closed") { record in
+                        Text(record.closedAt.formatted(date: .omitted, time: .standard))
+                            .monospacedDigit()
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 760, minHeight: 460)
+    }
+
+    private func totalTraffic(_ connection: MihomoConnection) -> Int64 {
+        let (total, overflow) = connection.download.addingReportingOverflow(connection.upload)
+        return overflow ? Int64.max : total
     }
 }
 
@@ -475,7 +576,6 @@ private struct ConnectionDetailView: View {
                 .padding(16)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Connection details for \(connectionDestination(connection))")
     }

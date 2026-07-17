@@ -28,54 +28,115 @@ actor CoreSupervisor {
     }
 
     private final class ProcessControl: @unchecked Sendable {
+        enum Interruption {
+            case cancelled
+            case timedOut
+        }
+
         private let lock = NSLock()
         private var process: Process?
-        private var cancelled = false
+        private var interruption: Interruption?
         private var completed = false
+        private var deadlineWorkItem: DispatchWorkItem?
 
         func install(_ process: Process) -> Bool {
             lock.withLock {
-                guard !cancelled else { return false }
+                guard interruption == nil, !completed else { return false }
                 self.process = process
                 return true
             }
         }
 
-        var isCancelled: Bool {
-            lock.withLock { cancelled }
+        var isInterrupted: Bool {
+            lock.withLock { interruption != nil }
         }
 
         func cancel() {
+            interrupt(.cancelled)
+        }
+
+        func scheduleTimeout(after interval: TimeInterval) {
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.interrupt(.timedOut)
+            }
+            let shouldSchedule = lock.withLock {
+                guard !completed, interruption == nil else { return false }
+                deadlineWorkItem?.cancel()
+                deadlineWorkItem = workItem
+                return true
+            }
+            if shouldSchedule {
+                DispatchQueue.global(qos: .utility).asyncAfter(
+                    deadline: .now() + interval,
+                    execute: workItem
+                )
+            }
+        }
+
+        private func interrupt(_ reason: Interruption) {
             let runningProcess = lock.withLock { () -> Process? in
-                cancelled = true
+                guard !completed else { return nil }
+                if interruption == nil {
+                    interruption = reason
+                }
                 return process
             }
             if runningProcess?.isRunning == true {
                 runningProcess?.terminate()
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) {
+                    guard let runningProcess, runningProcess.isRunning else { return }
+                    Darwin.kill(runningProcess.processIdentifier, SIGKILL)
+                }
             }
         }
 
-        func claimCompletion() -> (claimed: Bool, cancelled: Bool) {
+        func claimCompletion() -> (claimed: Bool, interruption: Interruption?) {
             lock.withLock {
-                guard !completed else { return (false, cancelled) }
+                guard !completed else { return (false, interruption) }
                 completed = true
                 process = nil
-                return (true, cancelled)
+                deadlineWorkItem?.cancel()
+                deadlineWorkItem = nil
+                return (true, interruption)
             }
         }
     }
 
     private final class ProcessOutputCollector: @unchecked Sendable {
         private let lock = NSLock()
+        private let maximumBytes: Int
         private var data = Data()
+        private var truncated = false
+
+        init(maximumBytes: Int) {
+            self.maximumBytes = maximumBytes
+        }
 
         func append(_ chunk: Data) {
             guard !chunk.isEmpty else { return }
-            lock.withLock { data.append(chunk) }
+            lock.withLock {
+                let remaining = maximumBytes - data.count
+                guard remaining > 0 else {
+                    truncated = true
+                    return
+                }
+                if chunk.count <= remaining {
+                    data.append(chunk)
+                } else {
+                    data.append(chunk.prefix(remaining))
+                    truncated = true
+                }
+            }
         }
 
-        func snapshot() -> Data {
-            lock.withLock { data }
+        func renderedString() -> String {
+            lock.withLock {
+                let value = String(decoding: data, as: UTF8.self)
+                if truncated {
+                    return value + "\n[output truncated by MClash]"
+                }
+                return value
+            }
         }
     }
 
@@ -92,8 +153,17 @@ actor CoreSupervisor {
 
     private let maximumCrashRestarts = 3
     private let crashWindow: TimeInterval = 10 * 60
+    private let validationTimeout: TimeInterval
+    private let maximumValidationOutputBytesPerStream: Int
 
-    init() {
+    init(
+        validationTimeout: TimeInterval = 15,
+        maximumValidationOutputBytesPerStream: Int = 64 * 1_024
+    ) {
+        precondition(validationTimeout > 0)
+        precondition(maximumValidationOutputBytesPerStream > 0)
+        self.validationTimeout = validationTimeout
+        self.maximumValidationOutputBytesPerStream = maximumValidationOutputBytesPerStream
         let pair = AsyncStream<CoreEvent>.makeStream(
             of: CoreEvent.self,
             bufferingPolicy: .bufferingNewest(500)
@@ -462,8 +532,12 @@ actor CoreSupervisor {
                 let process = Process()
                 let standardOutput = Pipe()
                 let standardError = Pipe()
-                let outputCollector = ProcessOutputCollector()
-                let errorCollector = ProcessOutputCollector()
+                let outputCollector = ProcessOutputCollector(
+                    maximumBytes: maximumValidationOutputBytesPerStream
+                )
+                let errorCollector = ProcessOutputCollector(
+                    maximumBytes: maximumValidationOutputBytesPerStream
+                )
 
                 process.executableURL = executableURL
                 process.arguments = arguments
@@ -492,20 +566,19 @@ actor CoreSupervisor {
 
                     let completion = control.claimCompletion()
                     guard completion.claimed else { return }
-                    if completion.cancelled {
+                    switch completion.interruption {
+                    case .cancelled:
                         continuation.resume(throwing: CancellationError())
-                    } else {
+                    case .timedOut:
+                        continuation.resume(
+                            throwing: CoreSupervisorError.configurationValidationTimedOut
+                        )
+                    case nil:
                         continuation.resume(
                             returning: ProcessResult(
                                 status: process.terminationStatus,
-                                standardOutput: String(
-                                    decoding: outputCollector.snapshot(),
-                                    as: UTF8.self
-                                ),
-                                standardError: String(
-                                    decoding: errorCollector.snapshot(),
-                                    as: UTF8.self
-                                )
+                                standardOutput: outputCollector.renderedString(),
+                                standardError: errorCollector.renderedString()
                             )
                         )
                     }
@@ -516,14 +589,22 @@ actor CoreSupervisor {
                     standardError.fileHandleForReading.readabilityHandler = nil
                     let completion = control.claimCompletion()
                     if completion.claimed {
-                        continuation.resume(throwing: CancellationError())
+                        switch completion.interruption {
+                        case .timedOut:
+                            continuation.resume(
+                                throwing: CoreSupervisorError.configurationValidationTimedOut
+                            )
+                        case .cancelled, nil:
+                            continuation.resume(throwing: CancellationError())
+                        }
                     }
                     return
                 }
 
                 do {
                     try process.run()
-                    if control.isCancelled {
+                    control.scheduleTimeout(after: validationTimeout)
+                    if control.isInterrupted {
                         process.terminate()
                     }
                 } catch {
@@ -532,7 +613,16 @@ actor CoreSupervisor {
                     process.terminationHandler = nil
                     let completion = control.claimCompletion()
                     if completion.claimed {
-                        continuation.resume(throwing: error)
+                        switch completion.interruption {
+                        case .timedOut:
+                            continuation.resume(
+                                throwing: CoreSupervisorError.configurationValidationTimedOut
+                            )
+                        case .cancelled:
+                            continuation.resume(throwing: CancellationError())
+                        case nil:
+                            continuation.resume(throwing: error)
+                        }
                     }
                 }
             }

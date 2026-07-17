@@ -84,7 +84,6 @@ struct ProxyInspectorView: View {
             }
             .padding(18)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
         .background {
             ProxyInspectorTrafficObserver(
                 model: model,
@@ -730,7 +729,9 @@ private struct ProxyPathDetail: View {
                             Image(systemName: pathSymbol(name))
                                 .font(.caption2)
                                 .foregroundStyle(
-                                    index == path.route.count - 1 ? Color.white : Color.secondary
+                                    index == path.route.count - 1
+                                        ? Color(nsColor: .alternateSelectedControlTextColor)
+                                        : Color.secondary
                                 )
                         }
                         if index < path.route.count - 1 {

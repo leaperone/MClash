@@ -6,6 +6,7 @@ source "${repo_root}/scripts/mihomo-alpha-common.sh"
 
 build_dir="${repo_root}/.build/integration"
 architecture="$(uname -m)"
+sparkle_framework_dir="${SPARKLE_FRAMEWORK_DIR:-$("${repo_root}/scripts/fetch-sparkle-tools.sh")}"
 core_pid=""
 origin_pid=""
 origin_port="$((20000 + RANDOM % 20000))"
@@ -63,10 +64,16 @@ swiftc -swift-version 6 \
 application_sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
 application_sources=("${(@)application_sources:#*/App/MClashApp.swift}")
 swiftc -parse-as-library -swift-version 6 \
+  -F "${sparkle_framework_dir}" \
   -framework AppKit \
   -framework Security \
+  -framework ServiceManagement \
+  -framework Sparkle \
   -framework SwiftUI \
   -framework SystemConfiguration \
+  -framework UserNotifications \
+  -Xlinker -rpath \
+  -Xlinker "${sparkle_framework_dir}" \
   "${application_sources[@]}" \
   "${repo_root}/Tests/Integration/AppModelSmoke.swift" \
   -o "${build_dir}/app-model-smoke"
@@ -76,8 +83,10 @@ swiftc -parse-as-library -swift-version 6 \
     "${build_dir}/app-model-smoke"
 )
 
+system_proxy_sources=("${repo_root}"/Sources/MClashApp/SystemProxy/*.swift(N))
+system_proxy_sources=("${(@)system_proxy_sources:#*/SystemProxyPreferences.swift}")
 swiftc -swift-version 6 -framework SystemConfiguration \
-  "${repo_root}"/Sources/MClashApp/SystemProxy/*.swift \
+  "${system_proxy_sources[@]}" \
   "${repo_root}/Tests/Integration/SystemProxyReadSmoke.swift" \
   -o "${build_dir}/system-proxy-read-smoke"
 "${build_dir}/system-proxy-read-smoke"

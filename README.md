@@ -27,6 +27,8 @@ WebSocket API.
 - Runtime-managed local listener fallback for subscriptions that omit HTTP/SOCKS ports
 - Dynamic loopback controller port to avoid conflicts with other Clash/mihomo clients
 - Optional automatic connection reset after routing mode or node changes
+- Signed Sparkle updates from GitHub Releases with automatic checking,
+  background downloads, and user-approved installation and relaunch
 
 TUN mode will be implemented behind a signed, narrow XPC privileged helper. It
 is intentionally not handled through arbitrary shell commands or a root-owned
@@ -94,21 +96,16 @@ pre-signing upstream binary hash as `MClashMihomoAlphaVersion` and
 
 ## Production release
 
-`build-app.sh` creates an ad-hoc signed local build by default. A distributable
-release requires a Developer ID Application certificate and Apple notarization:
+Public releases are built by the protected GitHub Actions Release workflow.
+It runs the test suite, imports the Developer ID certificate into an ephemeral
+Keychain, signs with the hardened runtime, notarizes and staples the app and
+DMG, signs the Sparkle update, and publishes all assets to GitHub Releases.
 
-```sh
-export MCLASH_VERSION=1.0.0
-export MCLASH_BUILD_NUMBER=100
-export CODE_SIGN_IDENTITY='Developer ID Application: Example (TEAMID)'
-export NOTARYTOOL_PROFILE='mclash-notary'
-./scripts/release-app.sh
-```
-
-The release script enables the hardened runtime, verifies the signature,
-submits the app to Apple, staples the ticket, performs Gatekeeper assessment,
-and writes a SHA-256 alongside the final zip. Signing credentials are never
-stored in this repository.
+Maintainers normally publish by pushing a semantic tag such as `v1.0.0`; the
+workflow can also be started manually. No production signing credential is
+required on a maintainer's Mac. See [`docs/RELEASING.md`](docs/RELEASING.md)
+for the protected environment, required Secrets, build-number policy, and
+complete release procedure.
 
 ## Safety invariants
 

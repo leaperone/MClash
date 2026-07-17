@@ -11,6 +11,7 @@ struct RulesView: View {
     @Bindable var model: AppModel
     @SceneStorage("mclash.rules.searchText") private var searchText = ""
     @State private var presentation = RulePresentationStore()
+    @State private var hasCompletedInitialLoad = false
 
     var body: some View {
         ruleContent
@@ -48,7 +49,12 @@ struct RulesView: View {
                 }
             }
             .task(id: model.controllerIsReady) {
+                guard model.controllerIsReady else {
+                    hasCompletedInitialLoad = false
+                    return
+                }
                 await loadRulesWhenAvailable()
+                hasCompletedInitialLoad = true
             }
             .onChange(of: model.rules, initial: true) { _, rules in
                 presentation.updateRules(rules)
@@ -87,10 +93,11 @@ struct RulesView: View {
     private var ruleContent: some View {
         Group {
             if !model.isConnected {
-                ContentUnavailableView(
-                    "Connect to inspect rules",
+                DisconnectedUnavailableView(
+                    model: model,
+                    title: "Connect to inspect rules",
                     systemImage: "list.bullet.rectangle",
-                    description: Text("Rules are read from the active mihomo runtime configuration.")
+                    description: "Rules are read from the active mihomo runtime configuration."
                 )
             } else if case let .degraded(message) = model.controllerState {
                 ContentUnavailableView {
@@ -102,7 +109,8 @@ struct RulesView: View {
                         .disabled(!model.canPerform(.connection))
                     Button("View Logs") { model.selection = .logs }
                 }
-            } else if model.isPerforming(.refreshRules), model.rules.isEmpty {
+            } else if model.rules.isEmpty,
+                      model.isPerforming(.refreshRules) || !hasCompletedInitialLoad {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Loading rules…")
@@ -180,7 +188,7 @@ private struct RuleTableSurface: Equatable, View {
             TableColumn("#") { row in
                 Text("\(row.rule.index + 1)")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .accessibilityLabel("Rule \(row.rule.index + 1)")
             }

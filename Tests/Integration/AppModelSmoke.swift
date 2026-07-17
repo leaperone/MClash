@@ -73,11 +73,21 @@ struct AppModelSmoke {
 
             try verifyProxyProtocols(model: model)
 
+            for _ in 0..<100 where !model.canPerform(.changeSystemProxy) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
             await model.enableSystemProxy()
             guard model.systemProxyState == .on,
                   systemProxyBackend.applyCount == 1,
                   let startedAt = model.runningSession?.startedAt else {
-                throw SmokeFailure.isolatedSystemProxyDidNotEnable
+                throw SmokeFailure.isolatedSystemProxyDidNotEnable(
+                    "state=\(model.systemProxyState), "
+                        + "applyCount=\(systemProxyBackend.applyCount), "
+                        + "canChange=\(model.canPerform(.changeSystemProxy)), "
+                        + "preparing=\(model.preparationInProgress), "
+                        + "operations=\(model.operations), "
+                        + "error=\(model.errorMessage ?? "none")"
+                )
             }
 
             let corePID = try processID(containing: layout.rootDirectory.path)
@@ -198,7 +208,7 @@ private enum SmokeFailure: Error {
     case runtimeListenerWasNotCreated(String)
     case proxyTestConfigurationUnavailable
     case proxyRequestFailed(Int32)
-    case isolatedSystemProxyDidNotEnable
+    case isolatedSystemProxyDidNotEnable(String)
     case coreProcessNotFound
     case coreTerminationFailed(Int32)
     case crashRecoveryDidNotRestoreSystemProxy(String)

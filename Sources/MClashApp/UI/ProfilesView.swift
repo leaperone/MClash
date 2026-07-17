@@ -34,6 +34,24 @@ struct ProfilesView: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                if model.profiles.contains(where: { profile in
+                    if case .remote = profile.origin { return true }
+                    return false
+                }) {
+                    Button {
+                        Task { await model.refreshAllProfiles() }
+                    } label: {
+                        if model.isPerforming(.refreshAllProfiles) {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Update All", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                    .disabled(!model.canPerform(.refreshAllProfiles))
+                    .help("Refresh all subscriptions")
+                }
+
                 Button {
                     Task { await model.importProfile() }
                 } label: {
@@ -117,6 +135,7 @@ private struct ProfileRow: View {
     let profile: ProfileMetadata
     let compact: Bool
     @State private var confirmingDelete = false
+    @State private var showingEditSheet = false
     @State private var operationError: String?
 
     var body: some View {
@@ -152,6 +171,13 @@ private struct ProfileRow: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the stored profile from MClash. The subscription itself is not changed.")
+        }
+        .sheet(isPresented: $showingEditSheet) {
+            EditProfileView(
+                model: model,
+                profile: profile,
+                isPresented: $showingEditSheet
+            )
         }
     }
 
@@ -207,11 +233,27 @@ private struct ProfileRow: View {
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .contain)
             }
+
+            if case let .remote(remote) = profile.origin,
+               let subscriptionDetails = subscriptionDetails(remote) {
+                Text(subscriptionDetails)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
     private var profileActions: some View {
         HStack(spacing: 8) {
+            Button {
+                showingEditSheet = true
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!model.canPerform(.updateProfile(profile.id)))
+            .help("Edit \(profile.name)")
+
             if isRemote {
                 Button {
                     refresh()
@@ -300,6 +342,8 @@ private struct ProfileRow: View {
     }
 
     private var operationTitle: String? {
+        if model.isPerforming(.refreshAllProfiles) { return "Updating subscriptions…" }
+        if model.isPerforming(.updateProfile(profile.id)) { return "Saving settings…" }
         if model.isPerforming(.refreshProfile(profile.id)) { return "Refreshing and validating…" }
         if model.isPerforming(.activateProfile(profile.id)) { return "Activating and checking…" }
         if model.isPerforming(.removeProfile(profile.id)) { return "Deleting…" }
@@ -308,6 +352,28 @@ private struct ProfileRow: View {
 
     private func relativeDate(_ date: Date) -> String {
         date.formatted(.relative(presentation: .named))
+    }
+
+    private func subscriptionDetails(_ remote: RemoteSubscriptionMetadata) -> String? {
+        var details: [String] = []
+        if let usage = remote.usage,
+           let used = usage.used,
+           let total = usage.total,
+           total > 0 {
+            details.append(
+                "Used \(ByteCountFormatter.string(fromByteCount: used, countStyle: .binary)) of "
+                    + ByteCountFormatter.string(fromByteCount: total, countStyle: .binary)
+            )
+        }
+        if let expiresAt = remote.usage?.expiresAt {
+            details.append("Expires \(expiresAt.formatted(date: .abbreviated, time: .omitted))")
+        }
+        if remote.automaticUpdatesEnabled {
+            details.append("Every \(remote.effectiveUpdateIntervalHours)h")
+        } else {
+            details.append("Automatic updates off")
+        }
+        return details.isEmpty ? nil : details.joined(separator: " · ")
     }
 
     private func activate() {
@@ -368,6 +434,188 @@ private struct ProfileRow: View {
             )
         }
         return sanitized
+    }
+}
+
+private struct EditProfileView: View {
+    private enum Field: Hashable {
+        case name
+        case address
+    }
+
+    @Bindable var model: AppModel
+    let profile: ProfileMetadata
+    @Binding var isPresented: Bool
+    @State private var name: String
+    @State private var address: String
+    @State private var automaticUpdatesEnabled: Bool
+    @State private var overridesUpdateInterval: Bool
+    @State private var updateIntervalHours: Int
+    @State private var submissionError: String?
+    @State private var submissionTask: Task<Void, Never>?
+    @State private var attemptedSubmission = false
+    @FocusState private var focusedField: Field?
+
+    init(model: AppModel, profile: ProfileMetadata, isPresented: Binding<Bool>) {
+        self.model = model
+        self.profile = profile
+        _isPresented = isPresented
+        _name = State(initialValue: profile.name)
+        if case let .remote(remote) = profile.origin {
+            _address = State(initialValue: remote.url.absoluteString)
+            _automaticUpdatesEnabled = State(initialValue: remote.automaticUpdatesEnabled)
+            _overridesUpdateInterval = State(initialValue: remote.updateIntervalHours != nil)
+            _updateIntervalHours = State(
+                initialValue: remote.updateIntervalHours ?? remote.effectiveUpdateIntervalHours
+            )
+        } else {
+            _address = State(initialValue: "")
+            _automaticUpdatesEnabled = State(initialValue: false)
+            _overridesUpdateInterval = State(initialValue: false)
+            _updateIntervalHours = State(initialValue: 24)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Edit Profile")
+                .font(.title2.weight(.semibold))
+
+            Form {
+                TextField("Name", text: $name)
+                    .focused($focusedField, equals: .name)
+                    .disabled(isSubmitting)
+
+                if isRemote {
+                    TextField("Subscription URL", text: $address)
+                        .textContentType(.URL)
+                        .privacySensitive()
+                        .focused($focusedField, equals: .address)
+                        .disabled(isSubmitting)
+
+                    Toggle("Update automatically", isOn: $automaticUpdatesEnabled)
+                        .disabled(isSubmitting)
+
+                    Toggle("Use a custom update interval", isOn: $overridesUpdateInterval)
+                        .disabled(isSubmitting || !automaticUpdatesEnabled)
+
+                    if automaticUpdatesEnabled, overridesUpdateInterval {
+                        Stepper(
+                            "Update every \(updateIntervalHours) hours",
+                            value: $updateIntervalHours,
+                            in: 1...8_760
+                        )
+                        .disabled(isSubmitting)
+                    } else if automaticUpdatesEnabled,
+                              let suggestedInterval = remoteMetadata?.providerSuggestedUpdateIntervalHours {
+                        Text("The subscription provider suggests every \(suggestedInterval) hours.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+
+            if attemptedSubmission, let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.circle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            } else if let submissionError {
+                Label(submissionError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+
+            HStack(spacing: 10) {
+                if isSubmitting {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Saving profile settings…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Cancel", role: .cancel) { cancel() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") { submit() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isSubmitting || validationMessage != nil)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .interactiveDismissDisabled(isSubmitting)
+        .onAppear { focusedField = .name }
+        .onDisappear { submissionTask?.cancel() }
+    }
+
+    private var isRemote: Bool {
+        remoteMetadata != nil
+    }
+
+    private var remoteMetadata: RemoteSubscriptionMetadata? {
+        guard case let .remote(remote) = profile.origin else { return nil }
+        return remote
+    }
+
+    private var normalizedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedAddress: String {
+        address.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var validatedURL: URL? {
+        guard let url = URL(string: normalizedAddress),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host?.isEmpty == false else { return nil }
+        return url
+    }
+
+    private var validationMessage: String? {
+        if normalizedName.isEmpty { return "Enter a profile name." }
+        if isRemote, validatedURL == nil { return "Use a complete HTTP or HTTPS subscription address." }
+        return nil
+    }
+
+    private var isSubmitting: Bool {
+        submissionTask != nil
+    }
+
+    private func submit() {
+        attemptedSubmission = true
+        submissionError = nil
+        guard validationMessage == nil else { return }
+
+        submissionTask = Task {
+            do {
+                try await model.updateProfile(
+                    profile.id,
+                    name: normalizedName,
+                    subscriptionURL: isRemote ? validatedURL : nil,
+                    automaticUpdatesEnabled: automaticUpdatesEnabled,
+                    updateIntervalHours: overridesUpdateInterval ? updateIntervalHours : nil
+                )
+                if !Task.isCancelled {
+                    await MainActor.run { isPresented = false }
+                }
+            } catch is CancellationError {
+                // Closing the sheet cancels its in-flight work.
+            } catch {
+                if !Task.isCancelled {
+                    await MainActor.run { submissionError = error.localizedDescription }
+                }
+            }
+            await MainActor.run { submissionTask = nil }
+        }
+    }
+
+    private func cancel() {
+        submissionTask?.cancel()
+        isPresented = false
     }
 }
 

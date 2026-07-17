@@ -5,6 +5,17 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 
+# Local credentials and Apple signing/notarization material.
+.env
+.env.*
+*.cer
+*.key
+*.mobileprovision
+*.p12
+*.p8
+*.pem
+*.provisionprofile
+
 # Downloaded upstream core binaries are reproducible via scripts/fetch-mihomo-alpha.sh.
 Sources/MClashApp/Resources/Core/mihomo-alpha-*
 

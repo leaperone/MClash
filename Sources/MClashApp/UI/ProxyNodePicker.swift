@@ -45,9 +45,15 @@ struct ProxyNodePicker: View {
                     }
                 } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: nodeSymbol(proxy))
-                            .foregroundStyle(nodeColor(proxy))
-                            .accessibilityHidden(true)
+                        if model.pendingProxySelections[group.name] == proxy {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 16, height: 16)
+                        } else {
+                            Image(systemName: nodeSymbol(proxy))
+                                .foregroundStyle(nodeColor(proxy))
+                                .accessibilityHidden(true)
+                        }
                         Text(proxy)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -108,6 +114,9 @@ struct ProxyNodePicker: View {
 
     private func accessibilityLabel(_ proxy: String) -> String {
         var parts = [proxy]
+        if model.pendingProxySelections[group.name] == proxy {
+            parts.append("switching")
+        }
         if proxy == group.fixedOverride { parts.append("pinned preference") }
         if proxy == group.now { parts.append("selected") }
         if model.proxyAlive(for: proxy, in: group.name) == false {

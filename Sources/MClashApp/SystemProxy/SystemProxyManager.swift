@@ -28,6 +28,7 @@ public actor SystemProxyManager {
     @discardableResult
     public func activate(
         endpoints: LocalSystemProxyEndpoints,
+        bypassDomains: [String]? = nil,
         savingSnapshotTo snapshotURL: URL? = nil
     ) throws -> SystemProxySnapshot {
         let snapshot = try captureSnapshot()
@@ -35,7 +36,11 @@ public actor SystemProxyManager {
             try save(snapshot: snapshot, to: snapshotURL)
         }
         do {
-            try apply(endpoints: endpoints, to: snapshot.services)
+            try apply(
+                endpoints: endpoints,
+                bypassDomains: bypassDomains,
+                to: snapshot.services
+            )
         } catch {
             if let snapshotURL,
                let proxyError = error as? SystemProxyError,
@@ -48,10 +53,48 @@ public actor SystemProxyManager {
     }
 
     /// Applies endpoints to all network services that are enabled at call time.
-    public func apply(endpoints: LocalSystemProxyEndpoints) throws {
+    public func apply(
+        endpoints: LocalSystemProxyEndpoints,
+        bypassDomains: [String]? = nil
+    ) throws {
         let services = try backend.enabledNetworkServices()
         let currentStates = try backend.proxyStates(for: services)
-        try apply(endpoints: endpoints, to: currentStates)
+        try apply(endpoints: endpoints, bypassDomains: bypassDomains, to: currentStates)
+    }
+
+    public func configurationMatches(
+        endpoints: LocalSystemProxyEndpoints,
+        bypassDomains: [String]? = nil
+    ) throws -> Bool {
+        let services = try backend.enabledNetworkServices()
+        let states = try backend.proxyStates(for: services)
+        guard !states.isEmpty else { return false }
+        return states.allSatisfy { state in
+            guard let configuration = state.configuration else { return false }
+            let endpointsMatch =
+                configuration[SystemProxyKeys.httpEnable] == .integer(1)
+                && configuration[SystemProxyKeys.httpHost] == .string(endpoints.http.host)
+                && configuration[SystemProxyKeys.httpPort] == .integer(Int64(endpoints.http.port))
+                && configuration[SystemProxyKeys.httpsEnable] == .integer(1)
+                && configuration[SystemProxyKeys.httpsHost] == .string(endpoints.https.host)
+                && configuration[SystemProxyKeys.httpsPort] == .integer(Int64(endpoints.https.port))
+                && configuration[SystemProxyKeys.socksEnable] == .integer(1)
+                && configuration[SystemProxyKeys.socksHost] == .string(endpoints.socks.host)
+                && configuration[SystemProxyKeys.socksPort] == .integer(Int64(endpoints.socks.port))
+                && configuration[SystemProxyKeys.pacEnable] != .integer(1)
+                && configuration[SystemProxyKeys.autoDiscoveryEnable] != .integer(1)
+            guard endpointsMatch else { return false }
+            guard let bypassDomains else { return true }
+            let expected = bypassDomains.map { $0.lowercased() }
+            guard case let .array(values) = configuration[SystemProxyKeys.exceptionsList] else {
+                return expected.isEmpty
+            }
+            let actual = values.compactMap { value -> String? in
+                guard case let .string(domain) = value else { return nil }
+                return domain.lowercased()
+            }
+            return actual == expected
+        }
     }
 
     /// Restores every captured dictionary verbatim, including a missing proxy protocol.
@@ -121,6 +164,7 @@ public actor SystemProxyManager {
 
     private func apply(
         endpoints: LocalSystemProxyEndpoints,
+        bypassDomains: [String]?,
         to currentStates: [SystemProxyServiceState]
     ) throws {
         guard !currentStates.isEmpty else {
@@ -143,6 +187,12 @@ public actor SystemProxyManager {
             // Explicit proxies and PAC should never race for ownership of the same service.
             configuration[SystemProxyKeys.pacEnable] = .integer(0)
             configuration[SystemProxyKeys.autoDiscoveryEnable] = .integer(0)
+
+            if let bypassDomains {
+                configuration[SystemProxyKeys.exceptionsList] = .array(
+                    bypassDomains.map(SystemProxyPropertyValue.string)
+                )
+            }
 
             return try SystemProxyServiceState(
                 service: state.service,

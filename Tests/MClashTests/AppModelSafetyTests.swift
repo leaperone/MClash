@@ -138,6 +138,11 @@ struct AppModelSafetyTests {
         #expect(model.proxyGroups(forRoutingMode: "rule").map(\.name) == ["Group B", "Group A"])
         #expect(model.proxyGroups(forRoutingMode: "global").map(\.name) == ["GLOBAL"])
         #expect(model.proxyGroups(forRoutingMode: "direct").isEmpty)
+        #expect(
+            ProxyGroupPartitionSnapshot(model: model, routingMode: "rule")
+                .orderedForPresentation
+                .map(\.name) == ["Group A", "Group B"]
+        )
 
         model.rules = try JSONDecoder().decode(
             [MihomoRule].self,
@@ -148,6 +153,11 @@ struct AppModelSafetyTests {
         #expect(
             model.proxyGroups(forRoutingMode: "rule").map(\.name)
                 == ["Group B", "Group A", "GLOBAL"]
+        )
+        #expect(
+            ProxyGroupPartitionSnapshot(model: model, routingMode: "rule")
+                .orderedForPresentation
+                .map(\.name) == ["Group A", "Group B", "GLOBAL"]
         )
     }
 
@@ -169,6 +179,53 @@ struct AppModelSafetyTests {
         #expect(entry.downloadDelta == 9)
         #expect(entry.routing.destination == "example.com")
         #expect(entry.routing.chains == ["Proxy", "Node"])
+    }
+
+    @MainActor
+    @Test("Deep-link subscriptions wait for confirmation and do not become active")
+    func deepLinkSubscriptionsRequireConfirmation() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "mclash-deep-link-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let validator = root.appending(path: "validator")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: validator)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: validator.path
+        )
+        let layout = ProfileDirectoryLayout(rootDirectory: root.appending(path: "data"))
+        let downloader = DeepLinkSubscriptionDownloader()
+        let store = try ProfileStore(layout: layout, downloader: downloader)
+        let model = AppModel(
+            binaryLocator: CoreBinaryLocator(bundledBinaryURLs: [validator]),
+            profileDirectoryLayout: layout,
+            profileStoreOverride: store
+        )
+        let incomingURL = try #require(
+            URL(
+                string: "mclash://subscribe?url=https%3A%2F%2Fexample.com%2Fprofile.yaml&name=Work"
+            )
+        )
+
+        await model.handleIncomingURL(incomingURL)
+
+        let pending = try #require(model.pendingSubscriptionImport)
+        #expect(pending.displayHost == "example.com")
+        #expect(await downloader.requestCount == 0)
+        #expect(model.profiles.isEmpty)
+        #expect(model.activeProfileID == nil)
+
+        await model.confirmPendingSubscriptionImport(pending)
+
+        #expect(model.pendingSubscriptionImport == nil)
+        #expect(await downloader.requestCount == 1)
+        #expect(model.profiles.count == 1)
+        #expect(model.activeProfileID == nil)
+        #expect(try await store.activeProfileID() == nil)
     }
 
     @MainActor
@@ -287,6 +344,18 @@ struct AppModelSafetyTests {
         return try JSONDecoder().decode(
             MihomoConnectionSnapshot.self,
             from: JSONSerialization.data(withJSONObject: object)
+        )
+    }
+}
+
+private actor DeepLinkSubscriptionDownloader: SubscriptionDownloading {
+    private(set) var requestCount = 0
+
+    func download(_ request: URLRequest) async throws -> SubscriptionDownloadResponse {
+        requestCount += 1
+        return SubscriptionDownloadResponse(
+            statusCode: 200,
+            data: Data("mixed-port: 7890\n".utf8)
         )
     }
 }

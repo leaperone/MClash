@@ -64,6 +64,7 @@ enum CoreSupervisorError: LocalizedError, Equatable {
     case binaryNotExecutable(String)
     case configurationNotFound(String)
     case configurationInvalid(String)
+    case configurationValidationTimedOut
     case launchFailed(String)
     case readinessTimedOut
 
@@ -79,6 +80,8 @@ enum CoreSupervisorError: LocalizedError, Equatable {
             "The active configuration was not found at \(path)."
         case let .configurationInvalid(details):
             "The configuration did not pass core validation.\n\(details)"
+        case .configurationValidationTimedOut:
+            "The proxy core did not finish validating the configuration in time."
         case let .launchFailed(details):
             "The proxy core could not be launched.\n\(details)"
         case .readinessTimedOut:

@@ -3,9 +3,11 @@ set -euo pipefail
 
 repo_root="${0:A:h:h}"
 build_dir="${repo_root}/.build/direct-tests"
-frameworks="/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
-plugins="/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing"
-testing_interop="/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
+sparkle_framework_dir="${SPARKLE_FRAMEWORK_DIR:-$("${repo_root}/scripts/fetch-sparkle-tools.sh")}"
+developer_dir="${DEVELOPER_DIR:-$(xcode-select -p)}"
+frameworks="${developer_dir}/Library/Developer/Frameworks"
+plugins="${developer_dir}/usr/lib/swift/host/plugins/testing"
+testing_interop="${developer_dir}/Library/Developer/usr/lib"
 
 rm -rf "${build_dir}"
 mkdir -p "${build_dir}"
@@ -23,8 +25,12 @@ swiftc \
   -module-name MClashApp \
   -framework AppKit \
   -framework Security \
+  -framework ServiceManagement \
   -framework SwiftUI \
   -framework SystemConfiguration \
+  -framework UserNotifications \
+  -F "${sparkle_framework_dir}" \
+  -framework Sparkle \
   "${sources[@]}" \
   -emit-module-path "${build_dir}/MClashApp.swiftmodule" \
   -o "${build_dir}/libMClashApp.dylib"
@@ -36,6 +42,8 @@ swiftc \
   -I "${build_dir}" \
   -L "${build_dir}" \
   -lMClashApp \
+  -F "${sparkle_framework_dir}" \
+  -framework Sparkle \
   -F "${frameworks}" \
   -framework Testing \
   -plugin-path "${plugins}" \
@@ -47,6 +55,8 @@ swiftc \
   -Xlinker "${frameworks}" \
   -Xlinker -rpath \
   -Xlinker "${testing_interop}" \
+  -Xlinker -rpath \
+  -Xlinker "${sparkle_framework_dir}" \
   -o "${build_dir}/MClashPackageTests"
 
 "${build_dir}/MClashPackageTests"
