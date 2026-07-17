@@ -11,24 +11,42 @@ struct AppRoutingView: View {
     @State private var editingRuleID: String?
     @State private var showingEditor = false
     @State private var editorError: String?
+    @State private var candidateRefreshRequest = 0
+    @State private var isRefreshingApplications = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            statusHeader
-            Divider()
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                statusHeader
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+                Divider()
 
-            if orderedRules.isEmpty {
-                emptyState
-            } else {
-                rulesTable
+                ZStack {
+                    if orderedRules.isEmpty {
+                        emptyState
+                    } else {
+                        rulesTable
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Divider()
+                actionBar
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
             }
-
-            Divider()
-            actionBar
+            // GeometryReader supplies the finite detail-column dimensions.
+            // Without this clamp, the empty state's flexible height can make
+            // NavigationSplitView adopt an oversized ideal height and clip
+            // both the sidebar rows and this page's fixed controls offscreen.
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .navigationTitle("App Routing")
         .mclashPageSurface()
-        .task { refreshApplications() }
+        .task(id: candidateRefreshRequest) {
+            await refreshApplications(request: candidateRefreshRequest)
+        }
         .sheet(isPresented: $showingEditor) {
             CaptureRuleEditorSheet(
                 isPresented: $showingEditor,
@@ -200,7 +218,18 @@ struct AppRoutingView: View {
                     .help(editorError)
             }
 
-            Button("Refresh Applications", action: refreshApplications)
+            Button(action: requestApplicationRefresh) {
+                if isRefreshingApplications {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Refreshing…")
+                    }
+                } else {
+                    Text("Refresh Applications")
+                }
+            }
+            .disabled(isRefreshingApplications)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -278,7 +307,7 @@ struct AppRoutingView: View {
     }
 
     private func addRule() {
-        refreshApplications()
+        requestApplicationRefresh()
         editingRuleID = nil
         selectedRuleID = nil
         draft = CaptureRuleDraft(
@@ -295,7 +324,7 @@ struct AppRoutingView: View {
     }
 
     private func edit(_ rule: CaptureRule) {
-        refreshApplications()
+        requestApplicationRefresh()
         do {
             draft = try CaptureRuleDraft(
                 rule: rule,
@@ -317,7 +346,7 @@ struct AppRoutingView: View {
     }
 
     private func clone(_ rule: CaptureRule) {
-        refreshApplications()
+        requestApplicationRefresh()
         do {
             var copy = try CaptureRuleDraft(
                 rule: rule,
@@ -437,11 +466,22 @@ struct AppRoutingView: View {
         return "\(base) \(suffix)"
     }
 
-    private func refreshApplications() {
-        let provider = ApplicationCaptureCandidateProvider()
-        let applications = provider.runningApplications()
-        applicationCandidates = applications
-        processCandidates = provider.runningProcesses(from: applications)
+    private func requestApplicationRefresh() {
+        candidateRefreshRequest &+= 1
+    }
+
+    private func refreshApplications(request: Int) async {
+        isRefreshingApplications = true
+        defer {
+            if request == candidateRefreshRequest {
+                isRefreshingApplications = false
+            }
+        }
+
+        let candidates = await ApplicationCaptureCandidateProvider().loadRunningCandidates()
+        guard !Task.isCancelled, request == candidateRefreshRequest else { return }
+        applicationCandidates = candidates.applications
+        processCandidates = candidates.processes
     }
 
     private func sourceSummary(_ rule: CaptureRule) -> String {

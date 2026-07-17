@@ -21,6 +21,17 @@ struct RunningProcessCaptureCandidate: Identifiable, Equatable, Sendable {
     let matcher: ProcessInstanceSourceMatcher
 }
 
+struct ApplicationCaptureCandidates: Equatable, Sendable {
+    let applications: [ApplicationCaptureCandidate]
+    let processes: [RunningProcessCaptureCandidate]
+}
+
+private struct RunningApplicationCaptureSnapshot: Sendable {
+    let bundleURL: URL
+    let displayName: String?
+    let processIdentifiers: [pid_t]
+}
+
 enum ApplicationCaptureCandidateError: Error, Equatable, LocalizedError, Sendable {
     case missingExecutable(URL)
     case codeObjectLookupFailed(status: Int32)
@@ -52,9 +63,34 @@ enum ApplicationCaptureCandidateError: Error, Equatable, LocalizedError, Sendabl
 
 /// Produces security-stable application matchers. Bundle identifiers are only
 /// labels; the designated requirement remains the primary matching identity.
-@MainActor
-struct ApplicationCaptureCandidateProvider {
+struct ApplicationCaptureCandidateProvider: Sendable {
+    @MainActor
+    func loadRunningCandidates() async -> ApplicationCaptureCandidates {
+        let snapshots = runningApplicationSnapshots()
+        let discoveryTask = Task.detached(priority: .userInitiated) {
+            let applications = applications(from: snapshots)
+            guard !Task.isCancelled else {
+                return ApplicationCaptureCandidates(applications: [], processes: [])
+            }
+            return ApplicationCaptureCandidates(
+                applications: applications,
+                processes: runningProcesses(from: applications)
+            )
+        }
+        return await withTaskCancellationHandler {
+            await discoveryTask.value
+        } onCancel: {
+            discoveryTask.cancel()
+        }
+    }
+
+    @MainActor
     func runningApplications() -> [ApplicationCaptureCandidate] {
+        applications(from: runningApplicationSnapshots())
+    }
+
+    @MainActor
+    private func runningApplicationSnapshots() -> [RunningApplicationCaptureSnapshot] {
         let applications = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy != .prohibited && $0.bundleURL != nil
         }
@@ -64,16 +100,28 @@ struct ApplicationCaptureCandidateProvider {
 
         return grouped.compactMap { path, applications in
             guard !path.isEmpty,
-                  let bundleURL = applications.first?.bundleURL,
-                  let candidate = try? candidate(
-                    bundleURL: bundleURL,
-                    displayName: applications.first?.localizedName,
-                    processIdentifiers: applications.map(\.processIdentifier)
-                  )
+                  let bundleURL = applications.first?.bundleURL
             else {
                 return nil
             }
-            return candidate
+            return RunningApplicationCaptureSnapshot(
+                bundleURL: bundleURL,
+                displayName: applications.first?.localizedName,
+                processIdentifiers: applications.map(\.processIdentifier)
+            )
+        }
+    }
+
+    private func applications(
+        from snapshots: [RunningApplicationCaptureSnapshot]
+    ) -> [ApplicationCaptureCandidate] {
+        snapshots.compactMap { snapshot in
+            guard !Task.isCancelled else { return nil }
+            return try? candidate(
+                bundleURL: snapshot.bundleURL,
+                displayName: snapshot.displayName,
+                processIdentifiers: snapshot.processIdentifiers
+            )
         }
         .sorted {
             $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
@@ -125,7 +173,8 @@ struct ApplicationCaptureCandidateProvider {
             application.runningProcessIdentifiers.map { ($0, application) }
         })
         return allProcessIdentifiers().compactMap { processIdentifier in
-            guard let firstStartTime = processStartTime(for: processIdentifier),
+            guard !Task.isCancelled,
+                  let firstStartTime = processStartTime(for: processIdentifier),
                   let executablePath = executablePath(for: processIdentifier),
                   processStartTime(for: processIdentifier) == firstStartTime else {
                 return nil

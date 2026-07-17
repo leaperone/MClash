@@ -6,13 +6,13 @@ import Testing
 
 @Suite("Capture rule draft")
 struct CaptureRuleDraftTests {
-    @Test("Running process discovery includes non-GUI executable instances")
-    @MainActor
-    func discoversCurrentProcess() throws {
+    @Test("Running process discovery stays off the main actor and includes non-GUI instances")
+    func discoversCurrentProcess() async throws {
+        let candidates = await Task.detached(priority: .userInitiated) {
+            ApplicationCaptureCandidateProvider().runningProcesses(from: [])
+        }.value
         let candidate = try #require(
-            ApplicationCaptureCandidateProvider()
-                .runningProcesses(from: [])
-                .first(where: { $0.processIdentifier == getpid() })
+            candidates.first(where: { $0.processIdentifier == getpid() })
         )
         #expect(candidate.executablePath.hasPrefix("/"))
         #expect(candidate.matcher.auditToken == nil)

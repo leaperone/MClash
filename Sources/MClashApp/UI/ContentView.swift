@@ -56,7 +56,12 @@ struct ContentView: View {
                     )
                     .transition(errorTransition)
                 }
-                destinationView
+                // Keep the detail column's view graph stable while switching
+                // between structurally different destinations. NavigationSplitView
+                // can otherwise fail to refresh conditional column content on macOS.
+                ZStack {
+                    destinationView
+                }
             }
             .mclashPageSurface()
         }
