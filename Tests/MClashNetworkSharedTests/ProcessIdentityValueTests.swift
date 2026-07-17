@@ -94,4 +94,62 @@ struct ProcessIdentityValueTests {
             return
         }
     }
+
+    @Test
+    func trustedMClashPolicyRequiresExactTeamAndSigningIdentifier() throws {
+        let policy = TrustedMClashComponentPolicy()
+
+        #expect(policy.contains(resolution(
+            signingIdentifier: "mclash-mihomo",
+            teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
+        )))
+        #expect(policy.contains(resolution(
+            signingIdentifier: "one.leaper.mclash",
+            teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
+        )))
+        #expect(!policy.contains(resolution(
+            signingIdentifier: "mclash-mihomo",
+            teamIdentifier: "ATTACKER123"
+        )))
+        #expect(!policy.contains(resolution(
+            signingIdentifier: "mclash-mihomo-copy",
+            teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
+        )))
+
+        let unsigned = ResolvedProcessIdentity(
+            auditToken: try SourceAppAuditToken(Data(repeating: 4, count: 32)),
+            processIdentifier: 12,
+            processVersion: 1,
+            effectiveUserID: 501,
+            auditUserID: 501,
+            executablePath: "/tmp/mclash-mihomo",
+            codeSigning: .unsigned
+        )
+        #expect(!policy.contains(.resolved(unsigned)))
+        #expect(!policy.contains(.unavailable(.processNoLongerExists)))
+    }
+
+    private func resolution(
+        signingIdentifier: String,
+        teamIdentifier: String?
+    ) -> ProcessIdentityResolution {
+        let identity = ResolvedProcessIdentity(
+            auditToken: try! SourceAppAuditToken(Data(repeating: 5, count: 32)),
+            processIdentifier: 13,
+            processVersion: 1,
+            effectiveUserID: 501,
+            auditUserID: 501,
+            executablePath: "/Applications/MClash.app/Contents/MacOS/\(signingIdentifier)",
+            codeSigning: .signed(SignedCodeIdentity(
+                signingIdentifier: signingIdentifier,
+                teamIdentifier: teamIdentifier,
+                designatedRequirement: "identifier \(signingIdentifier) and anchor apple generic",
+                codeDirectoryHash: nil,
+                securedBundleIdentifier: nil,
+                mainExecutablePath: nil,
+                isApplePlatformCode: false
+            ))
+        )
+        return .resolved(identity)
+    }
 }

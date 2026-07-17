@@ -127,6 +127,33 @@ struct TransparentProxyProviderMessageClientTests {
         #expect(try session.decodedRequests().map(\.command) == [.status])
     }
 
+    @Test("Activity batches preserve cursor paging without exposing control credentials")
+    func activityBatch() async throws {
+        let batch = AppRoutingActivityBatch(
+            activities: [],
+            nextCursor: 44,
+            droppedBeforeSequence: 12,
+            hasMore: true
+        )
+        let session = ScriptedProviderMessageSession(responses: [
+            response(
+                revision: 9,
+                captureEnabled: true,
+                failOpen: true,
+                activityBatch: batch
+            ),
+        ])
+
+        let received = try await TransparentProxyProviderMessageClient(session: session)
+            .activities(after: 40, limit: 125)
+        #expect(received == batch)
+        let request = try #require(session.decodedRequests().first)
+        #expect(request.command == .activity)
+        #expect(request.activityCursor == 40)
+        #expect(request.activityLimit == 125)
+        #expect(request.mihomoSOCKSPassword == nil)
+    }
+
     private func runtimeConfiguration(
         revision: UInt64
     ) throws -> NetworkExtensionRuntimeConfiguration {
@@ -164,9 +191,10 @@ struct TransparentProxyProviderMessageClientTests {
         revision: UInt64,
         captureEnabled: Bool,
         failOpen: Bool,
-        message: String? = nil
+        message: String? = nil,
+        activityBatch: AppRoutingActivityBatch? = nil
     ) -> Data {
-        let object: [String: Any?] = [
+        var object: [String: Any?] = [
             "protocolVersion": protocolVersion,
             "accepted": accepted,
             "provider": provider,
@@ -176,6 +204,11 @@ struct TransparentProxyProviderMessageClientTests {
             "failOpen": failOpen,
             "message": message,
         ]
+        if let activityBatch {
+            object["activityBatch"] = try! JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(activityBatch)
+            )
+        }
         return try! JSONSerialization.data(
             withJSONObject: object.compactMapValues { $0 }
         )

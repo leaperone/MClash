@@ -12,6 +12,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
     private let flowDecisionCoordinator = NetworkExtensionFlowDecisionCoordinator()
     private let tcpRelays = TCPFlowRelayRegistry()
     private let udpRelays = UDPFlowRelayRegistry()
+    private let activities = AppRoutingActivityRing(capacity: 2_000)
 
     override func startProxy(
         options: [String: Any]? = nil,
@@ -56,6 +57,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         let decision: FlowTrafficDecision
         if let tcpFlow = flow as? NEAppProxyTCPFlow {
             let plan = flowDecisionCoordinator.planTCPFlow(tcpFlow)
+            activities.upsert(plan.activity)
             decision = plan.decision
             switch decision.disposition {
             case .direct, .failOpen:
@@ -80,12 +82,15 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                     // A generic listener cannot faithfully implement a forced
                     // global/group route. Leave the flow untouched until a
                     // route-specific mihomo listener is configured.
+                    recordUnsupportedRoute(plan.activity)
                     return false
                 }
+                markRelayConnecting(plan.activity.flowIdentifier)
                 tcpRelays.start(
                     flow: tcpFlow,
                     proxy: proxy,
-                    destination: destination
+                    destination: destination,
+                    activityObserver: relayObserver(for: plan.activity.flowIdentifier)
                 )
                 return true
             }
@@ -111,6 +116,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         _ flow: NEAppProxyUDPFlow,
         plan: UDPFlowInterceptionPlan
     ) -> Bool {
+        activities.upsert(plan.activity)
         switch plan.decision.disposition {
         case .direct, .failOpen:
             return false
@@ -134,9 +140,15 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 // A generic listener cannot faithfully implement a forced
                 // global/group route. Leave the flow untouched until a
                 // route-specific mihomo listener is configured.
+                recordUnsupportedRoute(plan.activity)
                 return false
             }
-            udpRelays.start(flow: flow, proxy: proxy)
+            markRelayConnecting(plan.activity.flowIdentifier)
+            udpRelays.start(
+                flow: flow,
+                proxy: proxy,
+                activityObserver: relayObserver(for: plan.activity.flowIdentifier)
+            )
             return true
         }
     }
@@ -198,6 +210,26 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             switch request.command {
             case .status:
                 response = runtime.apply(request)
+            case .activity:
+                let snapshot = runtime.apply(request)
+                let batch = activities.batch(
+                    after: request.activityCursor ?? 0,
+                    limit: min(max(request.activityLimit ?? 200, 1), 500)
+                )
+                response = ProviderControlResponse(
+                    protocolVersion: snapshot.protocolVersion,
+                    accepted: snapshot.accepted,
+                    provider: snapshot.provider,
+                    revision: snapshot.revision,
+                    running: snapshot.running,
+                    captureEnabled: snapshot.captureEnabled,
+                    failOpen: snapshot.failOpen,
+                    message: snapshot.message,
+                    activityBatch: batch
+                )
+            case .clearActivity:
+                activities.removeAll()
+                response = runtime.apply(request)
             case .quiesce:
                 flowDecisionCoordinator.quiesce()
                 response = runtime.apply(request)
@@ -215,7 +247,8 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                         running: snapshot.running,
                         captureEnabled: false,
                         failOpen: true,
-                        message: snapshot.message
+                        message: snapshot.message,
+                        activityBatch: nil
                     )
                     completionHandler?(ProviderControlCodec.encode(response))
                     return
@@ -235,7 +268,8 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 running: snapshot.running,
                 captureEnabled: snapshot.captureEnabled,
                 failOpen: snapshot.failOpen,
-                message: snapshot.message
+                message: snapshot.message,
+                activityBatch: nil
             )
         }
         completionHandler?(ProviderControlCodec.encode(response))
@@ -270,6 +304,43 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             configuration[ProviderConfigurationKey.mihomoSOCKSPassword] = password
         }
         return configuration
+    }
+
+    private func markRelayConnecting(_ flowIdentifier: UUID) {
+        guard var activity = activities.activity(for: flowIdentifier) else { return }
+        activity.relayState = .connecting
+        activity.endedAt = nil
+        activities.upsert(activity)
+    }
+
+    private func recordUnsupportedRoute(_ original: AppRoutingActivity) {
+        guard var activity = activities.activity(for: original.flowIdentifier) else { return }
+        activity.effectiveAction = .direct
+        activity.relayState = .notApplicable
+        activity.relayError = "This Mihomo route requires a route-specific listener; traffic was left direct."
+        activity.endedAt = Date()
+        activities.upsert(activity)
+    }
+
+    private func relayObserver(
+        for flowIdentifier: UUID
+    ) -> @Sendable (AppRoutingRelaySnapshot) -> Void {
+        let activities = activities
+        return { snapshot in
+            guard var activity = activities.activity(for: flowIdentifier) else { return }
+            activity.relayState = snapshot.state
+            activity.relayError = snapshot.error
+            activity.uploadBytes = snapshot.uploadBytes
+            activity.downloadBytes = snapshot.downloadBytes
+            activity.relayLocalPort = snapshot.localPort
+            switch snapshot.state {
+            case .completed, .failed:
+                activity.endedAt = Date()
+            case .notApplicable, .pending, .connecting, .ready, .relaying:
+                activity.endedAt = nil
+            }
+            activities.upsert(activity)
+        }
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {

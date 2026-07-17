@@ -173,3 +173,29 @@ public enum ProcessIdentityResolution: Codable, Hashable, Sendable {
         return false
     }
 }
+
+/// Identifies MClash-owned, signed processes whose traffic must never be sent
+/// back through the transparent proxy. Exact signing identifiers and the
+/// Developer ID team are both required so an unrelated process with a matching
+/// executable name or path cannot claim the built-in bypass.
+public struct TrustedMClashComponentPolicy: Sendable {
+    public static let teamIdentifier = "5UAHRS482C"
+
+    private static let signingIdentifiers: Set<String> = [
+        "mclash-mihomo",
+        "one.leaper.mclash",
+        "one.leaper.mclash.network-extension",
+    ]
+
+    public init() {}
+
+    public func contains(_ resolution: ProcessIdentityResolution) -> Bool {
+        guard case let .resolved(identity) = resolution,
+              case let .signed(signing) = identity.codeSigning
+        else {
+            return false
+        }
+        return signing.teamIdentifier == Self.teamIdentifier
+            && Self.signingIdentifiers.contains(signing.signingIdentifier)
+    }
+}

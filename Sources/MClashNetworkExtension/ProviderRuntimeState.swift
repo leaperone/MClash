@@ -64,7 +64,7 @@ final class ProviderRuntimeState: @unchecked Sendable {
                 )
             }
             switch request.command {
-            case .status:
+            case .status, .activity, .clearActivity:
                 return response(accepted: true, message: nil)
 
             case .quiesce:
@@ -123,7 +123,8 @@ final class ProviderRuntimeState: @unchecked Sendable {
             running: storage.running,
             captureEnabled: storage.captureEnabled,
             failOpen: storage.failOpen,
-            message: message
+            message: message,
+            activityBatch: nil
         )
     }
 

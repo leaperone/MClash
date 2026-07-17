@@ -124,10 +124,11 @@ public struct ProcessIdentityResolver: Sendable {
             throw ProcessIdentityResolutionFailure.staticCodeLookupFailed(status: staticStatus)
         }
 
-        let validationFlags = SecCSFlags(
-            rawValue: kSecCSStrictValidate | kSecCSDoNotValidateResources
-        )
-        let validityStatus = SecCodeCheckValidity(dynamicCode, validationFlags, nil)
+        // `SecCodeCheckValidity` validates a running (dynamic) code object and only
+        // accepts its documented default flags. The strict/resource flags belong to
+        // `SecStaticCodeCheckValidity`; passing them here returns errSecCSInvalidFlags
+        // (-67070) for every flow and forces the provider to fail open.
+        let validityStatus = SecCodeCheckValidity(dynamicCode, SecCSFlags(), nil)
         if validityStatus != errSecSuccess, validityStatus != errSecCSUnsigned {
             throw ProcessIdentityResolutionFailure.codeSignatureInvalid(status: validityStatus)
         }

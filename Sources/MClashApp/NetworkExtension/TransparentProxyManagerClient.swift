@@ -1,4 +1,5 @@
 @preconcurrency import Foundation
+import MClashNetworkShared
 @preconcurrency import NetworkExtension
 
 protocol TransparentProxyManaging: Sendable {
@@ -14,6 +15,9 @@ protocol TransparentProxyManaging: Sendable {
     func updateProviderConfiguration(
         _ configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> TransparentProxyProviderStatus
+    func appRoutingActivity(after cursor: UInt64, limit: Int) async throws
+        -> AppRoutingActivityBatch
+    func clearAppRoutingActivity() async throws
 }
 
 private final class AppleTransparentProxyProviderMessageSession:
@@ -146,6 +150,17 @@ actor AppleTransparentProxyManager: TransparentProxyManaging {
         _ configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> TransparentProxyProviderStatus {
         try await providerMessageClient().updateConfiguration(configuration)
+    }
+
+    func appRoutingActivity(
+        after cursor: UInt64,
+        limit: Int
+    ) async throws -> AppRoutingActivityBatch {
+        try await providerMessageClient().activities(after: cursor, limit: limit)
+    }
+
+    func clearAppRoutingActivity() async throws {
+        try await providerMessageClient().clearActivity()
     }
 
     private func loadOwnedManager() async throws -> NETransparentProxyManager? {

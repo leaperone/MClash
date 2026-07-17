@@ -225,6 +225,8 @@ final class AppModel {
     private(set) var systemProxyPreferences: SystemProxyPreferences = .defaults
     private(set) var networkCaptureState: NetworkCaptureState = .off
     private(set) var networkCapturePreferences = NetworkCapturePreferences.disabled()
+    private(set) var appRoutingActivities: [AppRoutingActivity] = []
+    private(set) var appRoutingActivityError: String?
     private(set) var launchAtLogin = false
     private(set) var notificationsEnabled = false
     var controllerState: ControllerState = .idle
@@ -296,6 +298,8 @@ final class AppModel {
     private var prepared = false
     private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
     private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
+    private var appRoutingActivityTask: Task<Void, Never>?
+    private var appRoutingActivityCursor: UInt64 = 0
     private(set) var preparationInProgress = false
     private var shutdownInProgress = false
     private var startupPreparationErrorMessage: String?
@@ -1965,6 +1969,7 @@ final class AppModel {
             ) {
             case .running:
                 networkCaptureState = .on(revision: configuration.revision)
+                startAppRoutingActivityMonitor()
                 appendSupervisorLog(
                     "Network Extension is routing selected flows through mihomo."
                 )
@@ -1989,6 +1994,7 @@ final class AppModel {
     @discardableResult
     private func performNetworkCaptureDeactivation() async -> Bool {
         networkCaptureState = .disabling
+        stopAppRoutingActivityMonitor()
         do {
             try await networkExtensionControl.disable()
             networkCaptureState = .off
@@ -2338,6 +2344,19 @@ final class AppModel {
 
     func clearClosedConnectionHistory() {
         recentlyClosedConnections.removeAll(keepingCapacity: true)
+    }
+
+    func clearAppRoutingActivity() async {
+        do {
+            if networkCaptureIsActive {
+                try await networkExtensionControl.clearAppRoutingActivity()
+            }
+            appRoutingActivities.removeAll(keepingCapacity: true)
+            appRoutingActivityCursor = 0
+            appRoutingActivityError = nil
+        } catch {
+            appRoutingActivityError = error.localizedDescription
+        }
     }
 
     private func recordClosedConnections(
@@ -2979,6 +2998,72 @@ final class AppModel {
         routeTrafficEntries = []
         traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
         trafficHistory = []
+    }
+
+    private func startAppRoutingActivityMonitor() {
+        appRoutingActivityTask?.cancel()
+        appRoutingActivityCursor = 0
+        appRoutingActivities.removeAll(keepingCapacity: true)
+        appRoutingActivityError = nil
+        appRoutingActivityTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                guard case .on = networkCaptureState else { return }
+                do {
+                    var hasMore = true
+                    while hasMore, !Task.isCancelled {
+                        let batch = try await networkExtensionControl.appRoutingActivity(
+                            after: appRoutingActivityCursor,
+                            limit: 250
+                        )
+                        if let dropped = batch.droppedBeforeSequence,
+                           appRoutingActivityCursor > 0,
+                           appRoutingActivityCursor < dropped {
+                            appRoutingActivities.removeAll(keepingCapacity: true)
+                            appRoutingActivityCursor = 0
+                            continue
+                        }
+                        mergeAppRoutingActivities(batch.activities)
+                        appRoutingActivityCursor = batch.nextCursor
+                        hasMore = batch.hasMore
+                    }
+                    appRoutingActivityError = nil
+                    try await Task.sleep(for: .seconds(1))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    appRoutingActivityError = error.localizedDescription
+                    do {
+                        try await Task.sleep(for: .seconds(2))
+                    } catch {
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopAppRoutingActivityMonitor() {
+        appRoutingActivityTask?.cancel()
+        appRoutingActivityTask = nil
+    }
+
+    private func mergeAppRoutingActivities(_ updates: [AppRoutingActivity]) {
+        guard !updates.isEmpty else { return }
+        var byIdentifier = Dictionary(
+            uniqueKeysWithValues: appRoutingActivities.map { ($0.flowIdentifier, $0) }
+        )
+        for activity in updates {
+            byIdentifier[activity.flowIdentifier] = activity
+        }
+        appRoutingActivities = byIdentifier.values
+            .sorted {
+                if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
+                return $0.sequence > $1.sequence
+            }
+        if appRoutingActivities.count > 2_000 {
+            appRoutingActivities.removeLast(appRoutingActivities.count - 2_000)
+        }
     }
 
     private func cancelControllerStreamTasks() {

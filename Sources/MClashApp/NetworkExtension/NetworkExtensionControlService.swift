@@ -1,3 +1,5 @@
+import MClashNetworkShared
+
 protocol NetworkExtensionControlling: Sendable {
     func enable(
         _ configuration: NetworkExtensionRuntimeConfiguration,
@@ -6,6 +8,9 @@ protocol NetworkExtensionControlling: Sendable {
     func disable() async throws
     func uninstall() async throws -> NetworkExtensionUninstallOutcome
     func currentState() async -> NetworkExtensionControlState
+    func appRoutingActivity(after cursor: UInt64, limit: Int) async throws
+        -> AppRoutingActivityBatch
+    func clearAppRoutingActivity() async throws
 }
 
 extension NetworkExtensionControlling {
@@ -84,6 +89,16 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
 
             operation = .startTransparentProxy
             try await transparentProxy.start()
+            let providerStatus = try await transparentProxy.providerStatus()
+            guard providerStatus.running,
+                  providerStatus.captureEnabled == configuration.captureEnabled,
+                  providerStatus.revision == configuration.revision
+            else {
+                throw NetworkExtensionControlFailure(
+                    operation: .startTransparentProxy,
+                    message: "The transparent proxy connected but did not activate revision \(configuration.revision)."
+                )
+            }
             try transition(.transparentProxyStarted)
 
             if configuration.dnsEnabled {
@@ -172,6 +187,17 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
 
     func currentState() -> NetworkExtensionControlState {
         state
+    }
+
+    func appRoutingActivity(
+        after cursor: UInt64,
+        limit: Int
+    ) async throws -> AppRoutingActivityBatch {
+        try await transparentProxy.appRoutingActivity(after: cursor, limit: limit)
+    }
+
+    func clearAppRoutingActivity() async throws {
+        try await transparentProxy.clearAppRoutingActivity()
     }
 
     private func transition(_ event: NetworkExtensionControlEvent) throws {

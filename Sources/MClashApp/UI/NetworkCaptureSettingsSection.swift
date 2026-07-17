@@ -3,6 +3,13 @@ import ServiceManagement
 import SwiftUI
 
 struct AppRoutingView: View {
+    private enum Workspace: String, CaseIterable, Identifiable {
+        case rules = "Rules"
+        case activity = "Activity"
+
+        var id: Self { self }
+    }
+
     @Bindable var model: AppModel
 
     @State private var applicationCandidates: [ApplicationCaptureCandidate] = []
@@ -14,6 +21,8 @@ struct AppRoutingView: View {
     @State private var editorError: String?
     @State private var candidateRefreshRequest = 0
     @State private var isRefreshingApplications = false
+    @State private var workspace: Workspace = .rules
+    @State private var activitySearchText = ""
 
     var body: some View {
         GeometryReader { geometry in
@@ -24,16 +33,27 @@ struct AppRoutingView: View {
                 Divider()
 
                 ZStack {
-                    if orderedRules.isEmpty {
-                        emptyState
-                    } else {
-                        rulesTable
+                    switch workspace {
+                    case .rules:
+                        if orderedRules.isEmpty {
+                            emptyState
+                        } else {
+                            rulesTable
+                        }
+                    case .activity:
+                        activityWorkspace
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 Divider()
-                actionBar
+                Group {
+                    if workspace == .rules {
+                        actionBar
+                    } else {
+                        activityActionBar
+                    }
+                }
                     .fixedSize(horizontal: false, vertical: true)
                     .layoutPriority(1)
             }
@@ -69,12 +89,12 @@ struct AppRoutingView: View {
                         Label(statusTitle, systemImage: statusSymbol)
                             .font(.headline)
                             .foregroundStyle(statusColor)
-                        Text("· \(orderedRules.count) \(orderedRules.count == 1 ? "rule" : "rules")")
+                        Text(headerCount)
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
 
-                    Text("Rules are evaluated from top to bottom. The first matching rule decides whether traffic uses Mihomo, connects directly, or is rejected.")
+                    Text(headerDescription)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -89,6 +109,14 @@ struct AppRoutingView: View {
                             || !model.canPerform(.changeNetworkCapture)
                     )
             }
+
+            Picker("App Routing workspace", selection: $workspace) {
+                ForEach(Workspace.allCases) { item in
+                    Text(item.rawValue).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 300)
 
             statusNotice
         }
@@ -252,6 +280,98 @@ struct AppRoutingView: View {
         .onDeleteCommand { removeSelectedRule() }
     }
 
+    @ViewBuilder
+    private var activityWorkspace: some View {
+        if model.appRoutingActivities.isEmpty {
+            ContentUnavailableView(
+                "No App Routing Activity",
+                systemImage: "waveform.path.ecg",
+                description: Text(activityEmptyDescription)
+            )
+        } else if filteredActivities.isEmpty {
+            ContentUnavailableView.search(text: activitySearchText)
+        } else {
+            activityTable
+        }
+    }
+
+    private var activityTable: some View {
+        Table(filteredActivities) {
+            TableColumn("Application / Process") { activity in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(activityApplicationName(activity))
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Text("PID \(activity.source.processIdentifier)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .help(activity.source.executablePath ?? activityApplicationName(activity))
+            }
+            .width(min: 145, ideal: 200)
+
+            TableColumn("Destination") { activity in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(activityDestination(activity))
+                        .lineLimit(1)
+                    Text(activityDestinationDetail(activity))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .help(activityDestination(activity))
+            }
+            .width(min: 145, ideal: 210)
+
+            TableColumn("App Rule") { activity in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(activity.matchedRuleIdentifier ?? activityCause(activity))
+                        .lineLimit(1)
+                    Text("Requested: \(actionSummary(activity.configuredAction))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .width(min: 100, ideal: 145)
+
+            TableColumn("Result") { activity in
+                Label(
+                    activityResult(activity),
+                    systemImage: activityResultSymbol(activity)
+                )
+                .foregroundStyle(activityResultColor(activity))
+                .lineLimit(1)
+                .help(activity.relayError ?? activityResult(activity))
+            }
+            .width(min: 100, ideal: 130)
+
+            TableColumn("Mihomo Rule / Path") { activity in
+                Text(mihomoPath(activity))
+                    .lineLimit(1)
+                    .help(mihomoPath(activity))
+            }
+            .width(min: 145, ideal: 220)
+
+            TableColumn("Traffic") { activity in
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("↓ \(formattedActivityBytes(activity.downloadBytes))")
+                    Text("↑ \(formattedActivityBytes(activity.uploadBytes))")
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            }
+            .width(min: 88, ideal: 105)
+
+            TableColumn("Started") { activity in
+                Text(activity.startedAt, style: .time)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .width(min: 72, ideal: 86)
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "app.badge")
@@ -329,6 +449,207 @@ struct AppRoutingView: View {
         .padding(.horizontal, MClashLayout.pagePadding)
         .padding(.vertical, 12)
         .disabled(!model.canPerform(.changeNetworkCapture))
+    }
+
+    private var activityActionBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Filter app, destination, rule, or path", text: $activitySearchText)
+                .textFieldStyle(.plain)
+                .frame(maxWidth: 360)
+
+            Spacer()
+
+            if let error = model.appRoutingActivityError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .help(error)
+            } else {
+                Text("Live · updates automatically")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("Clear") {
+                Task { await model.clearAppRoutingActivity() }
+            }
+            .disabled(model.appRoutingActivities.isEmpty)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .padding(.horizontal, MClashLayout.pagePadding)
+        .padding(.vertical, 12)
+    }
+
+    private var headerCount: String {
+        switch workspace {
+        case .rules:
+            "· \(orderedRules.count) \(orderedRules.count == 1 ? "rule" : "rules")"
+        case .activity:
+            "· \(model.appRoutingActivities.count) flows"
+        }
+    }
+
+    private var headerDescription: String {
+        switch workspace {
+        case .rules:
+            "Rules are evaluated from top to bottom. The first matching rule decides whether traffic uses Mihomo, connects directly, or is rejected."
+        case .activity:
+            "Live decisions from the Network Extension show which process matched which App Routing rule, the effective route, relay state, traffic, and the corresponding Mihomo path when available."
+        }
+    }
+
+    private var activityEmptyDescription: String {
+        switch model.networkCaptureState {
+        case .on:
+            "Start using an application covered by a rule. Its next TCP or UDP flow will appear here."
+        default:
+            "Enable App Routing and connect MClash to inspect flow decisions."
+        }
+    }
+
+    private var filteredActivities: [AppRoutingActivity] {
+        let query = activitySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !query.isEmpty else { return model.appRoutingActivities }
+        return model.appRoutingActivities.filter { activity in
+            let fields = [
+                activityApplicationName(activity),
+                activity.source.executablePath,
+                activityDestination(activity),
+                activity.matchedRuleIdentifier,
+                activityCause(activity),
+                activityResult(activity),
+                mihomoPath(activity),
+            ].compactMap { $0?.lowercased() }
+            return fields.contains { $0.contains(query) }
+        }
+    }
+
+    private func activityApplicationName(_ activity: AppRoutingActivity) -> String {
+        if let path = activity.source.executablePath, !path.isEmpty {
+            return URL(fileURLWithPath: path).lastPathComponent
+        }
+        if let bundle = activity.source.bundleIdentifier, !bundle.isEmpty { return bundle }
+        if let signing = activity.source.signingIdentifier, !signing.isEmpty { return signing }
+        return activity.source.processIdentifier > 0
+            ? "Process \(activity.source.processIdentifier)"
+            : "Unknown process"
+    }
+
+    private func activityDestination(_ activity: AppRoutingActivity) -> String {
+        let host = activity.destination.hostname
+            ?? activity.destination.ipAddress
+            ?? "Unknown destination"
+        return activity.destination.port > 0 ? "\(host):\(activity.destination.port)" : host
+    }
+
+    private func activityDestinationDetail(_ activity: AppRoutingActivity) -> String {
+        let transport = activity.transportProtocol.rawValue.uppercased()
+        guard let address = activity.destination.ipAddress,
+              address.caseInsensitiveCompare(activity.destination.hostname ?? "") != .orderedSame
+        else { return transport }
+        return "\(transport) · \(address)"
+    }
+
+    private func activityCause(_ activity: AppRoutingActivity) -> String {
+        switch activity.cause {
+        case .captureDisabled: "Capture disabled"
+        case .configurationUnavailable: "Configuration unavailable"
+        case .contextUnavailable: "Identity unavailable"
+        case let .rule(cause), let .mihomoUnavailable(cause, _):
+            switch cause {
+            case let .matchedRule(identifier): identifier
+            case let .builtInBypass(reason): "Built-in: \(reason.rawValue)"
+            case .defaultDirect: "Default direct"
+            }
+        }
+    }
+
+    private func activityResult(_ activity: AppRoutingActivity) -> String {
+        if activity.relayState == .failed { return "Relay failed" }
+        return switch activity.effectiveAction {
+        case .direct: "Direct"
+        case .reject: "Rejected"
+        case .failOpen: "Fail-open"
+        case .mihomo: switch activity.relayState {
+            case .pending, .connecting: "Connecting"
+            case .ready: "Mihomo ready"
+            case .relaying: "Via Mihomo"
+            case .completed: "Mihomo complete"
+            case .failed: "Relay failed"
+            case .notApplicable: "Mihomo"
+            }
+        }
+    }
+
+    private func activityResultSymbol(_ activity: AppRoutingActivity) -> String {
+        if activity.relayState == .failed { return "exclamationmark.triangle.fill" }
+        return switch activity.effectiveAction {
+        case .direct: "arrow.right"
+        case .reject: "xmark.octagon.fill"
+        case .failOpen: "arrow.uturn.right"
+        case .mihomo: "point.3.connected.trianglepath.dotted"
+        }
+    }
+
+    private func activityResultColor(_ activity: AppRoutingActivity) -> Color {
+        if activity.relayState == .failed { return .red }
+        return switch activity.effectiveAction {
+        case .direct: .secondary
+        case .reject: .red
+        case .failOpen: .orange
+        case .mihomo: .accentColor
+        }
+    }
+
+    private func mihomoPath(_ activity: AppRoutingActivity) -> String {
+        guard case .mihomo = activity.effectiveAction else { return "—" }
+        guard let connection = matchingMihomoConnection(activity) else {
+            return activity.relayState == .failed ? "Relay failed" : "Waiting for Mihomo metadata"
+        }
+        let rule = [connection.rule, connection.rulePayload]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        let chain = connection.chains.joined(separator: " → ")
+        return [rule, chain].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private func matchingMihomoConnection(
+        _ activity: AppRoutingActivity
+    ) -> MihomoConnection? {
+        let active = model.connections?.connections ?? []
+        let closed = model.recentlyClosedConnections.map(\.connection)
+        return (active + closed).first { connection in
+            let metadata = connection.metadata
+            guard metadata.inboundName == NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName
+                    || metadata.inboundName == NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName
+            else { return false }
+            if let port = metadata.destinationPort,
+               port != String(activity.destination.port) { return false }
+            if let relayLocalPort = activity.relayLocalPort,
+               metadata.sourcePort != String(relayLocalPort) { return false }
+            if let network = metadata.network?.lowercased(),
+               network != activity.transportProtocol.rawValue { return false }
+            if let connectionStart = ISO8601DateFormatter().date(from: connection.start),
+               abs(connectionStart.timeIntervalSince(activity.startedAt)) > 15 {
+                return false
+            }
+            let expected = [activity.destination.hostname, activity.destination.ipAddress]
+                .compactMap { $0?.lowercased() }
+            let actual = [metadata.host, metadata.destinationIP, metadata.remoteDestination]
+                .compactMap { $0?.lowercased() }
+            return expected.isEmpty || expected.contains { value in
+                actual.contains { $0 == value || $0.hasPrefix("\(value):") }
+            }
+        }
+    }
+
+    private func formattedActivityBytes(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
     private var rules: [CaptureRule] {

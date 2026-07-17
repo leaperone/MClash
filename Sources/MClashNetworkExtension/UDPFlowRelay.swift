@@ -284,6 +284,7 @@ final class UDPFlowRelay: @unchecked Sendable {
     private let proxy: ProviderSOCKSConfiguration
     private let queue: DispatchQueue
     private let completion: @Sendable (UUID) -> Void
+    private let activityObserver: @Sendable (AppRoutingRelaySnapshot) -> Void
 
     private var controlConnection: NWConnection?
     private var udpConnection: NWConnection?
@@ -297,14 +298,19 @@ final class UDPFlowRelay: @unchecked Sendable {
     private var startedUDPConnection = false
     private var openedFlow = false
     private var finished = false
+    private var uploadBytes: UInt64 = 0
+    private var downloadBytes: UInt64 = 0
+    private var relayLocalPort: UInt16?
 
     init(
         flow: NEAppProxyUDPFlow,
         proxy: ProviderSOCKSConfiguration,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
         completion: @escaping @Sendable (UUID) -> Void
     ) {
         self.flow = flow
         self.proxy = proxy
+        self.activityObserver = activityObserver
         self.completion = completion
         queue = DispatchQueue(label: "one.leaper.mclash.udp-relay.\(id.uuidString)")
     }
@@ -502,6 +508,7 @@ final class UDPFlowRelay: @unchecked Sendable {
         switch state {
         case .ready where !startedUDPConnection:
             startedUDPConnection = true
+            relayLocalPort = Self.localPort(of: udpConnection)
             openFlow()
         case let .failed(error):
             finish(error: UDPFlowRelayError.udpConnectionFailed(
@@ -602,6 +609,7 @@ final class UDPFlowRelay: @unchecked Sendable {
                     return
                 }
                 self.openedFlow = true
+                self.report(.ready)
                 self.startupTimeout?.cancel()
                 self.startupTimeout = nil
                 self.resetIdleTimeout()
@@ -700,6 +708,8 @@ final class UDPFlowRelay: @unchecked Sendable {
                                 error.localizedDescription
                             ))
                         } else {
+                            self.uploadBytes &+= UInt64(item.payload.count)
+                            self.report(.relaying)
                             self.sendToRelay(datagrams, index: index + 1)
                         }
                     }
@@ -735,6 +745,8 @@ final class UDPFlowRelay: @unchecked Sendable {
                         payload: decoded.payload,
                         endpoint: decoded.destination
                     )
+                    self.downloadBytes &+= UInt64(decoded.payload.count)
+                    self.report(.relaying)
                     self.resetIdleTimeout()
                     UDPAppProxyFlowCompatibility.write(
                         datagram,
@@ -780,7 +792,28 @@ final class UDPFlowRelay: @unchecked Sendable {
             flow.closeReadWithError(nil)
             flow.closeWriteWithError(nil)
         }
+        report(
+            error == nil ? .completed : .failed,
+            error: error?.localizedDescription
+        )
         completion(id)
+    }
+
+    private func report(_ state: AppRoutingRelayState, error: String? = nil) {
+        activityObserver(AppRoutingRelaySnapshot(
+            state: state,
+            uploadBytes: uploadBytes,
+            downloadBytes: downloadBytes,
+            error: error,
+            localPort: relayLocalPort
+        ))
+    }
+
+    private static func localPort(of connection: NWConnection?) -> UInt16? {
+        guard case let .hostPort(_, port) = connection?.currentPath?.localEndpoint else {
+            return nil
+        }
+        return port.rawValue
     }
 }
 
@@ -788,8 +821,16 @@ final class UDPFlowRelayRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var relays: [UUID: UDPFlowRelay] = [:]
 
-    func start(flow: NEAppProxyUDPFlow, proxy: ProviderSOCKSConfiguration) {
-        let relay = UDPFlowRelay(flow: flow, proxy: proxy) { [weak self] identifier in
+    func start(
+        flow: NEAppProxyUDPFlow,
+        proxy: ProviderSOCKSConfiguration,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
+    ) {
+        let relay = UDPFlowRelay(
+            flow: flow,
+            proxy: proxy,
+            activityObserver: activityObserver
+        ) { [weak self] identifier in
             self?.remove(identifier)
         }
         lock.lock()

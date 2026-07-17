@@ -1,4 +1,5 @@
 import Foundation
+import MClashNetworkShared
 
 /// Versioned messages exchanged between the host app and the transparent
 /// provider through `NETunnelProviderSession.sendProviderMessage`.
@@ -9,6 +10,8 @@ enum ProviderControlCommand: String, Codable, Sendable {
     case status
     case applyConfiguration
     case quiesce
+    case activity
+    case clearActivity
 }
 
 struct ProviderControlRequest: Codable, Sendable {
@@ -24,6 +27,8 @@ struct ProviderControlRequest: Codable, Sendable {
     let mihomoSOCKSPort: UInt16?
     let mihomoSOCKSUsername: String?
     let mihomoSOCKSPassword: String?
+    let activityCursor: UInt64?
+    let activityLimit: Int?
 }
 
 struct ProviderControlResponse: Codable, Sendable {
@@ -35,6 +40,7 @@ struct ProviderControlResponse: Codable, Sendable {
     let captureEnabled: Bool
     let failOpen: Bool
     let message: String?
+    let activityBatch: AppRoutingActivityBatch?
 }
 
 enum ProviderConfigurationKey {

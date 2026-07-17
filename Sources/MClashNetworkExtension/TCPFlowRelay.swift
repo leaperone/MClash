@@ -61,6 +61,7 @@ final class TCPFlowRelay: @unchecked Sendable {
     private let destination: SOCKS5Endpoint
     private let queue: DispatchQueue
     private let completion: @Sendable (UUID) -> Void
+    private let activityObserver: @Sendable (AppRoutingRelaySnapshot) -> Void
 
     private var connection: NWConnection?
     private var handshakeTimeout: DispatchWorkItem?
@@ -71,16 +72,21 @@ final class TCPFlowRelay: @unchecked Sendable {
     private var clientReadFinished = false
     private var upstreamReadFinished = false
     private var finished = false
+    private var uploadBytes: UInt64 = 0
+    private var downloadBytes: UInt64 = 0
+    private var relayLocalPort: UInt16?
 
     init(
         flow: NEAppProxyTCPFlow,
         proxy: ProviderSOCKSConfiguration,
         destination: SOCKS5Endpoint,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
         completion: @escaping @Sendable (UUID) -> Void
     ) {
         self.flow = flow
         self.proxy = proxy
         self.destination = destination
+        self.activityObserver = activityObserver
         self.completion = completion
         queue = DispatchQueue(label: "one.leaper.mclash.tcp-relay.\(id.uuidString)")
     }
@@ -113,6 +119,7 @@ final class TCPFlowRelay: @unchecked Sendable {
         guard !finished else { return }
         switch state {
         case .ready:
+            relayLocalPort = Self.localPort(of: connection)
             beginSOCKSHandshake()
         case let .failed(error):
             finish(error: TCPFlowRelayError.upstreamFailed(error.localizedDescription))
@@ -277,9 +284,12 @@ final class TCPFlowRelay: @unchecked Sendable {
                     return
                 }
                 self.openedFlow = true
+                self.report(.ready)
                 if initialUpstreamPayload.isEmpty {
                     self.startPumps()
                 } else {
+                    self.downloadBytes &+= UInt64(initialUpstreamPayload.count)
+                    self.report(.relaying)
                     self.writeToFlow(initialUpstreamPayload) { [weak self] in
                         self?.startPumps()
                     }
@@ -326,6 +336,8 @@ final class TCPFlowRelay: @unchecked Sendable {
                     )
                     return
                 }
+                self.uploadBytes &+= UInt64(data.count)
+                self.report(.relaying)
                 self.connection?.send(
                     content: data,
                     completion: .contentProcessed { [weak self] error in
@@ -360,6 +372,8 @@ final class TCPFlowRelay: @unchecked Sendable {
                     return
                 }
                 if let data, !data.isEmpty {
+                    self.downloadBytes &+= UInt64(data.count)
+                    self.report(.relaying)
                     self.writeToFlow(data) { [weak self] in
                         guard let self else { return }
                         if isComplete {
@@ -420,7 +434,28 @@ final class TCPFlowRelay: @unchecked Sendable {
             if !clientReadFinished { flow.closeReadWithError(nil) }
             if !upstreamReadFinished { flow.closeWriteWithError(nil) }
         }
+        report(
+            error == nil ? .completed : .failed,
+            error: error?.localizedDescription
+        )
         completion(id)
+    }
+
+    private func report(_ state: AppRoutingRelayState, error: String? = nil) {
+        activityObserver(AppRoutingRelaySnapshot(
+            state: state,
+            uploadBytes: uploadBytes,
+            downloadBytes: downloadBytes,
+            error: error,
+            localPort: relayLocalPort
+        ))
+    }
+
+    private static func localPort(of connection: NWConnection?) -> UInt16? {
+        guard case let .hostPort(_, port) = connection?.currentPath?.localEndpoint else {
+            return nil
+        }
+        return port.rawValue
     }
 }
 
@@ -431,12 +466,14 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
     func start(
         flow: NEAppProxyTCPFlow,
         proxy: ProviderSOCKSConfiguration,
-        destination: SOCKS5Endpoint
+        destination: SOCKS5Endpoint,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
     ) {
         let relay = TCPFlowRelay(
             flow: flow,
             proxy: proxy,
-            destination: destination
+            destination: destination,
+            activityObserver: activityObserver
         ) { [weak self] identifier in
             self?.remove(identifier)
         }

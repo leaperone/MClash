@@ -1,9 +1,12 @@
 import Foundation
+import MClashNetworkShared
 
 enum TransparentProxyProviderControlCommand: String, Codable, Sendable {
     case status
     case quiesce
     case applyConfiguration
+    case activity
+    case clearActivity
 }
 
 struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
@@ -19,6 +22,8 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
     let mihomoSOCKSPort: UInt16?
     let mihomoSOCKSUsername: String?
     let mihomoSOCKSPassword: String?
+    let activityCursor: UInt64?
+    let activityLimit: Int?
 
     init(
         command: TransparentProxyProviderControlCommand,
@@ -29,7 +34,9 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
         mihomoSOCKSHost: String? = nil,
         mihomoSOCKSPort: UInt16? = nil,
         mihomoSOCKSUsername: String? = nil,
-        mihomoSOCKSPassword: String? = nil
+        mihomoSOCKSPassword: String? = nil,
+        activityCursor: UInt64? = nil,
+        activityLimit: Int? = nil
     ) {
         protocolVersion = Self.currentProtocolVersion
         self.command = command
@@ -41,6 +48,8 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
         self.mihomoSOCKSPort = mihomoSOCKSPort
         self.mihomoSOCKSUsername = mihomoSOCKSUsername
         self.mihomoSOCKSPassword = mihomoSOCKSPassword
+        self.activityCursor = activityCursor
+        self.activityLimit = activityLimit
     }
 }
 
@@ -81,6 +90,7 @@ private struct TransparentProxyProviderControlResponse: Decodable, Sendable {
     let captureEnabled: Bool
     let failOpen: Bool
     let message: String?
+    let activityBatch: AppRoutingActivityBatch?
 
     var status: TransparentProxyProviderStatus {
         TransparentProxyProviderStatus(
@@ -99,6 +109,7 @@ enum TransparentProxyProviderMessageError: Error, Equatable, Sendable, Localized
     case sessionUnavailable
     case timedOut
     case missingResponse
+    case missingActivityBatch
     case invalidResponse(String)
     case unsupportedProtocolVersion(expected: Int, actual: Int)
     case unexpectedProvider(String)
@@ -120,6 +131,8 @@ enum TransparentProxyProviderMessageError: Error, Equatable, Sendable, Localized
             "The transparent proxy provider did not respond before the deadline."
         case .missingResponse:
             "The transparent proxy provider returned no response data."
+        case .missingActivityBatch:
+            "The transparent proxy provider returned no App Routing activity batch."
         case let .invalidResponse(message):
             "The transparent proxy provider returned an invalid response: \(message)"
         case let .unsupportedProtocolVersion(expected, actual):
@@ -202,6 +215,27 @@ struct TransparentProxyProviderMessageClient: Sendable {
         )
     }
 
+    func activities(
+        after cursor: UInt64,
+        limit: Int = 200
+    ) async throws -> AppRoutingActivityBatch {
+        let response = try await validatedResponse(for: TransparentProxyProviderControlRequest(
+            command: .activity,
+            activityCursor: cursor,
+            activityLimit: limit
+        ))
+        guard let batch = response.activityBatch else {
+            throw TransparentProxyProviderMessageError.missingActivityBatch
+        }
+        return batch
+    }
+
+    func clearActivity() async throws {
+        _ = try await validatedResponse(for: TransparentProxyProviderControlRequest(
+            command: .clearActivity
+        ))
+    }
+
     /// Atomically changes the provider's decision inputs from the host's point
     /// of view. Any error after quiescing deliberately leaves capture disabled.
     @discardableResult
@@ -226,6 +260,29 @@ struct TransparentProxyProviderMessageClient: Sendable {
         expectedCaptureEnabled: Bool? = nil,
         expectedFailOpen: Bool? = nil
     ) async throws -> TransparentProxyProviderStatus {
+        let response = try await validatedResponse(for: request)
+        if let expectedRevision, response.revision != expectedRevision {
+            throw TransparentProxyProviderMessageError.revisionMismatch(
+                expected: expectedRevision,
+                actual: response.revision
+            )
+        }
+        if let expectedCaptureEnabled,
+           let expectedFailOpen,
+           (response.captureEnabled != expectedCaptureEnabled || response.failOpen != expectedFailOpen) {
+            throw TransparentProxyProviderMessageError.stateMismatch(
+                expectedCaptureEnabled: expectedCaptureEnabled,
+                actualCaptureEnabled: response.captureEnabled,
+                expectedFailOpen: expectedFailOpen,
+                actualFailOpen: response.failOpen
+            )
+        }
+        return response.status
+    }
+
+    private func validatedResponse(
+        for request: TransparentProxyProviderControlRequest
+    ) async throws -> TransparentProxyProviderControlResponse {
         let messageData = try JSONEncoder().encode(request)
         let responseData = try await exchange(messageData)
         let response: TransparentProxyProviderControlResponse
@@ -255,23 +312,7 @@ struct TransparentProxyProviderMessageClient: Sendable {
                 message: response.message
             )
         }
-        if let expectedRevision, response.revision != expectedRevision {
-            throw TransparentProxyProviderMessageError.revisionMismatch(
-                expected: expectedRevision,
-                actual: response.revision
-            )
-        }
-        if let expectedCaptureEnabled,
-           let expectedFailOpen,
-           (response.captureEnabled != expectedCaptureEnabled || response.failOpen != expectedFailOpen) {
-            throw TransparentProxyProviderMessageError.stateMismatch(
-                expectedCaptureEnabled: expectedCaptureEnabled,
-                actualCaptureEnabled: response.captureEnabled,
-                expectedFailOpen: expectedFailOpen,
-                actualFailOpen: response.failOpen
-            )
-        }
-        return response.status
+        return response
     }
 
     private func exchange(_ messageData: Data) async throws -> Data {

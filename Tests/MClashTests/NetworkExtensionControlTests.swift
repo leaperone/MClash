@@ -1,4 +1,5 @@
 import Foundation
+import MClashNetworkShared
 import Testing
 @testable import MClashApp
 
@@ -139,6 +140,32 @@ struct NetworkExtensionControlTests {
                 == "System extension installation: Invalid Mach service App Group (NetworkExtensionErrorDomain 6)"
         )
     }
+
+    @Test("Connected provider must confirm the active revision")
+    func providerRevisionIsVerified() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(
+                recorder: recorder,
+                statusOverride: TransparentProxyProviderStatus(
+                    revision: 3,
+                    running: true,
+                    captureEnabled: true,
+                    failOpen: true
+                )
+            ),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+
+        await #expect(throws: NetworkExtensionControlFailure.self) {
+            try await service.enable(NetworkExtensionRuntimeConfiguration(revision: 4))
+        }
+        let operations = await recorder.snapshot()
+        #expect(Array(operations.suffix(2)) == ["dns.disable", "transparent.stop"])
+        let state = await service.currentState()
+        #expect(state.phase == .failed)
+    }
 }
 
 private final class NetworkExtensionProgressRecorder: @unchecked Sendable {
@@ -156,6 +183,7 @@ private final class NetworkExtensionProgressRecorder: @unchecked Sendable {
 
 private actor NetworkExtensionOperationRecorder {
     private var operations: [String] = []
+    private var configuredRevision: UInt64 = 0
 
     func append(_ operation: String) {
         operations.append(operation)
@@ -167,6 +195,14 @@ private actor NetworkExtensionOperationRecorder {
 
     func removeAll() {
         operations.removeAll()
+    }
+
+    func setConfiguredRevision(_ revision: UInt64) {
+        configuredRevision = revision
+    }
+
+    func revision() -> UInt64 {
+        configuredRevision
     }
 }
 
@@ -192,9 +228,19 @@ private struct MockSystemExtensionController: SystemExtensionControlling {
 
 private struct MockTransparentProxyManager: TransparentProxyManaging {
     let recorder: NetworkExtensionOperationRecorder
+    var statusOverride: TransparentProxyProviderStatus?
+
+    init(
+        recorder: NetworkExtensionOperationRecorder,
+        statusOverride: TransparentProxyProviderStatus? = nil
+    ) {
+        self.recorder = recorder
+        self.statusOverride = statusOverride
+    }
 
     func configure(_ configuration: NetworkExtensionRuntimeConfiguration) async throws {
         await recorder.append("transparent.configure")
+        await recorder.setConfiguredRevision(configuration.revision)
     }
 
     func reload() async throws {
@@ -210,10 +256,12 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
     }
 
     func providerStatus() async throws -> TransparentProxyProviderStatus {
-        TransparentProxyProviderStatus(
-            revision: 0,
+        if let statusOverride { return statusOverride }
+        let revision = await recorder.revision()
+        return TransparentProxyProviderStatus(
+            revision: revision,
             running: true,
-            captureEnabled: false,
+            captureEnabled: true,
             failOpen: true
         )
     }
@@ -243,6 +291,20 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
     ) async throws -> TransparentProxyProviderStatus {
         try await applyProviderConfiguration(configuration)
     }
+
+    func appRoutingActivity(
+        after cursor: UInt64,
+        limit: Int
+    ) async throws -> AppRoutingActivityBatch {
+        AppRoutingActivityBatch(
+            activities: [],
+            nextCursor: cursor,
+            droppedBeforeSequence: nil,
+            hasMore: false
+        )
+    }
+
+    func clearAppRoutingActivity() async throws {}
 }
 
 private struct MockDNSProxyManager: DNSProxyManaging {
