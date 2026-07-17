@@ -100,6 +100,10 @@ enum NetworkExtensionEnableOutcome: Equatable, Sendable {
     case requiresReboot
 }
 
+enum NetworkExtensionEnableProgress: Equatable, Sendable {
+    case awaitingSystemExtensionApproval
+}
+
 enum NetworkExtensionUninstallOutcome: Equatable, Sendable {
     case uninstalled
     case requiresReboot
@@ -126,11 +130,35 @@ struct NetworkExtensionControlFailure: Error, Equatable, Sendable, LocalizedErro
     }
 
     init(operation: NetworkExtensionControlOperation, underlying error: Error) {
-        self.init(operation: operation, message: String(describing: error))
+        if let failure = error as? NetworkExtensionControlFailure {
+            self.init(operation: operation, message: failure.message)
+            return
+        }
+        let underlyingError = error as NSError
+        var message = underlyingError.localizedDescription
+        if underlyingError.domain != NSCocoaErrorDomain {
+            message += " (\(underlyingError.domain) \(underlyingError.code))"
+        }
+        self.init(operation: operation, message: message)
     }
 
     var errorDescription: String? {
-        "\(operation.rawValue): \(message)"
+        "\(operation.displayName): \(message)"
+    }
+}
+
+private extension NetworkExtensionControlOperation {
+    var displayName: String {
+        switch self {
+        case .activateSystemExtension: "System extension installation"
+        case .configureTransparentProxy: "Network filter configuration"
+        case .startTransparentProxy: "Network filter startup"
+        case .configureDNSProxy: "DNS proxy configuration"
+        case .disableDNSProxy: "DNS proxy shutdown"
+        case .stopTransparentProxy: "Network filter shutdown"
+        case .deactivateSystemExtension: "System extension removal"
+        case .stateTransition: "Network Extension state transition"
+        }
     }
 }
 

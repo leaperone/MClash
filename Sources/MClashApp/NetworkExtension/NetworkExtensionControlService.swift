@@ -1,10 +1,19 @@
 protocol NetworkExtensionControlling: Sendable {
     func enable(
-        _ configuration: NetworkExtensionRuntimeConfiguration
+        _ configuration: NetworkExtensionRuntimeConfiguration,
+        progress reportProgress: @escaping @Sendable (NetworkExtensionEnableProgress) -> Void
     ) async throws -> NetworkExtensionEnableOutcome
     func disable() async throws
     func uninstall() async throws -> NetworkExtensionUninstallOutcome
     func currentState() async -> NetworkExtensionControlState
+}
+
+extension NetworkExtensionControlling {
+    func enable(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> NetworkExtensionEnableOutcome {
+        try await enable(configuration, progress: { _ in })
+    }
 }
 
 actor NetworkExtensionControlService: NetworkExtensionControlling {
@@ -33,7 +42,8 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     }
 
     func enable(
-        _ configuration: NetworkExtensionRuntimeConfiguration
+        _ configuration: NetworkExtensionRuntimeConfiguration,
+        progress reportProgress: @escaping @Sendable (NetworkExtensionEnableProgress) -> Void
     ) async throws -> NetworkExtensionEnableOutcome {
         if state.phase == .running,
            state.revision == configuration.revision,
@@ -56,8 +66,9 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
 
         var operation = NetworkExtensionControlOperation.activateSystemExtension
         do {
-            let result = try await systemExtension.activate { [weak self] progress in
-                guard progress == .awaitingUserApproval else { return }
+            let result = try await systemExtension.activate { [weak self] systemProgress in
+                guard systemProgress == .awaitingUserApproval else { return }
+                reportProgress(.awaitingSystemExtensionApproval)
                 Task { await self?.recordUserApprovalRequirement() }
             }
             if result == .requiresReboot {

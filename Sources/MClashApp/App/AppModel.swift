@@ -55,7 +55,9 @@ final class AppModel {
 
     enum NetworkCaptureState: Equatable {
         case off
+        case waitingForConnection
         case enabling
+        case awaitingUserApproval
         case on(revision: UInt64)
         case disabling
         case requiresReboot
@@ -293,6 +295,7 @@ final class AppModel {
     private var trafficAttribution = TrafficAttribution()
     private var prepared = false
     private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
+    private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
     private(set) var preparationInProgress = false
     private var shutdownInProgress = false
     private var startupPreparationErrorMessage: String?
@@ -448,6 +451,9 @@ final class AppModel {
             }
             startupPreparationErrorMessage = nil
             await connectActiveProfileAtLaunchIfAvailable()
+            if networkCapturePreferences.enabled, networkCaptureState == .off {
+                networkCaptureState = .waitingForConnection
+            }
             try Task.checkCancellation()
             guard !shutdownInProgress else { return }
             prepared = true
@@ -624,6 +630,7 @@ final class AppModel {
         if case .enabling = systemProxyState { return true }
         if case .disabling = systemProxyState { return true }
         if case .enabling = networkCaptureState { return true }
+        if case .awaitingUserApproval = networkCaptureState { return true }
         if case .disabling = networkCaptureState { return true }
         return operations.contains { $0.serializesNetworkState || $0.isCoreBound }
     }
@@ -1771,6 +1778,19 @@ final class AppModel {
         }
     }
 
+    func retryNetworkCaptureActivation() async {
+        guard networkCapturePreferences.enabled,
+              begin(.changeNetworkCapture) else { return }
+        defer { end(.changeNetworkCapture) }
+
+        errorMessage = nil
+        if isConnected, controllerIsReady {
+            await performNetworkCaptureActivation()
+        } else {
+            _ = await performConnect()
+        }
+    }
+
     func applyNetworkCaptureRules(
         _ rules: [CaptureRule],
         enabled: Bool,
@@ -1832,7 +1852,7 @@ final class AppModel {
             activeConfigURL = activation.configurationURL
             profiles = try await profileStore.profiles()
 
-            if wasConnected {
+            if wasConnected || enabled {
                 guard await performConnect() else {
                     throw AppModelError.profileActivationFailed(
                         errorMessage ?? "The core could not restart with network capture settings."
@@ -1841,11 +1861,25 @@ final class AppModel {
             } else {
                 networkCaptureState = .off
             }
-            appendSupervisorLog(
-                enabled
-                    ? "Per-application network capture is enabled."
-                    : "Per-application network capture is disabled."
-            )
+            if enabled {
+                switch networkCaptureState {
+                case .on:
+                    appendSupervisorLog("Per-application network capture is enabled.")
+                case .requiresReboot:
+                    appendSupervisorLog(
+                        "App Routing is configured and will finish enabling after a Mac restart."
+                    )
+                case let .failed(message):
+                    appendSupervisorLog(
+                        "App Routing settings were saved, but activation failed: \(message)"
+                    )
+                case .waitingForConnection, .enabling, .awaitingUserApproval,
+                     .off, .disabling:
+                    break
+                }
+            } else {
+                appendSupervisorLog("Per-application network capture is disabled.")
+            }
         } catch {
             let primaryError = error
             do {
@@ -1880,8 +1914,34 @@ final class AppModel {
             networkCaptureState = .off
             return
         }
+        if case let .on(revision) = networkCaptureState,
+           revision == networkCapturePreferences.snapshot.revision {
+            return
+        }
+        if let networkCaptureActivationOperation {
+            await networkCaptureActivationOperation.task.value
+            return
+        }
+
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runNetworkCaptureActivation()
+        }
+        networkCaptureActivationOperation = (id, task)
+        await task.value
+        if networkCaptureActivationOperation?.id == id {
+            networkCaptureActivationOperation = nil
+        }
+    }
+
+    private func runNetworkCaptureActivation() async {
+        guard networkCapturePreferences.enabled else {
+            networkCaptureState = .off
+            return
+        }
         guard let listener = activeNetworkExtensionMihomoListener else {
-            networkCaptureState = .failed("The private mihomo listener is unavailable.")
+            reportNetworkCaptureFailure("The private mihomo listener is unavailable.")
             return
         }
         networkCaptureState = .enabling
@@ -1891,7 +1951,18 @@ final class AppModel {
                 preferences: networkCapturePreferences,
                 mihomoListener: listener
             )
-            switch try await networkExtensionControl.enable(configuration) {
+            switch try await networkExtensionControl.enable(
+                configuration,
+                progress: { [weak self] progress in
+                    Task { @MainActor in
+                        guard let self,
+                              progress == .awaitingSystemExtensionApproval,
+                              self.networkCapturePreferences.enabled,
+                              self.networkCaptureState == .enabling else { return }
+                        self.networkCaptureState = .awaitingUserApproval
+                    }
+                }
+            ) {
             case .running:
                 networkCaptureState = .on(revision: configuration.revision)
                 appendSupervisorLog(
@@ -1905,9 +1976,14 @@ final class AppModel {
             }
         } catch {
             let message = error.localizedDescription
-            networkCaptureState = .failed(message)
-            appendSupervisorLog("Network Extension activation failed: \(message)")
+            reportNetworkCaptureFailure(message)
         }
+    }
+
+    private func reportNetworkCaptureFailure(_ message: String) {
+        networkCaptureState = .failed(message)
+        errorMessage = "App Routing couldn’t start: \(message)"
+        appendSupervisorLog("Network Extension activation failed: \(message)")
     }
 
     @discardableResult
@@ -2346,7 +2422,10 @@ final class AppModel {
 
     private func handleRunningSession(_ session: CoreSession) async {
         await controllerDidStart(session)
-        if controllerIsReady, isConnected, networkCapturePreferences.enabled {
+        if controllerIsReady,
+           isConnected,
+           networkCapturePreferences.enabled,
+           networkCaptureNeedsActivation {
             await performNetworkCaptureActivation()
         }
         guard shouldReenableSystemProxyAfterCrash,
@@ -3177,9 +3256,20 @@ final class AppModel {
 
     private var networkCaptureIsActive: Bool {
         switch networkCaptureState {
-        case .enabling, .on, .disabling, .failed:
+        case .enabling, .awaitingUserApproval, .on, .disabling, .failed:
             true
-        case .off, .requiresReboot:
+        case .off, .waitingForConnection, .requiresReboot:
+            false
+        }
+    }
+
+    private var networkCaptureNeedsActivation: Bool {
+        switch networkCaptureState {
+        case let .on(revision):
+            revision != networkCapturePreferences.snapshot.revision
+        case .off, .waitingForConnection, .enabling, .awaitingUserApproval:
+            true
+        case .disabling, .requiresReboot, .failed:
             false
         }
     }

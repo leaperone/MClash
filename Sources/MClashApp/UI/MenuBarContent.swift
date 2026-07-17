@@ -418,6 +418,9 @@ struct MenuBarContent: View {
 
     private var issueMessage: String? {
         if case let .failed(message) = model.systemProxyState { return message }
+        if case let .failed(message) = model.networkCaptureState {
+            return "App Routing: \(message)"
+        }
         if let message = model.errorMessage { return message }
         if case let .degraded(message) = model.controllerState { return message }
         return nil

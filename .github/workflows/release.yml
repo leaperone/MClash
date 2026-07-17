@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.1.1"
+        default: "1.1.3"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -367,6 +367,16 @@ jobs:
             print -u2 "Host and Network Extension profiles use different application identifier prefixes."
             exit 1
           fi
+          developer_id_app_group="${host_application_prefix}.one.leaper.mclash"
+          for entitlement_file in "${host_entitlements}" "${extension_entitlements}"; do
+            if ! plist_array_contains \
+              "${entitlement_file}" \
+              "com.apple.security.application-groups" \
+              "${developer_id_app_group}"; then
+              print -u2 "${entitlement_file:t} is missing App Group ${developer_id_app_group}."
+              exit 1
+            fi
+          done
 
           {
             print "MCLASH_HOST_DEVID_PROFILE_PATH=${host_profile}"

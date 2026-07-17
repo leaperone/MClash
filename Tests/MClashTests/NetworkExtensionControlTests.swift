@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import MClashApp
 
@@ -101,6 +102,55 @@ struct NetworkExtensionControlTests {
         #expect(operations == ["system.activate"])
         let state = await service.currentState()
         #expect(state.phase == .requiresReboot)
+    }
+
+    @Test("System Extension approval progress reaches the host")
+    func approvalProgressIsForwarded() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let progressRecorder = NetworkExtensionProgressRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+
+        _ = try await service.enable(
+            NetworkExtensionRuntimeConfiguration(revision: 10),
+            progress: { progressRecorder.record($0) }
+        )
+
+        #expect(progressRecorder.snapshot() == [.awaitingSystemExtensionApproval])
+    }
+
+    @Test("Control failures preserve the localized system error")
+    func controlFailurePresentation() {
+        let underlying = NSError(
+            domain: "NetworkExtensionErrorDomain",
+            code: 6,
+            userInfo: [NSLocalizedDescriptionKey: "Invalid Mach service App Group"]
+        )
+        let failure = NetworkExtensionControlFailure(
+            operation: .activateSystemExtension,
+            underlying: underlying
+        )
+
+        #expect(
+            failure.localizedDescription
+                == "System extension installation: Invalid Mach service App Group (NetworkExtensionErrorDomain 6)"
+        )
+    }
+}
+
+private final class NetworkExtensionProgressRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [NetworkExtensionEnableProgress] = []
+
+    func record(_ value: NetworkExtensionEnableProgress) {
+        lock.withLock { values.append(value) }
+    }
+
+    func snapshot() -> [NetworkExtensionEnableProgress] {
+        lock.withLock { values }
     }
 }
 

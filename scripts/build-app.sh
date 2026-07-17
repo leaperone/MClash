@@ -27,6 +27,7 @@ team_identifier_prefix="${MCLASH_TEAM_IDENTIFIER_PREFIX:-${APPLE_TEAM_ID:-}}"
 if [[ -n "${team_identifier_prefix}" && "${team_identifier_prefix}" != *. ]]; then
   team_identifier_prefix="${team_identifier_prefix}."
 fi
+developer_id_app_group="${team_identifier_prefix}one.leaper.mclash"
 
 plist_array_contains() {
   local plist="$1"
@@ -278,6 +279,24 @@ else
     print -u2 "Network Extension entitlements must authorize both provider types."
     exit 1
   fi
+  for entitlement_file in \
+    "${host_devid_entitlements}" \
+    "${network_extension_devid_entitlements}"
+  do
+    if ! plist_array_contains \
+      "${entitlement_file}" \
+      "com.apple.security.application-groups" \
+      "${developer_id_app_group}"; then
+      print -u2 "${entitlement_file:t} must include App Group ${developer_id_app_group}."
+      exit 1
+    fi
+  done
+  expected_mach_service="${developer_id_app_group}.network-extension"
+  actual_mach_service="$(/usr/libexec/PlistBuddy -c 'Print :NetworkExtension:NEMachServiceName' "${extension_info}")"
+  if [[ "${actual_mach_service}" != "${expected_mach_service}" ]]; then
+    print -u2 "Network Extension Mach service ${actual_mach_service} must equal ${expected_mach_service}."
+    exit 1
+  fi
 
   cp "${host_devid_profile}" "${contents}/embedded.provisionprofile"
   cp "${network_extension_devid_profile}" "${system_extension}/Contents/embedded.provisionprofile"
@@ -311,4 +330,23 @@ if [[ -d "${system_extension}" ]]; then
   codesign --verify --strict --verbose=2 "${system_extension}"
 fi
 codesign --verify --deep --strict --verbose=2 "${app_bundle}"
+if [[ "${code_sign_identity}" != "-" ]]; then
+  signed_host_entitlements="${build_root}/MClash.signed-entitlements.plist"
+  signed_extension_entitlements="${build_root}/MClashNetworkExtension.signed-entitlements.plist"
+  codesign -d --entitlements :- "${app_bundle}" > "${signed_host_entitlements}" 2>/dev/null
+  codesign -d --entitlements :- "${system_extension}" > "${signed_extension_entitlements}" 2>/dev/null
+  for signed_entitlements in \
+    "${signed_host_entitlements}" \
+    "${signed_extension_entitlements}"
+  do
+    plutil -lint "${signed_entitlements}" >/dev/null
+    if ! plist_array_contains \
+      "${signed_entitlements}" \
+      "com.apple.security.application-groups" \
+      "${developer_id_app_group}"; then
+      print -u2 "Signed code is missing App Group ${developer_id_app_group}: ${signed_entitlements:t}"
+      exit 1
+    fi
+  done
+fi
 print "Built MClash ${app_version} (${build_number}) at ${app_bundle} with mihomo ${MIHOMO_ALPHA_VERSION} (${packaged_hash})"

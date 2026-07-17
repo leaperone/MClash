@@ -1,4 +1,5 @@
 import MClashNetworkShared
+import ServiceManagement
 import SwiftUI
 
 struct AppRoutingView: View {
@@ -61,34 +62,126 @@ struct AppRoutingView: View {
     }
 
     private var statusHeader: some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Label(statusTitle, systemImage: statusSymbol)
-                        .font(.headline)
-                        .foregroundStyle(statusColor)
-                    Text("· \(orderedRules.count) \(orderedRules.count == 1 ? "rule" : "rules")")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Label(statusTitle, systemImage: statusSymbol)
+                            .font(.headline)
+                            .foregroundStyle(statusColor)
+                        Text("· \(orderedRules.count) \(orderedRules.count == 1 ? "rule" : "rules")")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text("Rules are evaluated from top to bottom. The first matching rule decides whether traffic uses Mihomo, connects directly, or is rejected.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text("Rules are evaluated from top to bottom. The first matching rule decides whether traffic uses Mihomo, connects directly, or is rejected.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 24)
+
+                Toggle("Enable App Routing", isOn: enabled)
+                    .toggleStyle(.switch)
+                    .disabled(
+                        model.pendingNetworkCaptureEnabled != nil
+                            || !model.canPerform(.changeNetworkCapture)
+                    )
             }
 
-            Spacer(minLength: 24)
-
-            Toggle("Enable App Routing", isOn: enabled)
-                .toggleStyle(.switch)
-                .disabled(
-                    model.pendingNetworkCaptureEnabled != nil
-                        || !model.canPerform(.changeNetworkCapture)
-                )
+            statusNotice
         }
         .padding(.horizontal, MClashLayout.pagePadding)
         .padding(.vertical, 20)
+    }
+
+    @ViewBuilder
+    private var statusNotice: some View {
+        switch model.networkCaptureState {
+        case .waitingForConnection:
+            statusNotice(
+                title: "Connect MClash to start App Routing",
+                message: "The rules are saved. App Routing will start after the active profile connects.",
+                symbol: "pause.circle.fill",
+                color: .secondary
+            ) {
+                Button("Connect Now") {
+                    Task { await model.connect() }
+                }
+                .disabled(!model.canPerform(.connection))
+            }
+        case .awaitingUserApproval:
+            statusNotice(
+                title: "Approve the MClash Network Extension",
+                message: "In System Settings, open General → Login Items & Extensions → Network Extensions, then enable MClash.",
+                symbol: "lock.shield.fill",
+                color: .orange
+            ) {
+                Button("Open System Settings") {
+                    SMAppService.openSystemSettingsLoginItems()
+                }
+            }
+        case .requiresReboot:
+            statusNotice(
+                title: "Restart your Mac to finish enabling App Routing",
+                message: "macOS accepted the Network Extension update and will activate it after the next restart.",
+                symbol: "restart.circle.fill",
+                color: .orange
+            ) { EmptyView() }
+        case let .failed(message):
+            statusNotice(
+                title: "App Routing couldn’t start",
+                message: message,
+                symbol: "exclamationmark.triangle.fill",
+                color: .red
+            ) {
+                HStack(spacing: 8) {
+                    Button("Retry") {
+                        Task { await model.retryNetworkCaptureActivation() }
+                    }
+                    .disabled(!model.canPerform(.changeNetworkCapture))
+                    Button("View Logs") {
+                        model.selection = .logs
+                    }
+                }
+            }
+        case .off, .enabling, .on, .disabling:
+            EmptyView()
+        }
+    }
+
+    private func statusNotice<Actions: View>(
+        title: String,
+        message: String,
+        symbol: String,
+        color: Color,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .font(.title3)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 16)
+            actions()
+        }
+        .padding(12)
+        .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(color.opacity(0.22), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
     }
 
     private var rulesTable: some View {
@@ -269,12 +362,26 @@ struct AppRoutingView: View {
     }
 
     private var statusTitle: String {
+        switch model.networkCaptureState {
+        case .waitingForConnection:
+            return "App Routing Waiting for Connection"
+        case .awaitingUserApproval:
+            return "System Approval Required"
+        case .requiresReboot:
+            return "Restart Required"
+        case .failed:
+            return "App Routing Needs Attention"
+        case .off, .enabling, .on, .disabling:
+            break
+        }
         if let pending = model.pendingNetworkCaptureEnabled {
             return pending ? "Starting App Routing" : "Stopping App Routing"
         }
         return switch model.networkCaptureState {
         case .off: "App Routing Off"
+        case .waitingForConnection: "App Routing Waiting for Connection"
         case .enabling: "Starting App Routing"
+        case .awaitingUserApproval: "System Approval Required"
         case let .on(revision): "App Routing On · revision \(revision)"
         case .disabling: "Stopping App Routing"
         case .requiresReboot: "Restart Required"
@@ -285,7 +392,9 @@ struct AppRoutingView: View {
     private var statusSymbol: String {
         switch model.networkCaptureState {
         case .on: "checkmark.circle.fill"
+        case .waitingForConnection: "pause.circle.fill"
         case .enabling, .disabling: "clock.arrow.circlepath"
+        case .awaitingUserApproval: "lock.shield.fill"
         case .requiresReboot: "restart.circle.fill"
         case .failed: "exclamationmark.triangle.fill"
         case .off: "circle"
@@ -295,7 +404,9 @@ struct AppRoutingView: View {
     private var statusColor: Color {
         switch model.networkCaptureState {
         case .on: .green
+        case .waitingForConnection: .secondary
         case .enabling, .disabling: .accentColor
+        case .awaitingUserApproval: .orange
         case .requiresReboot: .orange
         case .failed: .red
         case .off: .secondary

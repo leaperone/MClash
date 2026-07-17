@@ -34,6 +34,7 @@ struct SettingsView: View {
 
             Section("App Routing") {
                 LabeledContent("Current status", value: appRoutingStatus)
+                appRoutingFeedback
                 LabeledContent(
                     "Rules",
                     value: "\(model.networkCapturePreferences.snapshot.rules.count)"
@@ -259,16 +260,56 @@ struct SettingsView: View {
     }
 
     private var appRoutingStatus: String {
+        switch model.networkCaptureState {
+        case .waitingForConnection:
+            return "Waiting for Connection"
+        case .awaitingUserApproval:
+            return "System Approval Required"
+        case .requiresReboot:
+            return "Restart Required"
+        case .failed:
+            return "Needs Attention"
+        case .off, .enabling, .on, .disabling:
+            break
+        }
         if let pending = model.pendingNetworkCaptureEnabled {
             return pending ? "Turning On" : "Turning Off"
         }
         return switch model.networkCaptureState {
         case .off: "Off"
+        case .waitingForConnection: "Waiting for Connection"
         case .enabling: "Starting"
+        case .awaitingUserApproval: "System Approval Required"
         case let .on(revision): "On · revision \(revision)"
         case .disabling: "Stopping"
         case .requiresReboot: "Restart Required"
         case .failed: "Needs Attention"
+        }
+    }
+
+    @ViewBuilder
+    private var appRoutingFeedback: some View {
+        switch model.networkCaptureState {
+        case .awaitingUserApproval:
+            Label(
+                "Approve MClash in System Settings → General → Login Items & Extensions → Network Extensions.",
+                systemImage: "lock.shield.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+        case let .failed(message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        case .requiresReboot:
+            Label("Restart your Mac to finish enabling App Routing.", systemImage: "restart.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .off, .waitingForConnection, .enabling, .on, .disabling:
+            EmptyView()
         }
     }
 
