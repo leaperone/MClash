@@ -193,12 +193,10 @@ struct ContentView: View {
                 .background(.red, in: Capsule())
                 .accessibilityLabel("\(model.operationalIssues.count) items need attention")
         case .connections where model.isConnected:
-            Text(formattedCount(model.connections?.connections.count ?? 0))
+            Text(sidebarConnectionValue)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .accessibilityLabel(
-                    "\(model.connections?.connections.count ?? 0) active connections"
-                )
+                .accessibilityLabel(sidebarConnectionAccessibilityLabel)
         case .appRouting:
             Circle()
                 .fill(appRoutingAccessoryColor)
@@ -206,6 +204,23 @@ struct ContentView: View {
                 .accessibilityLabel(appRoutingAccessoryLabel)
         default:
             EmptyView()
+        }
+    }
+
+    private var sidebarConnectionValue: String {
+        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
+        case .live: formattedCount(model.connections?.connections.count ?? 0)
+        case .connecting: "…"
+        case .reconnecting, .stale, .inactive: "—"
+        }
+    }
+
+    private var sidebarConnectionAccessibilityLabel: String {
+        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
+        case .live: "\(model.connections?.connections.count ?? 0) active connections"
+        case .connecting: "Waiting for active connections"
+        case .reconnecting, .stale: "Active connection count is stale"
+        case .inactive: "Active connection count is unavailable"
         }
     }
 

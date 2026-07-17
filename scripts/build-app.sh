@@ -130,6 +130,7 @@ swiftc \
   -framework SwiftUI \
   -framework SystemConfiguration \
   -framework UserNotifications \
+  -lsqlite3 \
   -I "${build_root}" \
   -L "${build_root}" \
   -lMClashNetworkShared \

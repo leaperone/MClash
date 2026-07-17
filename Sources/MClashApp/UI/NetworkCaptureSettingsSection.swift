@@ -37,6 +37,8 @@ struct AppRoutingView: View {
     @State private var activityFilter: ActivityFilter = .all
     @State private var selectedActivityID: UUID?
     @State private var activityInspectorPresented = false
+    @State private var appliedRuleRevision: UInt64?
+    @State private var appliedRuleRevisionAt: Date?
 
     var body: some View {
         GeometryReader { geometry in
@@ -242,7 +244,7 @@ struct AppRoutingView: View {
                 Spacer(minLength: 12)
                 providerHeartbeat
             }
-            Text("Flow outcomes started in the last minute. Direct and fail-open payload is not measured after macOS takes the flow back.")
+            Text("Flow outcomes started in the last minute. Relayed TCP Direct traffic is measured; UDP Direct, built-in bypass, and fail-open handoffs remain explicitly unmeasured.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -270,10 +272,15 @@ struct AppRoutingView: View {
             Label(providerHeartbeatTitle, systemImage: providerHeartbeatSymbol)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(providerHeartbeatColor)
-            if let date = model.liveStreamHealth[.appRouting]?.lastReceivedAt {
-                Text("Verified \(date.formatted(.relative(presentation: .named)))")
+            if let verifiedAt = model.appRoutingProviderLastVerifiedAt {
+                Text("Revision verified \(verifiedAt.formatted(.relative(presentation: .named)))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+            if let responseAt = model.liveStreamHealth[.appRouting]?.lastReceivedAt {
+                Text("Activity response \(responseAt.formatted(.relative(presentation: .named)))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -340,7 +347,8 @@ struct AppRoutingView: View {
     }
 
     private var rulesTable: some View {
-        Table(orderedRules, selection: $selectedRuleID) {
+        let statistics = appRuleStatistics
+        return Table(orderedRules, selection: $selectedRuleID) {
             TableColumn("") { rule in
                 Button {
                     setEnabled(!rule.enabled, for: rule)
@@ -389,6 +397,47 @@ struct AppRoutingView: View {
                     .foregroundStyle(actionColor(rule.action))
             }
             .width(min: 90, ideal: 130)
+
+            TableColumn("Observed") { rule in
+                let value = statistics[rule.id] ?? .zero
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(formattedCount(value.matchCount)) matches")
+                        .monospacedDigit()
+                    if value.activeCount > 0 {
+                        Text("\(formattedCount(value.activeCount)) active")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    } else if value.failureCount > 0 {
+                        Text("\(formattedCount(value.failureCount)) failed")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            .width(min: 88, ideal: 110)
+
+            TableColumn("Traffic") { rule in
+                let value = statistics[rule.id] ?? .zero
+                Text(formattedRuleTraffic(value.measuredBytes, partial: value.unmeasuredCount > 0))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(value.unmeasuredCount > 0 ? Color.orange : Color.secondary)
+                    .help(ruleTrafficHelp(value))
+            }
+            .width(min: 78, ideal: 100)
+
+            TableColumn("Last Match") { rule in
+                if let date = statistics[rule.id]?.lastMatchedAt {
+                    Text(date, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help(date.formatted(date: .abbreviated, time: .standard))
+                } else {
+                    Text("Never")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .width(min: 72, ideal: 96)
         }
         .contextMenu(forSelectionType: String.self) { selection in
             if let id = selection.first,
@@ -473,7 +522,7 @@ struct AppRoutingView: View {
                 )
                 .foregroundStyle(activityResultColor(activity))
                 .lineLimit(1)
-                .help(activity.relayError ?? activityResult(activity))
+                .help(activity.relayError ?? activity.relayNote ?? activityResult(activity))
             }
             .width(min: 100, ideal: 130)
 
@@ -560,6 +609,15 @@ struct AppRoutingView: View {
                     .help(editorError)
             }
 
+            if let appliedRuleRevision, let appliedRuleRevisionAt {
+                Label(
+                    "Applied · revision \(appliedRuleRevision) · \(appliedRuleRevisionAt.formatted(.relative(presentation: .named)))",
+                    systemImage: "checkmark.circle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.green)
+            }
+
             Button(action: requestApplicationRefresh) {
                 if isRefreshingApplications {
                     HStack(spacing: 6) {
@@ -605,9 +663,28 @@ struct AppRoutingView: View {
                     .lineLimit(1)
                     .help(error)
             } else {
-                Text("Live · updates automatically")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
+                case .live:
+                    Text("Live · updates automatically")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .connecting:
+                    Text("Waiting for the first provider response…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .reconnecting:
+                    Text("Provider reconnecting…")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                case .stale:
+                    Text("Provider data is stale")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                case .inactive:
+                    Text("Provider inactive")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Button("Clear") {
@@ -745,7 +822,16 @@ struct AppRoutingView: View {
     private func activityResult(_ activity: AppRoutingActivity) -> String {
         if activity.relayState == .failed { return "Relay failed" }
         return switch activity.effectiveAction {
-        case .direct: "Direct"
+        case .direct where activity.payloadBytesAreMeasured == true:
+            switch activity.relayState {
+            case .pending, .connecting: "Direct connecting"
+            case .ready: "Direct ready"
+            case .relaying: "Direct relaying"
+            case .completed: "Direct complete"
+            case .notApplicable: "Direct"
+            case .failed: "Relay failed"
+            }
+        case .direct: "Direct pass-through"
         case .reject: "Rejected"
         case .failOpen: "Fail-open"
         case .mihomo: switch activity.relayState {
@@ -820,6 +906,8 @@ struct AppRoutingView: View {
         _ activity: AppRoutingActivity
     ) -> FlowLedgerByteMeasurement {
         switch activity.effectiveAction {
+        case .direct where activity.payloadBytesAreMeasured == true:
+            .exact(activity.uploadBytes)
         case .direct, .failOpen: .notMeasuredAfterHandoff
         case .reject: .notApplicable
         case .mihomo: .exact(activity.uploadBytes)
@@ -841,6 +929,62 @@ struct AppRoutingView: View {
             }
             return lhs.offset < rhs.offset
         }.map(\.element)
+    }
+
+    private var appRuleStatistics: [String: AppRuleActivityStatistics] {
+        model.appRoutingActivities.reduce(into: [:]) { result, activity in
+            guard let identifier = activity.matchedRuleIdentifier else { return }
+            var value = result[identifier] ?? .zero
+            value.matchCount += 1
+            if activity.endedAt == nil,
+               activity.relayState != .completed,
+               activity.relayState != .failed,
+               activity.relayState != .notApplicable {
+                value.activeCount += 1
+            }
+            if activity.relayState == .failed { value.failureCount += 1 }
+            value.lastMatchedAt = max(value.lastMatchedAt ?? .distantPast, activity.startedAt)
+
+            let isMeasured: Bool = switch activity.effectiveAction {
+            case .mihomo: true
+            case .direct: activity.payloadBytesAreMeasured == true
+            case .reject: true
+            case .failOpen: false
+            }
+            if isMeasured {
+                value.measuredBytes = saturatingRuleBytes(
+                    value.measuredBytes,
+                    activity.uploadBytes
+                )
+                value.measuredBytes = saturatingRuleBytes(
+                    value.measuredBytes,
+                    activity.downloadBytes
+                )
+            } else {
+                value.unmeasuredCount += 1
+            }
+            result[identifier] = value
+        }
+    }
+
+    private func formattedRuleTraffic(_ bytes: UInt64, partial: Bool) -> String {
+        let value = ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: bytes),
+            countStyle: .file
+        )
+        return partial ? "\(value)+" : value
+    }
+
+    private func ruleTrafficHelp(_ statistics: AppRuleActivityStatistics) -> String {
+        guard statistics.unmeasuredCount > 0 else {
+            return "Exact payload bytes observed for this rule in the current app session."
+        }
+        return "\(formattedRuleTraffic(statistics.measuredBytes, partial: false)) measured, plus \(formattedCount(statistics.unmeasuredCount)) pass-through flows whose payload was not observable."
+    }
+
+    private func saturatingRuleBytes(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? .max : value
     }
 
     private var selectedRule: CaptureRule? {
@@ -1042,6 +1186,8 @@ struct AppRoutingView: View {
                     rules,
                     enabled: model.networkCapturePreferences.enabled
                 )
+                appliedRuleRevision = model.networkCapturePreferences.snapshot.revision
+                appliedRuleRevisionAt = Date()
             } catch {
                 editorError = error.localizedDescription
             }
@@ -1158,6 +1304,17 @@ struct AppRoutingView: View {
     }
 }
 
+private struct AppRuleActivityStatistics {
+    static let zero = AppRuleActivityStatistics()
+
+    var matchCount = 0
+    var activeCount = 0
+    var failureCount = 0
+    var measuredBytes: UInt64 = 0
+    var unmeasuredCount = 0
+    var lastMatchedAt: Date?
+}
+
 private struct AppRoutingFlowInspector: View {
     let activity: AppRoutingActivity
     let ledgerEntry: FlowLedgerEntry?
@@ -1229,6 +1386,15 @@ private struct AppRoutingFlowInspector: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        } else if activity.effectiveAction == .direct,
+                                  activity.payloadBytesAreMeasured == true {
+                            Label(
+                                "App Routing relayed this Direct TCP flow and counted bytes accepted by the destination and delivered to the application.",
+                                systemImage: "checkmark.circle"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 
@@ -1255,6 +1421,16 @@ private struct AppRoutingFlowInspector: View {
                         }
                         if let identifier = activity.source.bundleIdentifier {
                             detailRow("Bundle ID", value: identifier)
+                        }
+                    }
+
+                    if let note = activity.relayNote, !note.isEmpty {
+                        inspectorSection("Routing Note") {
+                            Text(note)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 
@@ -1335,7 +1511,10 @@ private struct AppRoutingFlowInspector: View {
     private var outcomeTitle: String {
         switch ledgerEntry?.outcome {
         case .viaMihomo: "Via Mihomo"
-        case .direct: "Direct · handed back to macOS"
+        case .direct:
+            activity.payloadBytesAreMeasured == true
+                ? "Direct · relayed and measured"
+                : "Direct · handed back to macOS"
         case .rejected: "Rejected"
         case .failOpen: "Fail-open · handed back to macOS"
         case .relayFailed: "Relay failed"
@@ -1361,18 +1540,20 @@ private struct AppRoutingFlowInspector: View {
     }
 
     private var uploadMeasurement: FlowLedgerByteMeasurement {
-        ledgerEntry?.upload ?? fallbackMeasurement
+        ledgerEntry?.upload ?? fallbackMeasurement(activity.uploadBytes)
     }
 
     private var downloadMeasurement: FlowLedgerByteMeasurement {
-        ledgerEntry?.download ?? fallbackMeasurement
+        ledgerEntry?.download ?? fallbackMeasurement(activity.downloadBytes)
     }
 
-    private var fallbackMeasurement: FlowLedgerByteMeasurement {
+    private func fallbackMeasurement(_ bytes: UInt64) -> FlowLedgerByteMeasurement {
         switch activity.effectiveAction {
+        case .direct where activity.payloadBytesAreMeasured == true:
+            .exact(bytes)
         case .direct, .failOpen: .notMeasuredAfterHandoff
         case .reject: .notApplicable
-        case .mihomo: .exact(0)
+        case .mihomo: .exact(bytes)
         }
     }
 

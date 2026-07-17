@@ -455,7 +455,11 @@ private struct LogLineRow: View {
                     HStack(spacing: 10) {
                         Label(sourceTitle, systemImage: sourceSymbol)
                             .foregroundStyle(sourceColor)
-                        Text(line.timestamp, format: .dateTime.hour().minute().second())
+                        Text(
+                            line.timestamp,
+                            format: .dateTime.month(.twoDigits).day(.twoDigits)
+                                .hour().minute().second()
+                        )
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
@@ -467,10 +471,14 @@ private struct LogLineRow: View {
                 }
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(line.timestamp, format: .dateTime.hour().minute().second())
+                    Text(
+                        line.timestamp,
+                        format: .dateTime.month(.twoDigits).day(.twoDigits)
+                            .hour().minute().second()
+                    )
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .frame(width: 72, alignment: .trailing)
+                        .frame(width: 112, alignment: .trailing)
 
                     Label(sourceTitle, systemImage: sourceSymbol)
                         .font(.caption)

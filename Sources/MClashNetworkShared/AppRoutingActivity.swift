@@ -50,7 +50,9 @@ public struct AppRoutingActivityDestination: Codable, Hashable, Sendable {
 }
 
 public enum AppRoutingRelayState: String, Codable, Hashable, Sendable {
-    /// Direct, rejected, or fail-open decisions do not create a relay.
+    /// Rejected, UDP-direct, built-in bypass, or fail-open decisions do not
+    /// create a measurable relay. TCP direct decisions use the normal relay
+    /// lifecycle states.
     case notApplicable
     case pending
     case connecting
@@ -83,7 +85,12 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
     public let cause: FlowTrafficDecisionReason
     public var relayState: AppRoutingRelayState
     public var relayError: String?
+    public var relayNote: String?
     public var relayLocalPort: UInt16?
+    /// `true` means the provider owns the payload relay and the byte counters
+    /// are exact at its delivery boundaries. `nil` preserves the legacy and
+    /// pass-through meaning where payload visibility is not established.
+    public var payloadBytesAreMeasured: Bool?
     public var uploadBytes: UInt64
     public var downloadBytes: UInt64
 
@@ -103,7 +110,9 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
         effectiveAction: FlowTrafficDisposition,
         relayState: AppRoutingRelayState,
         relayError: String? = nil,
+        relayNote: String? = nil,
         relayLocalPort: UInt16? = nil,
+        payloadBytesAreMeasured: Bool? = nil,
         uploadBytes: UInt64 = 0,
         downloadBytes: UInt64 = 0
     ) {
@@ -122,7 +131,9 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
         cause = decision.reason
         self.relayState = relayState
         self.relayError = relayError
+        self.relayNote = relayNote
         self.relayLocalPort = relayLocalPort
+        self.payloadBytesAreMeasured = payloadBytesAreMeasured
         self.uploadBytes = uploadBytes
         self.downloadBytes = downloadBytes
     }

@@ -54,6 +54,10 @@ struct ProviderSOCKSConfiguration: Equatable, Sendable {
     }
 
     func destination(for endpoint: FlowRemoteEndpoint) throws -> SOCKS5Endpoint {
+        try Self.destination(for: endpoint)
+    }
+
+    static func destination(for endpoint: FlowRemoteEndpoint) throws -> SOCKS5Endpoint {
         var host = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
         if host.hasPrefix("["), host.hasSuffix("]") {
             host.removeFirst()

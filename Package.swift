@@ -36,6 +36,7 @@ let package = Package(
                 .linkedFramework("Security"),
                 .linkedFramework("SystemExtensions"),
                 .linkedFramework("UserNotifications"),
+                .linkedLibrary("sqlite3"),
             ]
         ),
         .executableTarget(

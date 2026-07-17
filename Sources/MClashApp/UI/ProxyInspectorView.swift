@@ -239,7 +239,8 @@ private struct ProxyInspectorTrafficObserver: View {
 
     var body: some View {
         let trafficRevision = model.proxyInspectorTrafficRevision
-        let connectionMetricsStale = model.degradedStreams.contains(.connections)
+        let connectionMetricsStale = model.isConnected
+            && model.liveStreamHealth[.connections]?.hasCurrentData != true
         let scope = ProxyInspectorTrafficScope(groupName: groupName, scopeName: scopeName)
 
         Color.clear

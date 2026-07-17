@@ -25,6 +25,14 @@ struct SettingsView: View {
                 )
 
                 LabeledContent("Current status", value: systemProxyStatus)
+                if let verifiedAt = model.systemProxyGuardLastVerifiedAt {
+                    LabeledContent(
+                        "Last macOS verification",
+                        value: verifiedAt.formatted(.relative(presentation: .named))
+                    )
+                    .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
+                }
+                systemProxySettingsFeedback
 
                 Button("Bypass & Guard Settings…") {
                     showingSystemProxySettings = true
@@ -34,6 +42,13 @@ struct SettingsView: View {
 
             Section("App Routing") {
                 LabeledContent("Current status", value: appRoutingStatus)
+                if let verifiedAt = model.appRoutingProviderLastVerifiedAt {
+                    LabeledContent(
+                        "Provider revision verified",
+                        value: verifiedAt.formatted(.relative(presentation: .named))
+                    )
+                    .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
+                }
                 appRoutingFeedback
                 LabeledContent(
                     "Rules",
@@ -217,6 +232,28 @@ struct SettingsView: View {
         if model.pendingSystemProxyEnabled == false { return "Turning Off" }
         if model.systemProxyRecoveryRequired { return "Needs Restoration" }
         return model.systemProxyEnabled ? "On" : "Off"
+    }
+
+    @ViewBuilder
+    private var systemProxySettingsFeedback: some View {
+        if let receipt = model.systemProxySettingsReceipt {
+            switch receipt.outcome {
+            case .savedForNextConnection:
+                Label("Proxy settings saved for the next connection.", systemImage: "checkmark.circle")
+                    .foregroundStyle(.green)
+            case .appliedAndVerified:
+                Label("Proxy settings applied and verified by macOS.", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case let .rejectedAndRolledBack(message):
+                Label("New settings were rejected; the previous verified settings were restored.", systemImage: "arrow.uturn.backward.circle.fill")
+                    .foregroundStyle(.orange)
+                    .help(message)
+            case let .rollbackFailed(message):
+                Label("New settings failed and the previous settings could not be restored.", systemImage: "exclamationmark.octagon.fill")
+                    .foregroundStyle(.red)
+                    .help(message)
+            }
+        }
     }
 
     private func listenerAddressRow(_ endpoint: AppModel.LocalListenerEndpoint) -> some View {

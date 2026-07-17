@@ -4,6 +4,7 @@ import MClashNetworkShared
 @preconcurrency import NetworkExtension
 
 enum TCPFlowRelayError: Error, LocalizedError, Sendable {
+    case cancelled
     case handshakeTimedOut
     case upstreamClosedDuringHandshake
     case upstreamFailed(String)
@@ -13,6 +14,8 @@ enum TCPFlowRelayError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .cancelled:
+            "The TCP relay was cancelled because App Routing stopped or slept."
         case .handshakeTimedOut:
             "The local mihomo SOCKS5 handshake timed out."
         case .upstreamClosedDuringHandshake:
@@ -27,6 +30,11 @@ enum TCPFlowRelayError: Error, LocalizedError, Sendable {
             "Writing the intercepted TCP flow failed: \(message)"
         }
     }
+}
+
+enum TCPFlowRelayExit: Sendable {
+    case finished
+    case directFallback(String)
 }
 
 enum AppProxyFlowCompatibility {
@@ -60,7 +68,7 @@ final class TCPFlowRelay: @unchecked Sendable {
     private let proxy: ProviderSOCKSConfiguration
     private let destination: SOCKS5Endpoint
     private let queue: DispatchQueue
-    private let completion: @Sendable (UUID) -> Void
+    private let completion: @Sendable (UUID, TCPFlowRelayExit) -> Void
     private let activityReporter: AppRoutingRelayActivityReporter
 
     private var connection: NWConnection?
@@ -69,23 +77,28 @@ final class TCPFlowRelay: @unchecked Sendable {
     private var authenticationDecoder = SOCKS5UsernamePasswordResponseDecoder()
     private var commandDecoder = SOCKS5CommandReplyDecoder()
     private var openedFlow = false
-    private var clientReadFinished = false
-    private var upstreamReadFinished = false
+    private var handshakeStarted = false
+    private var failoverState: TCPRelayFailoverState
+    private var halfCloseState = TCPRelayHalfCloseState()
+    private var backpressureState = TCPRelayBackpressureState()
     private var finished = false
-    private var uploadBytes: UInt64 = 0
-    private var downloadBytes: UInt64 = 0
+    private var byteLedger = TCPRelayByteLedger()
     private var relayLocalPort: UInt16?
 
     init(
         flow: NEAppProxyTCPFlow,
         proxy: ProviderSOCKSConfiguration,
         destination: SOCKS5Endpoint,
+        unavailableFallback: UnavailableFallback,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
-        completion: @escaping @Sendable (UUID) -> Void
+        completion: @escaping @Sendable (UUID, TCPFlowRelayExit) -> Void
     ) {
         self.flow = flow
         self.proxy = proxy
         self.destination = destination
+        failoverState = TCPRelayFailoverState(
+            unavailableFallback: unavailableFallback
+        )
         self.completion = completion
         let queue = DispatchQueue(label: "one.leaper.mclash.tcp-relay.\(id.uuidString)")
         self.queue = queue
@@ -115,7 +128,7 @@ final class TCPFlowRelay: @unchecked Sendable {
 
     func cancel() {
         queue.async { [self] in
-            finish(error: nil)
+            finish(error: TCPFlowRelayError.cancelled, allowDirectFallback: false)
         }
     }
 
@@ -123,6 +136,8 @@ final class TCPFlowRelay: @unchecked Sendable {
         guard !finished else { return }
         switch state {
         case .ready:
+            guard !handshakeStarted else { return }
+            handshakeStarted = true
             relayLocalPort = Self.localPort(of: connection)
             beginSOCKSHandshake()
         case let .failed(error):
@@ -218,6 +233,7 @@ final class TCPFlowRelay: @unchecked Sendable {
                     return
                 }
                 try response.requireSuccess()
+                failoverState.markSOCKSHandshakeSucceeded()
                 handshakeTimeout?.cancel()
                 handshakeTimeout = nil
                 openFlow(initialUpstreamPayload: commandDecoder.remainingData)
@@ -292,9 +308,11 @@ final class TCPFlowRelay: @unchecked Sendable {
                 if initialUpstreamPayload.isEmpty {
                     self.startPumps()
                 } else {
-                    self.downloadBytes &+= UInt64(initialUpstreamPayload.count)
+                    self.byteLedger.recordUpstreamReceived(initialUpstreamPayload.count)
                     self.report(.relaying)
                     self.writeToFlow(initialUpstreamPayload) { [weak self] in
+                        self?.byteLedger.recordAppDelivered(initialUpstreamPayload.count)
+                        self?.report(.relaying)
                         self?.startPumps()
                     }
                 }
@@ -309,7 +327,10 @@ final class TCPFlowRelay: @unchecked Sendable {
     }
 
     private func readFromFlow() {
-        guard !finished, !clientReadFinished else { return }
+        guard !finished,
+              !halfCloseState.appReadEnded,
+              backpressureState.begin(.appToUpstream)
+        else { return }
         flow.readData { [weak self] data, error in
             guard let self else { return }
             self.queue.async {
@@ -320,8 +341,14 @@ final class TCPFlowRelay: @unchecked Sendable {
                     return
                 }
                 guard let data, !data.isEmpty else {
-                    self.clientReadFinished = true
-                    self.connection?.send(
+                    self.halfCloseState.markAppReadEnded()
+                    guard let connection = self.connection else {
+                        self.finish(error: TCPFlowRelayError.upstreamFailed(
+                            "The connection disappeared before the upload half closed."
+                        ))
+                        return
+                    }
+                    connection.send(
                         content: nil,
                         contentContext: .defaultMessage,
                         isComplete: true,
@@ -333,6 +360,7 @@ final class TCPFlowRelay: @unchecked Sendable {
                                         error.localizedDescription
                                     ))
                                 } else {
+                                    self.backpressureState.end(.appToUpstream)
                                     self.finishIfBothHalvesClosed()
                                 }
                             }
@@ -340,9 +368,14 @@ final class TCPFlowRelay: @unchecked Sendable {
                     )
                     return
                 }
-                self.uploadBytes &+= UInt64(data.count)
-                self.report(.relaying)
-                self.connection?.send(
+                self.byteLedger.recordAppRead(data.count)
+                guard let connection = self.connection else {
+                    self.finish(error: TCPFlowRelayError.upstreamFailed(
+                        "The connection disappeared before the payload was sent."
+                    ))
+                    return
+                }
+                connection.send(
                     content: data,
                     completion: .contentProcessed { [weak self] error in
                         guard let self else { return }
@@ -352,6 +385,10 @@ final class TCPFlowRelay: @unchecked Sendable {
                                     error.localizedDescription
                                 ))
                             } else {
+                                self.backpressureState.end(.appToUpstream)
+                                self.byteLedger.recordUpstreamAccepted(data.count)
+                                self.failoverState.markApplicationPayloadForwarded()
+                                self.report(.relaying)
                                 self.readFromFlow()
                             }
                         }
@@ -362,7 +399,11 @@ final class TCPFlowRelay: @unchecked Sendable {
     }
 
     private func readFromUpstream() {
-        guard !finished, !upstreamReadFinished, let connection else { return }
+        guard !finished,
+              !halfCloseState.upstreamReadEnded,
+              let connection,
+              backpressureState.begin(.upstreamToApp)
+        else { return }
         connection.receive(
             minimumIncompleteLength: 1,
             maximumLength: 64 * 1_024
@@ -376,10 +417,12 @@ final class TCPFlowRelay: @unchecked Sendable {
                     return
                 }
                 if let data, !data.isEmpty {
-                    self.downloadBytes &+= UInt64(data.count)
-                    self.report(.relaying)
+                    self.byteLedger.recordUpstreamReceived(data.count)
                     self.writeToFlow(data) { [weak self] in
                         guard let self else { return }
+                        self.backpressureState.end(.upstreamToApp)
+                        self.byteLedger.recordAppDelivered(data.count)
+                        self.report(.relaying)
                         if isComplete {
                             self.markUpstreamReadFinished()
                         } else {
@@ -387,8 +430,10 @@ final class TCPFlowRelay: @unchecked Sendable {
                         }
                     }
                 } else if isComplete {
+                    self.backpressureState.end(.upstreamToApp)
                     self.markUpstreamReadFinished()
                 } else {
+                    self.backpressureState.end(.upstreamToApp)
                     self.readFromUpstream()
                 }
             }
@@ -411,19 +456,29 @@ final class TCPFlowRelay: @unchecked Sendable {
     }
 
     private func markUpstreamReadFinished() {
-        upstreamReadFinished = true
+        halfCloseState.markUpstreamReadEnded()
         flow.closeWriteWithError(nil)
         finishIfBothHalvesClosed()
     }
 
     private func finishIfBothHalvesClosed() {
-        if clientReadFinished && upstreamReadFinished {
+        if halfCloseState.bothReadHalvesEnded {
             finish(error: nil)
         }
     }
 
-    private func finish(error: Error?) {
+    private func finish(
+        error: Error?,
+        allowDirectFallback: Bool = true
+    ) {
         guard !finished else { return }
+        if let error,
+           allowDirectFallback,
+           failoverState.canFallbackToDirect,
+           !openedFlow {
+            finishForDirectFallback(error: error)
+            return
+        }
         finished = true
         handshakeTimeout?.cancel()
         handshakeTimeout = nil
@@ -435,21 +490,31 @@ final class TCPFlowRelay: @unchecked Sendable {
             flow.closeReadWithError(error)
             flow.closeWriteWithError(error)
         } else if openedFlow {
-            if !clientReadFinished { flow.closeReadWithError(nil) }
-            if !upstreamReadFinished { flow.closeWriteWithError(nil) }
+            if !halfCloseState.appReadEnded { flow.closeReadWithError(nil) }
+            if !halfCloseState.upstreamReadEnded { flow.closeWriteWithError(nil) }
         }
         report(
             error == nil ? .completed : .failed,
             error: error?.localizedDescription
         )
-        completion(id)
+        completion(id, .finished)
+    }
+
+    private func finishForDirectFallback(error: Error) {
+        finished = true
+        handshakeTimeout?.cancel()
+        handshakeTimeout = nil
+        connection?.stateUpdateHandler = nil
+        connection?.cancel()
+        connection = nil
+        completion(id, .directFallback(error.localizedDescription))
     }
 
     private func report(_ state: AppRoutingRelayState, error: String? = nil) {
         activityReporter.report(AppRoutingRelaySnapshot(
             state: state,
-            uploadBytes: uploadBytes,
-            downloadBytes: downloadBytes,
+            uploadBytes: byteLedger.uploadBytes,
+            downloadBytes: byteLedger.downloadBytes,
             error: error,
             localPort: relayLocalPort
         ))
@@ -465,39 +530,132 @@ final class TCPFlowRelay: @unchecked Sendable {
 
 final class TCPFlowRelayRegistry: @unchecked Sendable {
     private let lock = NSLock()
-    private var relays: [UUID: TCPFlowRelay] = [:]
+    private var mihomoRelays: [UUID: TCPFlowRelay] = [:]
+    private var directRelays: [UUID: DirectTCPFlowRelay] = [:]
+    private var generation = UUID()
 
-    func start(
+    func startMihomo(
         flow: NEAppProxyTCPFlow,
         proxy: ProviderSOCKSConfiguration,
         destination: SOCKS5Endpoint,
+        unavailableFallback: UnavailableFallback,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
     ) {
+        let relayGeneration = currentGeneration()
         let relay = TCPFlowRelay(
             flow: flow,
             proxy: proxy,
             destination: destination,
+            unavailableFallback: unavailableFallback,
             activityObserver: activityObserver
-        ) { [weak self] identifier in
-            self?.remove(identifier)
+        ) { [weak self] identifier, exit in
+            self?.finishMihomo(
+                identifier,
+                exit: exit,
+                generation: relayGeneration,
+                flow: flow,
+                destination: destination,
+                activityObserver: activityObserver
+            )
         }
         lock.lock()
-        relays[relay.id] = relay
+        guard generation == relayGeneration else {
+            lock.unlock()
+            relay.cancel()
+            return
+        }
+        mihomoRelays[relay.id] = relay
         lock.unlock()
         relay.start()
     }
 
-    func cancelAll() {
-        lock.lock()
-        let current = Array(relays.values)
-        relays.removeAll(keepingCapacity: false)
-        lock.unlock()
-        current.forEach { $0.cancel() }
+    func startDirect(
+        flow: NEAppProxyTCPFlow,
+        destination: SOCKS5Endpoint,
+        relayNote: String? = nil,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
+    ) {
+        startDirect(
+            flow: flow,
+            destination: destination,
+            relayNote: relayNote,
+            activityObserver: activityObserver,
+            expectedGeneration: currentGeneration()
+        )
     }
 
-    private func remove(_ identifier: UUID) {
+    func cancelAll() {
         lock.lock()
-        relays.removeValue(forKey: identifier)
+        generation = UUID()
+        let currentMihomo = Array(mihomoRelays.values)
+        let currentDirect = Array(directRelays.values)
+        mihomoRelays.removeAll(keepingCapacity: false)
+        directRelays.removeAll(keepingCapacity: false)
         lock.unlock()
+        currentMihomo.forEach { $0.cancel() }
+        currentDirect.forEach { $0.cancel() }
+    }
+
+    private func finishMihomo(
+        _ identifier: UUID,
+        exit: TCPFlowRelayExit,
+        generation relayGeneration: UUID,
+        flow: NEAppProxyTCPFlow,
+        destination: SOCKS5Endpoint,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
+    ) {
+        lock.lock()
+        let wasRegistered = mihomoRelays.removeValue(forKey: identifier) != nil
+        let mayTransition = wasRegistered && generation == relayGeneration
+        lock.unlock()
+
+        guard mayTransition,
+              case let .directFallback(reason) = exit
+        else { return }
+        startDirect(
+            flow: flow,
+            destination: destination,
+            relayNote: "Mihomo SOCKS setup failed before application payload forwarding; MClash used the rule's Direct fallback. \(reason)",
+            activityObserver: activityObserver,
+            expectedGeneration: relayGeneration
+        )
+    }
+
+    private func startDirect(
+        flow: NEAppProxyTCPFlow,
+        destination: SOCKS5Endpoint,
+        relayNote: String? = nil,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
+        expectedGeneration: UUID
+    ) {
+        let relay = DirectTCPFlowRelay(
+            flow: flow,
+            destination: destination,
+            relayNote: relayNote,
+            activityObserver: activityObserver
+        ) { [weak self] identifier in
+            self?.removeDirect(identifier)
+        }
+        lock.lock()
+        guard generation == expectedGeneration else {
+            lock.unlock()
+            relay.cancel()
+            return
+        }
+        directRelays[relay.id] = relay
+        lock.unlock()
+        relay.start()
+    }
+
+    private func removeDirect(_ identifier: UUID) {
+        lock.lock()
+        directRelays.removeValue(forKey: identifier)
+        lock.unlock()
+    }
+
+    private func currentGeneration() -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation
     }
 }

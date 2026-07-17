@@ -7,7 +7,16 @@ struct ProfilesView: View {
 
     var body: some View {
         Group {
-            if model.profiles.isEmpty {
+            if let failure = profileStorageFailure {
+                ContentUnavailableView {
+                    Label("Profiles unavailable", systemImage: "externaldrive.badge.exclamationmark")
+                } description: {
+                    Text("MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n\(failure.reason)")
+                } actions: {
+                    Button("Review Recovery") { model.selection = .attention }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else if model.profiles.isEmpty {
                 emptyState
             } else {
                 List(model.profiles) { profile in
@@ -30,6 +39,30 @@ struct ProfilesView: View {
                     .onChange(of: geometry.size.width) { _, width in
                         updateLayout(width)
                     }
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let receipt = model.profileBatchUpdateReceipt,
+               !model.isPerforming(.refreshAllProfiles) {
+                HStack(spacing: 8) {
+                    Image(systemName: receipt.failedCount == 0
+                        ? "checkmark.circle.fill"
+                        : "exclamationmark.triangle.fill")
+                        .foregroundStyle(receipt.failedCount == 0 ? Color.green : Color.orange)
+                        .accessibilityHidden(true)
+                    Text(
+                        "Subscription refresh completed: \(formattedCount(receipt.updatedCount)) updated, \(formattedCount(receipt.unchangedCount)) unchanged, \(formattedCount(receipt.failedCount)) failed."
+                    )
+                    .font(.callout)
+                    Spacer()
+                    Text(receipt.completedAt, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.bar)
+                .overlay(alignment: .bottom) { Divider() }
             }
         }
         .toolbar {
@@ -82,6 +115,10 @@ struct ProfilesView: View {
         .sheet(isPresented: $showingSubscriptionSheet) {
             AddSubscriptionView(model: model, isPresented: $showingSubscriptionSheet)
         }
+    }
+
+    private var profileStorageFailure: AppModel.StorageInitializationFailure? {
+        model.storageInitializationFailures.first { $0.component == .profiles }
     }
 
     private func updateLayout(_ width: CGFloat) {

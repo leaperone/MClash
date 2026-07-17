@@ -63,6 +63,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     decision: failOpen(.unsupportedRemoteEndpoint),
                     destination: nil,
                     proxy: nil,
+                    unavailableFallback: .direct,
                     activity: fallbackActivity(
                         flow: flow,
                         endpoint: nil,
@@ -78,6 +79,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     decision: failOpen(.unsupportedRemoteEndpoint),
                     destination: nil,
                     proxy: nil,
+                    unavailableFallback: .direct,
                     activity: fallbackActivity(
                         flow: flow,
                         endpoint: nil,
@@ -95,13 +97,15 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             transportProtocol: .tcp,
             state: currentState
         )
-        let destination = try? currentState.mihomoSOCKSConfiguration?.destination(
-            for: endpoint
-        )
+        let destination = try? ProviderSOCKSConfiguration.destination(for: endpoint)
         return TCPFlowInterceptionPlan(
             decision: outcome.decision,
             destination: destination,
             proxy: currentState.mihomoSOCKSConfiguration,
+            unavailableFallback: unavailableFallbackRequested(
+                by: outcome.decision,
+                configuration: currentState.configuration
+            ),
             activity: outcome.activity
         )
     }
@@ -279,7 +283,10 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             by: decision,
             configuration: state.configuration
         )
-        let terminal = Self.isTerminalWithoutRelay(decision.disposition)
+        let terminal = Self.isTerminalWithoutRelay(
+            decision,
+            transportProtocol: transportProtocol
+        )
 
         return AppRoutingActivity(
             configurationRevision: state.revision,
@@ -364,10 +371,46 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         }
     }
 
-    private static func isTerminalWithoutRelay(_ disposition: FlowTrafficDisposition) -> Bool {
-        switch disposition {
-        case .direct, .reject, .failOpen: true
-        case .mihomo: false
+    private func unavailableFallbackRequested(
+        by decision: FlowTrafficDecision,
+        configuration: CaptureConfigurationLoadResult
+    ) -> UnavailableFallback {
+        let cause: RuleDecisionCause?
+        switch decision.reason {
+        case let .rule(value):
+            cause = value
+        case let .mihomoUnavailable(rule, fallback):
+            if case .matchedRule = rule {
+                return fallback
+            }
+            cause = rule
+        case .captureDisabled, .configurationUnavailable, .contextUnavailable:
+            cause = nil
+        }
+        if case let .matchedRule(identifier) = cause,
+           case let .loaded(snapshot) = configuration,
+           let rule = snapshot.rules.first(where: { $0.id == identifier }) {
+            return rule.unavailableFallback
+        }
+        return .direct
+    }
+
+    private static func isTerminalWithoutRelay(
+        _ decision: FlowTrafficDecision,
+        transportProtocol: TransportProtocol
+    ) -> Bool {
+        switch decision.disposition {
+        case .direct:
+            guard transportProtocol == .tcp else { return true }
+            if case let .rule(cause) = decision.reason,
+               case .builtInBypass = cause {
+                return true
+            }
+            return false
+        case .reject, .failOpen:
+            return true
+        case .mihomo:
+            return false
         }
     }
 
@@ -434,6 +477,7 @@ struct TCPFlowInterceptionPlan: Sendable {
     let decision: FlowTrafficDecision
     let destination: SOCKS5Endpoint?
     let proxy: ProviderSOCKSConfiguration?
+    let unavailableFallback: UnavailableFallback
     let activity: AppRoutingActivity
 }
 

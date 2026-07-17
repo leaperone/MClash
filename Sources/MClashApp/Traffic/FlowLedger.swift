@@ -4,9 +4,10 @@ import MClashNetworkShared
 /// A stable, presentation-independent account of traffic observed by MClash.
 ///
 /// The ledger deliberately distinguishes measured bytes from traffic that was
-/// handed back to the operating system. In particular, App Routing direct and
-/// fail-open decisions return `false` from the transparent proxy provider, so
-/// their subsequent payload cannot be represented as a measured zero.
+/// handed back to the operating system. App Routing's TCP Direct relay is
+/// measured at confirmed delivery boundaries; UDP Direct, built-in bypasses,
+/// and fail-open handoffs remain explicitly unmeasured rather than becoming a
+/// misleading zero.
 struct FlowLedger: Sendable {
     private static let defaultAssociationWindow: TimeInterval = 15
 
@@ -438,6 +439,8 @@ struct FlowLedger: Sendable {
         _ activity: AppRoutingActivity
     ) -> (upload: FlowLedgerByteMeasurement, download: FlowLedgerByteMeasurement) {
         switch activity.effectiveAction {
+        case .direct where activity.payloadBytesAreMeasured == true:
+            (.exact(activity.uploadBytes), .exact(activity.downloadBytes))
         case .direct, .failOpen:
             (.notMeasuredAfterHandoff, .notMeasuredAfterHandoff)
         case .reject:

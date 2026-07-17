@@ -11,6 +11,7 @@ struct AppRoutingActivityTests {
             ruleIdentifier: "Browser Proxy"
         )
         activity.relayState = .relaying
+        activity.relayNote = "Mihomo setup failed before payload; Direct fallback is active."
         activity.relayLocalPort = 51_234
         activity.uploadBytes = 123
         activity.downloadBytes = 456
@@ -21,6 +22,7 @@ struct AppRoutingActivityTests {
         #expect(Set([activity, decoded]).count == 1)
         #expect(decoded.matchedRuleIdentifier == "Browser Proxy")
         #expect(decoded.cause == activity.decision.reason)
+        #expect(decoded.relayNote == activity.relayNote)
 
         let json = String(decoding: data, as: UTF8.self)
         #expect(!json.contains("auditToken"))

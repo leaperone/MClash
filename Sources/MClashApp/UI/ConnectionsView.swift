@@ -164,16 +164,20 @@ struct ConnectionsView: View {
 
     @ViewBuilder
     private var historyWorkspace: some View {
-        if historicalEntries.isEmpty {
-            ContentUnavailableView(
-                "No traffic history",
-                systemImage: "clock.arrow.circlepath",
-                description: Text("Completed connections and App Routing decisions are kept for this app session.")
-            )
-        } else if filteredHistory.isEmpty {
-            ContentUnavailableView.search(text: searchText)
-        } else {
-            Table(filteredHistory) {
+        VStack(spacing: 0) {
+            persistentTrafficHistoryControl
+            Divider()
+
+            if historicalEntries.isEmpty {
+                ContentUnavailableView(
+                    "No session traffic history",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("Completed connection details appear here for this app session. Persistent totals, when enabled, remain available above without storing destinations.")
+                )
+            } else if filteredHistory.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else {
+                Table(filteredHistory) {
                 TableColumn("Application") { entry in
                     Text(entry.application.displayName)
                         .lineLimit(1)
@@ -199,6 +203,20 @@ struct ConnectionsView: View {
                 }
                 .width(min: 90, ideal: 120)
 
+                TableColumn("Rule") { entry in
+                    Text(historyRuleTitle(entry))
+                        .lineLimit(1)
+                        .help(historyRuleHelp(entry))
+                }
+                .width(min: 120, ideal: 180)
+
+                TableColumn("Route") { entry in
+                    Text(historyRouteTitle(entry))
+                        .lineLimit(1)
+                        .help(historyRouteHelp(entry))
+                }
+                .width(min: 140, ideal: 220)
+
                 TableColumn("Traffic") { entry in
                     Text(ledgerTrafficTitle(entry))
                         .monospacedDigit()
@@ -216,6 +234,7 @@ struct ConnectionsView: View {
                     }
                 }
                 .width(86)
+                }
             }
         }
     }
@@ -260,6 +279,29 @@ struct ConnectionsView: View {
         model.flowLedger.entries.filter { !$0.state.isActive }
     }
 
+    private func historyRuleTitle(_ entry: FlowLedgerEntry) -> String {
+        entry.mihomoRoute?.rule ?? entry.appRoutingRule ?? "—"
+    }
+
+    private func historyRuleHelp(_ entry: FlowLedgerEntry) -> String {
+        let value = [entry.appRoutingRule, entry.mihomoRoute?.rule, entry.mihomoRoute?.rulePayload]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " → ")
+        return value.isEmpty ? "No rule metadata was reported." : value
+    }
+
+    private func historyRouteTitle(_ entry: FlowLedgerEntry) -> String {
+        entry.mihomoRoute?.chain.last ?? outcomeTitle(entry.outcome)
+    }
+
+    private func historyRouteHelp(_ entry: FlowLedgerEntry) -> String {
+        guard let chain = entry.mihomoRoute?.chain, !chain.isEmpty else {
+            return outcomeTitle(entry.outcome)
+        }
+        return chain.joined(separator: " → ")
+    }
+
     private var filteredHistory: [FlowLedgerEntry] {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return historicalEntries }
@@ -292,6 +334,7 @@ struct ConnectionsView: View {
     @State private var confirmingCloseAll = false
     @State private var showingClosedHistory = false
     @State private var confirmingClearTrafficHistory = false
+    @State private var persistentHistoryPeriod: TrafficHistoryPeriod = .today
     @SceneStorage("mclash.traffic.workspace") private var workspace: Workspace = .live
 
     var body: some View {
@@ -371,16 +414,15 @@ struct ConnectionsView: View {
             Text("Apps may reconnect automatically. This affects every active connection, not only the current search results.")
         }
         .confirmationDialog(
-            "Clear traffic history for this app session?",
+            "Clear all local traffic history?",
             isPresented: $confirmingClearTrafficHistory
         ) {
             Button("Clear History", role: .destructive) {
-                model.clearClosedConnectionHistory()
-                Task { await model.clearAppRoutingActivity() }
+                Task { await model.clearTrafficHistory() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Active connections remain visible. Completed Mihomo connections and App Routing decisions are removed from MClash's in-memory history.")
+            Text("Active connections remain connected. Completed session details and persistent aggregate totals are removed; collection restarts from the moment you clear.")
         }
         .sheet(isPresented: $showingClosedHistory) {
             ClosedConnectionsHistoryView(model: model)
@@ -457,18 +499,202 @@ struct ConnectionsView: View {
                         )
                         .font(.callout)
                         .foregroundStyle(.orange)
-                        .help("Direct and fail-open flows were handed back to macOS. Their payload after handoff is not reported as zero.")
+                        .help("Pass-through Direct, UDP Direct, and fail-open flows were handed back to macOS. Their payload after handoff is not reported as zero.")
                     }
 
                     if workspace == .history {
                         Button("Clear History", role: .destructive) {
                             confirmingClearTrafficHistory = true
                         }
-                        .disabled(historicalEntries.isEmpty)
+                        .disabled(!hasTrafficHistoryToClear)
                     }
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var persistentTrafficHistoryControl: some View {
+        switch model.trafficHistoryRuntimeState {
+        case .notConfigured:
+            HStack(alignment: .center, spacing: 14) {
+                Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Keep traffic totals between launches?")
+                        .font(.callout.weight(.semibold))
+                    Text("Local-only aggregates keep app identity, rule name, proxy chain, outcome, and byte coverage. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Button("Session Only") {
+                    Task { await model.setPersistentTrafficHistoryEnabled(false) }
+                }
+                Button("Keep 30 Days") {
+                    Task { await model.setPersistentTrafficHistoryEnabled(true) }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+        case .sessionOnly:
+            HStack(spacing: 10) {
+                Label("Session history only", systemImage: "memorychip")
+                    .font(.callout.weight(.medium))
+                Text("Detailed completed flows disappear when MClash quits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Keep Local History") {
+                    Task { await model.setPersistentTrafficHistoryEnabled(true) }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+        case .loading:
+            HStack(spacing: 10) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Opening private local traffic history…")
+                    .font(.callout)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+        case let .unavailable(message):
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Persistent history unavailable")
+                        .font(.callout.weight(.semibold))
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Button("Use Session Only") {
+                    Task { await model.setPersistentTrafficHistoryEnabled(false) }
+                }
+                Button("Retry") {
+                    Task { await model.setPersistentTrafficHistoryEnabled(true) }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+        case let .ready(lastUpdatedAt):
+            persistentTrafficHistorySummary(lastUpdatedAt: lastUpdatedAt)
+        }
+    }
+
+    private func persistentTrafficHistorySummary(lastUpdatedAt: Date?) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Picker("History Range", selection: $persistentHistoryPeriod) {
+                    Text("Today").tag(TrafficHistoryPeriod.today)
+                    Text("This Week").tag(TrafficHistoryPeriod.week)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 190)
+
+                if let lastUpdatedAt {
+                    Text("Updated \(lastUpdatedAt.formatted(.relative(presentation: .named)))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Menu {
+                    ForEach(TrafficHistoryRetention.allCases, id: \.rawValue) { retention in
+                        Button {
+                            Task { await model.setTrafficHistoryRetention(retention) }
+                        } label: {
+                            if retention == model.trafficHistoryRetention {
+                                Label(retentionTitle(retention), systemImage: "checkmark")
+                            } else {
+                                Text(retentionTitle(retention))
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Use Session Only") {
+                        Task { await model.setPersistentTrafficHistoryEnabled(false) }
+                    }
+                } label: {
+                    Label("Keep \(model.trafficHistoryRetention.rawValue) Days", systemImage: "calendar")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+
+            if let snapshot = persistentTrafficHistorySnapshot {
+                HStack(spacing: 24) {
+                    historyMetric("Measured Traffic", value: persistentByteCount(snapshot.totals.exactTotalBytes))
+                    historyMetric("Completed Flows", value: formattedCount(Int(clamping: snapshot.totals.completedFlowCount)))
+                    historyMetric("Byte Coverage", value: persistentCoverageTitle(snapshot.totals.coverage))
+                    historyMetric("Top App", value: snapshot.applications.first?.application.displayName ?? "—")
+                    historyMetric("Top Route", value: snapshot.routes.first?.route.displayName ?? "—")
+                }
+                Text("Coverage starts \(max(snapshot.interval.start, snapshot.baseline.startedAt).formatted(date: .abbreviated, time: .shortened)). Persistent history stores aggregates only; detailed destinations below remain session-only.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                Text("Preparing aggregate totals…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func historyMetric(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var persistentTrafficHistorySnapshot: TrafficHistorySnapshot? {
+        switch persistentHistoryPeriod {
+        case .today: model.trafficHistoryTodaySnapshot
+        case .week: model.trafficHistoryWeekSnapshot
+        }
+    }
+
+    private var hasTrafficHistoryToClear: Bool {
+        !historicalEntries.isEmpty
+            || (model.trafficHistoryTodaySnapshot?.totals.completedFlowCount ?? 0) > 0
+            || (model.trafficHistoryWeekSnapshot?.totals.completedFlowCount ?? 0) > 0
+    }
+
+    private func persistentByteCount(_ bytes: UInt64) -> String {
+        formattedByteCount(Int64(clamping: bytes))
+    }
+
+    private func persistentCoverageTitle(_ coverage: TrafficHistoryCoverage) -> String {
+        guard let fraction = coverage.measuredFraction else { return "No payload" }
+        return fraction.formatted(.percent.precision(.fractionLength(0)))
+    }
+
+    private func retentionTitle(_ retention: TrafficHistoryRetention) -> String {
+        "\(retention.rawValue) days"
     }
 
     private var trafficDataNotice: String? {
@@ -726,7 +952,7 @@ private struct ClosedConnectionsHistoryView: View {
                             .lineLimit(1)
                     }
                     TableColumn("Node / Chain") { record in
-                        Text(record.connection.chains.joined(separator: " → "))
+                        Text(connectionRouteChain(record.connection))
                             .lineLimit(1)
                     }
                     TableColumn("Traffic") { record in
@@ -748,6 +974,13 @@ private struct ClosedConnectionsHistoryView: View {
     private func totalTraffic(_ connection: MihomoConnection) -> Int64 {
         let (total, overflow) = connection.download.addingReportingOverflow(connection.upload)
         return overflow ? Int64.max : total
+    }
+
+    private func connectionRouteChain(_ connection: MihomoConnection) -> String {
+        let explanation = RoutingExplanation(connection)
+        return explanation.chains.isEmpty
+            ? (nonEmpty(connection.metadata.specialProxy) ?? "—")
+            : explanation.chains.joined(separator: " → ")
     }
 }
 
@@ -862,9 +1095,10 @@ private struct ConnectionTableRow: Identifiable {
 
     init(_ connection: MihomoConnection) {
         self.connection = connection
+        let explanation = RoutingExplanation(connection)
         destination = connectionDestination(connection)
         process = nonEmpty(connection.metadata.process) ?? "—"
-        chain = connection.chains.first
+        chain = explanation.chains.last
             ?? nonEmpty(connection.metadata.specialProxy)
             ?? "—"
         rule = nonEmpty(connection.rule) ?? "—"
@@ -874,7 +1108,8 @@ private struct ConnectionTableRow: Identifiable {
     }
 
     var fullChain: String {
-        connection.chains.isEmpty ? chain : connection.chains.joined(separator: " → ")
+        let explanation = RoutingExplanation(connection)
+        return explanation.chains.isEmpty ? chain : explanation.chains.joined(separator: " → ")
     }
 
     var ruleHelp: String {
@@ -944,13 +1179,14 @@ private struct ConnectionDetailView: View {
                     }
 
                     ConnectionDetailSection("Routing") {
+                        let explanation = RoutingExplanation(connection)
                         ConnectionDetailRow(
                             "Chain",
-                            value: joined(connection.chains, separator: " → ")
+                            value: joined(explanation.chains, separator: " → ")
                                 ?? nonEmpty(connection.metadata.specialProxy)
                                 ?? "—"
                         )
-                        detailRow("Provider Chain", value: joined(connection.providerChains, separator: " → "))
+                        detailRow("Provider Chain", value: joined(explanation.providerChains, separator: " → "))
                         ConnectionDetailRow("Rule", value: nonEmpty(connection.rule) ?? "—")
                         detailRow("Rule Payload", value: nonEmpty(connection.rulePayload))
                         detailRow("Special Proxy", value: nonEmpty(connection.metadata.specialProxy))

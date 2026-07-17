@@ -96,6 +96,7 @@ swiftc \
   -framework SwiftUI \
   -framework SystemConfiguration \
   -framework UserNotifications \
+  -lsqlite3 \
   -I "${build_dir}" \
   -L "${build_dir}" \
   -lMClashNetworkShared \
@@ -115,6 +116,7 @@ swiftc \
   -lMClashNetworkShared \
   -F "${sparkle_framework_dir}" \
   -framework Sparkle \
+  -lsqlite3 \
   -F "${frameworks}" \
   -framework Testing \
   -plugin-path "${plugins}" \

@@ -62,6 +62,18 @@ struct LiveStreamHealth: Equatable, Sendable {
         self = .inactive
     }
 
+    mutating func becameStale(
+        reason: String,
+        at date: Date = Date()
+    ) {
+        guard phase == .live || phase == .connecting || phase == .reconnecting else {
+            return
+        }
+        phase = .stale
+        lastFailureAt = date
+        lastError = reason
+    }
+
     var hasCurrentData: Bool {
         phase == .live
     }

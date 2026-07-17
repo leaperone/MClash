@@ -55,6 +55,16 @@ struct RulesView: View {
                 }
                 await loadRulesWhenAvailable()
                 hasCompletedInitialLoad = true
+                while !Task.isCancelled, model.controllerIsReady {
+                    do {
+                        try await Task.sleep(for: .seconds(15))
+                    } catch {
+                        return
+                    }
+                    guard model.controllerIsReady,
+                          model.canPerform(.refreshRules) else { continue }
+                    await model.refreshRules()
+                }
             }
             .onChange(of: model.rules, initial: true) { _, rules in
                 presentation.updateRules(rules)
@@ -66,6 +76,12 @@ struct RulesView: View {
                 presentation.cancelPendingWork()
             }
             .toolbar {
+                ToolbarItem {
+                    Text(rulesFreshnessTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help(rulesFreshnessHelp)
+                }
                 ToolbarItem {
                     Text("\(formattedCount(model.rules.count)) rules")
                         .foregroundStyle(.secondary)
@@ -87,6 +103,18 @@ struct RulesView: View {
                     )
                 }
             }
+    }
+
+    private var rulesFreshnessTitle: String {
+        guard let loadedAt = model.rulesLastLoadedAt else { return "Not loaded" }
+        return "Updated \(loadedAt.formatted(.relative(presentation: .named)))"
+    }
+
+    private var rulesFreshnessHelp: String {
+        guard let loadedAt = model.rulesLastLoadedAt else {
+            return "Mihomo rule statistics have not been loaded."
+        }
+        return "Mihomo rule statistics last loaded \(loadedAt.formatted(date: .abbreviated, time: .standard)). They refresh every 15 seconds while this page is open."
     }
 
     @ViewBuilder
@@ -225,16 +253,39 @@ private struct RuleTableSurface: Equatable, View {
             .width(min: 220, ideal: 460, max: 1_200)
 
             TableColumn("Hits") { row in
-                if let hitCount = row.rule.extra?.hitCount, hitCount > 0 {
+                if let hitCount = row.rule.extra?.hitCount {
                     let hitCountText = hitCount.formatted(.number.grouping(.automatic))
                     Text(hitCountText)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .accessibilityLabel("\(hitCountText) hits")
+                } else {
+                    Text("—")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .help("This Mihomo runtime did not provide hit statistics for this rule.")
                 }
             }
             .width(min: 54, ideal: 72, max: 96)
+
+            TableColumn("Last Hit") { row in
+                if let lastHitAt = row.lastHitAt {
+                    Text(lastHitAt, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help(lastHitAt.formatted(date: .abbreviated, time: .standard))
+                } else if row.rule.extra != nil {
+                    Text("Never")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Unavailable")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .width(min: 76, ideal: 105, max: 140)
 
             TableColumn("Policy") { row in
                 Text(row.rule.proxy)
@@ -536,10 +587,18 @@ enum RulePresentationComputation {
 struct RuleTableRow: Identifiable, Sendable {
     let rule: MihomoRule
     let payload: String
+    let lastHitAt: Date?
 
     init(rule: MihomoRule) {
         self.rule = rule
         payload = rule.payload.isEmpty ? "Any" : rule.payload
+        if let value = rule.extra?.hitAt,
+           !value.isEmpty,
+           rule.extra?.hitCount != 0 {
+            lastHitAt = try? Date(value, strategy: .iso8601)
+        } else {
+            lastHitAt = nil
+        }
     }
 
     var id: Int { rule.index }

@@ -37,6 +37,7 @@ swiftc \
   -framework SwiftUI \
   -framework SystemConfiguration \
   -framework UserNotifications \
+  -lsqlite3 \
   -I "${output_dir}" \
   -L "${output_dir}" \
   -lMClashNetworkShared \

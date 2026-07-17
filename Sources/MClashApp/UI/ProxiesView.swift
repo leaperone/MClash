@@ -1274,18 +1274,31 @@ private struct ProxyNodeListRow: View {
     }
 
     private var delayIndicator: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 7, height: 7)
-                .accessibilityHidden(true)
-            Text(delayText)
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(delayColor)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(minWidth: 68, alignment: .trailing)
+        VStack(alignment: .trailing, spacing: 2) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+                Text(delayText)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(delayColor)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 68, alignment: .trailing)
+            }
+            if let lastTestedAt {
+                Text("tested \(lastTestedAt.formatted(.relative(presentation: .named)))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .help(lastTestedAt.formatted(date: .abbreviated, time: .standard))
+            }
         }
+    }
+
+    private var lastTestedAt: Date? {
+        guard let value = node?.history.last?.time else { return nil }
+        return parsedRuntimeTimestamp(value)
     }
 
     @ViewBuilder

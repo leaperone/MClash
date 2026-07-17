@@ -13,6 +13,7 @@ struct ProfileStoreTests {
             fixture.layout.stateDirectory,
             fixture.layout.runtimeDirectory,
             fixture.layout.runtimeStagingDirectory,
+            fixture.layout.trafficHistoryDirectory,
         ] {
             var isDirectory: ObjCBool = false
             #expect(

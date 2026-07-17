@@ -5,8 +5,9 @@ import MClashNetworkShared
 
 /// Transparent application proxy entry point. The framework first sends all
 /// outbound TCP/UDP flows (except loopback) to this provider. The local rule
-/// engine then returns unselected flows to the original network path and owns
-/// only reject or Mihomo-routed flows.
+/// engine owns selected TCP Direct flows for exact relay accounting as well as
+/// reject and Mihomo routes. Security-critical loop bypasses, true fail-open
+/// decisions, and UDP Direct remain on the original unmeasured network path.
 final class TransparentProxyProvider: NETransparentProxyProvider {
     private let runtime = ProviderRuntimeState(providerName: "transparent-proxy")
     private let flowDecisionCoordinator = NetworkExtensionFlowDecisionCoordinator()
@@ -60,7 +61,24 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             activities.upsert(plan.activity)
             decision = plan.decision
             switch decision.disposition {
-            case .direct, .failOpen:
+            case .direct:
+                // Security-critical loop/trusted-component bypasses must stay
+                // outside the relay so MClash cannot recursively capture itself.
+                if Self.isBuiltInBypass(decision) {
+                    return false
+                }
+                guard let destination = plan.destination else {
+                    recordDirectRelayUnavailable(plan.activity)
+                    return false
+                }
+                markRelayConnecting(plan.activity.flowIdentifier)
+                tcpRelays.startDirect(
+                    flow: tcpFlow,
+                    destination: destination,
+                    activityObserver: relayObserver(for: plan.activity.flowIdentifier)
+                )
+                return true
+            case .failOpen:
                 return false
             case .reject:
                 let completion: @Sendable (Error?) -> Void = { error in
@@ -79,17 +97,17 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                       let proxy = plan.proxy,
                       let destination = plan.destination
                 else {
-                    // A generic listener cannot faithfully implement a forced
-                    // global/group route. Leave the flow untouched until a
-                    // route-specific mihomo listener is configured.
-                    recordUnsupportedRoute(plan.activity)
-                    return false
+                    return handleUnavailableMihomoTCPRoute(
+                        tcpFlow,
+                        plan: plan
+                    )
                 }
                 markRelayConnecting(plan.activity.flowIdentifier)
-                tcpRelays.start(
+                tcpRelays.startMihomo(
                     flow: tcpFlow,
                     proxy: proxy,
                     destination: destination,
+                    unavailableFallback: plan.unavailableFallback,
                     activityObserver: relayObserver(for: plan.activity.flowIdentifier)
                 )
                 return true
@@ -313,13 +331,74 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         activities.upsert(activity)
     }
 
+    /// UDP direct relay is intentionally not implemented in this phase. Keep
+    /// its previous pass-through behavior explicit and unmeasured.
     private func recordUnsupportedRoute(_ original: AppRoutingActivity) {
         guard var activity = activities.activity(for: original.flowIdentifier) else { return }
         activity.effectiveAction = .direct
         activity.relayState = .notApplicable
-        activity.relayError = "This Mihomo route requires a route-specific listener; traffic was left direct."
+        activity.relayError = "This UDP Mihomo route requires a route-specific listener; traffic was left direct and is not measured."
         activity.endedAt = Date()
         activities.upsert(activity)
+    }
+
+    private func recordDirectRelayUnavailable(_ original: AppRoutingActivity) {
+        guard var activity = activities.activity(for: original.flowIdentifier) else { return }
+        activity.relayState = .failed
+        activity.relayError = "The original TCP destination could not be converted for direct relay; traffic was left to macOS."
+        activity.endedAt = Date()
+        activities.upsert(activity)
+    }
+
+    private func handleUnavailableMihomoTCPRoute(
+        _ flow: NEAppProxyTCPFlow,
+        plan: TCPFlowInterceptionPlan
+    ) -> Bool {
+        switch plan.unavailableFallback {
+        case .direct:
+            guard let destination = plan.destination else {
+                recordDirectRelayUnavailable(plan.activity)
+                return false
+            }
+            markRelayConnecting(plan.activity.flowIdentifier)
+            tcpRelays.startDirect(
+                flow: flow,
+                destination: destination,
+                relayNote: "The configured Mihomo route has no route-specific listener; MClash used the rule's Direct fallback.",
+                activityObserver: relayObserver(for: plan.activity.flowIdentifier)
+            )
+            return true
+        case .reject:
+            let error = NSError(
+                domain: "one.leaper.mclash.network-extension",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "The selected Mihomo route is unavailable and this rule rejects fallback"
+                ]
+            )
+            AppProxyFlowCompatibility.open(flow) { completionError in
+                let rejection = completionError ?? error
+                flow.closeReadWithError(rejection)
+                flow.closeWriteWithError(rejection)
+            }
+            guard var activity = activities.activity(for: plan.activity.flowIdentifier) else {
+                return true
+            }
+            activity.effectiveAction = .reject
+            activity.relayState = .failed
+            activity.relayError = error.localizedDescription
+            activity.endedAt = Date()
+            activities.upsert(activity)
+            return true
+        }
+    }
+
+    private static func isBuiltInBypass(_ decision: FlowTrafficDecision) -> Bool {
+        guard case let .rule(cause) = decision.reason,
+              case .builtInBypass = cause
+        else { return false }
+        return true
     }
 
     private func relayObserver(
@@ -330,9 +409,18 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             guard var activity = activities.activity(for: flowIdentifier) else { return }
             activity.relayState = snapshot.state
             activity.relayError = snapshot.error
+            if let note = snapshot.note {
+                activity.relayNote = note
+            }
             activity.uploadBytes = snapshot.uploadBytes
             activity.downloadBytes = snapshot.downloadBytes
             activity.relayLocalPort = snapshot.localPort
+            if let effectiveAction = snapshot.effectiveAction {
+                activity.effectiveAction = effectiveAction
+                if effectiveAction == .direct {
+                    activity.payloadBytesAreMeasured = true
+                }
+            }
             switch snapshot.state {
             case .completed, .failed:
                 activity.endedAt = Date()

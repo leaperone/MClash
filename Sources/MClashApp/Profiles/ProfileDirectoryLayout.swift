@@ -71,6 +71,16 @@ public struct ProfileDirectoryLayout: Equatable, Sendable {
         runtimeDirectory.appendingPathComponent("Staging", isDirectory: true)
     }
 
+    /// Private, local-only operational history. This directory must never be
+    /// included in profile exports or backups.
+    public var trafficHistoryDirectory: URL {
+        rootDirectory.appendingPathComponent("TrafficHistory", isDirectory: true)
+    }
+
+    public var trafficHistoryDatabaseURL: URL {
+        trafficHistoryDirectory.appendingPathComponent("traffic-history.sqlite3", isDirectory: false)
+    }
+
     public func createDirectories(fileManager: FileManager = .default) throws {
         for directory in [
             rootDirectory,
@@ -78,6 +88,7 @@ public struct ProfileDirectoryLayout: Equatable, Sendable {
             stateDirectory,
             runtimeDirectory,
             runtimeStagingDirectory,
+            trafficHistoryDirectory,
         ] {
             try fileManager.createDirectory(
                 at: directory,

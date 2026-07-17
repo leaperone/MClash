@@ -119,20 +119,28 @@ struct ProvidersView: View {
             hasCompletedInitialLoad = true
         }
         .toolbar {
-            Button {
-                Task { await model.refreshProviders() }
-            } label: {
-                if model.isPerforming(.refreshProviders) {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Label("Refresh All", systemImage: "arrow.clockwise")
+            ToolbarItemGroup {
+                if let loadedAt = model.providersLastLoadedAt {
+                    Text("Read \(loadedAt.formatted(.relative(presentation: .named)))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help(loadedAt.formatted(date: .abbreviated, time: .standard))
                 }
+                Button {
+                    Task { await model.refreshProviders() }
+                } label: {
+                    if model.isPerforming(.refreshProviders) {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("Refresh All", systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(
+                    !model.controllerIsReady
+                        || !model.canPerform(.refreshProviders)
+                )
             }
-            .disabled(
-                !model.controllerIsReady
-                    || !model.canPerform(.refreshProviders)
-            )
         }
     }
 
@@ -219,6 +227,9 @@ private struct ProxyProviderRow: View {
                     .foregroundStyle(.secondary)
                 }
             }
+            if let receipt = latestReceipt {
+                providerReceiptView(receipt)
+            }
         }
         .padding(.vertical, compact ? 8 : 5)
     }
@@ -281,6 +292,38 @@ private struct ProxyProviderRow: View {
             || model.isPerforming(.healthCheckProxyProvider(provider.name))
     }
 
+    private var latestReceipt: AppModel.ProviderOperationReceipt? {
+        [
+            model.providerOperationReceipt(.updateProxy, providerName: provider.name),
+            model.providerOperationReceipt(.healthCheckProxy, providerName: provider.name),
+        ]
+        .compactMap { $0 }
+        .max { $0.completedAt < $1.completedAt }
+    }
+
+    private func providerReceiptView(
+        _ receipt: AppModel.ProviderOperationReceipt
+    ) -> some View {
+        let action = receipt.kind == .healthCheckProxy ? "Health check" : "Update"
+        return HStack(spacing: 5) {
+            switch receipt.outcome {
+            case .succeeded:
+                Label(
+                    "\(action) completed \(receipt.completedAt.formatted(.relative(presentation: .named)))",
+                    systemImage: "checkmark.circle.fill"
+                )
+                .foregroundStyle(.green)
+            case let .failed(message):
+                Label("\(action) failed", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .help(message)
+                Text(receipt.completedAt, style: .relative)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption)
+    }
+
     private var metadata: String {
         let alive = provider.proxies.count { $0.alive }
         var parts = [
@@ -312,29 +355,37 @@ private struct RuleProviderRow: View {
     let compact: Bool
 
     var body: some View {
-        Group {
-            if compact {
-                VStack(alignment: .leading, spacing: 9) {
-                    ruleProviderIdentity
-                    HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 5) {
+            Group {
+                if compact {
+                    VStack(alignment: .leading, spacing: 9) {
+                        ruleProviderIdentity
+                        HStack(spacing: 10) {
+                            Text(updatedLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            updateButton
+                        }
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        ruleProviderIdentity
+                        Spacer(minLength: 18)
                         Text(updatedLabel)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                        Spacer(minLength: 0)
                         updateButton
                     }
                 }
-            } else {
-                HStack(spacing: 12) {
-                    ruleProviderIdentity
-                    Spacer(minLength: 18)
-                    Text(updatedLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    updateButton
-                }
+            }
+            if let receipt = model.providerOperationReceipt(
+                .updateRule,
+                providerName: provider.name
+            ) {
+                ruleProviderReceipt(receipt)
             }
         }
         .padding(.vertical, compact ? 8 : 5)
@@ -374,5 +425,25 @@ private struct RuleProviderRow: View {
             return "Not updated yet"
         }
         return date.formatted(.relative(presentation: .named))
+    }
+
+    private func ruleProviderReceipt(
+        _ receipt: AppModel.ProviderOperationReceipt
+    ) -> some View {
+        Group {
+            switch receipt.outcome {
+            case .succeeded:
+                Label(
+                    "Update completed \(receipt.completedAt.formatted(.relative(presentation: .named)))",
+                    systemImage: "checkmark.circle.fill"
+                )
+                .foregroundStyle(.green)
+            case let .failed(message):
+                Label("Update failed", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .help(message)
+            }
+        }
+        .font(.caption2)
     }
 }

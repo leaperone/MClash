@@ -25,6 +25,7 @@ struct OperationalIssue: Identifiable, Equatable, Sendable {
         case liveData = "Live Data"
         case rules = "Mihomo Rules"
         case providers = "Providers"
+        case trafficHistory = "Traffic History"
         case application = "Application"
     }
 
@@ -35,6 +36,7 @@ struct OperationalIssue: Identifiable, Equatable, Sendable {
         case openAppRouting
         case openRules
         case openProviders
+        case openTraffic
         case openLogs
     }
 
@@ -90,7 +92,10 @@ struct OperationalSnapshot: Equatable, Sendable {
     let captureSummary: String
     let activeCaptureCount: Int
     let activeRuleCount: Int
-    let latestSuccessfulProxyAt: Date?
+    /// Latest connection for which Mihomo reported a non-DIRECT terminal route.
+    /// This is route evidence, not proof that a particular macOS capture plane
+    /// originated the flow.
+    let latestNonDirectRouteAt: Date?
     let issueCount: Int
 }
 
@@ -284,6 +289,23 @@ extension AppModel {
             )
         }
 
+        if case let .unavailable(message) = trafficHistoryRuntimeState {
+            issues.append(
+                OperationalIssue(
+                    id: "traffic-history.unavailable",
+                    severity: .warning,
+                    subsystem: .trafficHistory,
+                    title: "Persistent traffic history is unavailable",
+                    consequence: "Live and in-memory traffic remain visible, but Today and This Week totals are not being saved.",
+                    technicalDetail: message,
+                    primaryActionTitle: "Open Traffic",
+                    primaryAction: .openTraffic,
+                    secondaryActionTitle: nil,
+                    secondaryAction: nil
+                )
+            )
+        }
+
         return issues.sorted {
             if $0.severity != $1.severity { return $0.severity > $1.severity }
             return $0.id < $1.id
@@ -302,7 +324,7 @@ extension AppModel {
         }()
         let activeCaptureCount = (systemProxyIsOn ? 1 : 0) + (appRoutingIsOn ? 1 : 0)
         let activeRuleCount = networkCapturePreferences.snapshot.rules.filter(\.enabled).count
-        let latestProxyAt = latestSuccessfulProxyAt
+        let latestRouteAt = latestNonDirectRouteAt
 
         let captureSummary: String
         switch (systemProxyIsOn, appRoutingIsOn) {
@@ -324,7 +346,7 @@ extension AppModel {
                 captureSummary: captureSummary,
                 activeCaptureCount: activeCaptureCount,
                 activeRuleCount: activeRuleCount,
-                latestSuccessfulProxyAt: latestProxyAt,
+                latestNonDirectRouteAt: latestRouteAt,
                 issueCount: issues.count
             )
         }
@@ -337,7 +359,7 @@ extension AppModel {
                 captureSummary: captureSummary,
                 activeCaptureCount: activeCaptureCount,
                 activeRuleCount: activeRuleCount,
-                latestSuccessfulProxyAt: latestProxyAt,
+                latestNonDirectRouteAt: latestRouteAt,
                 issueCount: issues.count
             )
         }
@@ -352,7 +374,7 @@ extension AppModel {
                 captureSummary: captureSummary,
                 activeCaptureCount: activeCaptureCount,
                 activeRuleCount: activeRuleCount,
-                latestSuccessfulProxyAt: latestProxyAt,
+                latestNonDirectRouteAt: latestRouteAt,
                 issueCount: issues.count
             )
         }
@@ -365,7 +387,7 @@ extension AppModel {
                 captureSummary: captureSummary,
                 activeCaptureCount: activeCaptureCount,
                 activeRuleCount: activeRuleCount,
-                latestSuccessfulProxyAt: latestProxyAt,
+                latestNonDirectRouteAt: latestRouteAt,
                 issueCount: issues.count
             )
         }
@@ -373,39 +395,35 @@ extension AppModel {
         return OperationalSnapshot(
             level: issues.isEmpty ? .active : .attention,
             title: issues.isEmpty ? "Traffic routing is active" : "Routing is active with warnings",
-            detail: latestProxyAt.map {
-                "A proxied flow was last observed \($0.formatted(.relative(presentation: .named)))."
-            } ?? "Capture is verified; no successfully proxied flow has been observed yet.",
+            detail: latestRouteAt.map {
+                "Mihomo last reported a non-direct route \($0.formatted(.relative(presentation: .named)))."
+            } ?? "Capture configuration is verified; Mihomo has not yet reported a non-direct route.",
             captureSummary: captureSummary,
             activeCaptureCount: activeCaptureCount,
             activeRuleCount: activeRuleCount,
-            latestSuccessfulProxyAt: latestProxyAt,
+            latestNonDirectRouteAt: latestRouteAt,
             issueCount: issues.count
         )
     }
 
-    private var latestSuccessfulProxyAt: Date? {
-        let appRoutingDate = appRoutingActivities.lazy
-            .filter {
-                if case .mihomo = $0.effectiveAction {
-                    return $0.relayState == .ready
-                        || $0.relayState == .relaying
-                        || $0.relayState == .completed
-                }
-                return false
+    private var latestNonDirectRouteAt: Date? {
+        let active = connections?.connections ?? []
+        let closed = recentlyClosedConnections.map(\.connection)
+        return (active + closed).compactMap { connection -> Date? in
+            let route = RoutingExplanation(connection)
+            guard let terminal = route.chains.last,
+                  !Self.isNonProxyTerminal(terminal) else {
+                return nil
             }
-            .map(\.startedAt)
-            .max()
-
-        let connectionDate = connections?.connections.compactMap { connection -> Date? in
-            guard !connection.chains.contains(where: {
-                $0.caseInsensitiveCompare("DIRECT") == .orderedSame
-            })
-            else { return nil }
             return Self.parseConnectionTimestamp(connection.start)
         }.max()
+    }
 
-        return [appRoutingDate, connectionDate].compactMap { $0 }.max()
+    private static func isNonProxyTerminal(_ value: String) -> Bool {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+        case "DIRECT", "REJECT", "REJECT-DROP", "PASS": true
+        default: false
+        }
     }
 
     private static func parseConnectionTimestamp(_ value: String) -> Date? {

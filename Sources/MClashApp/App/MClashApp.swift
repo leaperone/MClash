@@ -59,12 +59,12 @@ struct MClashApp: App {
     }
 
     private var menuBarSymbol: String {
-        if case .failed = model.systemProxyState {
+        if model.operationalIssues.contains(where: { $0.severity == .error }) {
             return "network.slash"
         }
         return switch model.coreState {
         case .running:
-            model.controllerIsReady && model.systemProxyEnabled
+            model.controllerIsReady && verifiedCaptureIsActive
                 ? "network.badge.shield.half.filled"
                 : "network"
         case .failed:
@@ -74,6 +74,18 @@ struct MClashApp: App {
         case .stopped:
             "network"
         }
+    }
+
+    private var verifiedCaptureIsActive: Bool {
+        if case .on = model.systemProxyState,
+           model.systemProxyGuardFailure == nil {
+            return true
+        }
+        if case .on = model.networkCaptureState,
+           model.liveStreamHealth[.appRouting]?.hasCurrentData == true {
+            return true
+        }
+        return false
     }
 
     private var menuBarAccessibilityLabel: String {

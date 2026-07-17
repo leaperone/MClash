@@ -89,7 +89,7 @@ private struct OverviewOperationalSummary: View {
                     )
                     if model.isConnected {
                         statusPill(
-                            "\(formattedCount(model.connections?.connections.count ?? 0)) active",
+                            connectionStatusTitle,
                             symbol: "arrow.left.arrow.right"
                         )
                     }
@@ -131,6 +131,15 @@ private struct OverviewOperationalSummary: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(.quaternary, in: Capsule())
+    }
+
+    private var connectionStatusTitle: String {
+        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
+        case .live: "\(formattedCount(model.connections?.connections.count ?? 0)) active"
+        case .connecting: "Connections waiting"
+        case .reconnecting, .stale: "Connections stale"
+        case .inactive: "Connections unavailable"
+        }
     }
 
     private var color: Color {
@@ -608,7 +617,7 @@ private struct OverviewMetricsSection: View {
                 )
                 OverviewMetricCell(
                     title: "App Relays",
-                    value: formattedCount(activeAppRoutingRelayCount),
+                    value: activeAppRoutingRelayValue,
                     symbol: "app.connected.to.app.below.fill",
                     color: .primary
                 )
@@ -659,6 +668,21 @@ private struct OverviewMetricsSection: View {
                 return false
             }
         }.count
+    }
+
+    private var activeAppRoutingRelayValue: String {
+        guard appRoutingIsOn else { return "Off" }
+        return switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
+        case .live: formattedCount(activeAppRoutingRelayCount)
+        case .connecting: "Waiting"
+        case .reconnecting, .stale: "Stale"
+        case .inactive: "Unavailable"
+        }
+    }
+
+    private var appRoutingIsOn: Bool {
+        if case .on = model.networkCaptureState { return true }
+        return false
     }
 }
 

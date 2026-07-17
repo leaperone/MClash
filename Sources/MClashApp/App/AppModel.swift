@@ -68,6 +68,16 @@ final class AppModel {
         case logs
         case proxies
         case appRouting
+
+        var freshnessDescription: String {
+            switch self {
+            case .traffic: "traffic rate"
+            case .connections: "connection"
+            case .logs: "log"
+            case .proxies: "proxy state"
+            case .appRouting: "App Routing activity"
+            }
+        }
     }
 
     enum SystemProxyState: Equatable {
@@ -126,6 +136,63 @@ final class AppModel {
         case saving
         case completed(RuntimeSettingsApplyOutcome)
         case failed(String)
+    }
+
+    enum TrafficHistoryPersistenceChoice: Int, Equatable, Sendable {
+        case undecided
+        case sessionOnly
+        case persistent
+    }
+
+    enum TrafficHistoryRuntimeState: Equatable, Sendable {
+        case notConfigured
+        case sessionOnly
+        case loading
+        case ready(lastUpdatedAt: Date?)
+        case unavailable(String)
+    }
+
+    enum ProviderOperationKind: String, Hashable, Sendable {
+        case updateProxy
+        case healthCheckProxy
+        case updateRule
+    }
+
+    struct ProviderOperationReceipt: Equatable, Sendable {
+        enum Outcome: Equatable, Sendable {
+            case succeeded
+            case failed(String)
+        }
+
+        let kind: ProviderOperationKind
+        let providerName: String
+        let completedAt: Date
+        let outcome: Outcome
+    }
+
+    struct SystemProxySettingsReceipt: Equatable, Sendable {
+        enum Outcome: Equatable, Sendable {
+            case savedForNextConnection
+            case appliedAndVerified
+            case rejectedAndRolledBack(String)
+            case rollbackFailed(String)
+        }
+
+        let completedAt: Date
+        let outcome: Outcome
+    }
+
+    struct ProfileBatchUpdateReceipt: Equatable, Sendable {
+        let completedAt: Date
+        let updatedCount: Int
+        let unchangedCount: Int
+        let failedCount: Int
+    }
+
+    private enum ProfileRefreshOperationOutcome {
+        case updated
+        case unchanged
+        case failed
     }
 
     enum Operation: Hashable {
@@ -209,6 +276,7 @@ final class AppModel {
     var logs: [CoreLogLine] = []
     var errorMessage: String?
     var profiles: [ProfileMetadata] = []
+    private(set) var profileBatchUpdateReceipt: ProfileBatchUpdateReceipt?
     var activeProfileID: ProfileID?
     var runtimeConfig: MihomoConfig?
     private(set) var runtimeOverrides: RuntimeOverrides = .empty
@@ -225,8 +293,11 @@ final class AppModel {
             updateGlobalProxyGroupRelevance()
         }
     }
+    private(set) var rulesLastLoadedAt: Date?
     var proxyProviders: [MihomoProxyProvider] = []
     var ruleProviders: [MihomoRuleProvider] = []
+    private(set) var providersLastLoadedAt: Date?
+    private(set) var providerOperationReceipts: [String: ProviderOperationReceipt] = [:]
     var rulesErrorMessage: String?
     var providersErrorMessage: String?
     var traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
@@ -284,6 +355,18 @@ final class AppModel {
             )
         }
     }
+    var trafficHistoryPersistenceChoice: TrafficHistoryPersistenceChoice {
+        didSet {
+            preferenceDefaults.set(
+                trafficHistoryPersistenceChoice.rawValue,
+                forKey: Self.trafficHistoryPersistenceChoiceKey
+            )
+        }
+    }
+    private(set) var trafficHistoryRuntimeState: TrafficHistoryRuntimeState = .notConfigured
+    private(set) var trafficHistoryRetention: TrafficHistoryRetention = .default
+    private(set) var trafficHistoryTodaySnapshot: TrafficHistorySnapshot?
+    private(set) var trafficHistoryWeekSnapshot: TrafficHistorySnapshot?
     private(set) var degradedStreams: Set<LiveStream> = []
     private(set) var liveStreamHealth: [LiveStream: LiveStreamHealth] = Dictionary(
         uniqueKeysWithValues: LiveStream.allCases.map { ($0, .inactive) }
@@ -292,6 +375,7 @@ final class AppModel {
     private(set) var storageInitializationFailures: [StorageInitializationFailure] = []
     private(set) var systemProxyGuardFailure: SystemProxyGuardFailure?
     private(set) var systemProxyGuardLastVerifiedAt: Date?
+    private(set) var systemProxySettingsReceipt: SystemProxySettingsReceipt?
 
     private let supervisor: CoreSupervisor
     private let binaryLocator: CoreBinaryLocator
@@ -320,6 +404,7 @@ final class AppModel {
     private var connectionsTask: Task<Void, Never>?
     private var apiLogTask: Task<Void, Never>?
     private var proxyRefreshTask: Task<Void, Never>?
+    private var liveFreshnessWatchdogTask: Task<Void, Never>?
     private var subscriptionUpdateTask: Task<Void, Never>?
     private var controllerGeneration = 0
     private var proxyRefreshRevision = 0
@@ -332,6 +417,12 @@ final class AppModel {
     private var contextualProxyDelays: [ProxyDelayContextKey: Int] = [:]
     private var proxyProfileStructure: ProfileStructure = .empty
     private var trafficAttribution = TrafficAttribution()
+    private var persistentTrafficHistoryStore: TrafficHistoryStore?
+    private var trafficHistoryPersistTask: Task<Void, Never>?
+    private var queuedTrafficHistoryCompletions: [TrafficHistoryCompletedFlow] = []
+    private var queuedTrafficHistoryIdentifiers: Set<String> = []
+    private var persistedTrafficHistoryIdentifiers: Set<String> = []
+    private var persistedTrafficHistoryIdentifierOrder: [String] = []
     private var flowLedgerRevision: UInt64 = 0
     private var flowLedgerTask: Task<Void, Never>?
     private var prepared = false
@@ -365,6 +456,15 @@ final class AppModel {
         self.geoDataInstaller = geoDataInstaller
         self.preferenceDefaults = preferenceDefaults
         self.networkExtensionControl = networkExtensionControl
+        if preferenceDefaults.object(forKey: Self.trafficHistoryPersistenceChoiceKey) == nil {
+            trafficHistoryPersistenceChoice = .undecided
+        } else {
+            trafficHistoryPersistenceChoice = TrafficHistoryPersistenceChoice(
+                rawValue: preferenceDefaults.integer(
+                    forKey: Self.trafficHistoryPersistenceChoiceKey
+                )
+            ) ?? .undecided
+        }
         if preferenceDefaults.object(forKey: Self.autoConnectOnLaunchKey) == nil {
             autoConnectOnLaunch = true
         } else {
@@ -512,6 +612,8 @@ final class AppModel {
         guard !prepared else { return }
         preparationInProgress = true
         defer { preparationInProgress = false }
+
+        await prepareTrafficHistoryPersistenceIfNeeded()
 
         do {
             try Task.checkCancellation()
@@ -1430,7 +1532,7 @@ final class AppModel {
         guard begin(.refreshProfile(id)) else { return }
         defer { end(.refreshProfile(id)) }
 
-        await performRefreshProfile(id)
+        _ = await performRefreshProfile(id)
     }
 
     func refreshAllProfiles() async {
@@ -1440,10 +1542,23 @@ final class AppModel {
         guard let profileStore else { return }
         do {
             let ids = try await profileStore.remoteProfileIDs()
+            var updatedCount = 0
+            var unchangedCount = 0
+            var failedCount = 0
             for id in ids {
                 try Task.checkCancellation()
-                await performRefreshProfile(id)
+                switch await performRefreshProfile(id) {
+                case .updated: updatedCount += 1
+                case .unchanged: unchangedCount += 1
+                case .failed: failedCount += 1
+                }
             }
+            profileBatchUpdateReceipt = ProfileBatchUpdateReceipt(
+                completedAt: Date(),
+                updatedCount: updatedCount,
+                unchangedCount: unchangedCount,
+                failedCount: failedCount
+            )
         } catch is CancellationError {
             return
         } catch {
@@ -1451,9 +1566,9 @@ final class AppModel {
         }
     }
 
-    private func performRefreshProfile(_ id: ProfileID) async {
+    private func performRefreshProfile(_ id: ProfileID) async -> ProfileRefreshOperationOutcome {
 
-        guard let profileStore else { return }
+        guard let profileStore else { return .failed }
         let subscriptionURL = profiles.first(where: { $0.id == id }).flatMap { profile -> URL? in
             guard case let .remote(remote) = profile.origin else { return nil }
             return remote.url
@@ -1467,7 +1582,7 @@ final class AppModel {
                 )
             } catch {
                 recordOperationFailure(error, context: "Subscription snapshot")
-                return
+                return .failed
             }
         } else {
             rollbackSnapshot = nil
@@ -1485,6 +1600,10 @@ final class AppModel {
                     force: true,
                     rollbackSnapshot: rollbackSnapshot
                 )
+            }
+            return switch result {
+            case .updated: .updated
+            case .notModified: .unchanged
             }
         } catch {
             if let rollbackSnapshot {
@@ -1506,6 +1625,7 @@ final class AppModel {
             )
             errorMessage = message
             appendSupervisorLog("Subscription refresh failed: \(message)")
+            return .failed
         }
     }
 
@@ -1535,7 +1655,7 @@ final class AppModel {
             let ids = try await profileStore.remoteProfileIDsDueForAutomaticUpdate(at: Date())
             for id in ids {
                 try Task.checkCancellation()
-                await performRefreshProfile(id)
+                _ = await performRefreshProfile(id)
             }
         } catch is CancellationError {
             return
@@ -1855,6 +1975,13 @@ final class AppModel {
         await loadProviders(using: apiClient, generation: controllerGeneration)
     }
 
+    func providerOperationReceipt(
+        _ kind: ProviderOperationKind,
+        providerName: String
+    ) -> ProviderOperationReceipt? {
+        providerOperationReceipts[providerReceiptKey(kind, providerName: providerName)]
+    }
+
     func updateProxyProvider(_ name: String) async {
         guard begin(.updateProxyProvider(name)) else { return }
         defer { end(.updateProxyProvider(name)) }
@@ -1867,9 +1994,15 @@ final class AppModel {
             guard generation == controllerGeneration, isConnected else { return }
             await loadProviders(using: apiClient, generation: generation)
             await refreshProxyGroups(generation: generation)
+            recordProviderOperationReceipt(.updateProxy, providerName: name, outcome: .succeeded)
         } catch {
             guard generation == controllerGeneration else { return }
             providersErrorMessage = error.localizedDescription
+            recordProviderOperationReceipt(
+                .updateProxy,
+                providerName: name,
+                outcome: .failed(error.localizedDescription)
+            )
             recordOperationFailure(error, context: "Proxy provider update")
         }
     }
@@ -1886,9 +2019,15 @@ final class AppModel {
             guard generation == controllerGeneration, isConnected else { return }
             await loadProviders(using: apiClient, generation: generation)
             await refreshProxyGroups(generation: generation)
+            recordProviderOperationReceipt(.healthCheckProxy, providerName: name, outcome: .succeeded)
         } catch {
             guard generation == controllerGeneration else { return }
             providersErrorMessage = error.localizedDescription
+            recordProviderOperationReceipt(
+                .healthCheckProxy,
+                providerName: name,
+                outcome: .failed(error.localizedDescription)
+            )
             recordOperationFailure(error, context: "Proxy provider health check")
         }
     }
@@ -1904,11 +2043,38 @@ final class AppModel {
             guard generation == controllerGeneration, isConnected else { return }
             await loadProviders(using: apiClient, generation: generation)
             await loadRules(using: apiClient, generation: generation)
+            recordProviderOperationReceipt(.updateRule, providerName: name, outcome: .succeeded)
         } catch {
             guard generation == controllerGeneration else { return }
             providersErrorMessage = error.localizedDescription
+            recordProviderOperationReceipt(
+                .updateRule,
+                providerName: name,
+                outcome: .failed(error.localizedDescription)
+            )
             recordOperationFailure(error, context: "Rule provider update")
         }
+    }
+
+    private func providerReceiptKey(
+        _ kind: ProviderOperationKind,
+        providerName: String
+    ) -> String {
+        "\(kind.rawValue):\(providerName)"
+    }
+
+    private func recordProviderOperationReceipt(
+        _ kind: ProviderOperationKind,
+        providerName: String,
+        outcome: ProviderOperationReceipt.Outcome
+    ) {
+        let receipt = ProviderOperationReceipt(
+            kind: kind,
+            providerName: providerName,
+            completedAt: Date(),
+            outcome: outcome
+        )
+        providerOperationReceipts[providerReceiptKey(kind, providerName: providerName)] = receipt
     }
 
     func closeConnection(_ id: String) async {
@@ -2286,10 +2452,17 @@ final class AppModel {
                 bypassDomains: systemProxyPreferences.effectiveBypassDomains,
                 savingSnapshotTo: snapshotURL
             )
+            guard try await systemProxyManager.configurationMatches(
+                endpoints: endpoints,
+                bypassDomains: systemProxyPreferences.effectiveBypassDomains
+            ) else {
+                throw AppModelError.systemProxyGuardVerificationFailed
+            }
             guard generation == controllerGeneration, isConnected else {
                 _ = await performDisableSystemProxy()
                 return
             }
+            systemProxyGuardLastVerifiedAt = Date()
             systemProxyState = .on
             startSystemProxyGuard(endpoints: endpoints)
             appendSupervisorLog(
@@ -2345,7 +2518,8 @@ final class AppModel {
     }
 
     func applySystemProxyPreferences(
-        _ preferences: SystemProxyPreferences
+        _ preferences: SystemProxyPreferences,
+        endpoints explicitEndpoints: LocalSystemProxyEndpoints? = nil
     ) async throws {
         guard begin(.changeSystemProxySettings) else {
             throw AppModelError.operationInProgress
@@ -2355,19 +2529,94 @@ final class AppModel {
             throw AppModelError.profileStoreUnavailable
         }
 
-        let preferences = try preferences.validated()
-        try await systemProxyPreferencesStore.save(preferences)
-        systemProxyPreferences = preferences
+        let updatedPreferences = try preferences.validated()
+        let previousPreferences = systemProxyPreferences
 
-        if systemProxyEnabled, let endpoints = currentSystemProxyEndpoints() {
-            try await systemProxyManager.apply(
-                endpoints: endpoints,
-                bypassDomains: preferences.effectiveBypassDomains
+        guard systemProxyEnabled else {
+            try await systemProxyPreferencesStore.save(updatedPreferences)
+            systemProxyPreferences = updatedPreferences
+            systemProxySettingsReceipt = SystemProxySettingsReceipt(
+                completedAt: Date(),
+                outcome: .savedForNextConnection
             )
-            startSystemProxyGuard(endpoints: endpoints)
-        } else {
             systemProxyGuardTask?.cancel()
             systemProxyGuardTask = nil
+            return
+        }
+        guard let endpoints = explicitEndpoints ?? currentSystemProxyEndpoints() else {
+            throw AppModelError.localProxyPortsUnavailable
+        }
+
+        systemProxyGuardTask?.cancel()
+        systemProxyGuardTask = nil
+        do {
+            try await systemProxyManager.apply(
+                endpoints: endpoints,
+                bypassDomains: updatedPreferences.effectiveBypassDomains
+            )
+            guard try await systemProxyManager.configurationMatches(
+                endpoints: endpoints,
+                bypassDomains: updatedPreferences.effectiveBypassDomains
+            ) else {
+                throw AppModelError.systemProxyGuardVerificationFailed
+            }
+            try await systemProxyPreferencesStore.save(updatedPreferences)
+            systemProxyPreferences = updatedPreferences
+            systemProxyGuardFailure = nil
+            systemProxyGuardLastVerifiedAt = Date()
+            systemProxyState = .on
+            systemProxySettingsReceipt = SystemProxySettingsReceipt(
+                completedAt: Date(),
+                outcome: .appliedAndVerified
+            )
+            startSystemProxyGuard(endpoints: endpoints)
+        } catch {
+            let updateError = error
+            var rollbackError: (any Error)?
+            do {
+                try await systemProxyManager.apply(
+                    endpoints: endpoints,
+                    bypassDomains: previousPreferences.effectiveBypassDomains
+                )
+                guard try await systemProxyManager.configurationMatches(
+                    endpoints: endpoints,
+                    bypassDomains: previousPreferences.effectiveBypassDomains
+                ) else {
+                    throw AppModelError.systemProxyGuardVerificationFailed
+                }
+                systemProxyPreferences = previousPreferences
+                systemProxyGuardFailure = nil
+                systemProxyGuardLastVerifiedAt = Date()
+                systemProxyState = .on
+                systemProxySettingsReceipt = SystemProxySettingsReceipt(
+                    completedAt: Date(),
+                    outcome: .rejectedAndRolledBack(updateError.localizedDescription)
+                )
+                startSystemProxyGuard(endpoints: endpoints)
+            } catch {
+                rollbackError = error
+            }
+
+            if let rollbackError {
+                let failure = SystemProxyPreferenceRollbackFailure(
+                    updateReason: updateError.localizedDescription,
+                    rollbackReason: rollbackError.localizedDescription
+                )
+                let now = Date()
+                systemProxyGuardFailure = SystemProxyGuardFailure(
+                    consecutiveFailures: Self.systemProxyGuardFailureThreshold,
+                    firstFailureAt: now,
+                    lastFailureAt: now,
+                    reason: failure.localizedDescription
+                )
+                systemProxyState = .failed(failure.localizedDescription)
+                systemProxySettingsReceipt = SystemProxySettingsReceipt(
+                    completedAt: Date(),
+                    outcome: .rollbackFailed(failure.localizedDescription)
+                )
+                throw failure
+            }
+            throw updateError
         }
     }
 
@@ -2603,6 +2852,134 @@ final class AppModel {
             scheduleFlowLedgerRefresh()
         } catch {
             appRoutingActivityError = error.localizedDescription
+        }
+    }
+
+    func setPersistentTrafficHistoryEnabled(_ enabled: Bool) async {
+        trafficHistoryPersistenceChoice = enabled ? .persistent : .sessionOnly
+        trafficHistoryPersistTask?.cancel()
+        trafficHistoryPersistTask = nil
+        queuedTrafficHistoryCompletions.removeAll(keepingCapacity: false)
+        queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
+
+        guard enabled else {
+            persistentTrafficHistoryStore = nil
+            trafficHistoryTodaySnapshot = nil
+            trafficHistoryWeekSnapshot = nil
+            trafficHistoryRuntimeState = .sessionOnly
+            return
+        }
+        await openPersistentTrafficHistory()
+    }
+
+    func setTrafficHistoryRetention(_ retention: TrafficHistoryRetention) async {
+        guard let store = persistentTrafficHistoryStore else { return }
+        do {
+            try await store.setRetention(retention)
+            trafficHistoryRetention = retention
+            await refreshPersistentTrafficHistorySnapshots()
+        } catch {
+            markPersistentTrafficHistoryUnavailable(
+                "MClash could not update the traffic history retention period: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    func clearTrafficHistory() async {
+        clearClosedConnectionHistory()
+        await clearAppRoutingActivity()
+
+        guard let store = persistentTrafficHistoryStore else { return }
+        do {
+            _ = try await store.clear()
+            persistedTrafficHistoryIdentifiers.removeAll(keepingCapacity: true)
+            persistedTrafficHistoryIdentifierOrder.removeAll(keepingCapacity: true)
+            queuedTrafficHistoryCompletions.removeAll(keepingCapacity: true)
+            queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: true)
+            await refreshPersistentTrafficHistorySnapshots()
+        } catch {
+            markPersistentTrafficHistoryUnavailable(
+                "MClash could not clear the persistent traffic history: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    func refreshPersistentTrafficHistorySnapshots() async {
+        guard let store = persistentTrafficHistoryStore else { return }
+        do {
+            let today = try await store.snapshot(for: .today)
+            let week = try await store.snapshot(for: .week)
+            trafficHistoryTodaySnapshot = today
+            trafficHistoryWeekSnapshot = week
+            trafficHistoryRuntimeState = .ready(lastUpdatedAt: Date())
+        } catch {
+            markPersistentTrafficHistoryUnavailable(
+                "MClash could not read the persistent traffic history: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func prepareTrafficHistoryPersistenceIfNeeded() async {
+        switch trafficHistoryPersistenceChoice {
+        case .undecided:
+            trafficHistoryRuntimeState = .notConfigured
+        case .sessionOnly:
+            trafficHistoryRuntimeState = .sessionOnly
+        case .persistent:
+            await openPersistentTrafficHistory()
+        }
+    }
+
+    private func openPersistentTrafficHistory() async {
+        guard let profileLayout else {
+            markPersistentTrafficHistoryUnavailable(
+                "The MClash Application Support directory is unavailable."
+            )
+            return
+        }
+        trafficHistoryRuntimeState = .loading
+        let result = await Task.detached(priority: .utility) {
+            TrafficHistoryStore.open(layout: profileLayout)
+        }.value
+        switch result {
+        case let .ready(store):
+            persistentTrafficHistoryStore = store
+            do {
+                trafficHistoryRetention = try await store.retention()
+                await refreshPersistentTrafficHistorySnapshots()
+                schedulePersistentTrafficHistory(from: flowLedger)
+            } catch {
+                markPersistentTrafficHistoryUnavailable(
+                    "MClash opened traffic history but could not verify it: \(error.localizedDescription)"
+                )
+            }
+        case let .unavailable(reason):
+            markPersistentTrafficHistoryUnavailable(
+                Self.trafficHistoryUnavailableDescription(reason)
+            )
+        }
+    }
+
+    private func markPersistentTrafficHistoryUnavailable(_ reason: String) {
+        persistentTrafficHistoryStore = nil
+        trafficHistoryRuntimeState = .unavailable(reason)
+        appendSupervisorLog("Persistent traffic history is unavailable: \(reason)")
+    }
+
+    private static func trafficHistoryUnavailableDescription(
+        _ reason: TrafficHistoryStoreUnavailableReason
+    ) -> String {
+        switch reason {
+        case .cannotCreatePrivateDirectory:
+            "MClash could not create its private TrafficHistory directory."
+        case .cannotOpenDatabase:
+            "MClash could not open its local traffic history database."
+        case .corruptedDatabase:
+            "The local traffic history database failed its integrity check. It was left untouched for recovery."
+        case let .newerSchema(found, supported):
+            "Traffic history uses schema \(found), but this version of MClash supports schema \(supported). The database was left untouched."
+        case .migrationFailed:
+            "MClash could not migrate the local traffic history database. It was left untouched."
         }
     }
 
@@ -2999,6 +3376,7 @@ final class AppModel {
             guard generation == controllerGeneration, isConnected else { return }
             rules = collection.rules
             rulesErrorMessage = nil
+            rulesLastLoadedAt = Date()
         } catch {
             guard generation == controllerGeneration, isConnected else { return }
             rulesErrorMessage = error.localizedDescription
@@ -3008,6 +3386,7 @@ final class AppModel {
 
     private func loadProviders(using client: MihomoAPIClient, generation: Int) async {
         var failures: [String] = []
+        var loadedAtLeastOneCollection = false
 
         do {
             let proxyCollection = try await client.fetchProxyProviders()
@@ -3015,6 +3394,7 @@ final class AppModel {
             proxyProviders = proxyCollection.providers.values.sorted {
                 $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
+            loadedAtLeastOneCollection = true
         } catch {
             guard generation == controllerGeneration, isConnected else { return }
             failures.append("Proxy providers: \(error.localizedDescription)")
@@ -3026,6 +3406,7 @@ final class AppModel {
             ruleProviders = ruleCollection.providers.values.sorted {
                 $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
+            loadedAtLeastOneCollection = true
         } catch {
             guard generation == controllerGeneration, isConnected else { return }
             failures.append("Rule providers: \(error.localizedDescription)")
@@ -3037,6 +3418,9 @@ final class AppModel {
             let message = failures.joined(separator: "\n")
             providersErrorMessage = message
             appendSupervisorLog("Providers could not be fully loaded: \(message)")
+        }
+        if loadedAtLeastOneCollection {
+            providersLastLoadedAt = Date()
         }
     }
 
@@ -3063,6 +3447,47 @@ final class AppModel {
 
         proxyRefreshTask = Task { [weak self] in
             await self?.monitorProxyState(client, generation: generation)
+        }
+
+        startLiveFreshnessWatchdog(generation: generation)
+    }
+
+    private func startLiveFreshnessWatchdog(generation: Int) {
+        liveFreshnessWatchdogTask?.cancel()
+        liveFreshnessWatchdogTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
+                }
+                guard let self, self.streamShouldContinue(generation) else { return }
+                self.expireSilentLiveStreams(at: Date())
+            }
+        }
+    }
+
+    /// A connected WebSocket can stop producing samples without throwing.
+    /// Expire data by cadence so a retained number never masquerades as live.
+    func expireSilentLiveStreams(at now: Date = Date()) {
+        let deadlines: [(LiveStream, TimeInterval)] = [
+            (.traffic, 4),
+            (.connections, 6),
+            (.proxies, 15),
+            (.appRouting, 5),
+        ]
+        for (stream, deadline) in deadlines {
+            guard var health = liveStreamHealth[stream],
+                  health.phase == .live,
+                  let lastReceivedAt = health.lastReceivedAt,
+                  now.timeIntervalSince(lastReceivedAt) > deadline else {
+                continue
+            }
+            let reason = "No \(stream.freshnessDescription) sample was received for more than \(Int(deadline)) seconds."
+            health.becameStale(reason: reason, at: now)
+            liveStreamHealth[stream] = health
+            degradedStreams.insert(stream)
+            appendSupervisorLog(reason)
         }
     }
 
@@ -3253,8 +3678,11 @@ final class AppModel {
         contextualProxyDelays = [:]
         proxyProfileStructure = .empty
         rules = []
+        rulesLastLoadedAt = nil
         proxyProviders = []
         ruleProviders = []
+        providersLastLoadedAt = nil
+        providerOperationReceipts = [:]
         rulesErrorMessage = nil
         providersErrorMessage = nil
         degradedStreams = []
@@ -3457,7 +3885,172 @@ final class AppModel {
                     return (identifier, entry)
                 }
             )
+            self.schedulePersistentTrafficHistory(from: ledger)
             self.flowLedgerTask = nil
+        }
+    }
+
+    private func schedulePersistentTrafficHistory(from ledger: FlowLedger) {
+        guard persistentTrafficHistoryStore != nil,
+              trafficHistoryPersistenceChoice == .persistent else { return }
+
+        for entry in ledger.entries {
+            guard let completion = Self.trafficHistoryCompletion(entry) else { continue }
+            let identifier = completion.checkpointIdentifier
+            guard !persistedTrafficHistoryIdentifiers.contains(identifier),
+                  queuedTrafficHistoryIdentifiers.insert(identifier).inserted else {
+                continue
+            }
+            queuedTrafficHistoryCompletions.append(completion)
+        }
+        startPersistentTrafficHistoryWriterIfNeeded()
+    }
+
+    private func startPersistentTrafficHistoryWriterIfNeeded() {
+        guard trafficHistoryPersistTask == nil,
+              persistentTrafficHistoryStore != nil,
+              !queuedTrafficHistoryCompletions.isEmpty else { return }
+
+        trafficHistoryPersistTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled,
+                  let store = self.persistentTrafficHistoryStore,
+                  !self.queuedTrafficHistoryCompletions.isEmpty {
+                let count = min(250, self.queuedTrafficHistoryCompletions.count)
+                let batch = Array(self.queuedTrafficHistoryCompletions.prefix(count))
+                self.queuedTrafficHistoryCompletions.removeFirst(count)
+                do {
+                    _ = try await store.ingest(batch)
+                    for completion in batch {
+                        let identifier = completion.checkpointIdentifier
+                        self.queuedTrafficHistoryIdentifiers.remove(identifier)
+                        if self.persistedTrafficHistoryIdentifiers.insert(identifier).inserted {
+                            self.persistedTrafficHistoryIdentifierOrder.append(identifier)
+                        }
+                    }
+                    self.trimPersistedTrafficHistoryIdentifierCache()
+                } catch {
+                    for completion in batch {
+                        self.queuedTrafficHistoryIdentifiers.remove(
+                            completion.checkpointIdentifier
+                        )
+                    }
+                    self.trafficHistoryPersistTask = nil
+                    self.markPersistentTrafficHistoryUnavailable(
+                        "MClash could not write the persistent traffic history: \(error.localizedDescription)"
+                    )
+                    return
+                }
+            }
+            self.trafficHistoryPersistTask = nil
+            if !Task.isCancelled {
+                await self.refreshPersistentTrafficHistorySnapshots()
+            }
+        }
+    }
+
+    private func trimPersistedTrafficHistoryIdentifierCache() {
+        let maximumCount = 10_000
+        guard persistedTrafficHistoryIdentifierOrder.count > maximumCount else { return }
+        let overflow = persistedTrafficHistoryIdentifierOrder.count - maximumCount
+        for identifier in persistedTrafficHistoryIdentifierOrder.prefix(overflow) {
+            persistedTrafficHistoryIdentifiers.remove(identifier)
+        }
+        persistedTrafficHistoryIdentifierOrder.removeFirst(overflow)
+    }
+
+    private static func trafficHistoryCompletion(
+        _ entry: FlowLedgerEntry
+    ) -> TrafficHistoryCompletedFlow? {
+        guard !entry.state.isActive, let completedAt = entry.endedAt else { return nil }
+
+        let checkpoint: String
+        let source: TrafficHistorySource
+        switch entry.id {
+        case let .appRouting(identifier):
+            checkpoint = "app:\(identifier.uuidString)"
+            source = .appRouting
+        case let .mihomo(identifier):
+            checkpoint = "mihomo:\(identifier)"
+            source = .mihomo
+        }
+
+        return TrafficHistoryCompletedFlow(
+            checkpointIdentifier: checkpoint,
+            source: source,
+            completedAt: completedAt,
+            application: trafficHistoryApplication(entry.application),
+            route: trafficHistoryRoute(entry),
+            outcome: trafficHistoryOutcome(entry.outcome),
+            upload: trafficHistoryMeasurement(entry.upload),
+            download: trafficHistoryMeasurement(entry.download)
+        )
+    }
+
+    private static func trafficHistoryApplication(
+        _ application: FlowLedgerApplication
+    ) -> TrafficHistoryApplication {
+        if let bundleIdentifier = application.bundleIdentifier {
+            return TrafficHistoryApplication(
+                identity: .bundleIdentifier(bundleIdentifier),
+                displayName: application.displayName
+            )
+        }
+        if let signingIdentifier = application.signingIdentifier {
+            return TrafficHistoryApplication(
+                identity: .signingIdentifier(signingIdentifier),
+                displayName: application.displayName
+            )
+        }
+        return .unattributed
+    }
+
+    private static func trafficHistoryRoute(
+        _ entry: FlowLedgerEntry
+    ) -> TrafficHistoryRoute {
+        switch entry.outcome {
+        case .viaMihomo:
+            guard let route = entry.mihomoRoute else { return .unresolved }
+            return TrafficHistoryRoute(
+                kind: .mihomo,
+                displayName: route.chain.last ?? route.rule ?? "Mihomo",
+                ruleName: route.rule,
+                proxyChain: route.chain
+            )
+        case .direct:
+            return TrafficHistoryRoute(kind: .direct, displayName: "Direct")
+        case .rejected:
+            return TrafficHistoryRoute(kind: .rejected, displayName: "Rejected")
+        case .failOpen:
+            return TrafficHistoryRoute(kind: .failOpen, displayName: "Fail-open")
+        case .relayFailed:
+            return TrafficHistoryRoute(
+                kind: .relayFailed,
+                displayName: "Relay failed",
+                ruleName: entry.appRoutingRule
+            )
+        }
+    }
+
+    private static func trafficHistoryOutcome(
+        _ outcome: FlowLedgerOutcome
+    ) -> TrafficHistoryOutcome {
+        switch outcome {
+        case .viaMihomo: .viaMihomo
+        case .direct: .direct
+        case .rejected: .rejected
+        case .failOpen: .failOpen
+        case .relayFailed: .relayFailed
+        }
+    }
+
+    private static func trafficHistoryMeasurement(
+        _ measurement: FlowLedgerByteMeasurement
+    ) -> TrafficHistoryMeasurement {
+        switch measurement {
+        case let .exact(bytes): .exact(bytes)
+        case .notMeasuredAfterHandoff: .notMeasuredAfterHandoff
+        case .notApplicable: .notApplicable
         }
     }
 
@@ -3466,10 +4059,12 @@ final class AppModel {
         connectionsTask?.cancel()
         apiLogTask?.cancel()
         proxyRefreshTask?.cancel()
+        liveFreshnessWatchdogTask?.cancel()
         trafficTask = nil
         connectionsTask = nil
         apiLogTask = nil
         proxyRefreshTask = nil
+        liveFreshnessWatchdogTask = nil
     }
 
     private func appendSupervisorLog(_ message: String) {
@@ -3836,6 +4431,7 @@ final class AppModel {
     static let autoConnectOnLaunchKey = "network.autoConnectOnLaunch"
     static let autoEnableSystemProxyKey = "network.autoEnableSystemProxy"
     static let closeConnectionsOnRoutingChangeKey = "network.closeConnectionsOnRoutingChange"
+    static let trafficHistoryPersistenceChoiceKey = "traffic.history.persistenceChoice"
     static let notificationsEnabledKey = "application.notificationsEnabled"
     static let systemProxyGuardFailureThreshold = 3
     static let appRoutingProviderFailureThreshold = 3
@@ -3999,6 +4595,15 @@ private enum AppModelError: LocalizedError {
         case .systemProxyGuardVerificationFailed:
             "The macOS system proxy still did not match MClash after reapplying it."
         }
+    }
+}
+
+private struct SystemProxyPreferenceRollbackFailure: LocalizedError {
+    let updateReason: String
+    let rollbackReason: String
+
+    var errorDescription: String? {
+        "The new macOS system proxy settings could not be verified, and MClash could not restore the previous settings. Update error: \(updateReason) Rollback error: \(rollbackReason)"
     }
 }
 

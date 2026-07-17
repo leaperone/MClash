@@ -79,7 +79,7 @@ struct MenuBarContent: View {
                 color: coreStatusColor
             )
             operationalStateRow(
-                title: "macOS Capture",
+                title: "System Proxy",
                 value: captureStatusTitle,
                 symbol: captureStatusSymbol,
                 color: captureStatusColor
@@ -92,7 +92,7 @@ struct MenuBarContent: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "Mihomo Core: \(coreStatusTitle). macOS Capture: \(captureStatusTitle)."
+            "Mihomo Core: \(coreStatusTitle). System Proxy: \(captureStatusTitle)."
         )
     }
 
@@ -713,57 +713,36 @@ struct MenuBarContent: View {
     }
 
     private var captureStatusTitle: String {
-        if model.operationalSnapshot.activeCaptureCount > 0 {
-            if appRoutingCaptureIsOn, !appRoutingActivityIsCurrent {
-                return systemProxyCaptureIsOn
-                    ? "System Proxy · App Routing unverified"
-                    : "App Routing · unverified"
-            }
-            return model.operationalSnapshot.captureSummary
-        }
-        if model.networkStateTransitionInProgress {
-            return "Changing…"
-        }
-        switch model.networkCaptureState {
-        case .awaitingUserApproval: return "Approval needed"
-        case .requiresReboot: return "Restart needed"
+        switch model.systemProxyState {
+        case .on:
+            if model.systemProxyGuardFailure != nil { return "On · unverified" }
+            return "On"
+        case .enabling: return "Turning on…"
+        case .disabling: return "Restoring…"
         case .failed: return "Unavailable"
-        case .off, .waitingForConnection, .enabling, .on, .disabling:
-            break
+        case .off: return model.isConnected ? "Off · listeners only" : "Off"
         }
-        if case .failed = model.systemProxyState { return "Unavailable" }
-        return model.isConnected ? "Off · local listeners only" : "Off"
     }
 
     private var captureStatusSymbol: String {
-        if model.operationalSnapshot.activeCaptureCount > 0 {
-            return appRoutingCaptureIsOn && !appRoutingActivityIsCurrent
-                ? "exclamationmark.circle.fill"
-                : "checkmark.circle.fill"
+        switch model.systemProxyState {
+        case .on:
+            return model.systemProxyGuardFailure == nil
+                ? "checkmark.circle.fill"
+                : "exclamationmark.circle.fill"
+        case .enabling, .disabling: return "arrow.clockwise"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .off: return "circle"
         }
-        if model.networkStateTransitionInProgress { return "arrow.clockwise" }
-        if model.operationalIssues.contains(where: {
-            $0.subsystem == .systemProxy || $0.subsystem == .appRouting
-        }) {
-            return "exclamationmark.triangle.fill"
-        }
-        return "circle"
     }
 
     private var captureStatusColor: Color {
-        if model.operationalSnapshot.activeCaptureCount > 0 {
-            return appRoutingCaptureIsOn && !appRoutingActivityIsCurrent ? .orange : .green
+        switch model.systemProxyState {
+        case .on: return model.systemProxyGuardFailure == nil ? .green : .orange
+        case .enabling, .disabling: return .orange
+        case .failed: return .red
+        case .off: return .secondary
         }
-        if model.networkStateTransitionInProgress { return .orange }
-        if model.operationalIssues.contains(where: {
-            $0.subsystem == .systemProxy || $0.subsystem == .appRouting
-        }) {
-            return model.operationalIssues.contains(where: {
-                ($0.subsystem == .systemProxy || $0.subsystem == .appRouting)
-                    && $0.severity == .error
-            }) ? .red : .orange
-        }
-        return .secondary
     }
 
     private var systemProxyCaptureIsOn: Bool {
@@ -899,11 +878,11 @@ struct MenuBarContent: View {
     }
 
     private var evidenceTitle: String {
-        if let date = model.operationalSnapshot.latestSuccessfulProxyAt {
-            return "Last proxied flow observed \(date.formatted(.relative(presentation: .named)))"
+        if let date = model.operationalSnapshot.latestNonDirectRouteAt {
+            return "Mihomo reported a non-direct route \(date.formatted(.relative(presentation: .named)))"
         }
         if model.operationalSnapshot.activeCaptureCount > 0 {
-            return "Capture is on; no successfully proxied flow observed yet"
+            return "Capture is on; no non-direct Mihomo route reported yet"
         }
         if model.isConnected {
             return "Core is ready; macOS traffic capture is off"
@@ -912,13 +891,13 @@ struct MenuBarContent: View {
     }
 
     private var evidenceSymbol: String {
-        model.operationalSnapshot.latestSuccessfulProxyAt == nil
+        model.operationalSnapshot.latestNonDirectRouteAt == nil
             ? "eye.slash"
             : "checkmark.shield.fill"
     }
 
     private var evidenceColor: Color {
-        model.operationalSnapshot.latestSuccessfulProxyAt == nil ? .secondary : .green
+        model.operationalSnapshot.latestNonDirectRouteAt == nil ? .secondary : .green
     }
 
     private func showMainWindow(destination: AppModel.Destination) {

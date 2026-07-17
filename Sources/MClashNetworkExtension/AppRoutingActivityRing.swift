@@ -11,7 +11,27 @@ struct AppRoutingRelaySnapshot: Sendable {
     let uploadBytes: UInt64
     let downloadBytes: UInt64
     let error: String?
+    let note: String?
     let localPort: UInt16?
+    let effectiveAction: FlowTrafficDisposition?
+
+    init(
+        state: AppRoutingRelayState,
+        uploadBytes: UInt64,
+        downloadBytes: UInt64,
+        error: String?,
+        note: String? = nil,
+        localPort: UInt16?,
+        effectiveAction: FlowTrafficDisposition? = nil
+    ) {
+        self.state = state
+        self.uploadBytes = uploadBytes
+        self.downloadBytes = downloadBytes
+        self.error = error
+        self.note = note
+        self.localPort = localPort
+        self.effectiveAction = effectiveAction
+    }
 }
 
 /// Relay-queue-confined publisher that turns high-frequency byte updates into

@@ -5,6 +5,7 @@ import SwiftUI
 /// visible and retain their own recovery action.
 struct AttentionView: View {
     @Bindable var model: AppModel
+    @State private var pendingAction: OperationalIssue.Action?
 
     var body: some View {
         Group {
@@ -33,7 +34,10 @@ struct AttentionView: View {
                         .padding(.bottom, 4)
 
                         ForEach(model.operationalIssues) { issue in
-                            OperationalIssueCard(issue: issue) { action in
+                            OperationalIssueCard(
+                                issue: issue,
+                                pendingAction: pendingAction
+                            ) { action in
                                 perform(action)
                             }
                         }
@@ -52,23 +56,38 @@ struct AttentionView: View {
     private func perform(_ action: OperationalIssue.Action) {
         switch action {
         case .reconnect:
+            guard pendingAction == nil else { return }
+            pendingAction = action
             Task {
                 if model.isConnected || model.isBusy {
                     await model.restartConnection()
                 } else {
                     await model.connect()
                 }
+                pendingAction = nil
             }
         case .restoreSystemProxy:
-            Task { await model.disableSystemProxy() }
+            guard pendingAction == nil else { return }
+            pendingAction = action
+            Task {
+                await model.disableSystemProxy()
+                pendingAction = nil
+            }
         case .retryAppRouting:
-            Task { await model.retryNetworkCaptureActivation() }
+            guard pendingAction == nil else { return }
+            pendingAction = action
+            Task {
+                await model.retryNetworkCaptureActivation()
+                pendingAction = nil
+            }
         case .openAppRouting:
             model.selection = .appRouting
         case .openRules:
             model.selection = .rules
         case .openProviders:
             model.selection = .providers
+        case .openTraffic:
+            model.selection = .connections
         case .openLogs:
             model.selection = .logs
         }
@@ -77,6 +96,7 @@ struct AttentionView: View {
 
 private struct OperationalIssueCard: View {
     let issue: OperationalIssue
+    let pendingAction: OperationalIssue.Action?
     let perform: (OperationalIssue.Action) -> Void
     @State private var showsTechnicalDetail = false
 
@@ -121,12 +141,26 @@ private struct OperationalIssueCard: View {
                 HStack(spacing: 8) {
                     if let title = issue.primaryActionTitle,
                        let action = issue.primaryAction {
-                        Button(title) { perform(action) }
+                        Button {
+                            perform(action)
+                        } label: {
+                            if pendingAction == action {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Working…")
+                                }
+                            } else {
+                                Text(title)
+                            }
+                        }
                             .buttonStyle(.borderedProminent)
+                            .disabled(pendingAction != nil)
                     }
                     if let title = issue.secondaryActionTitle,
                        let action = issue.secondaryAction {
                         Button(title) { perform(action) }
+                            .disabled(pendingAction != nil)
                     }
                 }
                 .controlSize(.small)

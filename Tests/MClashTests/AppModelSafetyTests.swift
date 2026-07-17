@@ -116,6 +116,66 @@ struct AppModelSafetyTests {
     }
 
     @MainActor
+    @Test("A rejected live system proxy settings change restores the previous verified settings")
+    func rejectedLiveSystemProxySettingsChangeRollsBack() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "mclash-system-proxy-settings-rollback-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        try layout.createDirectories()
+        let endpoints = try LocalSystemProxyEndpoints(
+            http: SystemProxyEndpoint(port: 7_890),
+            https: SystemProxyEndpoint(port: 7_890),
+            socks: SystemProxyEndpoint(port: 7_891)
+        )
+        let backend = PreferenceTransactionBackend()
+        let model = AppModel(
+            systemProxyManager: SystemProxyManager(backend: backend),
+            profileDirectoryLayout: layout,
+            preferenceDefaults: UserDefaults(
+                suiteName: "mclash-system-proxy-settings-rollback-\(UUID().uuidString)"
+            )!
+        )
+        model.systemProxyState = .on
+        let rejectedPreferences = SystemProxyPreferences(
+            customBypassDomains: ["example.test"],
+            bypassPrivateNetworks: false,
+            guardEnabled: false,
+            guardIntervalSeconds: 20
+        )
+
+        do {
+            try await model.applySystemProxyPreferences(
+                rejectedPreferences,
+                endpoints: endpoints
+            )
+            Issue.record("Expected the deliberately corrupted live apply to be rejected")
+        } catch {}
+
+        #expect(backend.applyCount == 2)
+        #expect(model.systemProxyPreferences == .defaults)
+        #expect(model.systemProxyState == .on)
+        #expect(model.systemProxyGuardLastVerifiedAt != nil)
+        guard case let .rejectedAndRolledBack(reason) = model.systemProxySettingsReceipt?.outcome else {
+            Issue.record("Expected an explicit rejected-and-rolled-back receipt")
+            return
+        }
+        #expect(!reason.isEmpty)
+        let persisted = try await SystemProxyPreferencesStore(profileLayout: layout).load()
+        #expect(persisted == .defaults)
+        let restoredState = try #require(backend.currentState)
+        let restoredConfiguration = try #require(restoredState.configuration)
+        #expect(
+            restoredConfiguration[SystemProxyKeys.exceptionsList]
+                == .array(SystemProxyPreferences.defaults.effectiveBypassDomains.map {
+                    SystemProxyPropertyValue.string($0)
+                })
+        )
+    }
+
+    @MainActor
     @Test("App Routing provider drift must be consecutive before capture is declared failed")
     func appRoutingProviderRuntimeDriftIsVerified() async throws {
         let revision: UInt64 = 42
@@ -685,6 +745,63 @@ private final class GuardVerificationBackend: SystemProxyBackend, @unchecked Sen
     }
 
     func applyProxyStates(_ states: [SystemProxyServiceState]) throws {}
+}
+
+private final class PreferenceTransactionBackend: SystemProxyBackend, @unchecked Sendable {
+    private let lock = NSLock()
+    private let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+    private var storedApplyCount = 0
+    private var state: SystemProxyServiceState?
+
+    var applyCount: Int {
+        lock.withLock { storedApplyCount }
+    }
+
+    var currentState: SystemProxyServiceState? {
+        lock.withLock { state }
+    }
+
+    func enabledNetworkServices() throws -> [SystemProxyNetworkService] {
+        [service]
+    }
+
+    func proxyStates(
+        for services: [SystemProxyNetworkService]
+    ) throws -> [SystemProxyServiceState] {
+        try lock.withLock {
+            let current = try state ?? SystemProxyServiceState(
+                service: service,
+                protocolExists: true,
+                configuration: [SystemProxyKeys.httpEnable: .integer(0)]
+            )
+            return try services.map { requestedService in
+                guard requestedService.id == service.id else {
+                    throw SystemProxyError.serviceNotFound(requestedService.id)
+                }
+                return current
+            }
+        }
+    }
+
+    func applyProxyStates(_ states: [SystemProxyServiceState]) throws {
+        try lock.withLock {
+            guard let applied = states.first else {
+                throw SystemProxyError.applyFailed
+            }
+            storedApplyCount += 1
+            if storedApplyCount == 1 {
+                var corrupted = applied.configuration ?? [:]
+                corrupted[SystemProxyKeys.exceptionsList] = .array([])
+                state = try SystemProxyServiceState(
+                    service: applied.service,
+                    protocolExists: applied.protocolExists,
+                    configuration: corrupted
+                )
+            } else {
+                state = applied
+            }
+        }
+    }
 }
 
 private actor AppRoutingRuntimeStatusControl: NetworkExtensionControlling {

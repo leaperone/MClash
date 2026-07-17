@@ -114,10 +114,18 @@ struct FlowLedgerTests {
             disposition: .mihomo(.profileRules),
             relayState: .relaying
         )
+        let measuredDirect = appActivity(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!,
+            disposition: .direct,
+            relayState: .completed,
+            payloadBytesAreMeasured: true,
+            upload: 123,
+            download: 456
+        )
 
         let ledger = FlowLedger(
             activeConnections: [],
-            appRoutingActivities: [direct, failOpen, rejected, proxiedZero]
+            appRoutingActivities: [direct, failOpen, rejected, proxiedZero, measuredDirect]
         )
 
         #expect(entry(direct.id, in: ledger).upload == .notMeasuredAfterHandoff)
@@ -125,6 +133,8 @@ struct FlowLedgerTests {
         #expect(entry(rejected.id, in: ledger).upload == .notApplicable)
         #expect(entry(proxiedZero.id, in: ledger).upload == .exact(0))
         #expect(entry(proxiedZero.id, in: ledger).download == .exact(0))
+        #expect(entry(measuredDirect.id, in: ledger).upload == .exact(123))
+        #expect(entry(measuredDirect.id, in: ledger).download == .exact(456))
     }
 
     @Test("Mihomo traffic without process metadata is retained as Unattributed")
@@ -250,6 +260,7 @@ struct FlowLedgerTests {
         relayState: AppRoutingRelayState = .relaying,
         relayLocalPort: UInt16? = 55_001,
         startedAt: Date? = nil,
+        payloadBytesAreMeasured: Bool? = nil,
         upload: UInt64 = 0,
         download: UInt64 = 0
     ) -> AppRoutingActivity {
@@ -283,6 +294,7 @@ struct FlowLedgerTests {
             effectiveAction: disposition,
             relayState: relayState,
             relayLocalPort: relayLocalPort,
+            payloadBytesAreMeasured: payloadBytesAreMeasured,
             uploadBytes: upload,
             downloadBytes: download
         )
