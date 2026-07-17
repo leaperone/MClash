@@ -5,36 +5,57 @@ struct SettingsView: View {
     @Bindable var model: AppModel
     @Bindable var applicationUpdater: ApplicationUpdater
     @State private var coreDetailsExpanded = false
+    @State private var showingListenerPortSettings = false
     @State private var showingRuntimeSettings = false
     @State private var showingSystemProxySettings = false
     @State private var applicationSettingsError: String?
 
     var body: some View {
         Form {
-            Section("Connection") {
+            Section("Startup") {
                 Toggle("Open MClash at login", isOn: launchAtLoginBinding)
                 Toggle("Connect the active profile when MClash opens", isOn: $model.autoConnectOnLaunch)
+            }
+
+            Section("Routing & macOS Proxy") {
                 Toggle("Enable macOS system proxy when connecting", isOn: $model.autoEnableSystemProxy)
                 Toggle(
                     "Close existing connections after changing mode or node",
                     isOn: $model.closeConnectionsOnRoutingChange
                 )
-                Text(
-                    "MClash uses the profile's HTTP and SOCKS5 ports, falling back to mixed-port when available. "
-                        + "Automatic connection and macOS routing can be controlled independently."
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
-                if model.isConnected {
-                    LabeledContent("HTTP", value: model.localHTTPProxyAddress ?? "Unavailable")
-                    LabeledContent("SOCKS5", value: model.localSOCKSProxyAddress ?? "Unavailable")
-                }
+                LabeledContent("Current status", value: systemProxyStatus)
 
-                Button("System Proxy Settings…") {
+                Button("Bypass & Guard Settings…") {
                     showingSystemProxySettings = true
                 }
                 .disabled(!model.canPerform(.changeSystemProxySettings))
+            }
+
+            Section("Local Proxy") {
+                if model.localListenerEndpoints.isEmpty {
+                    Text(
+                        model.isConnected
+                            ? "No local listener is currently available."
+                            : "Connect the active profile to see its live listener addresses."
+                    )
+                    .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.localListenerEndpoints) { endpoint in
+                        listenerAddressRow(endpoint)
+                    }
+                }
+
+                Button(model.isConnected ? "Edit Ports & Restart…" : "Edit Ports…") {
+                    showingListenerPortSettings = true
+                }
+                .disabled(!model.canPerform(.changeRuntimeSettings))
+
+                runtimeSettingsFeedback
+
+                Text("HTTP also handles HTTPS proxy connections. Mixed accepts both HTTP and SOCKS5 on one port. Port changes are validated and automatically restart a running core.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if let applicationSettingsError {
@@ -45,7 +66,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Profiles") {
+            Section("Profiles & Backup") {
                 LabeledContent("Active profile", value: activeProfileName)
                 Button("Manage Profiles…") {
                     model.selection = .profiles
@@ -66,7 +87,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Updates") {
+            Section("Updates & Notifications") {
                 Toggle(
                     "Automatically check for MClash updates",
                     isOn: Binding(
@@ -98,7 +119,7 @@ struct SettingsView: View {
                     }
                     .disabled(!applicationUpdater.canCheckForUpdates)
                 }
-                Text("Updates are downloaded from GitHub Releases and verified by both Sparkle and Apple code signing. Before installing and relaunching, MClash safely restores the macOS system proxy and stops its core.")
+                Text("Updates are verified by Sparkle and Apple code signing. Before replacing the app, MClash safely restores the macOS system proxy and stops its core.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -109,7 +130,7 @@ struct SettingsView: View {
                 }
                 .disabled(!model.canPerform(.changeRuntimeSettings))
 
-                Text("Override ports, LAN access, IPv6, sniffing, process lookup, interface, concurrency, and core log level without modifying the subscription file.")
+                Text("Override network, DNS, routing rules, process lookup, interface, concurrency, and core logging without modifying the subscription file.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -119,7 +140,17 @@ struct SettingsView: View {
                         "Version",
                         value: model.runningSession?.version ?? "Verified during build"
                     )
-                    LabeledContent("Controller", value: controllerAddress)
+                    LabeledContent("Controller") {
+                        if let controllerAddress {
+                            CopyableValueButton(
+                                value: controllerAddress,
+                                accessibilityName: "controller address"
+                            )
+                        } else {
+                            Text("Assigned when connecting")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Text("The controller credential is generated in memory for each app launch. MClash does not request Keychain access when connecting.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -138,6 +169,12 @@ struct SettingsView: View {
                 isPresented: $showingRuntimeSettings
             )
         }
+        .sheet(isPresented: $showingListenerPortSettings) {
+            ListenerPortSettingsEditor(
+                model: model,
+                isPresented: $showingListenerPortSettings
+            )
+        }
         .sheet(isPresented: $showingSystemProxySettings) {
             SystemProxySettingsEditor(
                 model: model,
@@ -151,13 +188,80 @@ struct SettingsView: View {
         return model.profiles.first(where: { $0.id == activeProfileID })?.name ?? "Active profile"
     }
 
-    private var controllerAddress: String {
+    private var controllerAddress: String? {
         guard let endpoint = model.runningSession?.endpoint,
               let host = endpoint.host(),
               let port = endpoint.port else {
-            return "Assigned automatically when connecting"
+            return nil
         }
         return "\(host):\(port)"
+    }
+
+    private var systemProxyStatus: String {
+        if model.pendingSystemProxyEnabled == true { return "Turning On" }
+        if model.pendingSystemProxyEnabled == false { return "Turning Off" }
+        if model.systemProxyRecoveryRequired { return "Needs Restoration" }
+        return model.systemProxyEnabled ? "On" : "Off"
+    }
+
+    private func listenerAddressRow(_ endpoint: AppModel.LocalListenerEndpoint) -> some View {
+        LabeledContent(endpoint.kind.presentationTitle) {
+            HStack(spacing: 8) {
+                Text(endpoint.source.presentationTitle)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+                CopyableValueButton(
+                    value: endpoint.address,
+                    accessibilityName: "\(endpoint.kind.presentationTitle) proxy address"
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var runtimeSettingsFeedback: some View {
+        switch model.runtimeSettingsApplyState {
+        case .idle:
+            EmptyView()
+        case .validating:
+            settingsProgressLabel("Validating configuration…")
+        case .restarting:
+            settingsProgressLabel("Restarting the core…")
+        case .saving:
+            settingsProgressLabel("Saving settings…")
+        case let .completed(outcome):
+            Label(runtimeSettingsCompletionTitle(outcome), systemImage: "checkmark.circle.fill")
+                .font(.callout)
+                .foregroundStyle(.green)
+        case let .failed(message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.callout)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func settingsProgressLabel(_ title: String) -> some View {
+        HStack(spacing: 7) {
+            ProgressView()
+                .controlSize(.small)
+            Text(title)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func runtimeSettingsCompletionTitle(
+        _ outcome: AppModel.RuntimeSettingsApplyOutcome
+    ) -> String {
+        switch outcome {
+        case .unchanged: "Settings are already up to date."
+        case .saved: "Settings saved for the next connection."
+        case .savedAndRestarted: "Settings applied · Core restarted."
+        }
     }
 
     private var launchAtLoginBinding: Binding<Bool> {
@@ -248,8 +352,9 @@ private struct SystemProxySettingsEditor: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Cancel", role: .cancel) { cancel() }
+                Button("Cancel", role: .cancel) { isPresented = false }
                     .keyboardShortcut(.cancelAction)
+                    .disabled(isSaving)
                 Button("Save") { save() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
@@ -257,9 +362,8 @@ private struct SystemProxySettingsEditor: View {
             }
         }
         .padding(24)
-        .frame(width: 560, height: 560)
+        .frame(minWidth: 500, idealWidth: 560, minHeight: 500, idealHeight: 560)
         .interactiveDismissDisabled(isSaving)
-        .onDisappear { saveTask?.cancel() }
     }
 
     private var isSaving: Bool { saveTask != nil }
@@ -298,10 +402,6 @@ private struct SystemProxySettingsEditor: View {
         }
     }
 
-    private func cancel() {
-        saveTask?.cancel()
-        isPresented = false
-    }
 }
 
 private struct RuntimeSettingsEditor: View {
@@ -328,13 +428,10 @@ private struct RuntimeSettingsEditor: View {
             }
 
             Form {
-                Section("Local Ports") {
-                    OptionalPortField("HTTP", value: $overrides.ports.port, suggestedValue: 7_890)
-                    OptionalPortField("SOCKS5", value: $overrides.ports.socksPort, suggestedValue: 7_891)
-                    OptionalPortField("Mixed", value: $overrides.ports.mixedPort, suggestedValue: 7_890)
+                Section("Transparent Proxy Ports") {
                     OptionalPortField("Redirect", value: $overrides.ports.redirPort, suggestedValue: 0)
                     OptionalPortField("TProxy", value: $overrides.ports.tproxyPort, suggestedValue: 0)
-                    Text("A value of 0 disables that listener. Ports must be between 0 and 65535.")
+                    Text("HTTP, SOCKS5, and Mixed ports are configured from Local Proxy settings. A value of 0 disables these advanced listeners.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -457,33 +554,40 @@ private struct RuntimeSettingsEditor: View {
             }
 
             HStack(spacing: 10) {
-                Button("Use Profile Defaults") {
+                Button("Reset Advanced Settings") {
+                    let commonPorts = RuntimePortOverrides(
+                        port: overrides.ports.port,
+                        socksPort: overrides.ports.socksPort,
+                        mixedPort: overrides.ports.mixedPort
+                    )
                     overrides = .empty
+                    overrides.ports = commonPorts
                     errorMessage = nil
                 }
+                .help("Keep local proxy ports and reset the advanced overrides in this editor")
                 .disabled(isSaving)
 
                 if isSaving {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Validating and applying…")
+                    Text(model.isConnected ? "Validating and restarting…" : "Validating and applying…")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
-                Button("Cancel", role: .cancel) { cancel() }
+                Button("Cancel", role: .cancel) { isPresented = false }
                     .keyboardShortcut(.cancelAction)
-                Button("Save") { save() }
+                    .disabled(isSaving)
+                Button(model.isConnected ? "Apply & Restart Core" : "Save") { save() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(isSaving || !model.canPerform(.changeRuntimeSettings))
             }
         }
         .padding(24)
-        .frame(width: 620, height: 720)
+        .frame(minWidth: 560, idealWidth: 620, minHeight: 520, idealHeight: 680, maxHeight: 760)
         .interactiveDismissDisabled(isSaving)
-        .onDisappear { saveTask?.cancel() }
     }
 
     private var isSaving: Bool {
@@ -547,10 +651,6 @@ private struct RuntimeSettingsEditor: View {
         }
     }
 
-    private func cancel() {
-        saveTask?.cancel()
-        isPresented = false
-    }
 }
 
 private struct OptionalBooleanPicker: View {

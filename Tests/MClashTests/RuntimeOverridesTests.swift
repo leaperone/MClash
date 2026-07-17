@@ -4,6 +4,15 @@ import Testing
 
 @Suite("Runtime Overrides")
 struct RuntimeOverridesTests {
+    @Test("Only HTTP, SOCKS5, and Mixed count as explicit local proxy listeners")
+    func detectsExplicitLocalProxyListenerOverrides() {
+        #expect(!RuntimePortOverrides().hasExplicitLocalProxyListener)
+        #expect(!RuntimePortOverrides(redirPort: 7_892, tproxyPort: 7_893).hasExplicitLocalProxyListener)
+        #expect(RuntimePortOverrides(port: 0).hasExplicitLocalProxyListener)
+        #expect(RuntimePortOverrides(socksPort: 7_891).hasExplicitLocalProxyListener)
+        #expect(RuntimePortOverrides(mixedPort: 7_890).hasExplicitLocalProxyListener)
+    }
+
     @Test("Store persists a versioned private document and reloads it")
     func storePersistsPrivateVersionedDocument() async throws {
         let fixture = try Fixture()
@@ -190,6 +199,25 @@ struct RuntimeOverridesTests {
         let profile = Data([0xff, 0x00, 0x01])
         let result = try RuntimeConfigurationComposer().applying(.empty, to: profile)
         #expect(result == profile)
+    }
+
+    @Test("Profile listener ports are read before overrides")
+    func readsProfileListenerPorts() throws {
+        let profile = Data(
+            """
+            port: 7890 # HTTP
+            socks-port: "7891"
+            mixed-port: 7_892
+            redir-port: 7893
+            """.utf8
+        )
+
+        let ports = try RuntimeConfigurationComposer().listenerPorts(in: profile)
+        #expect(ports.port == 7_890)
+        #expect(ports.socksPort == 7_891)
+        #expect(ports.mixedPort == 7_892)
+        #expect(ports.redirPort == nil)
+        #expect(ports.tproxyPort == nil)
     }
 
     @Test("Nil and empty rule layers have explicit no-op persistence semantics")
@@ -442,6 +470,64 @@ struct RuntimeOverridesTests {
         #expect(yaml.contains("    - \"https://dns.example/dns-query\"\n"))
         #expect(yaml.contains("rules:\n  - \"DOMAIN,example.com,DIRECT\"\n"))
         #expect(yaml.contains("  - MATCH,DIRECT\n  - \"MATCH,REJECT\"\n"))
+    }
+
+    @Test("Candidate validation does not change the durable overrides or active runtime")
+    func coordinatorPreflightsExplicitCandidateWithoutMutation() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let profileStore = try ProfileStore(layout: fixture.profileLayout)
+        let profile = try await profileStore.createLocalProfile(
+            name: "Original",
+            yaml: Data("mixed-port: 7890\n".utf8)
+        )
+        _ = try await profileStore.activateProfile(
+            profile.id,
+            validator: RuntimeRecordingValidator()
+        )
+        let previousRuntime = try Data(contentsOf: fixture.profileLayout.runtimeConfigurationURL)
+        let stored = RuntimeOverrides(ports: RuntimePortOverrides(mixedPort: 9_090))
+        try await fixture.store.save(stored)
+        let validator = RuntimeRecordingValidator()
+        let coordinator = RuntimeOverrideActivationCoordinator(overrideStore: fixture.store)
+
+        try await coordinator.validateProfile(
+            profile.id,
+            overrides: RuntimeOverrides(ports: RuntimePortOverrides(mixedPort: 9_191)),
+            in: profileStore,
+            validator: validator
+        )
+
+        #expect(try await fixture.store.load() == stored)
+        #expect(try Data(contentsOf: fixture.profileLayout.runtimeConfigurationURL) == previousRuntime)
+        let validations = await validator.validatedData
+        let validated = try #require(validations.first)
+        #expect(String(decoding: validated, as: UTF8.self).contains("mixed-port: 9191\n"))
+    }
+
+    @Test("Explicit activation uses the candidate instead of the stored override")
+    func coordinatorActivatesExplicitCandidate() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let profileStore = try ProfileStore(layout: fixture.profileLayout)
+        let profile = try await profileStore.createLocalProfile(
+            name: "Original",
+            yaml: Data("mixed-port: 7890\n".utf8)
+        )
+        let stored = RuntimeOverrides(ports: RuntimePortOverrides(mixedPort: 9_090))
+        try await fixture.store.save(stored)
+        let coordinator = RuntimeOverrideActivationCoordinator(overrideStore: fixture.store)
+
+        _ = try await coordinator.activateProfile(
+            profile.id,
+            overrides: RuntimeOverrides(ports: RuntimePortOverrides(mixedPort: 9_191)),
+            in: profileStore,
+            validator: RuntimeRecordingValidator()
+        )
+
+        #expect(try await fixture.store.load() == stored)
+        let runtime = try Data(contentsOf: fixture.profileLayout.runtimeConfigurationURL)
+        #expect(String(decoding: runtime, as: UTF8.self).contains("mixed-port: 9191\n"))
     }
 
     @Test("Rejected composed YAML leaves the previous runtime and active profile intact")

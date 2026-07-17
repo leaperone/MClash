@@ -203,6 +203,13 @@ public struct RuntimePortOverrides: Codable, Equatable, Sendable {
             && tproxyPort == nil
             && mixedPort == nil
     }
+
+    /// Whether the user has taken ownership of at least one listener that can
+    /// serve the app's local HTTP/SOCKS proxy workflow. Redirect and TProxy do
+    /// not participate in that readiness contract.
+    public var hasExplicitLocalProxyListener: Bool {
+        port != nil || socksPort != nil || mixedPort != nil
+    }
 }
 
 public enum RuntimeOverrideValidationError: Error, Equatable, Sendable {

@@ -70,6 +70,126 @@ struct LocalPortProbe: Sendable {
         throw LocalPortProbeError.listenerUnavailable(ports.sorted())
     }
 
+    /// Verifies the protocols MClash will actually expose, rather than merely
+    /// accepting any process that happens to own the requested TCP port.
+    func waitUntilProxyProtocols(httpPort: Int, socksPort: Int) async throws {
+        try await waitUntilProxyProtocols(
+            httpPorts: [httpPort],
+            socksPorts: [socksPort]
+        )
+    }
+
+    func waitUntilProxyProtocols(
+        httpPorts: Set<Int>,
+        socksPorts: Set<Int>
+    ) async throws {
+        let ports = httpPorts.union(socksPorts)
+        guard !httpPorts.isEmpty, !socksPorts.isEmpty else {
+            throw LocalPortProbeError.noPorts
+        }
+        guard ports.allSatisfy({ (1...65_535).contains($0) }) else {
+            throw LocalPortProbeError.listenerUnavailable(ports.sorted())
+        }
+
+        for _ in 0..<40 {
+            try Task.checkCancellation()
+            let ready = await Task.detached(priority: .utility) {
+                httpPorts.allSatisfy(supportsHTTPProxy(port:))
+                    && socksPorts.allSatisfy(supportsSOCKS5Proxy(port:))
+            }.value
+            if ready { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw LocalPortProbeError.listenerUnavailable(ports.sorted())
+    }
+
+    func supportsHTTPProxy(port: Int) -> Bool {
+        guard let descriptor = connectedSocket(port: port) else { return false }
+        defer { Darwin.close(descriptor) }
+
+        let request = Data(
+            "CONNECT 127.0.0.1:1 HTTP/1.1\r\nHost: 127.0.0.1:1\r\nConnection: close\r\n\r\n".utf8
+        )
+        guard send(request, to: descriptor) else { return false }
+        var response = [UInt8](repeating: 0, count: 8)
+        let count = response.withUnsafeMutableBytes { buffer in
+            Darwin.recv(descriptor, buffer.baseAddress, buffer.count, 0)
+        }
+        guard count >= 5 else { return false }
+        return response.prefix(5).elementsEqual(Array("HTTP/".utf8))
+    }
+
+    func supportsSOCKS5Proxy(port: Int) -> Bool {
+        guard let descriptor = connectedSocket(port: port) else { return false }
+        defer { Darwin.close(descriptor) }
+
+        guard send(Data([0x05, 0x01, 0x00]), to: descriptor) else { return false }
+        var response = [UInt8](repeating: 0, count: 2)
+        let count = response.withUnsafeMutableBytes { buffer in
+            Darwin.recv(descriptor, buffer.baseAddress, buffer.count, 0)
+        }
+        return count == 2 && response[0] == 0x05
+    }
+
+    private func connectedSocket(port: Int) -> Int32? {
+        guard (1...65_535).contains(port) else { return nil }
+        let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return nil }
+
+        var noSignal: Int32 = 1
+        _ = withUnsafePointer(to: &noSignal) {
+            Darwin.setsockopt(
+                descriptor,
+                SOL_SOCKET,
+                SO_NOSIGPIPE,
+                $0,
+                socklen_t(MemoryLayout<Int32>.size)
+            )
+        }
+        var timeout = timeval(tv_sec: 0, tv_usec: 100_000)
+        _ = withUnsafePointer(to: &timeout) {
+            Darwin.setsockopt(
+                descriptor,
+                SOL_SOCKET,
+                SO_RCVTIMEO,
+                $0,
+                socklen_t(MemoryLayout<timeval>.size)
+            )
+        }
+        _ = withUnsafePointer(to: &timeout) {
+            Darwin.setsockopt(
+                descriptor,
+                SOL_SOCKET,
+                SO_SNDTIMEO,
+                $0,
+                socklen_t(MemoryLayout<timeval>.size)
+            )
+        }
+
+        var address = loopbackAddress(port: port)
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                Darwin.connect(
+                    descriptor,
+                    socketAddress,
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        }
+        guard result == 0 else {
+            Darwin.close(descriptor)
+            return nil
+        }
+        return descriptor
+    }
+
+    private func send(_ data: Data, to descriptor: Int32) -> Bool {
+        data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return false }
+            return Darwin.send(descriptor, baseAddress, buffer.count, 0) == buffer.count
+        }
+    }
+
     private func loopbackAddress(port: Int) -> sockaddr_in {
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)

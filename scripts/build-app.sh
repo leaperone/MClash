@@ -74,7 +74,7 @@ mkdir -p "${contents}/MacOS" "${contents}/Frameworks" "${contents}/Resources/Cor
 cp "${binary_output}" "${contents}/MacOS/MClash"
 ditto "${sparkle_framework}" "${contents}/Frameworks/Sparkle.framework"
 cp "${repo_root}/Support/Info.plist" "${contents}/Info.plist"
-cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_RESOURCE_NAME}"
+cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
 cp "${repo_root}/Sources/MClashApp/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"
 cp "${mclash_license}" "${contents}/Resources/MClash-LICENSE.txt"
 cp "${license_source}" "${contents}/Resources/ThirdParty/mihomo-LICENSE.txt"
@@ -91,13 +91,13 @@ recorded_hash="$(mihomo_alpha_recorded_hash "${MIHOMO_ALPHA_RESOURCE_NAME}")"
   -c "Add :MClashSourceRevision string ${source_revision}" \
   "${contents}/Info.plist"
 
-packaged_hash="$(shasum -a 256 "${contents}/Resources/Core/${MIHOMO_ALPHA_RESOURCE_NAME}" | awk '{ print $1 }')"
+packaged_hash="$(shasum -a 256 "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}" | awk '{ print $1 }')"
 if [[ "${packaged_hash}" != "${recorded_hash}" ]]; then
   print -u2 "Packaged mihomo Alpha SHA-256 changed while assembling the app"
   exit 1
 fi
 
-packaged_core="${contents}/Resources/Core/${MIHOMO_ALPHA_RESOURCE_NAME}"
+packaged_core="${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
 if [[ "${code_sign_identity}" == "-" ]]; then
   codesign --force --sign - "${packaged_core}"
   codesign --force --sign - "${app_bundle}"

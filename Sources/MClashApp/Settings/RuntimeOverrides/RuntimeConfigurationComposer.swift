@@ -92,6 +92,29 @@ public struct RuntimeConfigurationComposer: Sendable {
         return Data(rendered.joined().utf8)
     }
 
+    /// Reads the original profile's common listener declarations before any
+    /// MClash override layer is applied. The port editor uses this baseline so
+    /// "Use Profile" remains truthful while disconnected or while a custom
+    /// override is active.
+    public func listenerPorts(in profileData: Data) throws -> RuntimePortOverrides {
+        guard let yaml = String(data: profileData, encoding: .utf8) else {
+            throw RuntimeConfigurationComposerError.profileIsNotUTF8
+        }
+
+        var result = RuntimePortOverrides()
+        for line in YAMLLine.split(yaml) {
+            guard let key = line.rootMappingKey,
+                  let value = line.rootIntegerValue else { continue }
+            switch key {
+            case "port": result.port = value
+            case "socks-port": result.socksPort = value
+            case "mixed-port": result.mixedPort = value
+            default: continue
+            }
+        }
+        return result
+    }
+
     public func applying(_ overrides: RuntimeOverrides, toProfileAt url: URL) throws -> Data {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         return try applying(overrides, to: data)
@@ -532,6 +555,22 @@ private struct YAMLLine {
         if value.isEmpty { return .block }
         if value.first == "[" { return .flowSequence }
         return .other
+    }
+
+    var rootIntegerValue: Int? {
+        guard rootMappingKey != nil,
+              let colon = raw.firstIndex(of: ":") else { return nil }
+        let valueStart = raw.index(after: colon)
+        var value = yamlContentBeforeComment(String(raw[valueStart...]))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.first == "\"", value.last == "\"", value.count >= 2,
+           let decoded = try? JSONDecoder().decode(String.self, from: Data(value.utf8)) {
+            value = decoded
+        } else if value.first == "'", value.last == "'", value.count >= 2 {
+            value = String(value.dropFirst().dropLast())
+                .replacingOccurrences(of: "''", with: "'")
+        }
+        return Int(value.replacingOccurrences(of: "_", with: ""))
     }
 
     private var markerContent: String {

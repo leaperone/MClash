@@ -439,17 +439,61 @@ private struct ProxyTopologyNodeView: View {
     let onFocus: () -> Void
     let onOpenGroup: (() -> Void)?
 
-    @ViewBuilder
     var body: some View {
-        if let onOpenGroup {
-            nodeButton
-                .accessibilityAction(named: "Open Group", onOpenGroup)
-        } else {
-            nodeButton
-        }
+        nodeButton
     }
 
     private var nodeButton: some View {
+        HStack(spacing: 0) {
+            focusButton
+
+            if let onOpenGroup {
+                Button(action: onOpenGroup) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .padding(.trailing, 4)
+                .help("Open group \(node.title)")
+                .accessibilityLabel("Open group \(node.title)")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(node.backgroundColor)
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(
+                    node.borderColor(isFocused: isFocused),
+                    lineWidth: node.isSelectedPath || isFocused ? 2 : 1
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contextMenu {
+            if let onOpenGroup {
+                Button("Open Group", action: onOpenGroup)
+            }
+        }
+        .help(
+            node.opensGroup
+                ? "\(node.title) — click the card to inspect or the chevron to open the group"
+                : "\(node.title) — \(node.subtitle)"
+        )
+    }
+
+    @ViewBuilder
+    private var focusButton: some View {
+        if let onOpenGroup {
+            focusButtonContent
+                .accessibilityAction(named: "Open Group", onOpenGroup)
+        } else {
+            focusButtonContent
+        }
+    }
+
+    private var focusButtonContent: some View {
         Button(action: onFocus) {
             HStack(spacing: 9) {
                 Image(systemName: node.symbol)
@@ -469,44 +513,16 @@ private struct ProxyTopologyNodeView: View {
                 }
 
                 Spacer(minLength: 4)
-
-                if node.opensGroup {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
-                }
             }
-            .padding(.horizontal, 11)
+            .padding(.leading, 11)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(node.backgroundColor)
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(
-                        node.borderColor(isFocused: isFocused),
-                        lineWidth: node.isSelectedPath || isFocused ? 2 : 1
-                    )
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded {
-                onOpenGroup?()
-            }
-        )
-        .contextMenu {
-            if let onOpenGroup {
-                Button("Open Group", action: onOpenGroup)
-            }
-        }
-        .help(
-            node.opensGroup
-                ? "\(node.title) — click to inspect; double-click to open group"
-                : "\(node.title) — \(node.subtitle)"
-        )
+        .help("Inspect \(node.title)")
         .accessibilityLabel(accessibilityDescription)
+        .accessibilityHint("Shows this node in the proxy inspector")
     }
 }
 

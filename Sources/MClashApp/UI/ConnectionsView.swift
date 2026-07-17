@@ -10,6 +10,7 @@ struct ConnectionsView: View {
     @SceneStorage("mclash.connections.sortDescending") private var storedSortDescending = false
     @State private var hasRestoredSortOrder = false
     @State private var inspectorPresented = false
+    @State private var inspectorPresentation: ConnectionInspectorPresentation = .popover
     @State private var confirmingCloseAll = false
     @State private var showingClosedHistory = false
 
@@ -50,7 +51,16 @@ struct ConnectionsView: View {
         .navigationTitle("Connections")
         .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
-        .inspector(isPresented: $inspectorPresented) {
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { updateWorkspaceWidth(geometry.size.width) }
+                    .onChange(of: geometry.size.width) { _, width in
+                        updateWorkspaceWidth(width)
+                    }
+            }
+        }
+        .inspector(isPresented: attachedInspectorBinding) {
             connectionInspector(presentation.selectedConnection)
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 440)
         }
@@ -80,7 +90,7 @@ struct ConnectionsView: View {
             }
         }
         .confirmationDialog(
-            "Close all (formattedCount(presentation.totalConnectionCount)) active connections?",
+            "Close all \(formattedCount(presentation.totalConnectionCount)) active connections?",
             isPresented: $confirmingCloseAll
         ) {
             Button("Close All Connections", role: .destructive) {
@@ -137,13 +147,7 @@ struct ConnectionsView: View {
                         .help("Session upload")
                 }
 
-                Button {
-                    inspectorPresented.toggle()
-                } label: {
-                    Label("Connection Inspector", systemImage: "sidebar.right")
-                }
-                .disabled(presentation.selectedConnection == nil)
-                .help(inspectorPresented ? "Hide Connection Inspector" : "Show Connection Inspector")
+                inspectorButton(selectedConnection: presentation.selectedConnection)
 
                 Button {
                     confirmingCloseAll = true
@@ -161,6 +165,56 @@ struct ConnectionsView: View {
                 )
                 .help("Close every active connection")
             }
+        }
+    }
+
+    private func inspectorButton(selectedConnection: MihomoConnection?) -> some View {
+        Button {
+            inspectorPresented.toggle()
+        } label: {
+            Label("Connection Inspector", systemImage: "sidebar.right")
+        }
+        .disabled(selectedConnection == nil)
+        .help(inspectorPresented ? "Hide Connection Inspector" : "Show Connection Inspector")
+        .accessibilityHint("Shows route, process, address, and traffic details for the selected connection")
+        .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
+            connectionInspector(selectedConnection)
+                .frame(width: 360, height: 520)
+        }
+    }
+
+    private var attachedInspectorBinding: Binding<Bool> {
+        Binding(
+            get: { inspectorPresented && inspectorPresentation == .attached },
+            set: { presented in
+                guard inspectorPresentation == .attached else { return }
+                inspectorPresented = presented
+            }
+        )
+    }
+
+    private var popoverInspectorBinding: Binding<Bool> {
+        Binding(
+            get: { inspectorPresented && inspectorPresentation == .popover },
+            set: { presented in
+                guard inspectorPresentation == .popover else { return }
+                inspectorPresented = presented
+            }
+        )
+    }
+
+    private func updateWorkspaceWidth(_ width: CGFloat) {
+        guard width > 0 else { return }
+
+        // SwiftUI reports the content width after an attached inspector is removed from it.
+        // Reconstruct the full workspace so resizing does not immediately reverse the decision.
+        let reconstructedFullWidth = width
+            + (inspectorPresented && inspectorPresentation == .attached ? 340 : 0)
+        let nextPresentation = inspectorPresentation.presentation(
+            forFullWidth: reconstructedFullWidth
+        )
+        if inspectorPresentation != nextPresentation {
+            inspectorPresentation = nextPresentation
         }
     }
 
@@ -265,6 +319,25 @@ struct ConnectionsView: View {
                 systemImage: "sidebar.right",
                 description: Text("Choose a row to inspect its route, process, addresses, and metadata.")
             )
+        }
+    }
+}
+
+enum ConnectionInspectorPresentation: Equatable {
+    case popover
+    case attached
+
+    func presentation(forFullWidth width: CGFloat) -> Self {
+        // The hysteresis band keeps the inspector stable while the window is resized near
+        // the point where the table and the inspector can both remain comfortably readable.
+        let attachWidth: CGFloat = 1_100
+        let detachWidth: CGFloat = 980
+
+        switch self {
+        case .popover:
+            return width >= attachWidth ? .attached : .popover
+        case .attached:
+            return width < detachWidth ? .popover : .attached
         }
     }
 }
@@ -657,10 +730,11 @@ private struct ConnectionDetailRow: View {
 
     var body: some View {
         LabeledContent {
-            Text(value)
-                .font(monospaced ? .callout.monospaced() : .callout)
-                .multilineTextAlignment(.trailing)
-                .textSelection(.enabled)
+            CopyableValueButton(
+                value: value,
+                accessibilityName: label.lowercased(),
+                font: monospaced ? .callout.monospaced() : .callout
+            )
                 .frame(maxWidth: 220, alignment: .trailing)
         } label: {
             Text(label)

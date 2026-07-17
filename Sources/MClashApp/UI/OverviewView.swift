@@ -560,13 +560,28 @@ private struct OverviewSessionDetailsSection: View {
                 detailDivider
 
                 OverviewDetailRow(title: "HTTP Proxy", presentation: presentation) {
-                    addressText(model.localHTTPProxyAddress)
+                    addressValue(
+                        model.localHTTPListenerAddress,
+                        accessibilityName: "HTTP proxy address"
+                    )
                 }
 
                 detailDivider
 
                 OverviewDetailRow(title: "SOCKS5 Proxy", presentation: presentation) {
-                    addressText(model.localSOCKSProxyAddress)
+                    addressValue(
+                        model.localSOCKSListenerAddress,
+                        accessibilityName: "SOCKS5 proxy address"
+                    )
+                }
+
+                detailDivider
+
+                OverviewDetailRow(title: "Mixed Proxy", presentation: presentation) {
+                    addressValue(
+                        model.localMixedListenerAddress,
+                        accessibilityName: "Mixed proxy address"
+                    )
                 }
 
                 if let session = model.runningSession {
@@ -594,11 +609,15 @@ private struct OverviewSessionDetailsSection: View {
     }
 
     @ViewBuilder
-    private func addressText(_ address: String?) -> some View {
+    private func addressValue(
+        _ address: String?,
+        accessibilityName: String
+    ) -> some View {
         if let address {
-            Text(address)
-                .monospaced()
-                .textSelection(.enabled)
+            CopyableValueButton(
+                value: address,
+                accessibilityName: accessibilityName
+            )
         } else {
             Text("Unavailable")
                 .foregroundStyle(.secondary)

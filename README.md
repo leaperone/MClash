@@ -63,7 +63,8 @@ profile transaction, and proxy restoration behavior.
 
 `build-app.sh` automatically downloads the architecture-appropriate Alpha core,
 verifies its upstream archive checksum and recorded unpacked SHA-256, and embeds
-it in the application. End users never select or download a core.
+it in the application as `mclash-mihomo`. End users never select or download a
+core.
 
 ## Bundled mihomo Alpha artifact
 

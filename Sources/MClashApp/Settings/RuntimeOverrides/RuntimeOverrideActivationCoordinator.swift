@@ -29,13 +29,50 @@ public actor RuntimeOverrideActivationCoordinator {
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
-        let previousProfileID = try await profileStore.activeProfileID()
-        let sourceData = try await profileStore.configurationData(for: id)
         let currentOverrides = try await overrideStore.load()
-        let runtimeData = try composer.applying(currentOverrides, to: sourceData)
-        let stagedURL = try await profileStore.stageRuntimeConfiguration(
-            data: runtimeData,
-            preferredName: "config.yaml"
+        return try await activateProfile(
+            id,
+            overrides: currentOverrides,
+            in: profileStore,
+            validator: validator
+        )
+    }
+
+    /// Validates the exact candidate runtime configuration without changing
+    /// either the active runtime file or the durable override document. This
+    /// lets AppModel keep a healthy core running while a settings edit is
+    /// checked by mihomo.
+    public func validateProfile(
+        _ id: ProfileID,
+        overrides: RuntimeOverrides,
+        in profileStore: ProfileStore,
+        validator: any ProfileValidating
+    ) async throws {
+        let stagedURL = try await stagedRuntimeConfiguration(
+            for: id,
+            overrides: overrides,
+            in: profileStore
+        )
+        defer { try? FileManager.default.removeItem(at: stagedURL) }
+        try await validator.validate(configurationAt: stagedURL)
+    }
+
+    /// Activates a caller-supplied override candidate. The durable override
+    /// store is deliberately not read or written here: AppModel commits it
+    /// only after the candidate core has reached readiness, and can therefore
+    /// reactivate the previous overrides during rollback.
+    @discardableResult
+    public func activateProfile(
+        _ id: ProfileID,
+        overrides: RuntimeOverrides,
+        in profileStore: ProfileStore,
+        validator: any ProfileValidating
+    ) async throws -> RuntimeConfigurationActivation {
+        let previousProfileID = try await profileStore.activeProfileID()
+        let stagedURL = try await stagedRuntimeConfiguration(
+            for: id,
+            overrides: overrides,
+            in: profileStore
         )
 
         do {
@@ -67,6 +104,19 @@ public actor RuntimeOverrideActivationCoordinator {
             profileID: id,
             previousProfileID: previousProfileID,
             configurationURL: profileStore.layout.runtimeConfigurationURL
+        )
+    }
+
+    private func stagedRuntimeConfiguration(
+        for id: ProfileID,
+        overrides: RuntimeOverrides,
+        in profileStore: ProfileStore
+    ) async throws -> URL {
+        let sourceData = try await profileStore.configurationData(for: id)
+        let runtimeData = try composer.applying(overrides, to: sourceData)
+        return try await profileStore.stageRuntimeConfiguration(
+            data: runtimeData,
+            preferredName: "config.yaml"
         )
     }
 }

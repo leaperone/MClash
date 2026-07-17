@@ -58,7 +58,7 @@ swiftc -swift-version 6 \
   -o "${build_dir}/core-supervisor-smoke"
 (
   cd "${repo_root}"
-  "${build_dir}/core-supervisor-smoke"
+  MCLASH_TEST_CORE="${core}" "${build_dir}/core-supervisor-smoke"
 )
 
 application_sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
@@ -80,6 +80,7 @@ swiftc -parse-as-library -swift-version 6 \
 (
   cd "${repo_root}"
   MCLASH_PROXY_SMOKE_URL="http://127.0.0.1:${origin_port}/minimal.yaml" \
+    MCLASH_TEST_CORE="${core}" \
     "${build_dir}/app-model-smoke"
 )
 

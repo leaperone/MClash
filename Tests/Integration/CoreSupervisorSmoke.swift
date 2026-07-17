@@ -8,10 +8,11 @@ struct CoreSupervisorSmoke {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let repository = URL(filePath: FileManager.default.currentDirectoryPath)
+        guard let corePath = ProcessInfo.processInfo.environment["MCLASH_TEST_CORE"] else {
+            throw SmokeFailure.corePathMissing
+        }
         let configuration = CoreLaunchConfiguration(
-            binaryURL: repository.appending(
-                path: "Sources/MClashApp/Resources/Core/\(CoreBinaryLocator.bundledResourceName)"
-            ),
+            binaryURL: URL(filePath: corePath),
             homeDirectory: root,
             configURL: repository.appending(path: "Tests/Fixtures/minimal.yaml"),
             controllerPort: 19_092,
@@ -36,6 +37,7 @@ struct CoreSupervisorSmoke {
 }
 
 private enum SmokeFailure: Error {
+    case corePathMissing
     case notRunning
     case didNotStop
 }

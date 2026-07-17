@@ -9,6 +9,10 @@ fi
 
 source "${repo_root}/Support/mihomo-alpha.env"
 
+# Keep the upstream artifact name architecture-specific in the repository, but
+# present one stable, product-owned executable name inside MClash.app.
+MIHOMO_ALPHA_BUNDLE_NAME="mclash-mihomo"
+
 mihomo_alpha_select_architecture() {
   local architecture="${1:-$(uname -m)}"
 

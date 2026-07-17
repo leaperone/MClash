@@ -194,6 +194,29 @@ struct MenuBarContent: View {
             )
             .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
 
+            if !model.localListenerEndpoints.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Local Proxy")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(model.localListenerEndpoints) { endpoint in
+                        CopyableValueButton(
+                            value: endpoint.address,
+                            accessibilityName: "\(endpoint.kind.presentationTitle) proxy address",
+                            title: endpoint.kind.presentationTitle,
+                            systemImage: endpoint.kind.presentationSystemImage,
+                            font: .caption,
+                            usesSecondaryStyle: true
+                        )
+                        .help(
+                            "Copy \(endpoint.kind.presentationTitle) proxy address · "
+                                + endpoint.source.presentationTitle
+                        )
+                    }
+                }
+            }
+
             VStack(alignment: .leading, spacing: 7) {
                 Text("Routing Mode")
                     .font(.caption)
@@ -501,8 +524,8 @@ struct MenuBarContent: View {
     }
 
     private var popoverHeight: CGFloat {
-        if issueMessage != nil { return 440 }
-        if !quickRouteGroups.isEmpty { return 440 }
-        return model.isConnected ? 340 : 280
+        if issueMessage != nil { return 500 }
+        if !quickRouteGroups.isEmpty { return 500 }
+        return model.isConnected ? 420 : 280
     }
 }

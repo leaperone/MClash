@@ -80,7 +80,7 @@ sign_path() {
 sign_application() {
   local app="$1"
   local sparkle="${app}/Contents/Frameworks/Sparkle.framework"
-  local core="${app}/Contents/Resources/Core/${MIHOMO_ALPHA_RESOURCE_NAME}"
+  local core="${app}/Contents/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
 
   if [[ -d "${sparkle}" ]]; then
     local version_root="${sparkle}/Versions/B"

@@ -14,6 +14,7 @@ struct ProxiesView: View {
     @SceneStorage private var inspectorPresented: Bool
     @State private var inspectorPopoverPresented = false
     @State private var groupNavigatorPresented = false
+    @State private var showingListenerPortSettings = false
     @State private var measuredWorkspaceWidth: CGFloat = 0
     @State private var inspectorPresentation: ProxyInspectorPresentation = .popover
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -52,7 +53,7 @@ struct ProxiesView: View {
             } else if model.controllerState == .loading || model.controllerState == .idle {
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Starting local HTTP and SOCKS5 listeners…")
+                    Text("Starting local proxy listeners…")
                         .foregroundStyle(.secondary)
                 }
             } else if case let .degraded(message) = model.controllerState {
@@ -96,21 +97,38 @@ struct ProxiesView: View {
         .mclashPageSurface()
         .searchable(text: searchBinding, prompt: "Search nodes in the current group")
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if model.controllerIsReady,
-               model.localHTTPProxyAddress != nil || model.localSOCKSProxyAddress != nil {
+            if model.controllerIsReady, !activeListenerEndpoints.isEmpty {
                 HStack(spacing: 14) {
                     if usesCompactChrome {
-                        compactEndpointLabel
+                        compactEndpointMenu
                     } else {
                         localEndpointLabels
                     }
+                    if case .completed(.savedAndRestarted) = model.runtimeSettingsApplyState {
+                        Label("Applied · Core restarted", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                            .lineLimit(1)
+                    }
                     Spacer(minLength: 0)
+                    Button("Ports…") {
+                        showingListenerPortSettings = true
+                    }
+                    .controlSize(.small)
+                    .disabled(!model.canPerform(.changeRuntimeSettings))
+                    .help(model.isConnected ? "Edit ports and restart the core" : "Edit local proxy ports")
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
                 .background(.bar)
                 .overlay(alignment: .top) { Divider() }
             }
+        }
+        .sheet(isPresented: $showingListenerPortSettings) {
+            ListenerPortSettingsEditor(
+                model: model,
+                isPresented: $showingListenerPortSettings
+            )
         }
         .onAppear {
             restoreSearchStateIfNeeded()
@@ -335,41 +353,62 @@ struct ProxiesView: View {
 
     private var localEndpointLabels: some View {
         HStack(spacing: 14) {
-            if let http = model.localHTTPProxyAddress {
-                Label("HTTP \(http)", systemImage: "globe")
-            }
-            if let socks = model.localSOCKSProxyAddress {
-                Label("SOCKS5 \(socks)", systemImage: "point.3.connected.trianglepath.dotted")
+            ForEach(activeListenerEndpoints) { endpoint in
+                CopyableValueButton(
+                    value: endpoint.address,
+                    accessibilityName: "\(endpoint.kind.presentationTitle) proxy address",
+                    title: endpoint.kind.presentationTitle,
+                    systemImage: endpoint.kind.presentationSystemImage,
+                    font: .caption,
+                    usesSecondaryStyle: true
+                )
             }
         }
-        .font(.caption.monospacedDigit())
-        .foregroundStyle(.secondary)
     }
 
-    private var compactEndpointLabel: some View {
-        Label(compactEndpointTitle, systemImage: "network")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .help(endpointHelp)
+    private var compactEndpointMenu: some View {
+        Menu {
+            ForEach(activeListenerEndpoints) { endpoint in
+                CopyableValueButton(
+                    value: endpoint.address,
+                    accessibilityName: "\(endpoint.kind.presentationTitle) proxy address",
+                    title: endpoint.kind.presentationTitle,
+                    systemImage: endpoint.kind.presentationSystemImage,
+                    font: .callout
+                )
+            }
+        } label: {
+            Label(compactEndpointTitle, systemImage: "network")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(endpointHelp)
     }
 
     private var compactEndpointTitle: String {
-        switch (model.localHTTPProxyAddress, model.localSOCKSProxyAddress) {
-        case (.some, .some): "HTTP and SOCKS5 listeners ready"
-        case (.some, .none): "HTTP listener ready"
-        case (.none, .some): "SOCKS5 listener ready"
-        case (.none, .none): "Local listeners unavailable"
+        switch activeListenerEndpoints.count {
+        case 0:
+            "Local listeners unavailable"
+        case 1:
+            "\(activeListenerEndpoints[0].kind.presentationTitle) listener ready"
+        default:
+            "\(activeListenerEndpoints.count) local listeners ready"
         }
     }
 
     private var endpointHelp: String {
-        [
-            model.localHTTPProxyAddress.map { "HTTP \($0)" },
-            model.localSOCKSProxyAddress.map { "SOCKS5 \($0)" },
-        ]
-        .compactMap { $0 }
-        .joined(separator: " · ")
+        activeListenerEndpoints
+            .map {
+                "\($0.kind.presentationTitle) \($0.address) · \($0.source.presentationTitle)"
+            }
+            .joined(separator: " · ")
+    }
+
+    private var activeListenerEndpoints: [AppModel.LocalListenerEndpoint] {
+        model.localListenerEndpoints
     }
 
     @ViewBuilder

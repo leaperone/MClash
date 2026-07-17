@@ -4,6 +4,11 @@ import Testing
 
 @Suite("Core binary location")
 struct CoreBinaryLocatorTests {
+    @Test("Bundled core uses the product-owned executable name")
+    func bundledCoreName() {
+        #expect(CoreBinaryLocator.bundledResourceName == "mclash-mihomo")
+    }
+
     @Test("Explicit executable takes precedence")
     func explicitExecutableTakesPrecedence() throws {
         let directory = FileManager.default.temporaryDirectory

@@ -17,6 +17,34 @@ enum MClashLayout {
     static let statusBarVerticalPadding: CGFloat = 8
 }
 
+extension AppModel.LocalListenerKind {
+    var presentationTitle: String {
+        switch self {
+        case .http: "HTTP"
+        case .socks5: "SOCKS5"
+        case .mixed: "Mixed"
+        }
+    }
+
+    var presentationSystemImage: String {
+        switch self {
+        case .http: "globe"
+        case .socks5: "point.3.connected.trianglepath.dotted"
+        case .mixed: "arrow.triangle.branch"
+        }
+    }
+}
+
+extension AppModel.LocalListenerSource {
+    var presentationTitle: String {
+        switch self {
+        case .profile: "Profile"
+        case .override: "Custom"
+        case .managedFallback: "Temporary"
+        }
+    }
+}
+
 func formattedByteCount(
     _ value: Int64,
     style: ByteCountFormatter.CountStyle = .file
@@ -40,6 +68,13 @@ func saturatingByteSum(_ lhs: Int64, _ rhs: Int64) -> Int64 {
     let right = max(0, rhs)
     let (sum, overflow) = left.addingReportingOverflow(right)
     return overflow ? Int64.max : sum
+}
+
+@discardableResult
+func copyToPasteboard(_ value: String) -> Bool {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    return pasteboard.setString(value, forType: .string)
 }
 
 func parsedRuntimeTimestamp(_ value: String) -> Date? {
@@ -103,6 +138,74 @@ struct DisconnectedUnavailableView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canPerform(.connection))
             }
+        }
+    }
+}
+
+/// A value that behaves like a native macOS control instead of inert text.
+/// The complete visible value is the hit target, while the transient checkmark
+/// confirms the clipboard write without interrupting the user's workflow.
+struct CopyableValueButton: View {
+    let value: String
+    let accessibilityName: String
+    var title: String? = nil
+    var systemImage: String? = nil
+    var font: Font = .body
+    var usesSecondaryStyle = false
+    var lineLimit = 1
+
+    @State private var copied = false
+    @State private var resetTask: Task<Void, Never>?
+
+    var body: some View {
+        Button(action: copyValue) {
+            HStack(spacing: 5) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                }
+                if let title {
+                    Text(title)
+                }
+                Text(value)
+                    .monospacedDigit()
+                    .lineLimit(lineLimit)
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .foregroundStyle(copied ? Color.green : Color.secondary)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .font(font)
+            .foregroundStyle(usesSecondaryStyle ? Color.secondary : Color.primary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+            .background(
+                copied ? Color.green.opacity(0.12) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(copied ? "Copied" : "Copy \(accessibilityName): \(value)")
+        .accessibilityLabel("Copy \(accessibilityName)")
+        .accessibilityValue(copied ? "Copied" : value)
+        .contextMenu {
+            Button("Copy") { copyValue() }
+        }
+        .onDisappear {
+            resetTask?.cancel()
+            resetTask = nil
+        }
+    }
+
+    private func copyValue() {
+        guard copyToPasteboard(value) else { return }
+
+        resetTask?.cancel()
+        copied = true
+        resetTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            copied = false
+            resetTask = nil
         }
     }
 }

@@ -59,13 +59,15 @@ struct ProfilesView: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Label("Import YAML", systemImage: "square.and.arrow.down")
+                        Label("Import & Activate", systemImage: "square.and.arrow.down")
                     }
                 }
                 .disabled(!model.canPerform(.importProfile))
-                .help("Import a local YAML profile")
+                .help("Import a local YAML profile and make it active")
                 .accessibilityLabel(
-                    model.isPerforming(.importProfile) ? "Importing YAML profile" : "Import YAML profile"
+                    model.isPerforming(.importProfile)
+                        ? "Importing and activating YAML profile"
+                        : "Import and activate YAML profile"
                 )
 
                 Button {
@@ -104,7 +106,7 @@ struct ProfilesView: View {
                             Text("Importing…")
                         }
                     } else {
-                        Label("Import YAML…", systemImage: "square.and.arrow.down")
+                        Label("Import & Activate…", systemImage: "square.and.arrow.down")
                     }
                 }
                 .disabled(!model.canPerform(.importProfile))
@@ -179,6 +181,26 @@ private struct ProfileRow: View {
                 isPresented: $showingEditSheet
             )
         }
+        .contextMenu {
+            if case let .remote(remote) = profile.origin {
+                Button("Copy Subscription URL", systemImage: "doc.on.doc") {
+                    copyToPasteboard(remote.url.absoluteString)
+                }
+                Divider()
+            }
+            Button("Edit Profile…", systemImage: "pencil") {
+                showingEditSheet = true
+            }
+            .disabled(!model.canPerform(.updateProfile(profile.id)))
+            if !isActive {
+                Button("Activate", systemImage: "checkmark.circle") { activate() }
+                    .disabled(!model.canPerform(.activateProfile(profile.id)))
+            }
+            if isRemote {
+                Button("Refresh", systemImage: "arrow.clockwise") { refresh() }
+                    .disabled(!model.canPerform(.refreshProfile(profile.id)))
+            }
+        }
     }
 
     private var profileDetails: some View {
@@ -243,16 +265,73 @@ private struct ProfileRow: View {
         }
     }
 
+    @ViewBuilder
     private var profileActions: some View {
-        HStack(spacing: 8) {
-            Button {
-                showingEditSheet = true
-            } label: {
-                Label("Edit", systemImage: "pencil")
+        if compact {
+            HStack(spacing: 8) {
+                primaryProfileAction
+                profileMoreMenu
             }
-            .buttonStyle(.borderless)
+            .controlSize(.small)
+        } else {
+            HStack(spacing: 8) {
+                Button {
+                    showingEditSheet = true
+                } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!model.canPerform(.updateProfile(profile.id)))
+                .help("Edit \(profile.name)")
+
+                if isRemote {
+                    Button {
+                        refresh()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!model.canPerform(.refreshProfile(profile.id)))
+                    .help("Refresh \(profile.name) subscription")
+                }
+
+                primaryProfileAction
+
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                    confirmingDelete = true
+                }
+                .buttonStyle(.borderless)
+                .disabled(isActive || !model.canPerform(.removeProfile(profile.id)))
+                .help(isActive ? "Activate another profile before deleting this one" : "Delete \(profile.name)")
+            }
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private var primaryProfileAction: some View {
+        if isActive {
+            Text("In Use")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 64)
+                .accessibilityLabel("\(profile.name) is the active profile")
+        } else {
+            Button("Activate") {
+                activate()
+            }
+            .buttonStyle(.bordered)
+            .disabled(!model.canPerform(.activateProfile(profile.id)))
+            .help("Activate \(profile.name)")
+        }
+    }
+
+    private var profileMoreMenu: some View {
+        Menu {
+            Button("Edit…", systemImage: "pencil") {
+                showingEditSheet = true
+            }
             .disabled(!model.canPerform(.updateProfile(profile.id)))
-            .help("Edit \(profile.name)")
 
             if isRemote {
                 Button {
@@ -260,34 +339,26 @@ private struct ProfileRow: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(.borderless)
                 .disabled(!model.canPerform(.refreshProfile(profile.id)))
-                .help("Refresh \(profile.name) subscription")
             }
 
-            if isActive {
-                Text("In Use")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 64)
-                    .accessibilityLabel("\(profile.name) is the active profile")
-            } else {
-                Button("Activate") {
-                    activate()
+            if case let .remote(remote) = profile.origin {
+                Button("Copy Subscription URL", systemImage: "doc.on.doc") {
+                    copyToPasteboard(remote.url.absoluteString)
                 }
-                .buttonStyle(.bordered)
-                .disabled(!model.canPerform(.activateProfile(profile.id)))
-                .help("Activate \(profile.name)")
             }
 
+            Divider()
             Button("Delete", systemImage: "trash", role: .destructive) {
                 confirmingDelete = true
             }
-            .buttonStyle(.borderless)
             .disabled(isActive || !model.canPerform(.removeProfile(profile.id)))
-            .help(isActive ? "Activate another profile before deleting this one" : "Delete \(profile.name)")
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+                .labelStyle(.iconOnly)
         }
-        .controlSize(.small)
+        .menuStyle(.borderlessButton)
+        .help("More actions for \(profile.name)")
     }
 
     private var activeIndicator: some View {

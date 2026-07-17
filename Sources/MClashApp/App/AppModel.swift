@@ -51,6 +51,45 @@ final class AppModel {
         case failed(String)
     }
 
+    enum LocalListenerKind: String, CaseIterable, Identifiable, Sendable {
+        case http
+        case socks5
+        case mixed
+
+        var id: Self { self }
+    }
+
+    enum LocalListenerSource: Equatable, Sendable {
+        case profile
+        case override
+        case managedFallback
+    }
+
+    struct LocalListenerEndpoint: Identifiable, Equatable, Sendable {
+        let kind: LocalListenerKind
+        let host: String
+        let port: Int
+        let source: LocalListenerSource
+
+        var id: LocalListenerKind { kind }
+        var address: String { "\(host):\(port)" }
+    }
+
+    enum RuntimeSettingsApplyOutcome: Equatable, Sendable {
+        case unchanged
+        case saved
+        case savedAndRestarted
+    }
+
+    enum RuntimeSettingsApplyState: Equatable, Sendable {
+        case idle
+        case validating
+        case restarting
+        case saving
+        case completed(RuntimeSettingsApplyOutcome)
+        case failed(String)
+    }
+
     enum Operation: Hashable {
         case connection
         case importProfile
@@ -128,6 +167,8 @@ final class AppModel {
     var activeProfileID: ProfileID?
     var runtimeConfig: MihomoConfig?
     private(set) var runtimeOverrides: RuntimeOverrides = .empty
+    private(set) var activeProfileListenerPorts = RuntimePortOverrides()
+    private(set) var runtimeSettingsApplyState: RuntimeSettingsApplyState = .idle
     var proxyGroups: [MihomoProxy] = []
     var proxiesByName: [String: MihomoProxy] = [:]
     var proxyTopology: ProxyTopology = .empty
@@ -334,6 +375,7 @@ final class AppModel {
                 }
                 profiles = try await profileStore.profiles()
                 activeProfileID = try await profileStore.activeProfileID()
+                await refreshActiveProfileListenerPorts()
                 if let activeProfileID {
                     if runtimeOverrideCoordinator != nil {
                         let activation = try await activateStoredProfile(
@@ -469,18 +511,68 @@ final class AppModel {
         return false
     }
 
-    var localHTTPProxyPort: Int? {
+    var localHTTPListenerPort: Int? {
         guard let runtimeConfig else { return nil }
-        return managedMixedPort
-            ?? positivePort(runtimeConfig.port)
-            ?? positivePort(runtimeConfig.mixedPort)
+        return positivePort(runtimeConfig.port)
     }
 
-    var localSOCKSProxyPort: Int? {
+    var localSOCKSListenerPort: Int? {
         guard let runtimeConfig else { return nil }
-        return managedMixedPort
-            ?? positivePort(runtimeConfig.socksPort)
-            ?? positivePort(runtimeConfig.mixedPort)
+        return positivePort(runtimeConfig.socksPort)
+    }
+
+    var localMixedListenerPort: Int? {
+        guard let runtimeConfig else { return nil }
+        return managedMixedPort ?? positivePort(runtimeConfig.mixedPort)
+    }
+
+    var localHTTPListenerAddress: String? {
+        localHTTPListenerPort.map { "127.0.0.1:\($0)" }
+    }
+
+    var localSOCKSListenerAddress: String? {
+        localSOCKSListenerPort.map { "127.0.0.1:\($0)" }
+    }
+
+    var localMixedListenerAddress: String? {
+        localMixedListenerPort.map { "127.0.0.1:\($0)" }
+    }
+
+    var localListenerEndpoints: [LocalListenerEndpoint] {
+        [
+            listenerEndpoint(
+                kind: .http,
+                port: localHTTPListenerPort,
+                isOverridden: runtimeOverrides.ports.port != nil
+            ),
+            listenerEndpoint(
+                kind: .socks5,
+                port: localSOCKSListenerPort,
+                isOverridden: runtimeOverrides.ports.socksPort != nil
+            ),
+            localMixedListenerPort.map {
+                LocalListenerEndpoint(
+                    kind: .mixed,
+                    host: "127.0.0.1",
+                    port: $0,
+                    source: managedMixedPort == nil ? mixedListenerConfiguredSource : .managedFallback
+                )
+            },
+        ]
+        .compactMap { $0 }
+    }
+
+    /// Effective HTTP endpoint used when configuring macOS. A mixed listener
+    /// is a protocol-compatible fallback, while a managed mixed listener takes
+    /// precedence because it was created after configured listeners failed.
+    var localHTTPProxyPort: Int? {
+        managedMixedPort ?? localHTTPListenerPort ?? localMixedListenerPort
+    }
+
+    /// Effective SOCKS endpoint used when configuring macOS. See
+    /// `localHTTPProxyPort` for the fallback semantics.
+    var localSOCKSProxyPort: Int? {
+        managedMixedPort ?? localSOCKSListenerPort ?? localMixedListenerPort
     }
 
     var localHTTPProxyAddress: String? {
@@ -758,6 +850,7 @@ final class AppModel {
             }
             profiles = try await profileStore.profiles()
             activeProfileID = try await profileStore.activeProfileID()
+            await refreshActiveProfileListenerPorts()
             activeConfigURL = nil
             if let activeProfileID {
                 let activation = try await activateStoredProfile(
@@ -826,6 +919,7 @@ final class AppModel {
             throw error
         }
         activeProfileID = activation.profileID
+        await refreshActiveProfileListenerPorts()
         activeConfigURL = activation.configurationURL
         profiles = try await profileStore.profiles()
         errorMessage = nil
@@ -857,6 +951,7 @@ final class AppModel {
                         validator: try makeProfileValidator()
                     )
                     activeProfileID = rollback.profileID
+                    await refreshActiveProfileListenerPorts()
                     activeConfigURL = rollback.configurationURL
                     profiles = try await profileStore.profiles()
                     let restoredPreviousSession = await performConnect()
@@ -895,39 +990,219 @@ final class AppModel {
         return try await profileStore.activateProfile(id, validator: validator)
     }
 
-    func applyRuntimeOverrides(_ overrides: RuntimeOverrides) async throws {
+    private func activateStoredProfile(
+        _ id: ProfileID,
+        overrides: RuntimeOverrides,
+        validator: any ProfileValidating
+    ) async throws -> RuntimeConfigurationActivation {
+        guard let profileStore, let runtimeOverrideCoordinator else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        return try await runtimeOverrideCoordinator.activateProfile(
+            id,
+            overrides: overrides,
+            in: profileStore,
+            validator: validator
+        )
+    }
+
+    @discardableResult
+    func applyRuntimeOverrides(
+        _ overrides: RuntimeOverrides
+    ) async throws -> RuntimeSettingsApplyOutcome {
         guard begin(.changeRuntimeSettings) else {
             throw AppModelError.operationInProgress
         }
         defer { end(.changeRuntimeSettings) }
 
-        guard let runtimeOverrideCoordinator else {
+        guard let runtimeOverrideCoordinator, let profileStore else {
             throw AppModelError.profileStoreUnavailable
         }
 
         let previousOverrides = runtimeOverrides
-        try await runtimeOverrideCoordinator.save(overrides)
-        do {
-            runtimeOverrides = overrides
-            if let activeProfileID {
-                try await performActivateProfile(activeProfileID, force: true)
-            }
-            errorMessage = nil
-        } catch {
+        guard overrides != previousOverrides else {
+            let outcome = RuntimeSettingsApplyOutcome.unchanged
+            runtimeSettingsApplyState = .completed(outcome)
+            return outcome
+        }
+
+        guard let activeProfileID else {
+            runtimeSettingsApplyState = .saving
             do {
-                try await runtimeOverrideCoordinator.save(previousOverrides)
-                runtimeOverrides = previousOverrides
+                try await runtimeOverrideCoordinator.save(overrides)
+                runtimeOverrides = overrides
+                errorMessage = nil
+                let outcome = RuntimeSettingsApplyOutcome.saved
+                runtimeSettingsApplyState = .completed(outcome)
+                return outcome
             } catch {
-                appendSupervisorLog(
-                    "Restoring runtime settings failed: \(error.localizedDescription)"
-                )
+                runtimeSettingsApplyState = .failed(error.localizedDescription)
+                throw error
             }
+        }
+
+        let validator: any ProfileValidating
+        do {
+            runtimeSettingsApplyState = .validating
+            validator = try makeProfileValidator()
+            try await runtimeOverrideCoordinator.validateProfile(
+                activeProfileID,
+                overrides: overrides,
+                in: profileStore,
+                validator: validator
+            )
+        } catch {
+            runtimeSettingsApplyState = .failed(error.localizedDescription)
             throw error
+        }
+
+        let shouldRestart = isConnected || isBusy
+        let shouldRestoreSystemProxy = systemProxyEnabled
+        if shouldRestart {
+            runtimeSettingsApplyState = .restarting
+            guard await performDisconnect() else {
+                let error = AppModelError.systemProxyRestoreFailed
+                runtimeSettingsApplyState = .failed(error.localizedDescription)
+                throw error
+            }
+        }
+
+        runtimeOverrides = overrides
+        do {
+            let activation = try await activateStoredProfile(
+                activeProfileID,
+                overrides: overrides,
+                validator: validator
+            )
+            self.activeProfileID = activation.profileID
+            activeConfigURL = activation.configurationURL
+            profiles = try await profileStore.profiles()
+
+            if shouldRestart {
+                runtimeSettingsApplyState = .restarting
+                guard await performConnect() else {
+                    throw AppModelError.profileActivationFailed(
+                        errorMessage ?? "The updated runtime configuration could not be started."
+                    )
+                }
+            }
+
+            runtimeSettingsApplyState = .saving
+            try await runtimeOverrideCoordinator.save(overrides)
+
+            if shouldRestart, shouldRestoreSystemProxy {
+                await performEnableSystemProxy()
+                guard systemProxyState == .on else {
+                    throw AppModelError.profileActivationFailed(
+                        errorMessage ?? "The macOS system proxy could not be restored after restarting the core."
+                    )
+                }
+            }
+
+            errorMessage = nil
+            let outcome: RuntimeSettingsApplyOutcome = shouldRestart
+                ? .savedAndRestarted
+                : .saved
+            runtimeSettingsApplyState = .completed(outcome)
+            appendSupervisorLog(
+                shouldRestart
+                    ? "Runtime settings saved and the core restarted successfully."
+                    : "Runtime settings saved."
+            )
+            return outcome
+        } catch {
+            let primaryMessage = error.localizedDescription
+            let restorationFailures = await Task { @MainActor [weak self] in
+                guard let self else { return ["MClash closed before rollback completed."] }
+                return await self.rollbackRuntimeOverrides(
+                    previousOverrides,
+                    activeProfileID: activeProfileID,
+                    shouldReconnect: shouldRestart,
+                    shouldRestoreSystemProxy: shouldRestoreSystemProxy
+                )
+            }.value
+            let restorationMessage = restorationFailures.isEmpty
+                ? "The previous runtime settings were restored."
+                : "Restoring the previous runtime settings failed: "
+                    + restorationFailures.joined(separator: " ")
+            let message = "\(primaryMessage) \(restorationMessage)"
+            errorMessage = message
+            runtimeSettingsApplyState = .failed(message)
+            appendSupervisorLog("Runtime settings update failed. \(message)")
+            throw AppModelError.profileActivationFailed(message)
         }
     }
 
-    func resetRuntimeOverrides() async throws {
+    @discardableResult
+    func resetRuntimeOverrides() async throws -> RuntimeSettingsApplyOutcome {
         try await applyRuntimeOverrides(.empty)
+    }
+
+    private func rollbackRuntimeOverrides(
+        _ previousOverrides: RuntimeOverrides,
+        activeProfileID: ProfileID,
+        shouldReconnect: Bool,
+        shouldRestoreSystemProxy: Bool
+    ) async -> [String] {
+        guard let runtimeOverrideCoordinator, let profileStore else {
+            return [AppModelError.profileStoreUnavailable.localizedDescription]
+        }
+
+        var failures: [String] = []
+        do {
+            try await runtimeOverrideCoordinator.save(previousOverrides)
+        } catch {
+            failures.append("The previous override document could not be saved: \(error.localizedDescription)")
+        }
+        runtimeOverrides = previousOverrides
+
+        if isConnected || isBusy || hasSystemProxySnapshot {
+            let disconnected = await performDisconnect()
+            if !disconnected {
+                failures.append("The candidate core could not be stopped safely because macOS proxy settings were not restored.")
+                return failures
+            }
+        } else {
+            await supervisor.stop()
+            coreState = await supervisor.state()
+            stopControllerStreams()
+        }
+
+        do {
+            let validator = try makeProfileValidator()
+            let activation = try await activateStoredProfile(
+                activeProfileID,
+                overrides: previousOverrides,
+                validator: validator
+            )
+            self.activeProfileID = activation.profileID
+            activeConfigURL = activation.configurationURL
+            profiles = try await profileStore.profiles()
+        } catch {
+            failures.append("The previous runtime configuration could not be activated: \(error.localizedDescription)")
+            return failures
+        }
+
+        if shouldReconnect {
+            guard await performConnect() else {
+                failures.append(
+                    "The previous core session could not be restarted: "
+                        + (errorMessage ?? "No additional error was reported.")
+                )
+                return failures
+            }
+        }
+
+        if shouldReconnect, shouldRestoreSystemProxy {
+            await performEnableSystemProxy()
+            if systemProxyState != .on {
+                failures.append(
+                    "The macOS system proxy could not be re-enabled: "
+                        + (errorMessage ?? "No additional error was reported.")
+                )
+            }
+        }
+        return failures
     }
 
     func refreshProfile(_ id: ProfileID) async {
@@ -1984,18 +2259,35 @@ final class AppModel {
         using client: MihomoAPIClient
     ) async throws -> MihomoConfig {
         managedMixedPort = nil
+        let requiresExactListeners = runtimeOverrides.ports.hasExplicitLocalProxyListener
         if let ports = resolvedProxyPorts(in: initialConfig) {
+            let requiredPorts = try requiredProxyProtocolPorts(
+                effectiveHTTPPort: ports.http,
+                effectiveSOCKSPort: ports.socks,
+                config: initialConfig
+            )
             do {
-                try await localPortProbe.waitUntilListening(ports: Set([ports.http, ports.socks]))
+                try await localPortProbe.waitUntilProxyProtocols(
+                    httpPorts: requiredPorts.http,
+                    socksPorts: requiredPorts.socks
+                )
                 return initialConfig
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                if requiresExactListeners {
+                    throw AppModelError.explicitLocalProxyListenersUnavailable(
+                        Set([ports.http, ports.socks]).sorted()
+                    )
+                }
                 appendSupervisorLog(
                     "Configured proxy listeners were unavailable; applying a temporary MClash mixed port."
                 )
             }
         } else {
+            if requiresExactListeners {
+                throw AppModelError.explicitLocalProxyListenersIncomplete
+            }
             appendSupervisorLog(
                 "The profile has no complete local HTTP/SOCKS listener; applying a temporary MClash mixed port."
             )
@@ -2010,7 +2302,10 @@ final class AppModel {
                 guard config.mixedPort == port else {
                     throw AppModelError.localProxyOverrideRejected(port)
                 }
-                try await localPortProbe.waitUntilListening(ports: [port])
+                try await localPortProbe.waitUntilProxyProtocols(
+                    httpPort: port,
+                    socksPort: port
+                )
                 managedMixedPort = port
                 appendSupervisorLog("MClash local HTTP/SOCKS5 listener is ready on 127.0.0.1:\(port).")
                 return config
@@ -2030,6 +2325,51 @@ final class AppModel {
             return nil
         }
         return (http, socks)
+    }
+
+    private func requiredProxyProtocolPorts(
+        effectiveHTTPPort: Int,
+        effectiveSOCKSPort: Int,
+        config: MihomoConfig
+    ) throws -> (http: Set<Int>, socks: Set<Int>) {
+        var httpPorts: Set<Int> = [effectiveHTTPPort]
+        var socksPorts: Set<Int> = [effectiveSOCKSPort]
+        let overrides = runtimeOverrides.ports
+
+        if let requested = overrides.port {
+            guard config.port == requested else {
+                throw AppModelError.explicitLocalProxyListenerRejected(
+                    field: "HTTP",
+                    requested: requested,
+                    actual: config.port
+                )
+            }
+            if let port = positivePort(config.port) { httpPorts.insert(port) }
+        }
+        if let requested = overrides.socksPort {
+            guard config.socksPort == requested else {
+                throw AppModelError.explicitLocalProxyListenerRejected(
+                    field: "SOCKS5",
+                    requested: requested,
+                    actual: config.socksPort
+                )
+            }
+            if let port = positivePort(config.socksPort) { socksPorts.insert(port) }
+        }
+        if let requested = overrides.mixedPort {
+            guard config.mixedPort == requested else {
+                throw AppModelError.explicitLocalProxyListenerRejected(
+                    field: "Mixed",
+                    requested: requested,
+                    actual: config.mixedPort
+                )
+            }
+            if let port = positivePort(config.mixedPort) {
+                httpPorts.insert(port)
+                socksPorts.insert(port)
+            }
+        }
+        return (httpPorts, socksPorts)
     }
 
     private func refreshProxyGroups(generation: Int) async {
@@ -2589,6 +2929,39 @@ final class AppModel {
         port > 0 ? port : nil
     }
 
+    private func refreshActiveProfileListenerPorts() async {
+        guard let activeProfileID, let profileStore else {
+            activeProfileListenerPorts = RuntimePortOverrides()
+            return
+        }
+        do {
+            let data = try await profileStore.configurationData(for: activeProfileID)
+            activeProfileListenerPorts = try RuntimeConfigurationComposer().listenerPorts(in: data)
+        } catch {
+            activeProfileListenerPorts = RuntimePortOverrides()
+            appendSupervisorLog("Could not read the active profile's listener ports: \(error.localizedDescription)")
+        }
+    }
+
+    private var mixedListenerConfiguredSource: LocalListenerSource {
+        runtimeOverrides.ports.mixedPort == nil ? .profile : .override
+    }
+
+    private func listenerEndpoint(
+        kind: LocalListenerKind,
+        port: Int?,
+        isOverridden: Bool
+    ) -> LocalListenerEndpoint? {
+        port.map {
+            LocalListenerEndpoint(
+                kind: kind,
+                host: "127.0.0.1",
+                port: $0,
+                source: isOverridden ? .override : .profile
+            )
+        }
+    }
+
     private var hasSystemProxySnapshot: Bool {
         guard let profileLayout else { return false }
         return FileManager.default.fileExists(
@@ -2714,6 +3087,9 @@ private enum AppModelError: LocalizedError {
     case profileActivationFailed(String)
     case localProxyPortsUnavailable
     case localProxyOverrideRejected(Int)
+    case explicitLocalProxyListenersIncomplete
+    case explicitLocalProxyListenersUnavailable([Int])
+    case explicitLocalProxyListenerRejected(field: String, requested: Int, actual: Int)
 
     var errorDescription: String? {
         switch self {
@@ -2731,6 +3107,12 @@ private enum AppModelError: LocalizedError {
             "The active profile does not expose both an HTTP and a SOCKS5 local proxy port. Add port/socks-port or mixed-port to the profile."
         case let .localProxyOverrideRejected(port):
             "mihomo did not accept MClash's temporary local proxy port \(port)."
+        case .explicitLocalProxyListenersIncomplete:
+            "The HTTP, SOCKS5, and Mixed overrides do not provide both HTTP and SOCKS5 service. Configure a Mixed port or complete HTTP and SOCKS5 ports."
+        case let .explicitLocalProxyListenersUnavailable(ports):
+            "The requested local proxy listener did not start on \(ports.map(String.init).joined(separator: ", ")). Choose available ports and try again."
+        case let .explicitLocalProxyListenerRejected(field, requested, actual):
+            "mihomo did not apply the requested \(field) listener port \(requested); it reported \(actual)."
         }
     }
 }

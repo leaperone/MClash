@@ -36,7 +36,7 @@ before testing failure scenarios.
 - Repeat connect/disconnect rapidly. Confirm transitional buttons are disabled
   and the core never launches twice.
 - Quit while disconnected and relaunch. Confirm the active profile persists.
-- With the core connected, terminate only the bundled `mihomo` process from
+- With the core connected, terminate only the bundled `mclash-mihomo` process from
   Activity Monitor. Confirm MClash reports the crash, performs bounded restart,
   reconnects live metrics without duplicating streams, and safely restores then
   re-enables System Proxy if it was on before the crash.
@@ -67,7 +67,28 @@ before testing failure scenarios.
   **Cancel**, and **Quit Anyway**. Confirm Quit Anyway stops the bundled core but
   preserves the snapshot for the next recovery attempt.
 
-## 4. Daily menu bar workflow
+## 4. Local proxy ports and restart safety
+
+- In Settings, confirm **Local Proxy** presents HTTP, SOCKS5, and Mixed as
+  independent listeners and identifies whether each value comes from the
+  profile, a custom override, or MClash's temporary fallback.
+- Open **Edit Ports & Restart…**. For each listener, verify **Profile**,
+  **Custom**, and **Off** have explicit meanings. Custom ports must accept only
+  `1...65535`; duplicate enabled ports must be rejected beside the fields.
+- Set HTTP, SOCKS5, and Mixed to three different free ports. Apply while
+  connected and confirm progress advances through validation and restart,
+  MClash reconnects automatically, and an enabled macOS System Proxy is
+  restored only after the new listeners answer their respective protocols.
+- Apply the same values again. Confirm MClash reports no change and does not
+  restart the core.
+- Occupy one requested port with another local process, then apply. Confirm the
+  old configuration, core session, and System Proxy state are all restored and
+  the failed values are not persisted.
+- Confirm Overview, Proxies, Settings, and the menu bar all show the same three
+  listener identities. Click every visible address and confirm it copies the
+  complete `127.0.0.1:port` value with immediate visual feedback.
+
+## 5. Daily menu bar workflow
 
 - Verify current status, active profile, upload/download rates, and any degraded
   live-data warning are readable in both light and dark appearance.
@@ -87,7 +108,7 @@ before testing failure scenarios.
   subscription does not restart the core and an updated subscription safely
   reconnects.
 
-## 5. Main feature coverage
+## 6. Main feature coverage
 
 - Proxies: confirm Rule groups follow the subscription YAML order rather than
   alphabetical order. Global must show only GLOBAL, and Direct must show a
@@ -115,7 +136,7 @@ before testing failure scenarios.
   dependencies use a distinct dashed connection, and large groups use a “more
   nodes” summary instead of rendering every node at once.
 - Proxies: select a nested group from the Sidebar, from a list-row chevron, and
-  by double-clicking a topology group. Confirm the List, Topology, and Inspector
+  from a topology group chevron. Confirm the List, Topology, and Inspector
   stay synchronized and the current route remains readable with long names.
 - Proxies: test Profile / Latency / Name sorting. Profile order must remain
   stable, equal latency results must keep their profile order, and changing one
@@ -153,7 +174,7 @@ before testing failure scenarios.
 - With no traffic, confirm download and upload show `0 B/s`, totals show `0 B`,
   and no surface spells the value as `Zero`.
 
-## 6. Accessibility and edge cases
+## 7. Accessibility and edge cases
 
 - Navigate the sidebar, toolbar, menu popup, subscription sheet, node picker,
   and error actions using only the keyboard.
@@ -168,7 +189,7 @@ before testing failure scenarios.
   timeouts, and controller degradation. Confirm errors remain dismissible and
   do not leave an invisible modal layer.
 
-## 7. Signed application updates
+## 8. Signed application updates
 
 - Install a notarized release in `/Applications`, then choose **MClash > Check
   for Updates…**. Confirm Sparkle presents its native result and never opens a

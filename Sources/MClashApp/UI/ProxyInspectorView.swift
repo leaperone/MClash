@@ -55,9 +55,7 @@ struct ProxyInspectorView: View {
                         }
                         InspectorValueRow(
                             "Status",
-                            value: model.proxyAlive(for: node.name, in: group?.name) == false
-                                ? "Unavailable"
-                                : "Available"
+                            value: availabilityTitle(for: node)
                         )
                         if let dialer = normalized(node.dialerProxy) {
                             InspectorValueRow("Dialer Dependency", value: dialer)
@@ -113,6 +111,13 @@ struct ProxyInspectorView: View {
 
     private var trafficScopeName: String? {
         focusedNodeName ?? group?.name
+    }
+
+    private func availabilityTitle(for node: MihomoProxy) -> String {
+        guard let alive = model.proxyAlive(for: node.name, in: group?.name) else {
+            return "Not tested"
+        }
+        return alive ? "Available" : "Unavailable"
     }
 
     private func capability(_ text: String) -> some View {
@@ -660,21 +665,26 @@ private struct InspectorValueRow: View {
     var body: some View {
         ViewThatFits(in: .horizontal) {
             LabeledContent(title) {
-                Text(value)
-                    .multilineTextAlignment(.trailing)
-                    .lineLimit(2)
+                CopyableValueButton(
+                    value: value,
+                    accessibilityName: title.lowercased(),
+                    font: .callout,
+                    lineLimit: 2
+                )
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(value)
-                    .lineLimit(3)
+                CopyableValueButton(
+                    value: value,
+                    accessibilityName: title.lowercased(),
+                    font: .callout,
+                    lineLimit: 3
+                )
             }
         }
-        .help(value)
-        .textSelection(.enabled)
     }
 }
 

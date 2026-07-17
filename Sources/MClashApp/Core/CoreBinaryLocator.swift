@@ -87,6 +87,13 @@ struct CoreBinaryLocator: Sendable {
         ) {
             candidates.append(packaged)
         }
+        if let developmentPackaged = Bundle.module.url(
+            forResource: developmentResourceName,
+            withExtension: nil,
+            subdirectory: "Core"
+        ) {
+            candidates.append(developmentPackaged)
+        }
         #endif
 
         if let bundled = Bundle.main.url(
@@ -101,6 +108,10 @@ struct CoreBinaryLocator: Sendable {
     }
 
     static var bundledResourceName: String {
+        "mclash-mihomo"
+    }
+
+    private static var developmentResourceName: String {
         #if arch(arm64)
         "mihomo-alpha-darwin-arm64"
         #elseif arch(x86_64)
