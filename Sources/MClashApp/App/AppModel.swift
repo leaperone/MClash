@@ -243,6 +243,7 @@ final class AppModel {
     private let systemProxyPreferencesStore: SystemProxyPreferencesStore?
     private let systemProxyManager: SystemProxyManager
     private let localPortProbe: LocalPortProbe
+    private let geoDataInstaller: BundledGeoDataInstaller
     private let preferenceDefaults: UserDefaults
     private let profileBackupService = ProfileBackupService()
     private let notificationCenter = AppNotificationCenter()
@@ -283,6 +284,7 @@ final class AppModel {
         localPortProbe: LocalPortProbe = LocalPortProbe(),
         profileDirectoryLayout: ProfileDirectoryLayout? = nil,
         profileStoreOverride: ProfileStore? = nil,
+        geoDataInstaller: BundledGeoDataInstaller = .applicationBundle(),
         preferenceDefaults: UserDefaults = .standard
     ) {
         self.supervisor = supervisor
@@ -290,6 +292,7 @@ final class AppModel {
         self.secretStore = secretStore
         self.systemProxyManager = systemProxyManager
         self.localPortProbe = localPortProbe
+        self.geoDataInstaller = geoDataInstaller
         self.preferenceDefaults = preferenceDefaults
         if preferenceDefaults.object(forKey: Self.autoConnectOnLaunchKey) == nil {
             autoConnectOnLaunch = true
@@ -1391,6 +1394,7 @@ final class AppModel {
             let binaryURL = try binaryLocator.locate()
             let secret = try secretStore.loadOrCreate()
             let homeDirectory = try coreHomeDirectory()
+            try geoDataInstaller.installIfNeeded(into: homeDirectory)
             let controllerPort = try localPortProbe.availableTCPPort()
             let configuration = CoreLaunchConfiguration(
                 binaryURL: binaryURL,
@@ -2167,6 +2171,7 @@ final class AppModel {
     private func makeProfileValidator() throws -> ClosureProfileValidator {
         let binaryURL = try binaryLocator.locate()
         let homeDirectory = try validationHomeDirectory()
+        try geoDataInstaller.installIfNeeded(into: homeDirectory)
 
         return ClosureProfileValidator { [supervisor] configurationURL in
             try await supervisor.validateWithoutStateChanges(

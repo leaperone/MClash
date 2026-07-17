@@ -40,6 +40,10 @@ before testing failure scenarios.
   Activity Monitor. Confirm MClash reports the crash, performs bounded restart,
   reconnects live metrics without duplicating streams, and safely restores then
   re-enables System Proxy if it was on before the crash.
+- On a clean macOS account, block outbound access to GitHub before importing a
+  profile containing GEOIP, GEOSITE, and IP-ASN rules. Confirm profile validation
+  and the first connection succeed without a GEO database download. Repeat with
+  `geodata-mode: true` to cover `GeoIP.dat` as well as the default MMDB mode.
 
 ## 3. macOS system proxy safety
 

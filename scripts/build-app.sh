@@ -27,6 +27,16 @@ if [[ ! -f "${MIHOMO_ALPHA_RESOURCE_PATH}" ]]; then
   "${repo_root}/scripts/fetch-mihomo-alpha.sh" --architecture "${architecture}"
 fi
 mihomo_alpha_verify_selected_artifact
+geodata_source="${MCLASH_GEODATA_DIR:-${build_root}/GeoData}"
+geodata_fetch_arguments=(--output "${geodata_source}")
+if [[ "${code_sign_identity}" != "-" || "${MCLASH_REFRESH_GEODATA:-0}" == "1" ]]; then
+  geodata_fetch_arguments+=(--refresh)
+fi
+"${repo_root}/scripts/fetch-mihomo-geodata.sh" "${geodata_fetch_arguments[@]}"
+"${repo_root}/scripts/smoke-test-mihomo-geodata.sh" \
+  "${MIHOMO_ALPHA_RESOURCE_PATH}" \
+  "${geodata_source}"
+
 
 license_source="${repo_root}/Sources/MClashApp/Resources/ThirdParty/mihomo-LICENSE.txt"
 corresponding_source="${repo_root}/Sources/MClashApp/Resources/ThirdParty/mihomo-SOURCE.txt"
@@ -70,11 +80,13 @@ swiftc \
   -o "${binary_output}"
 
 rm -rf "${app_bundle}"
-mkdir -p "${contents}/MacOS" "${contents}/Frameworks" "${contents}/Resources/Core" "${contents}/Resources/ThirdParty"
+mkdir -p "${contents}/MacOS" "${contents}/Frameworks" "${contents}/Resources/Core" "${contents}/Resources/GeoData" "${contents}/Resources/ThirdParty"
 cp "${binary_output}" "${contents}/MacOS/MClash"
 ditto "${sparkle_framework}" "${contents}/Frameworks/Sparkle.framework"
 cp "${repo_root}/Support/Info.plist" "${contents}/Info.plist"
 cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+ditto "${geodata_source}" "${contents}/Resources/GeoData"
+cp "${license_source}" "${contents}/Resources/GeoData/LICENSE.txt"
 cp "${repo_root}/Sources/MClashApp/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"
 cp "${mclash_license}" "${contents}/Resources/MClash-LICENSE.txt"
 cp "${license_source}" "${contents}/Resources/ThirdParty/mihomo-LICENSE.txt"
@@ -82,6 +94,7 @@ cp "${corresponding_source}" "${contents}/Resources/ThirdParty/mihomo-SOURCE.txt
 cp "${notice_source}" "${contents}/Resources/ThirdParty/mihomo-NOTICE.md"
 cp "${sparkle_framework_dir}/LICENSE" "${contents}/Resources/ThirdParty/Sparkle-LICENSE.txt"
 recorded_hash="$(mihomo_alpha_recorded_hash "${MIHOMO_ALPHA_RESOURCE_NAME}")"
+"${repo_root}/scripts/verify-mihomo-geodata.sh" "${contents}/Resources/GeoData"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${app_version}" \
   -c "Set :CFBundleVersion ${build_number}" \
   "${contents}/Info.plist"

@@ -97,6 +97,15 @@ The built application's Info.plist also records the pinned core version and
 pre-signing upstream binary hash as `MClashMihomoAlphaVersion` and
 `MClashMihomoAlphaRawSHA256`.
 
+## Bundled GEO databases
+
+Production builds resolve the current `MetaCubeX/meta-rules-dat` release-branch
+revision, download that immutable snapshot, and verify its upstream SHA-256
+files before packaging. MClash bundles `geoip.metadb`, `GeoIP.dat`,
+`GeoSite.dat`, and `ASN.mmdb`, then seeds missing files into both mihomo's
+validation and live core homes. Existing non-empty databases are preserved, so
+later user or core updates are never replaced by the app bundle.
+
 ## Production release
 
 Public releases are built by the protected GitHub Actions Release workflow.
