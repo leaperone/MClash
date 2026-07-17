@@ -1,0 +1,214 @@
+import Testing
+@testable import MClashApp
+
+@Suite("Network extension control")
+struct NetworkExtensionControlTests {
+    @Test("Reducer enforces the full enable order")
+    func reducerEnableOrder() throws {
+        var state = NetworkExtensionControlState.inactive
+        state = try NetworkExtensionControlReducer.reduce(
+            state,
+            .beginEnable(revision: 42, dnsEnabled: true)
+        )
+        #expect(state.phase == .activatingSystemExtension)
+
+        state = try NetworkExtensionControlReducer.reduce(
+            state,
+            .systemExtensionNeedsApproval
+        )
+        #expect(state.userApprovalRequired)
+
+        state = try NetworkExtensionControlReducer.reduce(state, .systemExtensionActivated)
+        #expect(state.phase == .configuringTransparentProxy)
+        state = try NetworkExtensionControlReducer.reduce(state, .transparentProxyConfigured)
+        #expect(state.phase == .startingTransparentProxy)
+        state = try NetworkExtensionControlReducer.reduce(state, .transparentProxyStarted)
+        #expect(state.phase == .configuringDNSProxy)
+        state = try NetworkExtensionControlReducer.reduce(state, .dnsProxyConfigured)
+        #expect(state.phase == .running)
+        #expect(state.revision == 42)
+    }
+
+    @Test("Reducer rejects DNS configuration before transparent proxy start")
+    func reducerRejectsOutOfOrderEvent() throws {
+        var state = try NetworkExtensionControlReducer.reduce(
+            .inactive,
+            .beginEnable(revision: 1, dnsEnabled: true)
+        )
+        state = try NetworkExtensionControlReducer.reduce(state, .systemExtensionActivated)
+
+        do {
+            _ = try NetworkExtensionControlReducer.reduce(state, .dnsProxyConfigured)
+            Issue.record("Expected an invalid transition")
+        } catch let error as NetworkExtensionStateReductionError {
+            #expect(
+                error == .invalidTransition(
+                    phase: .configuringTransparentProxy,
+                    event: .dnsProxyConfigured
+                )
+            )
+        }
+    }
+
+    @Test("Service enables and disables providers in safe order")
+    func serviceOperationOrder() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+
+        let result = try await service.enable(
+            NetworkExtensionRuntimeConfiguration(revision: 7, dnsEnabled: true)
+        )
+        #expect(result == .running)
+        var operations = await recorder.snapshot()
+        #expect(operations == [
+            "system.activate",
+            "transparent.configure",
+            "transparent.reload",
+            "transparent.start",
+            "dns.configure",
+            "dns.reload",
+        ])
+
+        await recorder.removeAll()
+        try await service.disable()
+        operations = await recorder.snapshot()
+        #expect(operations == ["dns.disable", "transparent.stop"])
+        let state = await service.currentState()
+        #expect(state.phase == .inactive)
+    }
+
+    @Test("A reboot result prevents proxy preferences from being configured")
+    func rebootStopsEnableSequence() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(
+                recorder: recorder,
+                activationOutcome: .requiresReboot
+            ),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+
+        let result = try await service.enable(
+            NetworkExtensionRuntimeConfiguration(revision: 9)
+        )
+        #expect(result == .requiresReboot)
+        let operations = await recorder.snapshot()
+        #expect(operations == ["system.activate"])
+        let state = await service.currentState()
+        #expect(state.phase == .requiresReboot)
+    }
+}
+
+private actor NetworkExtensionOperationRecorder {
+    private var operations: [String] = []
+
+    func append(_ operation: String) {
+        operations.append(operation)
+    }
+
+    func snapshot() -> [String] {
+        operations
+    }
+
+    func removeAll() {
+        operations.removeAll()
+    }
+}
+
+private struct MockSystemExtensionController: SystemExtensionControlling {
+    let recorder: NetworkExtensionOperationRecorder
+    var activationOutcome: SystemExtensionRequestOutcome = .completed
+
+    func activate(
+        progress: @escaping @Sendable (SystemExtensionRequestProgress) -> Void
+    ) async throws -> SystemExtensionRequestOutcome {
+        await recorder.append("system.activate")
+        progress(.awaitingUserApproval)
+        return activationOutcome
+    }
+
+    func deactivate(
+        progress: @escaping @Sendable (SystemExtensionRequestProgress) -> Void
+    ) async throws -> SystemExtensionRequestOutcome {
+        await recorder.append("system.deactivate")
+        return .completed
+    }
+}
+
+private struct MockTransparentProxyManager: TransparentProxyManaging {
+    let recorder: NetworkExtensionOperationRecorder
+
+    func configure(_ configuration: NetworkExtensionRuntimeConfiguration) async throws {
+        await recorder.append("transparent.configure")
+    }
+
+    func reload() async throws {
+        await recorder.append("transparent.reload")
+    }
+
+    func start() async throws {
+        await recorder.append("transparent.start")
+    }
+
+    func stop() async throws {
+        await recorder.append("transparent.stop")
+    }
+
+    func providerStatus() async throws -> TransparentProxyProviderStatus {
+        TransparentProxyProviderStatus(
+            revision: 0,
+            running: true,
+            captureEnabled: false,
+            failOpen: true
+        )
+    }
+
+    func quiesceProvider(revision: UInt64) async throws -> TransparentProxyProviderStatus {
+        TransparentProxyProviderStatus(
+            revision: revision,
+            running: true,
+            captureEnabled: false,
+            failOpen: true
+        )
+    }
+
+    func applyProviderConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> TransparentProxyProviderStatus {
+        TransparentProxyProviderStatus(
+            revision: configuration.revision,
+            running: true,
+            captureEnabled: configuration.captureEnabled,
+            failOpen: configuration.failOpen
+        )
+    }
+
+    func updateProviderConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> TransparentProxyProviderStatus {
+        try await applyProviderConfiguration(configuration)
+    }
+}
+
+private struct MockDNSProxyManager: DNSProxyManaging {
+    let recorder: NetworkExtensionOperationRecorder
+
+    func configureAndEnable(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws {
+        await recorder.append("dns.configure")
+    }
+
+    func reload() async throws {
+        await recorder.append("dns.reload")
+    }
+
+    func disable() async throws {
+        await recorder.append("dns.disable")
+    }
+}

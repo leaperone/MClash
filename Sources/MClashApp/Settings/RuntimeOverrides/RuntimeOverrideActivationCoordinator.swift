@@ -26,6 +26,7 @@ public actor RuntimeOverrideActivationCoordinator {
     @discardableResult
     public func activateProfile(
         _ id: ProfileID,
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
@@ -33,6 +34,7 @@ public actor RuntimeOverrideActivationCoordinator {
         return try await activateProfile(
             id,
             overrides: currentOverrides,
+            networkExtensionListener: networkExtensionListener,
             in: profileStore,
             validator: validator
         )
@@ -45,12 +47,14 @@ public actor RuntimeOverrideActivationCoordinator {
     public func validateProfile(
         _ id: ProfileID,
         overrides: RuntimeOverrides,
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws {
         let stagedURL = try await stagedRuntimeConfiguration(
             for: id,
             overrides: overrides,
+            networkExtensionListener: networkExtensionListener,
             in: profileStore
         )
         defer { try? FileManager.default.removeItem(at: stagedURL) }
@@ -65,6 +69,7 @@ public actor RuntimeOverrideActivationCoordinator {
     public func activateProfile(
         _ id: ProfileID,
         overrides: RuntimeOverrides,
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
@@ -72,6 +77,7 @@ public actor RuntimeOverrideActivationCoordinator {
         let stagedURL = try await stagedRuntimeConfiguration(
             for: id,
             overrides: overrides,
+            networkExtensionListener: networkExtensionListener,
             in: profileStore
         )
 
@@ -110,10 +116,15 @@ public actor RuntimeOverrideActivationCoordinator {
     private func stagedRuntimeConfiguration(
         for id: ProfileID,
         overrides: RuntimeOverrides,
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration?,
         in profileStore: ProfileStore
     ) async throws -> URL {
         let sourceData = try await profileStore.configurationData(for: id)
-        let runtimeData = try composer.applying(overrides, to: sourceData)
+        let runtimeData = try composer.applying(
+            overrides,
+            to: sourceData,
+            networkExtensionListener: networkExtensionListener
+        )
         return try await profileStore.stageRuntimeConfiguration(
             data: runtimeData,
             preferredName: "config.yaml"

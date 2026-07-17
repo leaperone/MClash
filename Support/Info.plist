@@ -17,7 +17,7 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.2</string>
+	<string>1.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleURLTypes</key>
@@ -42,6 +42,8 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Leaperone. All rights reserved.</string>
+	<key>NSSystemExtensionUsageDescription</key>
+	<string>MClash uses a network system extension to apply per-application proxy and DNS routing rules.</string>
     <key>SUFeedURL</key>
     <string>https://github.com/leaperone/MClash/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>

@@ -32,6 +32,8 @@ struct SettingsView: View {
                 .disabled(!model.canPerform(.changeSystemProxySettings))
             }
 
+            NetworkCaptureSettingsSection(model: model)
+
             Section("Local Proxy") {
                 if model.localListenerEndpoints.isEmpty {
                     Text(

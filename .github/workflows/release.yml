@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.0.2"
+        default: "1.1.0"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -129,10 +129,21 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          MCLASH_HOST_DEVID_PROFILE: ${{ secrets.MCLASH_HOST_DEVID_PROFILE }}
+          MCLASH_NETWORK_EXTENSION_DEVID_PROFILE: ${{ secrets.MCLASH_NETWORK_EXTENSION_DEVID_PROFILE }}
         shell: zsh {0}
         run: |
           set -euo pipefail
-          for name in CSC_LINK CSC_KEY_PASSWORD SPARKLE_PRIVATE_KEY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          for name in \
+            CSC_LINK \
+            CSC_KEY_PASSWORD \
+            SPARKLE_PRIVATE_KEY \
+            APPLE_ID \
+            APPLE_APP_SPECIFIC_PASSWORD \
+            APPLE_TEAM_ID \
+            MCLASH_HOST_DEVID_PROFILE \
+            MCLASH_NETWORK_EXTENSION_DEVID_PROFILE
+          do
             value="${(P)name:-}"
             if [[ -z "${value}" ]]; then
               print -u2 "Required release secret is unavailable: ${name}"
@@ -177,11 +188,184 @@ jobs:
             security find-identity -v -p codesigning "${keychain_path}"
             exit 1
           fi
+          identity_record="$(security find-identity -v -p codesigning "${keychain_path}" | \
+            sed -n '/"Developer ID Application:/{p;q;}')"
+          if [[ ! "${identity_record}" =~ '([0-9A-Fa-f]{40}) "([^"]+)"' ]]; then
+            print -u2 "Could not determine the Developer ID certificate fingerprint."
+            exit 1
+          fi
+          certificate_sha1="${match[1]:u}"
           print "Using ${identity}"
           {
             print "CODE_SIGN_IDENTITY=${identity}"
+            print "MCLASH_CERTIFICATE_SHA1=${certificate_sha1}"
             print "MCLASH_KEYCHAIN_PATH=${keychain_path}"
             print "MCLASH_CERTIFICATE_PATH=${certificate_path}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Validate Developer ID provisioning profiles
+        env:
+          MCLASH_HOST_DEVID_PROFILE: ${{ secrets.MCLASH_HOST_DEVID_PROFILE }}
+          MCLASH_NETWORK_EXTENSION_DEVID_PROFILE: ${{ secrets.MCLASH_NETWORK_EXTENSION_DEVID_PROFILE }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          signing_dir="${RUNNER_TEMP}/mclash-signing-material"
+          mkdir -p "${signing_dir}"
+          chmod 700 "${signing_dir}"
+          host_profile="${signing_dir}/host.provisionprofile"
+          extension_profile="${signing_dir}/network-extension.provisionprofile"
+          host_plist="${signing_dir}/host-profile.plist"
+          extension_plist="${signing_dir}/network-extension-profile.plist"
+          host_entitlements="${GITHUB_WORKSPACE}/Support/Signing/MClash-DeveloperID.entitlements"
+          extension_entitlements="${GITHUB_WORKSPACE}/Support/NetworkExtension/MClashNetworkExtension.DeveloperID.entitlements"
+
+          decode_profile() {
+            local encoded="$1"
+            local destination="$2"
+            if [[ "${encoded}" == data:*base64,* ]]; then
+              encoded="${encoded#*,}"
+            fi
+            print -rn -- "${encoded}" | \
+              LC_ALL=C tr -d '\r\n\t ' | \
+              base64 --decode > "${destination}"
+            if [[ ! -s "${destination}" ]]; then
+              print -u2 "Decoded provisioning profile is empty: ${destination:t}"
+              exit 1
+            fi
+          }
+
+          plist_array_contains() {
+            local plist="$1"
+            local key="$2"
+            local expected="$3"
+            local index=0
+            local value
+            while value="$(/usr/libexec/PlistBuddy -c "Print :${key}:${index}" "${plist}" 2>/dev/null)"; do
+              if [[ "${value}" == "${expected}" ]]; then
+                return 0
+              fi
+              (( index += 1 ))
+            done
+            return 1
+          }
+
+          validate_profile() {
+            local profile="$1"
+            local decoded_plist="$2"
+            local expected_bundle_id="$3"
+            local requires_install_entitlement="$4"
+            local team_identifier
+            local application_identifier_prefix
+            local application_identifier
+            local entitlement_team_identifier
+            local certificate_count
+            local certificate_index
+            local certificate_data
+            local certificate_path
+            local fingerprint
+            local fingerprint_output
+            local matching_certificate=0
+
+            security cms -D -i "${profile}" -o "${decoded_plist}"
+            plutil -lint "${decoded_plist}" >/dev/null
+            team_identifier="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "${decoded_plist}")"
+            application_identifier_prefix="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationIdentifierPrefix:0' "${decoded_plist}")"
+            application_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "${decoded_plist}")"
+            entitlement_team_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.team-identifier' "${decoded_plist}")"
+            if [[ "${team_identifier}" != "${APPLE_TEAM_ID}" || \
+                  "${entitlement_team_identifier}" != "${APPLE_TEAM_ID}" ]]; then
+              print -u2 "Provisioning profile ${profile:t} belongs to the wrong Apple team."
+              exit 1
+            fi
+            if [[ -z "${application_identifier_prefix}" || \
+                  "${application_identifier}" != "${application_identifier_prefix}.${expected_bundle_id}" ]]; then
+              print -u2 "Provisioning profile ${profile:t} does not match ${expected_bundle_id}."
+              exit 1
+            fi
+            for provider_type in \
+              app-proxy-provider-systemextension \
+              dns-proxy-systemextension
+            do
+              if ! plist_array_contains \
+                "${decoded_plist}" \
+                "Entitlements:com.apple.developer.networking.networkextension" \
+                "${provider_type}"; then
+                print -u2 "Provisioning profile ${profile:t} is missing ${provider_type}."
+                exit 1
+              fi
+            done
+            if [[ "${requires_install_entitlement}" == "1" ]] && \
+               [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.system-extension.install' "${decoded_plist}" 2>/dev/null)" != "true" ]]; then
+              print -u2 "The host profile does not authorize system extension installation."
+              exit 1
+            fi
+
+            certificate_count="$(plutil -extract DeveloperCertificates raw -o - "${decoded_plist}")"
+            for (( certificate_index = 0; certificate_index < certificate_count; certificate_index++ )); do
+              certificate_data="$(plutil -extract "DeveloperCertificates.${certificate_index}" raw -o - "${decoded_plist}")"
+              certificate_path="${signing_dir}/${profile:t}.${certificate_index}.cer"
+              print -rn -- "${certificate_data}" | base64 --decode > "${certificate_path}"
+              fingerprint_output="$(openssl x509 -inform DER -noout -fingerprint -sha1 -in "${certificate_path}")"
+              fingerprint="${fingerprint_output#*=}"
+              fingerprint="${fingerprint//:/}"
+              fingerprint="${fingerprint:u}"
+              rm -f "${certificate_path}"
+              if [[ "${fingerprint}" == "${MCLASH_CERTIFICATE_SHA1}" ]]; then
+                matching_certificate=1
+                break
+              fi
+            done
+            if [[ "${matching_certificate}" != "1" ]]; then
+              print -u2 "Provisioning profile ${profile:t} does not authorize the imported signing certificate."
+              exit 1
+            fi
+          }
+
+          for entitlement_file in "${host_entitlements}" "${extension_entitlements}"; do
+            plutil -lint "${entitlement_file}" >/dev/null
+            for provider_type in \
+              app-proxy-provider-systemextension \
+              dns-proxy-systemextension
+            do
+              if ! plist_array_contains \
+                "${entitlement_file}" \
+                "com.apple.developer.networking.networkextension" \
+                "${provider_type}"; then
+                print -u2 "${entitlement_file:t} is missing ${provider_type}."
+                exit 1
+              fi
+            done
+          done
+          if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.system-extension.install' "${host_entitlements}")" != "true" ]]; then
+            print -u2 "Host Developer ID entitlements are missing system-extension.install."
+            exit 1
+          fi
+
+          decode_profile "${MCLASH_HOST_DEVID_PROFILE}" "${host_profile}"
+          decode_profile "${MCLASH_NETWORK_EXTENSION_DEVID_PROFILE}" "${extension_profile}"
+          validate_profile "${host_profile}" "${host_plist}" "one.leaper.mclash" 1
+          validate_profile \
+            "${extension_profile}" \
+            "${extension_plist}" \
+            "one.leaper.mclash.network-extension" \
+            0
+          host_application_prefix="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationIdentifierPrefix:0' "${host_plist}")"
+          extension_application_prefix="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationIdentifierPrefix:0' "${extension_plist}")"
+          if [[ "${host_application_prefix}" != "${extension_application_prefix}" ]]; then
+            print -u2 "Host and Network Extension profiles use different application identifier prefixes."
+            exit 1
+          fi
+
+          {
+            print "MCLASH_HOST_DEVID_PROFILE_PATH=${host_profile}"
+            print "MCLASH_NETWORK_EXTENSION_DEVID_PROFILE_PATH=${extension_profile}"
+            print "MCLASH_HOST_DEVID_ENTITLEMENTS=${host_entitlements}"
+            print "MCLASH_NETWORK_EXTENSION_DEVID_ENTITLEMENTS=${extension_entitlements}"
+            print "MCLASH_TEAM_IDENTIFIER_PREFIX=${host_application_prefix}."
+            print "MCLASH_SIGNING_MATERIAL_DIR=${signing_dir}"
           } >> "${GITHUB_ENV}"
 
       - name: Build notarized release assets
@@ -242,9 +426,16 @@ jobs:
         shell: zsh {0}
         run: |
           set +e
-          if [[ -n "${MCLASH_KEYCHAIN_PATH:-}" && -f "${MCLASH_KEYCHAIN_PATH}" ]]; then
-            security delete-keychain "${MCLASH_KEYCHAIN_PATH}"
+          keychain_path="${MCLASH_KEYCHAIN_PATH:-${RUNNER_TEMP}/mclash-signing.keychain-db}"
+          certificate_path="${MCLASH_CERTIFICATE_PATH:-${RUNNER_TEMP}/mclash-developer-id.p12}"
+          signing_dir="${MCLASH_SIGNING_MATERIAL_DIR:-${RUNNER_TEMP}/mclash-signing-material}"
+          if [[ "${keychain_path}" == "${RUNNER_TEMP}"/* && -f "${keychain_path}" ]]; then
+            security delete-keychain "${keychain_path}"
           fi
-          if [[ -n "${MCLASH_CERTIFICATE_PATH:-}" && -f "${MCLASH_CERTIFICATE_PATH}" ]]; then
-            rm -f "${MCLASH_CERTIFICATE_PATH}"
+          if [[ "${certificate_path}" == "${RUNNER_TEMP}"/* && -f "${certificate_path}" ]]; then
+            rm -f "${certificate_path}"
+          fi
+          if [[ "${signing_dir}" == "${RUNNER_TEMP}"/* && -d "${signing_dir}" ]]; then
+            find "${signing_dir}" -type f -delete
+            rmdir "${signing_dir}"
           fi

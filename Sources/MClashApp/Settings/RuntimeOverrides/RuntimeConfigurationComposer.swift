@@ -9,9 +9,13 @@ public struct RuntimeConfigurationComposer: Sendable {
         self.validator = validator
     }
 
-    public func applying(_ overrides: RuntimeOverrides, to profileData: Data) throws -> Data {
+    public func applying(
+        _ overrides: RuntimeOverrides,
+        to profileData: Data,
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil
+    ) throws -> Data {
         try validator.validate(overrides)
-        guard !overrides.isEmpty else { return profileData }
+        guard !overrides.isEmpty || networkExtensionListener != nil else { return profileData }
         guard let yaml = String(data: profileData, encoding: .utf8) else {
             throw RuntimeConfigurationComposerError.profileIsNotUTF8
         }
@@ -24,6 +28,13 @@ public struct RuntimeConfigurationComposer: Sendable {
             lines = try applyingRuleOverrides(
                 prepend: prependRules,
                 append: appendRules,
+                to: lines,
+                newline: newline
+            )
+        }
+        if let networkExtensionListener {
+            lines = try applyingNetworkExtensionListener(
+                networkExtensionListener,
                 to: lines,
                 newline: newline
             )
@@ -115,9 +126,17 @@ public struct RuntimeConfigurationComposer: Sendable {
         return result
     }
 
-    public func applying(_ overrides: RuntimeOverrides, toProfileAt url: URL) throws -> Data {
+    public func applying(
+        _ overrides: RuntimeOverrides,
+        toProfileAt url: URL,
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil
+    ) throws -> Data {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        return try applying(overrides, to: data)
+        return try applying(
+            overrides,
+            to: data,
+            networkExtensionListener: networkExtensionListener
+        )
     }
 
     private func encodedEntries(for overrides: RuntimeOverrides) throws -> [(key: String, value: String)] {
@@ -350,6 +369,216 @@ public struct RuntimeConfigurationComposer: Sendable {
         return nil
     }
 
+    private func applyingNetworkExtensionListener(
+        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+        to lines: [YAMLLine],
+        newline: String
+    ) throws -> [YAMLLine] {
+        let listenerIndices = lines.indices.filter { lines[$0].rootMappingKey == "listeners" }
+        guard listenerIndices.count <= 1 else {
+            throw RuntimeConfigurationComposerError.multipleListenersSectionsUnsupported
+        }
+        guard let listenersIndex = listenerIndices.first else {
+            return try insertingNetworkExtensionListeners(
+                configuration,
+                into: lines,
+                newline: newline
+            )
+        }
+
+        var sectionEnd = listenersIndex + 1
+        while sectionEnd < lines.count {
+            let line = lines[sectionEnd]
+            if line.rootMappingKey != nil
+                || line.isRootDocumentStart
+                || line.isRootDocumentEnd
+                || line.isRootDirective {
+                break
+            }
+            sectionEnd += 1
+        }
+
+        let section = lines[listenersIndex ..< sectionEnd].map(\.raw).joined()
+        try rejectReservedListenerNameConflicts(in: section)
+
+        switch lines[listenersIndex].rootValueStyle {
+        case .block:
+            return try appendingNetworkExtensionListenersToBlockSequence(
+                configuration,
+                listenersIndex: listenersIndex,
+                sectionEnd: sectionEnd,
+                lines: lines,
+                newline: newline
+            )
+        case .flowSequence:
+            return try appendingNetworkExtensionListenersToFlowSequence(
+                configuration,
+                listenersIndex: listenersIndex,
+                sectionEnd: sectionEnd,
+                lines: lines
+            )
+        case .other:
+            throw RuntimeConfigurationComposerError.listenersSectionMustBeSequence
+        }
+    }
+
+    private func insertingNetworkExtensionListeners(
+        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+        into lines: [YAMLLine],
+        newline: String
+    ) throws -> [YAMLLine] {
+        let insertionIndex = lines.lastIndex(where: \.isRootDocumentEnd) ?? lines.endIndex
+        var insertion = ["listeners:\(newline)"]
+        insertion.append(contentsOf: try encodedNetworkExtensionListenerBlocks(
+            configuration,
+            sequencePrefix: "  ",
+            newline: newline
+        ))
+
+        var rendered = lines.map(\.raw)
+        if insertionIndex > 0,
+           !rendered[insertionIndex - 1].hasSuffix("\n"),
+           !rendered[insertionIndex - 1].hasSuffix("\r") {
+            insertion.insert(newline, at: 0)
+        }
+        rendered.insert(contentsOf: insertion, at: insertionIndex)
+        return YAMLLine.split(rendered.joined())
+    }
+
+    private func appendingNetworkExtensionListenersToBlockSequence(
+        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+        listenersIndex: Int,
+        sectionEnd: Int,
+        lines: [YAMLLine],
+        newline: String
+    ) throws -> [YAMLLine] {
+        let content = Array(lines[(listenersIndex + 1) ..< sectionEnd])
+        let firstDataLine = content.first(where: { !$0.isYAMLTrivia })
+        let sequencePrefix: String
+        if let firstDataLine {
+            guard let prefix = firstDataLine.sequenceItemPrefix else {
+                throw RuntimeConfigurationComposerError.listenersSectionMustBeSequence
+            }
+            sequencePrefix = prefix
+        } else {
+            sequencePrefix = "  "
+        }
+
+        var replacement = lines[listenersIndex ..< sectionEnd].map(\.raw)
+        appendRawLines(
+            try encodedNetworkExtensionListenerBlocks(
+                configuration,
+                sequencePrefix: sequencePrefix,
+                newline: newline
+            ),
+            newline: newline,
+            to: &replacement
+        )
+
+        var rendered = lines.map(\.raw)
+        rendered.replaceSubrange(listenersIndex ..< sectionEnd, with: replacement)
+        return YAMLLine.split(rendered.joined())
+    }
+
+    private func appendingNetworkExtensionListenersToFlowSequence(
+        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+        listenersIndex: Int,
+        sectionEnd: Int,
+        lines: [YAMLLine]
+    ) throws -> [YAMLLine] {
+        let section = lines[listenersIndex ..< sectionEnd].map(\.raw).joined()
+        guard let colon = section.firstIndex(of: ":"),
+              let opening = section[section.index(after: colon)...].firstIndex(where: { !$0.isWhitespace }),
+              section[opening] == "[",
+              let closing = flowSequenceClosingBracket(in: section, openingAt: opening) else {
+            throw RuntimeConfigurationComposerError.listenersSectionMustBeSequence
+        }
+
+        let bodyStart = section.index(after: opening)
+        var body = String(section[bodyStart ..< closing])
+        let generated = try encodedNetworkExtensionListenerFlowMappings(configuration)
+            .joined(separator: ", ")
+        if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body = generated
+        } else {
+            let trailingWhitespace = body.reversed().prefix(while: \.isWhitespace).count
+            let insertion = body.index(body.endIndex, offsetBy: -trailingWhitespace)
+            body.insert(contentsOf: ", " + generated, at: insertion)
+        }
+
+        let replacement = String(section[...opening]) + body + String(section[closing...])
+        var rendered = lines.map(\.raw)
+        rendered.replaceSubrange(listenersIndex ..< sectionEnd, with: [replacement])
+        return YAMLLine.split(rendered.joined())
+    }
+
+    private func encodedNetworkExtensionListenerBlocks(
+        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+        sequencePrefix: String,
+        newline: String
+    ) throws -> [String] {
+        try [
+            (NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName,
+             NetworkExtensionMihomoListenerConfiguration.ipv4Host),
+            (NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName,
+             NetworkExtensionMihomoListenerConfiguration.ipv6Host),
+        ].flatMap { name, host in
+            let fieldPrefix = sequencePrefix + "  "
+            var output = [
+                "\(sequencePrefix)- name: \(try yamlQuoted(name))\(newline)",
+                "\(fieldPrefix)type: socks\(newline)",
+                "\(fieldPrefix)port: \(configuration.port)\(newline)",
+                "\(fieldPrefix)listen: \(try yamlQuoted(host))\(newline)",
+                "\(fieldPrefix)udp: true\(newline)",
+            ]
+            if let authentication = configuration.authentication {
+                output.append("\(fieldPrefix)users:\(newline)")
+                output.append(
+                    "\(fieldPrefix)  - username: \(try yamlQuoted(authentication.username))\(newline)"
+                )
+                output.append(
+                    "\(fieldPrefix)    password: \(try yamlQuoted(authentication.password))\(newline)"
+                )
+            } else {
+                // Explicitly bypass the profile's global authentication. The
+                // listener is private because its bind address is loopback.
+                output.append("\(fieldPrefix)users: []\(newline)")
+            }
+            return output
+        }
+    }
+
+    private func encodedNetworkExtensionListenerFlowMappings(
+        _ configuration: NetworkExtensionMihomoListenerConfiguration
+    ) throws -> [String] {
+        try [
+            (NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName,
+             NetworkExtensionMihomoListenerConfiguration.ipv4Host),
+            (NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName,
+             NetworkExtensionMihomoListenerConfiguration.ipv6Host),
+        ].map { name, host in
+            let users: String
+            if let authentication = configuration.authentication {
+                users = "[{\"username\": \(try yamlQuoted(authentication.username)), "
+                    + "\"password\": \(try yamlQuoted(authentication.password))}]"
+            } else {
+                users = "[]"
+            }
+            return "{\"name\": \(try yamlQuoted(name)), \"type\": \"socks\", "
+                + "\"port\": \(configuration.port), \"listen\": \(try yamlQuoted(host)), "
+                + "\"udp\": true, \"users\": \(users)}"
+        }
+    }
+
+    private func rejectReservedListenerNameConflicts(in section: String) throws {
+        for name in [
+            NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName,
+            NetworkExtensionMihomoListenerConfiguration.ipv6ListenerName,
+        ] where section.contains(name) {
+            throw RuntimeConfigurationComposerError.reservedListenerNameConflict(name)
+        }
+    }
+
     private func encodedDNSSection(
         _ dns: RuntimeDNSOverrides,
         newline: String
@@ -468,7 +697,10 @@ public enum RuntimeConfigurationComposerError: Error, Equatable, Sendable {
     case profileIsNotUTF8
     case multipleYAMLDocumentsUnsupported
     case multipleRulesSectionsUnsupported
+    case multipleListenersSectionsUnsupported
     case rulesSectionMustBeSequence
+    case listenersSectionMustBeSequence
+    case reservedListenerNameConflict(String)
     case scalarEncodingFailed
 }
 
@@ -481,8 +713,14 @@ extension RuntimeConfigurationComposerError: LocalizedError {
             "Runtime overrides do not support profiles containing multiple YAML documents."
         case .multipleRulesSectionsUnsupported:
             "Runtime rule overrides do not support profiles containing duplicate top-level rules sections."
+        case .multipleListenersSectionsUnsupported:
+            "The Network Extension listener layer does not support profiles containing duplicate top-level listeners sections."
         case .rulesSectionMustBeSequence:
             "The profile's top-level rules value must be a block or inline YAML sequence."
+        case .listenersSectionMustBeSequence:
+            "The profile's top-level listeners value must be a block or inline YAML sequence."
+        case let .reservedListenerNameConflict(name):
+            "The profile already uses the reserved Network Extension listener name \(name)."
         case .scalarEncodingFailed:
             "A runtime override could not be encoded as a YAML scalar."
         }

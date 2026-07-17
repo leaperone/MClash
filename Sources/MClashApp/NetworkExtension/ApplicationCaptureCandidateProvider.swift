@@ -1,0 +1,282 @@
+import AppKit
+import Darwin
+import Foundation
+import MClashNetworkShared
+import Security
+
+struct ApplicationCaptureCandidate: Identifiable, Equatable, Sendable {
+    let id: String
+    let displayName: String
+    let bundleIdentifier: String?
+    let executablePath: String
+    let runningProcessIdentifiers: [Int32]
+    let matcher: ApplicationSourceMatcher
+}
+
+struct RunningProcessCaptureCandidate: Identifiable, Equatable, Sendable {
+    let id: String
+    let displayName: String
+    let processIdentifier: Int32
+    let executablePath: String
+    let matcher: ProcessInstanceSourceMatcher
+}
+
+enum ApplicationCaptureCandidateError: Error, Equatable, LocalizedError, Sendable {
+    case missingExecutable(URL)
+    case codeObjectLookupFailed(status: Int32)
+    case invalidCodeSignature(status: Int32)
+    case signingInformationFailed(status: Int32)
+    case unsignedApplication(URL)
+    case designatedRequirementFailed(status: Int32)
+    case requirementStringFailed(status: Int32)
+
+    var errorDescription: String? {
+        switch self {
+        case let .missingExecutable(url):
+            "No executable was found for \(url.lastPathComponent)."
+        case let .codeObjectLookupFailed(status):
+            "The application code object could not be opened (OSStatus \(status))."
+        case let .invalidCodeSignature(status):
+            "The application code signature is invalid (OSStatus \(status))."
+        case let .signingInformationFailed(status):
+            "The application signing identity could not be read (OSStatus \(status))."
+        case let .unsignedApplication(url):
+            "\(url.lastPathComponent) is unsigned and cannot be selected as an application rule. Use an executable-path rule instead."
+        case let .designatedRequirementFailed(status):
+            "The application designated requirement could not be read (OSStatus \(status))."
+        case let .requirementStringFailed(status):
+            "The application designated requirement could not be serialized (OSStatus \(status))."
+        }
+    }
+}
+
+/// Produces security-stable application matchers. Bundle identifiers are only
+/// labels; the designated requirement remains the primary matching identity.
+@MainActor
+struct ApplicationCaptureCandidateProvider {
+    func runningApplications() -> [ApplicationCaptureCandidate] {
+        let applications = NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy != .prohibited && $0.bundleURL != nil
+        }
+        let grouped = Dictionary(grouping: applications) { application in
+            application.bundleURL?.standardizedFileURL.path ?? ""
+        }
+
+        return grouped.compactMap { path, applications in
+            guard !path.isEmpty,
+                  let bundleURL = applications.first?.bundleURL,
+                  let candidate = try? candidate(
+                    bundleURL: bundleURL,
+                    displayName: applications.first?.localizedName,
+                    processIdentifiers: applications.map(\.processIdentifier)
+                  )
+            else {
+                return nil
+            }
+            return candidate
+        }
+        .sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    func candidate(
+        bundleURL: URL,
+        displayName: String? = nil,
+        processIdentifiers: [pid_t] = []
+    ) throws -> ApplicationCaptureCandidate {
+        let canonicalBundleURL = bundleURL.resolvingSymlinksInPath().standardizedFileURL
+        guard let executableURL = Bundle(url: canonicalBundleURL)?.executableURL else {
+            throw ApplicationCaptureCandidateError.missingExecutable(canonicalBundleURL)
+        }
+        let identity = try codeIdentity(at: canonicalBundleURL)
+        let bundleIdentifier = Bundle(url: canonicalBundleURL)?.bundleIdentifier
+            ?? identity.securedBundleIdentifier
+        let matcher = ApplicationSourceMatcher(
+            designatedRequirement: identity.designatedRequirement,
+            signingIdentifier: identity.signingIdentifier,
+            teamIdentifier: identity.teamIdentifier,
+            bundleIdentifier: bundleIdentifier
+        )
+        let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName: String
+        if let name, !name.isEmpty {
+            resolvedName = name
+        } else {
+            resolvedName = (Bundle(url: canonicalBundleURL)?.object(
+                forInfoDictionaryKey: "CFBundleDisplayName"
+            ) as? String) ?? canonicalBundleURL.deletingPathExtension().lastPathComponent
+        }
+
+        return ApplicationCaptureCandidate(
+            id: canonicalBundleURL.path,
+            displayName: resolvedName,
+            bundleIdentifier: bundleIdentifier,
+            executablePath: executableURL.resolvingSymlinksInPath().standardizedFileURL.path,
+            runningProcessIdentifiers: Array(Set(processIdentifiers.map { Int32($0) })).sorted(),
+            matcher: matcher
+        )
+    }
+
+    func runningProcesses(
+        from applications: [ApplicationCaptureCandidate]
+    ) -> [RunningProcessCaptureCandidate] {
+        let applicationByPID = Dictionary(uniqueKeysWithValues: applications.flatMap { application in
+            application.runningProcessIdentifiers.map { ($0, application) }
+        })
+        return allProcessIdentifiers().compactMap { processIdentifier in
+            guard let firstStartTime = processStartTime(for: processIdentifier),
+                  let executablePath = executablePath(for: processIdentifier),
+                  processStartTime(for: processIdentifier) == firstStartTime else {
+                return nil
+            }
+            let path = URL(fileURLWithPath: executablePath)
+                .resolvingSymlinksInPath()
+                .standardizedFileURL.path
+            let matcher = ProcessInstanceSourceMatcher(
+                processIdentifier: processIdentifier,
+                startTime: firstStartTime,
+                canonicalExecutablePath: path
+            )
+            let name = applicationByPID[processIdentifier]?.displayName
+                ?? URL(fileURLWithPath: path).lastPathComponent
+            return RunningProcessCaptureCandidate(
+                id: "\(processIdentifier):\(firstStartTime.seconds):\(firstStartTime.microseconds)",
+                displayName: "\(name) · PID \(processIdentifier)",
+                processIdentifier: processIdentifier,
+                executablePath: path,
+                matcher: matcher
+            )
+        }
+        .sorted {
+            let nameOrder = $0.displayName.localizedStandardCompare($1.displayName)
+            if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+            return $0.processIdentifier < $1.processIdentifier
+        }
+    }
+
+    private func allProcessIdentifiers() -> [pid_t] {
+        let requiredBytes = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
+        guard requiredBytes > 0 else { return [] }
+        let elementSize = MemoryLayout<pid_t>.size
+        // Leave headroom for processes created between the sizing and fill calls.
+        var identifiers = [pid_t](
+            repeating: 0,
+            count: (Int(requiredBytes) / elementSize) + 64
+        )
+        let capacity = identifiers.count * elementSize
+        let actualBytes = identifiers.withUnsafeMutableBytes { buffer in
+            proc_listpids(
+                UInt32(PROC_ALL_PIDS),
+                0,
+                buffer.baseAddress,
+                Int32(capacity)
+            )
+        }
+        guard actualBytes > 0 else { return [] }
+        return Array(identifiers.prefix(Int(actualBytes) / elementSize)).filter { $0 > 0 }
+    }
+
+    private func executablePath(for processIdentifier: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let byteCount = buffer.withUnsafeMutableBufferPointer { pointer in
+            proc_pidpath(processIdentifier, pointer.baseAddress, UInt32(pointer.count))
+        }
+        guard byteCount > 0 else { return nil }
+        let bytes = buffer.prefix(min(Int(byteCount), buffer.count))
+            .prefix { $0 != 0 }
+            .map { UInt8(bitPattern: $0) }
+        let path = String(decoding: bytes, as: UTF8.self)
+        return path.isEmpty ? nil : path
+    }
+
+    private func processStartTime(for processIdentifier: pid_t) -> ProcessStartTime? {
+        var info = proc_bsdinfo()
+        let expectedSize = MemoryLayout<proc_bsdinfo>.size
+        let actualSize = withUnsafeMutablePointer(to: &info) { pointer in
+            proc_pidinfo(
+                processIdentifier,
+                PROC_PIDTBSDINFO,
+                0,
+                pointer,
+                Int32(expectedSize)
+            )
+        }
+        guard actualSize == expectedSize else { return nil }
+        return try? ProcessStartTime(
+            seconds: info.pbi_start_tvsec,
+            microseconds: UInt32(info.pbi_start_tvusec)
+        )
+    }
+
+    private func codeIdentity(at bundleURL: URL) throws -> SignedCodeIdentity {
+        var staticCode: SecStaticCode?
+        let createStatus = SecStaticCodeCreateWithPath(
+            bundleURL as CFURL,
+            SecCSFlags(),
+            &staticCode
+        )
+        guard createStatus == errSecSuccess, let staticCode else {
+            throw ApplicationCaptureCandidateError.codeObjectLookupFailed(status: createStatus)
+        }
+
+        let validationFlags = SecCSFlags(
+            rawValue: kSecCSStrictValidate | kSecCSDoNotValidateResources
+        )
+        let validityStatus = SecStaticCodeCheckValidity(staticCode, validationFlags, nil)
+        if validityStatus == errSecCSUnsigned {
+            throw ApplicationCaptureCandidateError.unsignedApplication(bundleURL)
+        }
+        guard validityStatus == errSecSuccess else {
+            throw ApplicationCaptureCandidateError.invalidCodeSignature(status: validityStatus)
+        }
+
+        var signingInformation: CFDictionary?
+        let signingStatus = SecCodeCopySigningInformation(
+            staticCode,
+            SecCSFlags(rawValue: kSecCSSigningInformation | kSecCSRequirementInformation),
+            &signingInformation
+        )
+        guard signingStatus == errSecSuccess,
+              let information = signingInformation as NSDictionary?,
+              let signingIdentifier = information[kSecCodeInfoIdentifier] as? String
+        else {
+            throw ApplicationCaptureCandidateError.signingInformationFailed(status: signingStatus)
+        }
+
+        var requirement: SecRequirement?
+        let requirementStatus = SecCodeCopyDesignatedRequirement(
+            staticCode,
+            SecCSFlags(),
+            &requirement
+        )
+        guard requirementStatus == errSecSuccess, let requirement else {
+            throw ApplicationCaptureCandidateError.designatedRequirementFailed(
+                status: requirementStatus
+            )
+        }
+        var requirementText: CFString?
+        let stringStatus = SecRequirementCopyString(
+            requirement,
+            SecCSFlags(),
+            &requirementText
+        )
+        guard stringStatus == errSecSuccess,
+              let designatedRequirement = requirementText as String?,
+              !designatedRequirement.isEmpty
+        else {
+            throw ApplicationCaptureCandidateError.requirementStringFailed(status: stringStatus)
+        }
+
+        let securedInfo = information[kSecCodeInfoPList] as? NSDictionary
+        return SignedCodeIdentity(
+            signingIdentifier: signingIdentifier,
+            teamIdentifier: information[kSecCodeInfoTeamIdentifier] as? String,
+            designatedRequirement: designatedRequirement,
+            codeDirectoryHash: information[kSecCodeInfoUnique] as? Data,
+            securedBundleIdentifier: securedInfo?["CFBundleIdentifier"] as? String,
+            mainExecutablePath: (information[kSecCodeInfoMainExecutable] as? URL)?.path,
+            isApplePlatformCode: information[kSecCodeInfoPlatformIdentifier] != nil
+        )
+    }
+}

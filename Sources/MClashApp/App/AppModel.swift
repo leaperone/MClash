@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
+import MClashNetworkShared
 import Observation
+import Security
 
 @MainActor
 @Observable
@@ -48,6 +50,15 @@ final class AppModel {
         case enabling
         case on
         case disabling
+        case failed(String)
+    }
+
+    enum NetworkCaptureState: Equatable {
+        case off
+        case enabling
+        case on(revision: UInt64)
+        case disabling
+        case requiresReboot
         case failed(String)
     }
 
@@ -106,6 +117,7 @@ final class AppModel {
         case restoreBackup
         case changeMode
         case changeSystemProxy
+        case changeNetworkCapture
         case selectProxy(String)
         case clearProxyOverride(String)
         case measureDelay(String)
@@ -206,12 +218,15 @@ final class AppModel {
     private(set) var globalProxyGroupIsRelevant = false
     var systemProxyState: SystemProxyState = .off
     private(set) var systemProxyPreferences: SystemProxyPreferences = .defaults
+    private(set) var networkCaptureState: NetworkCaptureState = .off
+    private(set) var networkCapturePreferences = NetworkCapturePreferences.disabled()
     private(set) var launchAtLogin = false
     private(set) var notificationsEnabled = false
     var controllerState: ControllerState = .idle
     private(set) var pendingSubscriptionImport: SubscriptionImportRequest?
     private(set) var pendingMode: String?
     private(set) var pendingSystemProxyEnabled: Bool?
+    private(set) var pendingNetworkCaptureEnabled: Bool?
     private(set) var pendingProxySelections: [String: String] = [:]
     var autoConnectOnLaunch: Bool {
         didSet {
@@ -241,6 +256,8 @@ final class AppModel {
     private let profileLayout: ProfileDirectoryLayout?
     private let runtimeOverrideCoordinator: RuntimeOverrideActivationCoordinator?
     private let systemProxyPreferencesStore: SystemProxyPreferencesStore?
+    private let networkCaptureConfigurationStore: NetworkCaptureConfigurationStore?
+    private let networkExtensionControl: any NetworkExtensionControlling
     private let systemProxyManager: SystemProxyManager
     private let localPortProbe: LocalPortProbe
     private let geoDataInstaller: BundledGeoDataInstaller
@@ -248,6 +265,7 @@ final class AppModel {
     private let profileBackupService = ProfileBackupService()
     private let notificationCenter = AppNotificationCenter()
     private var managedMixedPort: Int?
+    private var networkExtensionMihomoListener: NetworkExtensionMihomoListenerConfiguration?
     private var rulesUseGlobalProxy = false
     private var connectionsUseGlobalProxy = false
     private var apiClient: MihomoAPIClient?
@@ -285,7 +303,8 @@ final class AppModel {
         profileDirectoryLayout: ProfileDirectoryLayout? = nil,
         profileStoreOverride: ProfileStore? = nil,
         geoDataInstaller: BundledGeoDataInstaller = .applicationBundle(),
-        preferenceDefaults: UserDefaults = .standard
+        preferenceDefaults: UserDefaults = .standard,
+        networkExtensionControl: any NetworkExtensionControlling = NetworkExtensionControlService.live()
     ) {
         self.supervisor = supervisor
         self.binaryLocator = binaryLocator
@@ -294,6 +313,7 @@ final class AppModel {
         self.localPortProbe = localPortProbe
         self.geoDataInstaller = geoDataInstaller
         self.preferenceDefaults = preferenceDefaults
+        self.networkExtensionControl = networkExtensionControl
         if preferenceDefaults.object(forKey: Self.autoConnectOnLaunchKey) == nil {
             autoConnectOnLaunch = true
         } else {
@@ -327,11 +347,15 @@ final class AppModel {
             systemProxyPreferencesStore = try? SystemProxyPreferencesStore(
                 profileLayout: layout
             )
+            networkCaptureConfigurationStore = try? NetworkCaptureConfigurationStore(
+                profileLayout: layout
+            )
         } else {
             profileLayout = nil
             profileStore = nil
             runtimeOverrideCoordinator = nil
             systemProxyPreferencesStore = nil
+            networkCaptureConfigurationStore = nil
         }
 
         eventTask = Task { [weak self, events = supervisor.events] in
@@ -375,6 +399,12 @@ final class AppModel {
                 }
                 if let systemProxyPreferencesStore {
                     systemProxyPreferences = try await systemProxyPreferencesStore.load()
+                }
+                if let networkCaptureConfigurationStore {
+                    networkCapturePreferences = try await networkCaptureConfigurationStore.load()
+                    if networkCapturePreferences.enabled {
+                        networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener()
+                    }
                 }
                 profiles = try await profileStore.profiles()
                 activeProfileID = try await profileStore.activeProfileID()
@@ -590,6 +620,8 @@ final class AppModel {
         if preparationInProgress { return true }
         if case .enabling = systemProxyState { return true }
         if case .disabling = systemProxyState { return true }
+        if case .enabling = networkCaptureState { return true }
+        if case .disabling = networkCaptureState { return true }
         return operations.contains { $0.serializesNetworkState || $0.isCoreBound }
     }
 
@@ -986,6 +1018,7 @@ final class AppModel {
         if let runtimeOverrideCoordinator {
             return try await runtimeOverrideCoordinator.activateProfile(
                 id,
+                networkExtensionListener: activeNetworkExtensionMihomoListener,
                 in: profileStore,
                 validator: validator
             )
@@ -1004,6 +1037,7 @@ final class AppModel {
         return try await runtimeOverrideCoordinator.activateProfile(
             id,
             overrides: overrides,
+            networkExtensionListener: activeNetworkExtensionMihomoListener,
             in: profileStore,
             validator: validator
         )
@@ -1051,6 +1085,7 @@ final class AppModel {
             try await runtimeOverrideCoordinator.validateProfile(
                 activeProfileID,
                 overrides: overrides,
+                networkExtensionListener: activeNetworkExtensionMihomoListener,
                 in: profileStore,
                 validator: validator
             )
@@ -1409,6 +1444,9 @@ final class AppModel {
             if case let .running(session) = state {
                 await controllerDidStart(session)
             }
+            if isConnected, controllerIsReady, networkCapturePreferences.enabled {
+                await performNetworkCaptureActivation()
+            }
             return isConnected && controllerIsReady
         } catch is CancellationError {
             return false
@@ -1422,6 +1460,9 @@ final class AppModel {
     @discardableResult
     private func performDisconnect() async -> Bool {
         shouldReenableSystemProxyAfterCrash = false
+        if networkCaptureIsActive {
+            guard await performNetworkCaptureDeactivation() else { return false }
+        }
         if systemProxyEnabled || hasSystemProxySnapshot {
             guard await performDisableSystemProxy() else { return false }
         }
@@ -1714,6 +1755,174 @@ final class AppModel {
         }
     }
 
+    func setNetworkCaptureEnabled(_ enabled: Bool) async {
+        guard enabled != networkCapturePreferences.enabled else { return }
+        do {
+            try await applyNetworkCaptureRules(
+                networkCapturePreferences.snapshot.rules,
+                enabled: enabled,
+                dnsEnabled: false
+            )
+        } catch {
+            recordOperationFailure(error, context: "Network capture update")
+        }
+    }
+
+    func applyNetworkCaptureRules(
+        _ rules: [CaptureRule],
+        enabled: Bool,
+        dnsEnabled: Bool = false
+    ) async throws {
+        guard begin(.changeNetworkCapture) else {
+            throw AppModelError.operationInProgress
+        }
+        pendingNetworkCaptureEnabled = enabled
+        defer {
+            pendingNetworkCaptureEnabled = nil
+            end(.changeNetworkCapture)
+        }
+        guard let store = networkCaptureConfigurationStore,
+              let activeProfileID,
+              let profileStore,
+              runtimeOverrideCoordinator != nil
+        else {
+            throw AppModelError.profileStoreUnavailable
+        }
+
+        if enabled, systemProxyEnabled || hasSystemProxySnapshot {
+            guard await performDisableSystemProxy() else {
+                throw AppModelError.systemProxyRestoreFailed
+            }
+        }
+
+        let previous = networkCapturePreferences
+        let previousListener = networkExtensionMihomoListener
+        let wasConnected = isConnected || isBusy
+        do {
+            if enabled, networkExtensionMihomoListener == nil {
+                networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener()
+            }
+            let candidate = try await store.replaceRules(
+                rules,
+                enabled: enabled,
+                // DNS capture stays opt-in and is enabled only when a working
+                // DNS data plane is packaged by the provider.
+                dnsEnabled: enabled && dnsEnabled,
+                failOpen: true
+            )
+            networkCapturePreferences = candidate
+            if !enabled {
+                networkExtensionMihomoListener = nil
+            }
+
+            if wasConnected {
+                guard await performDisconnect() else {
+                    throw AppModelError.networkCaptureDisableFailed
+                }
+            }
+
+            let activation = try await activateStoredProfile(
+                activeProfileID,
+                validator: try makeProfileValidator()
+            )
+            self.activeProfileID = activation.profileID
+            activeConfigURL = activation.configurationURL
+            profiles = try await profileStore.profiles()
+
+            if wasConnected {
+                guard await performConnect() else {
+                    throw AppModelError.profileActivationFailed(
+                        errorMessage ?? "The core could not restart with network capture settings."
+                    )
+                }
+            } else {
+                networkCaptureState = .off
+            }
+            appendSupervisorLog(
+                enabled
+                    ? "Per-application network capture is enabled."
+                    : "Per-application network capture is disabled."
+            )
+        } catch {
+            let primaryError = error
+            do {
+                networkExtensionMihomoListener = previous.enabled ? previousListener : nil
+                networkCapturePreferences = try await store.replaceRules(
+                    previous.snapshot.rules,
+                    enabled: previous.enabled,
+                    dnsEnabled: previous.dnsEnabled,
+                    failOpen: previous.failOpen
+                )
+                if isConnected || isBusy {
+                    _ = await performDisconnect()
+                }
+                let rollback = try await activateStoredProfile(
+                    activeProfileID,
+                    validator: try makeProfileValidator()
+                )
+                self.activeProfileID = rollback.profileID
+                activeConfigURL = rollback.configurationURL
+                if wasConnected { _ = await performConnect() }
+            } catch {
+                appendSupervisorLog(
+                    "Network capture rollback failed: \(error.localizedDescription)"
+                )
+            }
+            throw primaryError
+        }
+    }
+
+    private func performNetworkCaptureActivation() async {
+        guard networkCapturePreferences.enabled else {
+            networkCaptureState = .off
+            return
+        }
+        guard let listener = activeNetworkExtensionMihomoListener else {
+            networkCaptureState = .failed("The private mihomo listener is unavailable.")
+            return
+        }
+        networkCaptureState = .enabling
+        do {
+            try await localPortProbe.waitUntilListening(ports: [Int(listener.port)])
+            let configuration = try NetworkExtensionRuntimeConfiguration(
+                preferences: networkCapturePreferences,
+                mihomoListener: listener
+            )
+            switch try await networkExtensionControl.enable(configuration) {
+            case .running:
+                networkCaptureState = .on(revision: configuration.revision)
+                appendSupervisorLog(
+                    "Network Extension is routing selected flows through mihomo."
+                )
+            case .requiresReboot:
+                networkCaptureState = .requiresReboot
+                appendSupervisorLog(
+                    "Network Extension installation requires a Mac restart."
+                )
+            }
+        } catch {
+            let message = error.localizedDescription
+            networkCaptureState = .failed(message)
+            appendSupervisorLog("Network Extension activation failed: \(message)")
+        }
+    }
+
+    @discardableResult
+    private func performNetworkCaptureDeactivation() async -> Bool {
+        networkCaptureState = .disabling
+        do {
+            try await networkExtensionControl.disable()
+            networkCaptureState = .off
+            return true
+        } catch {
+            let message = error.localizedDescription
+            networkCaptureState = .failed(message)
+            errorMessage = message
+            appendSupervisorLog("Network Extension shutdown failed: \(message)")
+            return false
+        }
+    }
+
     func toggleSystemProxy() async {
         guard begin(.changeSystemProxy) else { return }
         pendingSystemProxyEnabled = !systemProxyEnabled
@@ -1778,6 +1987,10 @@ final class AppModel {
     private func performSystemProxyActivation() async {
         if case .on = systemProxyState { return }
         if case .enabling = systemProxyState { return }
+        guard !networkCapturePreferences.enabled else {
+            errorMessage = "Turn off per-application network capture before enabling the macOS system proxy."
+            return
+        }
         guard isConnected, runtimeConfig != nil else {
             errorMessage = "Connect the core before enabling the macOS system proxy."
             return
@@ -1988,6 +2201,11 @@ final class AppModel {
         if let operation = systemProxyEnableOperation {
             await operation.task.value
         }
+        if networkCaptureIsActive,
+           !(await performNetworkCaptureDeactivation()) {
+            shutdownInProgress = false
+            return false
+        }
         if systemProxyEnabled || hasSystemProxySnapshot {
             guard await performDisableSystemProxy() else {
                 // Keep the failure user-recoverable without allowing another Scene
@@ -2015,6 +2233,9 @@ final class AppModel {
         shouldReenableSystemProxyAfterCrash = false
         if let operation = systemProxyEnableOperation {
             await operation.task.value
+        }
+        if networkCaptureIsActive {
+            _ = await performNetworkCaptureDeactivation()
         }
         trafficTask?.cancel()
         connectionsTask?.cancel()
@@ -2091,6 +2312,11 @@ final class AppModel {
                 }
                 let shouldReenable = systemProxyEnabled
                 stopControllerStreams()
+                if networkCaptureIsActive {
+                    Task { [weak self] in
+                        _ = await self?.performNetworkCaptureDeactivation()
+                    }
+                }
                 if shouldReenable || hasSystemProxySnapshot {
                     beginCrashSystemProxyRestore(reenableAfterRestart: shouldReenable)
                 }
@@ -2098,6 +2324,11 @@ final class AppModel {
             if case .stopped = state {
                 shouldReenableSystemProxyAfterCrash = false
                 stopControllerStreams()
+                if networkCaptureIsActive {
+                    Task { [weak self] in
+                        _ = await self?.performNetworkCaptureDeactivation()
+                    }
+                }
                 if systemProxyEnabled || hasSystemProxySnapshot {
                     Task { [weak self] in await self?.performDisableSystemProxy() }
                 }
@@ -2112,6 +2343,9 @@ final class AppModel {
 
     private func handleRunningSession(_ session: CoreSession) async {
         await controllerDidStart(session)
+        if controllerIsReady, isConnected, networkCapturePreferences.enabled {
+            await performNetworkCaptureActivation()
+        }
         guard shouldReenableSystemProxyAfterCrash,
               controllerIsReady,
               isConnected else { return }
@@ -2934,6 +3168,38 @@ final class AppModel {
         port > 0 ? port : nil
     }
 
+    private var activeNetworkExtensionMihomoListener: NetworkExtensionMihomoListenerConfiguration? {
+        networkCapturePreferences.enabled ? networkExtensionMihomoListener : nil
+    }
+
+    private var networkCaptureIsActive: Bool {
+        switch networkCaptureState {
+        case .enabling, .on, .disabling, .failed:
+            true
+        case .off, .requiresReboot:
+            false
+        }
+    }
+
+    private func makeNetworkExtensionMihomoListener() throws
+        -> NetworkExtensionMihomoListenerConfiguration
+    {
+        var randomBytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
+        guard status == errSecSuccess else {
+            throw AppModelError.secureRandomGenerationFailed(status)
+        }
+        let password = Data(randomBytes).base64EncodedString()
+        let authentication = try NetworkExtensionMihomoAuthentication(
+            username: "mclash-network-extension",
+            password: password
+        )
+        return try NetworkExtensionMihomoListenerConfiguration(
+            port: localPortProbe.availableTCPPort(),
+            authentication: authentication
+        )
+    }
+
     private func refreshActiveProfileListenerPorts() async {
         guard let activeProfileID, let profileStore else {
             activeProfileListenerPorts = RuntimePortOverrides()
@@ -2996,7 +3262,8 @@ private extension AppModel.Operation {
              .changeApplicationSettings,
              .exportBackup,
              .restoreBackup,
-             .changeSystemProxy:
+             .changeSystemProxy,
+             .changeNetworkCapture:
             true
         case .changeMode,
              .selectProxy,
@@ -3042,7 +3309,8 @@ private extension AppModel.Operation {
              .changeApplicationSettings,
              .exportBackup,
              .restoreBackup,
-             .changeSystemProxy:
+             .changeSystemProxy,
+             .changeNetworkCapture:
             false
         }
     }
@@ -3089,6 +3357,8 @@ private enum AppModelError: LocalizedError {
     case operationInProgress
     case streamEnded(String)
     case systemProxyRestoreFailed
+    case networkCaptureDisableFailed
+    case secureRandomGenerationFailed(OSStatus)
     case profileActivationFailed(String)
     case localProxyPortsUnavailable
     case localProxyOverrideRejected(Int)
@@ -3106,6 +3376,10 @@ private enum AppModelError: LocalizedError {
             "\(name) stream ended unexpectedly."
         case .systemProxyRestoreFailed:
             "MClash could not restore the previous macOS proxy settings, so the running core was left active."
+        case .networkCaptureDisableFailed:
+            "MClash could not stop Network Extension capture, so the mihomo core was left active."
+        case let .secureRandomGenerationFailed(status):
+            "MClash could not generate private Network Extension credentials (OSStatus \(status))."
         case let .profileActivationFailed(message):
             message
         case .localProxyPortsUnavailable:

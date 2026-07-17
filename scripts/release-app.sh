@@ -13,6 +13,11 @@ apple_password="${APPLE_APP_SPECIFIC_PASSWORD:-}"
 apple_team_id="${APPLE_TEAM_ID:-}"
 release_notes="${MCLASH_RELEASE_NOTES:-${repo_root}/ReleaseNotes/${version}.md}"
 architecture="${MCLASH_ARCHITECTURE:-$(uname -m)}"
+host_devid_profile="${MCLASH_HOST_DEVID_PROFILE_PATH:-}"
+network_extension_devid_profile="${MCLASH_NETWORK_EXTENSION_DEVID_PROFILE_PATH:-}"
+host_devid_entitlements="${MCLASH_HOST_DEVID_ENTITLEMENTS:-${repo_root}/Support/Signing/MClash-DeveloperID.entitlements}"
+network_extension_devid_entitlements="${MCLASH_NETWORK_EXTENSION_DEVID_ENTITLEMENTS:-${repo_root}/Support/NetworkExtension/MClashNetworkExtension.DeveloperID.entitlements}"
+network_extension_bundle_id="one.leaper.mclash.network-extension"
 
 if [[ -z "${version}" || -z "${build_number}" || -z "${identity}" ]]; then
   print -u2 "Set MCLASH_VERSION, MCLASH_BUILD_NUMBER, and CODE_SIGN_IDENTITY."
@@ -30,6 +35,17 @@ if [[ "${identity}" == "-" || "${identity}" != Developer\ ID\ Application:* ]]; 
   print -u2 "A Developer ID Application identity is required for a production release."
   exit 2
 fi
+for required_file in \
+  "${host_devid_profile}" \
+  "${network_extension_devid_profile}" \
+  "${host_devid_entitlements}" \
+  "${network_extension_devid_entitlements}"
+do
+  if [[ -z "${required_file}" || ! -s "${required_file}" ]]; then
+    print -u2 "Developer ID signing material is missing: ${required_file:-<unset>}"
+    exit 2
+  fi
+done
 if [[ "${architecture}" != "arm64" ]]; then
   print -u2 "The current release manifest only supports arm64, not ${architecture}."
   exit 2
@@ -77,10 +93,64 @@ sign_path() {
     "${target_path}"
 }
 
+plist_array_contains() {
+  local plist="$1"
+  local key="$2"
+  local expected="$3"
+  local index=0
+  local value
+
+  while value="$(/usr/libexec/PlistBuddy -c "Print :${key}:${index}" "${plist}" 2>/dev/null)"; do
+    if [[ "${value}" == "${expected}" ]]; then
+      return 0
+    fi
+    (( index += 1 ))
+  done
+  return 1
+}
+
+verify_signed_entitlements() {
+  local target_path="$1"
+  local requires_system_extension_install="$2"
+  local entitlements
+  entitlements="$(mktemp "${TMPDIR:-/tmp}/mclash-signed-entitlements.XXXXXX")"
+
+  if ! /usr/bin/codesign -d --entitlements :- "${target_path}" > "${entitlements}" 2>/dev/null; then
+    rm -f "${entitlements}"
+    print -u2 "Could not read signed entitlements from ${target_path}."
+    exit 1
+  fi
+  if ! plutil -lint "${entitlements}" >/dev/null; then
+    rm -f "${entitlements}"
+    print -u2 "Signed entitlements are not a valid plist: ${target_path}"
+    exit 1
+  fi
+  if ! plist_array_contains \
+    "${entitlements}" \
+    "com.apple.developer.networking.networkextension" \
+    "app-proxy-provider-systemextension" || \
+     ! plist_array_contains \
+    "${entitlements}" \
+    "com.apple.developer.networking.networkextension" \
+    "dns-proxy-systemextension"; then
+    rm -f "${entitlements}"
+    print -u2 "Signed Network Extension entitlements are incomplete: ${target_path}"
+    exit 1
+  fi
+  if [[ "${requires_system_extension_install}" == "1" ]] && \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.system-extension.install' "${entitlements}" 2>/dev/null)" != "true" ]]; then
+    rm -f "${entitlements}"
+    print -u2 "The signed host is missing system-extension.install."
+    exit 1
+  fi
+  rm -f "${entitlements}"
+}
+
 sign_application() {
   local app="$1"
   local sparkle="${app}/Contents/Frameworks/Sparkle.framework"
   local core="${app}/Contents/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+  local system_extension="${app}/Contents/Library/SystemExtensions/${network_extension_bundle_id}.systemextension"
 
   if [[ -d "${sparkle}" ]]; then
     local version_root="${sparkle}/Versions/B"
@@ -107,8 +177,32 @@ sign_application() {
     print -u2 "Bundled core is missing: ${core}"
     exit 1
   fi
+  if [[ ! -d "${system_extension}" ]]; then
+    print -u2 "Bundled Network Extension is missing: ${system_extension}"
+    exit 1
+  fi
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${system_extension}/Contents/Info.plist")" != "${network_extension_bundle_id}" ]]; then
+    print -u2 "Bundled Network Extension has an unexpected bundle identifier."
+    exit 1
+  fi
+
+  cp "${host_devid_profile}" "${app}/Contents/embedded.provisionprofile"
+  cp "${network_extension_devid_profile}" "${system_extension}/Contents/embedded.provisionprofile"
+  chmod 600 \
+    "${app}/Contents/embedded.provisionprofile" \
+    "${system_extension}/Contents/embedded.provisionprofile"
+
   sign_path "${core}"
-  sign_path "${app}"
+  sign_path "${system_extension}" --entitlements "${network_extension_devid_entitlements}"
+  sign_path "${app}" --entitlements "${host_devid_entitlements}"
+
+  if ! cmp -s "${host_devid_profile}" "${app}/Contents/embedded.provisionprofile" || \
+     ! cmp -s "${network_extension_devid_profile}" "${system_extension}/Contents/embedded.provisionprofile"; then
+    print -u2 "Embedded provisioning profiles do not match the validated release profiles."
+    exit 1
+  fi
+  verify_signed_entitlements "${system_extension}" 0
+  verify_signed_entitlements "${app}" 1
 }
 
 export CONFIGURATION=release
@@ -124,11 +218,18 @@ if [[ ! -d "${app}" ]]; then
 fi
 
 sign_application "${app}"
+system_extension="${app}/Contents/Library/SystemExtensions/${network_extension_bundle_id}.systemextension"
+codesign --verify --strict --verbose=2 "${system_extension}"
 codesign --verify --deep --strict --verbose=2 "${app}"
 
 app_architectures="$(lipo -archs "${app}/Contents/MacOS/MClash")"
 if [[ " ${app_architectures} " != *" arm64 "* ]]; then
   print -u2 "Release binary is not arm64: ${app_architectures}"
+  exit 1
+fi
+extension_architectures="$(lipo -archs "${system_extension}/Contents/MacOS/MClashNetworkExtension")"
+if [[ " ${extension_architectures} " != *" arm64 "* ]]; then
+  print -u2 "Release Network Extension binary is not arm64: ${extension_architectures}"
   exit 1
 fi
 

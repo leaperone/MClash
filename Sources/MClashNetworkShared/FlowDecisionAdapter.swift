@@ -1,0 +1,361 @@
+import Foundation
+
+/// Platform-neutral representation of an endpoint supplied by NetworkExtension.
+/// The provider intentionally passes the port as text because the legacy
+/// `NWHostEndpoint` API exposes it that way.
+public struct FlowRemoteEndpoint: Codable, Hashable, Sendable {
+    public let host: String
+    public let port: String
+
+    public init(host: String, port: String) {
+        self.host = host
+        self.port = port
+    }
+
+    public init(host: String, port: UInt16) {
+        self.init(host: host, port: String(port))
+    }
+}
+
+/// Values copied from `NEFlowMetaData` before entering the shared decision layer.
+public struct FlowApplicationMetadata: Codable, Hashable, Sendable {
+    public let sourceAppAuditToken: Data?
+    public let sourceAppUniqueIdentifier: Data
+    public let sourceAppSigningIdentifier: String
+
+    public init(
+        sourceAppAuditToken: Data?,
+        sourceAppUniqueIdentifier: Data,
+        sourceAppSigningIdentifier: String
+    ) {
+        self.sourceAppAuditToken = sourceAppAuditToken
+        self.sourceAppUniqueIdentifier = sourceAppUniqueIdentifier
+        self.sourceAppSigningIdentifier = sourceAppSigningIdentifier
+    }
+}
+
+public enum FlowContextConversionFailure: Error, Codable, Hashable, Sendable {
+    case missingSourceAppAuditToken
+    case identityUnavailable(ProcessIdentityResolutionFailure)
+    case identityAuditTokenMismatch
+    case signingIdentifierMismatch(metadata: String, resolved: String?)
+    case emptyRemoteHost
+    case invalidRemotePort(String)
+    case unsupportedRemoteEndpoint
+}
+
+extension FlowContextConversionFailure: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .missingSourceAppAuditToken:
+            return "The flow does not contain a source application audit token"
+        case let .identityUnavailable(failure):
+            return "The source process identity is unavailable: \(failure)"
+        case .identityAuditTokenMismatch:
+            return "The resolved process identity does not belong to the flow audit token"
+        case let .signingIdentifierMismatch(metadata, resolved):
+            let resolvedDescription = resolved ?? "unsigned code"
+            return "The flow signing identifier \(metadata) does not match \(resolvedDescription)"
+        case .emptyRemoteHost:
+            return "The flow remote endpoint has an empty host"
+        case let .invalidRemotePort(port):
+            return "The flow remote endpoint has an invalid port: \(port)"
+        case .unsupportedRemoteEndpoint:
+            return "The flow uses an endpoint type that cannot be matched by capture rules"
+        }
+    }
+}
+
+/// Context conversion never returns a partially trusted source. A provider can
+/// map `.failOpen` directly to `false` from a transparent-proxy flow callback.
+public enum FlowContextResolution: Codable, Hashable, Sendable {
+    case resolved(context: FlowContext, processIdentity: ResolvedProcessIdentity)
+    case failOpen(FlowContextConversionFailure)
+
+    public var context: FlowContext? {
+        guard case let .resolved(context, _) = self else { return nil }
+        return context
+    }
+
+    public var processIdentity: ResolvedProcessIdentity? {
+        guard case let .resolved(_, identity) = self else { return nil }
+        return identity
+    }
+}
+
+public struct FlowContextBuilder: Sendable {
+    public init() {}
+
+    public func resolve(
+        endpoint: FlowRemoteEndpoint,
+        remoteHostname: String? = nil,
+        metadata: FlowApplicationMetadata,
+        identityResolution: ProcessIdentityResolution,
+        transportProtocol: TransportProtocol,
+        isTrustedMClashComponent: Bool = false
+    ) -> FlowContextResolution {
+        guard let auditTokenData = metadata.sourceAppAuditToken else {
+            return .failOpen(.missingSourceAppAuditToken)
+        }
+
+        let identity: ResolvedProcessIdentity
+        switch identityResolution {
+        case let .resolved(value):
+            identity = value
+        case let .unavailable(failure):
+            return .failOpen(.identityUnavailable(failure))
+        }
+
+        guard identity.auditToken.data == auditTokenData else {
+            return .failOpen(.identityAuditTokenMismatch)
+        }
+
+        let metadataSigningIdentifier = metadata.sourceAppSigningIdentifier
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSigningIdentifier: String?
+        switch identity.codeSigning {
+        case .unsigned:
+            resolvedSigningIdentifier = nil
+        case let .signed(signing):
+            resolvedSigningIdentifier = signing.signingIdentifier
+        }
+        if !metadataSigningIdentifier.isEmpty,
+           metadataSigningIdentifier != resolvedSigningIdentifier {
+            return .failOpen(.signingIdentifierMismatch(
+                metadata: metadataSigningIdentifier,
+                resolved: resolvedSigningIdentifier
+            ))
+        }
+
+        let destination: FlowDestination
+        do {
+            destination = try makeDestination(
+                endpoint: endpoint,
+                remoteHostname: remoteHostname
+            )
+        } catch let failure as FlowContextConversionFailure {
+            return .failOpen(failure)
+        } catch {
+            return .failOpen(.unsupportedRemoteEndpoint)
+        }
+
+        let signingIdentity: SignedCodeIdentity?
+        if case let .signed(value) = identity.codeSigning {
+            signingIdentity = value
+        } else {
+            signingIdentity = nil
+        }
+        let uniqueIdentifier = metadata.sourceAppUniqueIdentifier.isEmpty
+            ? nil
+            : metadata.sourceAppUniqueIdentifier
+        let source = FlowSource(
+            processIdentifier: identity.processIdentifier,
+            auditToken: identity.auditToken.data,
+            processStartTime: identity.processStartTime,
+            sourceAppUniqueIdentifier: uniqueIdentifier,
+            userID: identity.effectiveUserID,
+            executablePath: identity.executablePath,
+            executableSHA256: nil,
+            designatedRequirement: signingIdentity?.designatedRequirement,
+            signingIdentifier: signingIdentity?.signingIdentifier,
+            teamIdentifier: signingIdentity?.teamIdentifier,
+            bundleIdentifier: signingIdentity?.securedBundleIdentifier,
+            isTrustedMClashComponent: isTrustedMClashComponent
+        )
+        return .resolved(
+            context: FlowContext(
+                source: source,
+                destination: destination,
+                transportProtocol: transportProtocol
+            ),
+            processIdentity: identity
+        )
+    }
+
+    private func makeDestination(
+        endpoint: FlowRemoteEndpoint,
+        remoteHostname: String?
+    ) throws -> FlowDestination {
+        var host = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if host.hasPrefix("["), host.hasSuffix("]") {
+            host.removeFirst()
+            host.removeLast()
+        }
+        guard !host.isEmpty else {
+            throw FlowContextConversionFailure.emptyRemoteHost
+        }
+        guard let port = UInt16(endpoint.port), port > 0 else {
+            throw FlowContextConversionFailure.invalidRemotePort(endpoint.port)
+        }
+
+        let suppliedHostname = remoteHostname?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedHostname = suppliedHostname?.isEmpty == false
+            ? suppliedHostname
+            : nil
+        if let address = try? IPAddress(host) {
+            return try FlowDestination(
+                hostname: normalizedHostname,
+                ipAddress: address,
+                port: port
+            )
+        }
+        return try FlowDestination(
+            hostname: normalizedHostname ?? host,
+            port: port
+        )
+    }
+}
+
+public enum CaptureConfigurationLoadFailure: Error, Codable, Hashable, Sendable {
+    case missingEncodedSnapshot
+    case encodedSnapshotTooLarge(actual: Int, maximum: Int)
+    case invalidEncodedSnapshot(String)
+    case tooManyRules(actual: Int, maximum: Int)
+}
+
+public enum CaptureConfigurationLoadResult: Codable, Hashable, Sendable {
+    case loaded(CaptureConfigurationSnapshot)
+    case failOpen(CaptureConfigurationLoadFailure)
+
+    public var snapshot: CaptureConfigurationSnapshot? {
+        guard case let .loaded(snapshot) = self else { return nil }
+        return snapshot
+    }
+}
+
+public struct CaptureConfigurationSnapshotLoader: Sendable {
+    public static let maximumEncodedSize = 8 * 1_024 * 1_024
+    public static let maximumRuleCount = 10_000
+
+    public init() {}
+
+    /// Loads a snapshot encoded directly with `JSONEncoder`. Both Foundation's
+    /// default date representation and ISO-8601 are accepted so the provider can
+    /// consume data produced by the runtime store without weakening validation.
+    public func load(_ data: Data?) -> CaptureConfigurationLoadResult {
+        guard let data else {
+            return .failOpen(.missingEncodedSnapshot)
+        }
+        guard data.count <= Self.maximumEncodedSize else {
+            return .failOpen(.encodedSnapshotTooLarge(
+                actual: data.count,
+                maximum: Self.maximumEncodedSize
+            ))
+        }
+
+        do {
+            let snapshot: CaptureConfigurationSnapshot
+            do {
+                snapshot = try JSONDecoder().decode(
+                    CaptureConfigurationSnapshot.self,
+                    from: data
+                )
+            } catch {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                snapshot = try decoder.decode(CaptureConfigurationSnapshot.self, from: data)
+            }
+            try snapshot.validate()
+            guard snapshot.rules.count <= Self.maximumRuleCount else {
+                return .failOpen(.tooManyRules(
+                    actual: snapshot.rules.count,
+                    maximum: Self.maximumRuleCount
+                ))
+            }
+            return .loaded(snapshot)
+        } catch {
+            return .failOpen(.invalidEncodedSnapshot(String(describing: error)))
+        }
+    }
+}
+
+public enum FlowTrafficDisposition: Codable, Hashable, Sendable {
+    case direct
+    case reject
+    case mihomo(MihomoRoute)
+    case failOpen
+}
+
+public enum FlowTrafficDecisionReason: Codable, Hashable, Sendable {
+    case captureDisabled
+    case configurationUnavailable(CaptureConfigurationLoadFailure)
+    case contextUnavailable(FlowContextConversionFailure)
+    case rule(RuleDecisionCause)
+    case mihomoUnavailable(rule: RuleDecisionCause, fallback: UnavailableFallback)
+}
+
+public struct FlowTrafficDecision: Codable, Hashable, Sendable {
+    public let disposition: FlowTrafficDisposition
+    public let reason: FlowTrafficDecisionReason
+
+    public init(disposition: FlowTrafficDisposition, reason: FlowTrafficDecisionReason) {
+        self.disposition = disposition
+        self.reason = reason
+    }
+}
+
+public struct FlowTrafficDecisionAdapter: Sendable {
+    public init() {}
+
+    public func decide(
+        configuration: CaptureConfigurationLoadResult,
+        context: FlowContextResolution,
+        captureEnabled: Bool,
+        mihomoAvailable: Bool
+    ) -> FlowTrafficDecision {
+        guard captureEnabled else {
+            return FlowTrafficDecision(disposition: .failOpen, reason: .captureDisabled)
+        }
+        guard case let .loaded(snapshot) = configuration else {
+            guard case let .failOpen(failure) = configuration else {
+                preconditionFailure("CaptureConfigurationLoadResult gained an unhandled case")
+            }
+            return FlowTrafficDecision(
+                disposition: .failOpen,
+                reason: .configurationUnavailable(failure)
+            )
+        }
+        guard case let .resolved(flowContext, _) = context else {
+            guard case let .failOpen(failure) = context else {
+                preconditionFailure("FlowContextResolution gained an unhandled case")
+            }
+            return FlowTrafficDecision(
+                disposition: .failOpen,
+                reason: .contextUnavailable(failure)
+            )
+        }
+
+        let ruleDecision = CaptureRuleEngine(snapshot: snapshot).evaluate(flowContext)
+        switch ruleDecision.action {
+        case .direct:
+            return FlowTrafficDecision(
+                disposition: .direct,
+                reason: .rule(ruleDecision.cause)
+            )
+        case .reject:
+            return FlowTrafficDecision(
+                disposition: .reject,
+                reason: .rule(ruleDecision.cause)
+            )
+        case let .mihomo(route):
+            if mihomoAvailable {
+                return FlowTrafficDecision(
+                    disposition: .mihomo(route),
+                    reason: .rule(ruleDecision.cause)
+                )
+            }
+            let disposition: FlowTrafficDisposition = switch ruleDecision.unavailableFallback {
+            case .direct: .direct
+            case .reject: .reject
+            }
+            return FlowTrafficDecision(
+                disposition: disposition,
+                reason: .mihomoUnavailable(
+                    rule: ruleDecision.cause,
+                    fallback: ruleDecision.unavailableFallback
+                )
+            )
+        }
+    }
+}

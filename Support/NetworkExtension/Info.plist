@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>MClash Network Extension</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>one.leaper.mclash.network-extension</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>MClashNetworkExtension</string>
+	<key>CFBundlePackageType</key>
+	<string>SYSX</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NetworkExtension</key>
+	<dict>
+		<key>NEMachServiceName</key>
+		<string>$(TeamIdentifierPrefix)one.leaper.mclash.network-extension</string>
+		<key>NEProviderClasses</key>
+		<dict>
+			<key>com.apple.networkextension.app-proxy</key>
+			<string>MClashNetworkExtension.TransparentProxyProvider</string>
+			<key>com.apple.networkextension.dns-proxy</key>
+			<string>MClashNetworkExtension.DNSProxyProvider</string>
+		</dict>
+	</dict>
+	<key>NSSystemExtensionUsageDescription</key>
+	<string>MClash uses a network system extension to apply your per-application proxy and DNS routing rules.</string>
+</dict>
+</plist>
