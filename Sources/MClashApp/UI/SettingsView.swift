@@ -32,7 +32,19 @@ struct SettingsView: View {
                 .disabled(!model.canPerform(.changeSystemProxySettings))
             }
 
-            NetworkCaptureSettingsSection(model: model)
+            Section("App Routing") {
+                LabeledContent("Current status", value: appRoutingStatus)
+                LabeledContent(
+                    "Rules",
+                    value: "\(model.networkCapturePreferences.snapshot.rules.count)"
+                )
+                Button("Manage App Routing…") {
+                    model.selection = .appRouting
+                }
+                Text("Choose which applications, processes, destinations, and ports are handled by Mihomo.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Section("Local Proxy") {
                 if model.localListenerEndpoints.isEmpty {
@@ -243,6 +255,20 @@ struct SettingsView: View {
                 .font(.callout)
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var appRoutingStatus: String {
+        if let pending = model.pendingNetworkCaptureEnabled {
+            return pending ? "Turning On" : "Turning Off"
+        }
+        return switch model.networkCaptureState {
+        case .off: "Off"
+        case .enabling: "Starting"
+        case let .on(revision): "On · revision \(revision)"
+        case .disabling: "Stopping"
+        case .requiresReboot: "Restart Required"
+        case .failed: "Needs Attention"
         }
     }
 

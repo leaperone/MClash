@@ -45,6 +45,7 @@ enum CaptureRuleDraftAction: String, CaseIterable, Identifiable, Sendable {
 
 enum CaptureRuleDraftError: Error, Equatable, Sendable {
     case invalidIdentifier
+    case invalidApplicationPattern(String)
     case invalidExecutablePath(String)
     case invalidUserID(String)
     case invalidIPAddress(String)
@@ -62,6 +63,8 @@ extension CaptureRuleDraftError: LocalizedError {
         switch self {
         case .invalidIdentifier:
             "Enter a rule identifier."
+        case let .invalidApplicationPattern(value):
+            "Enter an application name or bundle identifier pattern; received \(value)."
         case let .invalidExecutablePath(value):
             "Executable path must be an absolute path; received \(value.isEmpty ? "an empty value" : value)."
         case let .invalidUserID(value):
@@ -97,6 +100,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
     var priority: Int
     var selectedApplication: ApplicationCaptureCandidate?
     var selectedProcess: RunningProcessCaptureCandidate?
+    var applicationIdentifierPattern: String
     var executablePath: String
     var userID: String
     var destinationKind: CaptureRuleDestinationKind
@@ -114,6 +118,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         priority: Int = 100,
         selectedApplication: ApplicationCaptureCandidate? = nil,
         selectedProcess: RunningProcessCaptureCandidate? = nil,
+        applicationIdentifierPattern: String = "",
         executablePath: String = "",
         userID: String = "",
         destinationKind: CaptureRuleDestinationKind = .any,
@@ -130,6 +135,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         self.priority = priority
         self.selectedApplication = selectedApplication
         self.selectedProcess = selectedProcess
+        self.applicationIdentifierPattern = applicationIdentifierPattern
         self.executablePath = executablePath
         self.userID = userID
         self.destinationKind = destinationKind
@@ -160,18 +166,22 @@ struct CaptureRuleDraft: Equatable, Sendable {
         )
 
         var applicationMatchers: [ApplicationSourceMatcher] = []
+        var applicationPatternMatchers: [ApplicationIdentifierPatternMatcher] = []
         var executableMatchers: [ExecutableSourceMatcher] = []
         var processMatchers: [ProcessInstanceSourceMatcher] = []
         var userIDs: [UInt32] = []
         for source in rule.sources {
             switch source {
             case let .application(matcher): applicationMatchers.append(matcher)
+            case let .applicationIdentifierPattern(matcher):
+                applicationPatternMatchers.append(matcher)
             case let .executable(matcher): executableMatchers.append(matcher)
             case let .userID(value): userIDs.append(value)
             case let .processInstance(matcher): processMatchers.append(matcher)
             }
         }
         guard applicationMatchers.count <= 1,
+              applicationPatternMatchers.count <= 1,
               executableMatchers.count <= 1,
               processMatchers.count <= 1,
               userIDs.count <= 1 else {
@@ -198,6 +208,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
             selectedProcess = processCandidates.first(where: { $0.matcher == matcher })
                 ?? Self.placeholderProcessCandidate(matcher: matcher)
         }
+        applicationIdentifierPattern = applicationPatternMatchers.first?.pattern ?? ""
         executablePath = executableMatchers.first?.canonicalPath ?? ""
         userID = userIDs.first.map(String.init) ?? ""
 
@@ -331,6 +342,18 @@ struct CaptureRuleDraft: Equatable, Sendable {
             sources.append(.processInstance(selectedProcess.matcher))
         }
 
+        let applicationPattern = applicationIdentifierPattern
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !applicationPattern.isEmpty {
+            do {
+                sources.append(.applicationIdentifierPattern(
+                    try ApplicationIdentifierPatternMatcher(pattern: applicationPattern)
+                ))
+            } catch {
+                throw CaptureRuleDraftError.invalidApplicationPattern(applicationPattern)
+            }
+        }
+
         let path = executablePath.trimmingCharacters(in: .whitespacesAndNewlines)
         if !path.isEmpty {
             guard path.hasPrefix("/"), path.count > 1,
@@ -384,7 +407,10 @@ struct CaptureRuleDraft: Equatable, Sendable {
             }
         case .domain:
             do {
-                return [.host(try HostMatcher(kind: domainKind, value: value))]
+                let usesWildcard = value.hasPrefix("*.")
+                let normalizedValue = usesWildcard ? String(value.dropFirst(2)) : value
+                let kind: HostMatcher.Kind = usesWildcard ? .suffix : domainKind
+                return [.host(try HostMatcher(kind: kind, value: normalizedValue))]
             } catch {
                 throw CaptureRuleDraftError.invalidDomain(value)
             }

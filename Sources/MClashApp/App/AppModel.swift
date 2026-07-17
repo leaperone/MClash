@@ -134,6 +134,7 @@ final class AppModel {
     enum Destination: String, CaseIterable, Identifiable {
         case overview
         case proxies
+        case appRouting
         case profiles
         case rules
         case providers
@@ -147,6 +148,7 @@ final class AppModel {
             switch self {
             case .overview: "Overview"
             case .proxies: "Proxies"
+            case .appRouting: "App Routing"
             case .profiles: "Profiles"
             case .rules: "Rules"
             case .providers: "Providers"
@@ -160,6 +162,7 @@ final class AppModel {
             switch self {
             case .overview: "gauge.with.dots.needle.50percent"
             case .proxies: "point.3.connected.trianglepath.dotted"
+            case .appRouting: "app.badge"
             case .profiles: "doc.text"
             case .rules: "list.bullet.rectangle"
             case .providers: "shippingbox"

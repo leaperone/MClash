@@ -114,6 +114,26 @@ before testing failure scenarios.
 
 ## 6. Main feature coverage
 
+- App Routing: confirm the dedicated sidebar destination opens its rule table,
+  Settings shows only a status summary and **Manage App Routing…**, and the
+  selected destination is restored after relaunching the app.
+- App Routing: add a rule by selecting a running application, then add another
+  with **Choose Other Application…** and select a signed `.app` that is not
+  running. Confirm its icon, display name, bundle identifier, and executable
+  path appear before saving.
+- App Routing: verify `com.google.*` matches application bundle/signing IDs and
+  `*.example.com` is presented and saved as a domain-and-subdomains match.
+  Confirm exact app selection remains based on its designated code-signing
+  requirement.
+- App Routing: duplicate, edit, disable, delete, and move rules up/down. Confirm
+  the table order is the evaluation order and the first matching rule wins.
+- App Routing: keep Advanced Matching collapsed for the normal application →
+  Mihomo path, then expand it and verify exact process, executable path, UID,
+  IP, CIDR, domain, TCP/UDP, port range, and unavailable-route fallback inputs.
+- App Routing: turn the feature on while connected, approve the system
+  extension if macOS requests it, and confirm the status reaches **App Routing
+  On**. If it reports **Restart Required**, restart macOS and repeat the check.
+
 - Proxies: confirm Rule groups follow the subscription YAML order rather than
   alphabetical order. Global must show only GLOBAL, and Direct must show a
   clear bypass state instead of irrelevant node controls.

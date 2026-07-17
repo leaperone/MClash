@@ -24,6 +24,77 @@ public struct ApplicationSourceMatcher: Codable, Hashable, Sendable {
     }
 }
 
+public struct ApplicationIdentifierPatternMatcher: Codable, Hashable, Sendable {
+    public let pattern: String
+
+    public init(pattern: String) throws {
+        let normalized = pattern.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let allowedPunctuation: Set<Character> = [".", "-", "_", "*", "?", " "]
+        guard !normalized.isEmpty,
+              normalized.utf8.count <= 255,
+              normalized.contains(where: { $0 != "*" && $0 != "?" && $0 != " " }),
+              normalized.allSatisfy({ $0.isLetter || $0.isNumber || allowedPunctuation.contains($0) })
+        else {
+            throw NetworkRuleValidationError.invalidSourceMatcher(
+                "Application pattern must contain a name or identifier and may use * or ? wildcards"
+            )
+        }
+        self.pattern = normalized
+    }
+
+    public func matches(_ candidate: String) -> Bool {
+        Self.wildcardMatch(pattern: Array(pattern), candidate: Array(candidate.lowercased()))
+    }
+
+    private static func wildcardMatch(pattern: [Character], candidate: [Character]) -> Bool {
+        var patternIndex = 0
+        var candidateIndex = 0
+        var starIndex: Int?
+        var starCandidateIndex = 0
+
+        while candidateIndex < candidate.count {
+            if patternIndex < pattern.count,
+               pattern[patternIndex] == "?" || pattern[patternIndex] == candidate[candidateIndex] {
+                patternIndex += 1
+                candidateIndex += 1
+            } else if patternIndex < pattern.count, pattern[patternIndex] == "*" {
+                starIndex = patternIndex
+                patternIndex += 1
+                starCandidateIndex = candidateIndex
+            } else if let starIndex {
+                patternIndex = starIndex + 1
+                starCandidateIndex += 1
+                candidateIndex = starCandidateIndex
+            } else {
+                return false
+            }
+        }
+
+        while patternIndex < pattern.count, pattern[patternIndex] == "*" {
+            patternIndex += 1
+        }
+        return patternIndex == pattern.count
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pattern
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let pattern = try container.decode(String.self, forKey: .pattern)
+        do {
+            try self.init(pattern: pattern)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .pattern,
+                in: container,
+                debugDescription: String(describing: error)
+            )
+        }
+    }
+}
+
 public struct ExecutableSourceMatcher: Codable, Hashable, Sendable {
     public let canonicalPath: String
     public let designatedRequirement: String?
@@ -80,6 +151,7 @@ public struct ProcessStartTime: Codable, Hashable, Sendable {
 
 public enum SourceMatcher: Codable, Hashable, Sendable {
     case application(ApplicationSourceMatcher)
+    case applicationIdentifierPattern(ApplicationIdentifierPatternMatcher)
     case executable(ExecutableSourceMatcher)
     case processInstance(ProcessInstanceSourceMatcher)
     case userID(UInt32)
@@ -224,6 +296,8 @@ public struct CaptureRule: Codable, Hashable, Identifiable, Sendable {
                         "Application matcher requires a designated requirement"
                     )
                 }
+            case let .applicationIdentifierPattern(application):
+                _ = try ApplicationIdentifierPatternMatcher(pattern: application.pattern)
             case let .executable(executable):
                 guard executable.canonicalPath.hasPrefix("/"), executable.canonicalPath.count > 1 else {
                     throw NetworkRuleValidationError.invalidSourceMatcher(

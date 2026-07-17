@@ -18,6 +18,7 @@ struct ContentView: View {
 
                 Section("Routing") {
                     destinationRow(.proxies)
+                    destinationRow(.appRouting)
                     destinationRow(.profiles)
                     destinationRow(.rules)
                     destinationRow(.providers)
@@ -147,6 +148,8 @@ struct ContentView: View {
         case .proxies:
             ProxiesView(model: model)
                 .id(model.activeProfileID)
+        case .appRouting:
+            AppRoutingView(model: model)
         case .profiles:
             ProfilesView(model: model)
         case .rules:

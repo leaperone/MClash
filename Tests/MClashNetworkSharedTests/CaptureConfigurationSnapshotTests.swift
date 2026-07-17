@@ -9,6 +9,9 @@ struct CaptureConfigurationSnapshotTests {
         let rule = try CaptureRule(
             id: "proxy-web",
             priority: 20,
+            sources: [.applicationIdentifierPattern(
+                try ApplicationIdentifierPatternMatcher(pattern: "com.example.*")
+            )],
             destinations: [.network(try IPNetwork("2001:db8::/32"))],
             protocols: [.tcp, .udp],
             portRanges: [try PortRange(lowerBound: 443, upperBound: 8443)],

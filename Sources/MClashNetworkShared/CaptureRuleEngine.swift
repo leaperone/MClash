@@ -107,6 +107,13 @@ public struct CaptureRuleEngine: Sendable {
             if let expected = application.teamIdentifier, source.teamIdentifier != expected { return false }
             if let expected = application.bundleIdentifier, source.bundleIdentifier != expected { return false }
             return true
+        case let .applicationIdentifierPattern(application):
+            let candidates = [
+                source.bundleIdentifier,
+                source.signingIdentifier,
+                source.executablePath.map { URL(fileURLWithPath: $0).lastPathComponent }
+            ].compactMap { $0 }
+            return candidates.contains(where: application.matches)
         case let .executable(executable):
             guard source.executablePath == executable.canonicalPath else { return false }
             if let expected = executable.designatedRequirement, source.designatedRequirement != expected { return false }

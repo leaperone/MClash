@@ -75,6 +75,30 @@ struct CaptureRuleDraftTests {
         networkDraft.domainKind = .suffix
         rule = try networkDraft.makeRule()
         #expect(rule.destinations == [.host(try HostMatcher(kind: .suffix, value: "example.com"))])
+
+        networkDraft.identifier = "wildcard"
+        networkDraft.destinationValue = "*.api.example.com"
+        networkDraft.domainKind = .exact
+        rule = try networkDraft.makeRule()
+        #expect(
+            rule.destinations
+                == [.host(try HostMatcher(kind: .suffix, value: "api.example.com"))]
+        )
+    }
+
+    @Test("Application identifier wildcard becomes a source matcher")
+    func applicationIdentifierPattern() throws {
+        let draft = CaptureRuleDraft(
+            identifier: "browser-family",
+            applicationIdentifierPattern: " COM.GOOGLE.* "
+        )
+
+        #expect(
+            try draft.makeRule().sources
+                == [.applicationIdentifierPattern(
+                    ApplicationIdentifierPatternMatcher(pattern: "com.google.*")
+                )]
+        )
     }
 
     @Test("Single ports and inclusive ranges map to PortRange")

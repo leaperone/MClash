@@ -79,6 +79,32 @@ struct CaptureRuleEngineTests {
     }
 
     @Test
+    func testApplicationIdentifierWildcardsMatchBundleIDSigningIDOrExecutableName() throws {
+        let matcher = try ApplicationIdentifierPatternMatcher(pattern: "com.google.*")
+        let rule = try CaptureRule(
+            id: "google-apps",
+            priority: 1,
+            sources: [.applicationIdentifierPattern(matcher)],
+            action: .mihomo(.profileRules)
+        )
+        let engine = try engine([rule])
+
+        let matchingBundle = source(bundleIdentifier: "com.google.Chrome")
+        #expect(engine.evaluate(try context(source: matchingBundle)).action == .mihomo(.profileRules))
+
+        let unrelated = source(
+            executablePath: "/Applications/Safari.app/Contents/MacOS/Safari",
+            signingIdentifier: "com.apple.Safari",
+            bundleIdentifier: "com.apple.Safari"
+        )
+        #expect(engine.evaluate(try context(source: unrelated)).cause == .defaultDirect)
+
+        let executableMatcher = try ApplicationIdentifierPatternMatcher(pattern: "*helper?")
+        #expect(executableMatcher.matches("BackgroundHelper1"))
+        #expect(!executableMatcher.matches("BackgroundHelper"))
+    }
+
+    @Test
     func testExecutableAndTemporaryProcessMatchers() throws {
         let executableRule = try CaptureRule(
             id: "cli",
