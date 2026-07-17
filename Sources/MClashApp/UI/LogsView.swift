@@ -261,7 +261,7 @@ struct LogsView: View {
         timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let header = [
+        var header: [String] = [
             "# MClash diagnostic report",
             "# Exported: \(timestampFormatter.string(from: Date()))",
             "# Version: \(diagnosticVersion)",
@@ -278,13 +278,17 @@ struct LogsView: View {
             "# Entries: \(logs.count)",
             "",
             "## Operational issues",
-        ] + diagnosticIssues + [
+        ]
+        header.append(contentsOf: diagnosticIssues)
+        header.append(contentsOf: [
             "",
             "## Live data sources",
-        ] + diagnosticLiveSources + [
+        ])
+        header.append(contentsOf: diagnosticLiveSources)
+        header.append(contentsOf: [
             "",
             "## Filtered logs",
-        ]
+        ])
 
         let entries = logs.map { line in
             let timestamp = timestampFormatter.string(from: line.timestamp)
