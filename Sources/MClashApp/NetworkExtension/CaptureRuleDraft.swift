@@ -169,7 +169,6 @@ struct CaptureRuleDraft: Equatable, Sendable {
             }
         }
         guard applicationMatchers.count <= 1,
-              applicationPatternMatchers.count <= 1,
               executableMatchers.count <= 1,
               processMatchers.count <= 1,
               userIDs.count <= 1 else {
@@ -196,20 +195,19 @@ struct CaptureRuleDraft: Equatable, Sendable {
             selectedProcess = processCandidates.first(where: { $0.matcher == matcher })
                 ?? Self.placeholderProcessCandidate(matcher: matcher)
         }
-        applicationIdentifierPattern = applicationPatternMatchers.first?.pattern ?? ""
+        applicationIdentifierPattern = applicationPatternMatchers
+            .map(\.pattern)
+            .joined(separator: "; ")
         executablePath = executableMatchers.first?.canonicalPath ?? ""
         userID = userIDs.first.map(String.init) ?? ""
 
         destinations = rule.destinations
 
-        guard rule.portRanges.count <= 1 else {
-            throw CaptureRuleDraftError.unsupportedExistingRule("multiple port ranges")
-        }
-        if let range = rule.portRanges.first {
-            portRange = range.lowerBound == range.upperBound
+        portRange = rule.portRanges.map { range in
+            range.lowerBound == range.upperBound
                 ? String(range.lowerBound)
                 : "\(range.lowerBound)-\(range.upperBound)"
-        }
+        }.joined(separator: "; ")
     }
 
     var selectedApplicationID: String? {
@@ -255,8 +253,10 @@ struct CaptureRuleDraft: Equatable, Sendable {
 
     var domainDestinations: [DestinationMatcher] {
         destinations.filter {
-            if case .host = $0 { return true }
-            return false
+            switch $0 {
+            case .host, .hostPattern: return true
+            case .ip, .network: return false
+            }
         }
     }
 
@@ -264,7 +264,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         destinations.filter {
             switch $0 {
             case .ip, .network: return true
-            case .host: return false
+            case .host, .hostPattern: return false
             }
         }
     }
@@ -362,13 +362,11 @@ struct CaptureRuleDraft: Equatable, Sendable {
             sources.append(.processInstance(selectedProcess.matcher))
         }
 
-        let applicationPattern = applicationIdentifierPattern
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !applicationPattern.isEmpty {
+        for applicationPattern in Self.splitPatternEntries(applicationIdentifierPattern) {
             do {
-                sources.append(.applicationIdentifierPattern(
-                    try ApplicationIdentifierPatternMatcher(pattern: applicationPattern)
-                ))
+                let matcher = try ApplicationIdentifierPatternMatcher(pattern: applicationPattern)
+                let source = SourceMatcher.applicationIdentifierPattern(matcher)
+                if !sources.contains(source) { sources.append(source) }
             } catch {
                 throw CaptureRuleDraftError.invalidApplicationPattern(applicationPattern)
             }
@@ -451,7 +449,14 @@ struct CaptureRuleDraft: Equatable, Sendable {
             }
 
             do {
-                appendUnique([.host(try HostMatcher(kind: kind, value: entry))], to: &result)
+                if entry.contains("*") || entry.contains("?") {
+                    appendUnique(
+                        [.hostPattern(try HostPatternMatcher(pattern: entry))],
+                        to: &result
+                    )
+                } else {
+                    appendUnique([.host(try HostMatcher(kind: kind, value: entry))], to: &result)
+                }
             } catch {
                 throw CaptureRuleDraftError.invalidDomain(originalEntry)
             }
@@ -487,6 +492,12 @@ struct CaptureRuleDraft: Equatable, Sendable {
             .filter { !$0.isEmpty }
     }
 
+    private static func splitPatternEntries(_ input: String) -> [String] {
+        input.components(separatedBy: CharacterSet(charactersIn: ",;\n\r"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
     static func destinationLabel(_ matcher: DestinationMatcher) -> String {
         switch matcher {
         case let .host(host):
@@ -494,6 +505,8 @@ struct CaptureRuleDraft: Equatable, Sendable {
             case .exact: "=\(host.value)"
             case .suffix: "*.\(host.value)"
             }
+        case let .hostPattern(pattern):
+            pattern.pattern
         case let .ip(address):
             address.presentation
         case let .network(network):
@@ -514,32 +527,37 @@ struct CaptureRuleDraft: Equatable, Sendable {
     private func portMatchers() throws -> [PortRange] {
         let value = portRange.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return [] }
-        let components = value.split(separator: "-", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard (1 ... 2).contains(components.count),
-              let lowerInteger = Int(components[0]),
-              (1 ... Int(UInt16.max)).contains(lowerInteger) else {
-            throw CaptureRuleDraftError.invalidPortRange(value)
-        }
-        let upperInteger: Int
-        if components.count == 2 {
-            guard let parsedUpper = Int(components[1]),
-                  (1 ... Int(UInt16.max)).contains(parsedUpper),
-                  parsedUpper >= lowerInteger else {
-                throw CaptureRuleDraftError.invalidPortRange(value)
+        var result: [PortRange] = []
+        for entry in Self.splitPatternEntries(value) {
+            let components = entry.split(separator: "-", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard (1 ... 2).contains(components.count),
+                  let lowerInteger = Int(components[0]),
+                  (1 ... Int(UInt16.max)).contains(lowerInteger) else {
+                throw CaptureRuleDraftError.invalidPortRange(entry)
             }
-            upperInteger = parsedUpper
-        } else {
-            upperInteger = lowerInteger
+            let upperInteger: Int
+            if components.count == 2 {
+                guard let parsedUpper = Int(components[1]),
+                      (1 ... Int(UInt16.max)).contains(parsedUpper),
+                      parsedUpper >= lowerInteger else {
+                    throw CaptureRuleDraftError.invalidPortRange(entry)
+                }
+                upperInteger = parsedUpper
+            } else {
+                upperInteger = lowerInteger
+            }
+            do {
+                let range = try PortRange(
+                    lowerBound: UInt16(lowerInteger),
+                    upperBound: UInt16(upperInteger)
+                )
+                if !result.contains(range) { result.append(range) }
+            } catch {
+                throw CaptureRuleDraftError.invalidPortRange(entry)
+            }
         }
-        do {
-            return [try PortRange(
-                lowerBound: UInt16(lowerInteger),
-                upperBound: UInt16(upperInteger)
-            )]
-        } catch {
-            throw CaptureRuleDraftError.invalidPortRange(value)
-        }
+        return result
     }
 
     private static func draftAction(_ action: CaptureAction) throws -> CaptureRuleDraftAction {

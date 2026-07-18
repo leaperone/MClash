@@ -6,7 +6,6 @@ struct ContentView: View {
     @AppStorage("mclash.navigation.destination") private var restoredDestinationRawValue =
         AppModel.Destination.overview.rawValue
     @State private var hasRestoredDestination = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         NavigationSplitView {
@@ -40,32 +39,44 @@ struct ContentView: View {
                 SidebarOperationalStatus(model: model)
             }
         } detail: {
-            VStack(spacing: 0) {
-                if let errorMessage = activeErrorMessage {
-                    ErrorBanner(
-                        message: errorMessage,
-                        retryNetworkRestore: model.systemProxyRecoveryRequired ? {
-                            Task { await model.disableSystemProxy() }
-                        } : nil,
-                        isRestoringNetwork: model.isPerforming(.changeSystemProxy),
-                        showLogs: {
-                            model.selection = .logs
-                            if !model.systemProxyRecoveryRequired {
-                                model.errorMessage = nil
-                            }
-                        },
-                        dismiss: model.systemProxyRecoveryRequired
-                            ? nil
-                            : { model.errorMessage = nil }
-                    )
-                    .transition(errorTransition)
-                }
-                // Keep the detail column's view graph stable while switching
-                // between structurally different destinations. NavigationSplitView
-                // can otherwise fail to refresh conditional column content on macOS.
-                ZStack {
+            GeometryReader { geometry in
+                // Keep every destination inside the finite detail-column size.
+                // Wide Tables must not feed their intrinsic width back into
+                // NavigationSplitView and displace or blank the sidebar.
+                ZStack(alignment: .top) {
                     destinationView
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+
+                    if let errorMessage = activeErrorMessage {
+                        ErrorBanner(
+                            message: errorMessage,
+                            retryNetworkRestore: model.systemProxyRecoveryRequired ? {
+                                Task { await model.disableSystemProxy() }
+                            } : nil,
+                            isRestoringNetwork: model.isPerforming(.changeSystemProxy),
+                            showLogs: {
+                                model.selection = .logs
+                                if !model.systemProxyRecoveryRequired {
+                                    model.errorMessage = nil
+                                }
+                            },
+                            dismiss: model.systemProxyRecoveryRequired
+                                ? nil
+                                : { model.errorMessage = nil }
+                        )
+                        .frame(maxWidth: 720)
+                        .padding(.horizontal, MClashLayout.pagePadding)
+                        // Keep the destination's primary header usable while an
+                        // operation error is visible. App Routing and Traffic
+                        // both reserve a stable header lane at the top of their
+                        // page; the banner floats immediately below that lane
+                        // instead of covering its tabs and switches.
+                        .padding(.top, errorBannerTopClearance)
+                        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+                        .zIndex(10)
+                    }
                 }
+                .frame(width: geometry.size.width, height: geometry.size.height)
             }
             .mclashPageSurface()
         }
@@ -76,12 +87,6 @@ struct ContentView: View {
             guard let destination else { return }
             restoredDestinationRawValue = destination.rawValue
         }
-        .animation(
-            reduceMotion
-                ? .easeOut(duration: 0.14)
-                : .spring(response: 0.3, dampingFraction: 1),
-            value: activeErrorMessage
-        )
         .alert(
             "Import Subscription?",
             isPresented: pendingSubscriptionImportIsPresented,
@@ -117,6 +122,17 @@ struct ContentView: View {
         return model.errorMessage
     }
 
+    private var errorBannerTopClearance: CGFloat {
+        switch model.selection ?? .overview {
+        case .appRouting:
+            94
+        case .connections:
+            56
+        case .overview, .proxies, .profiles, .rules, .providers, .attention, .logs, .settings:
+            56
+        }
+    }
+
     private var pendingSubscriptionImportIsPresented: Binding<Bool> {
         Binding(
             get: { model.pendingSubscriptionImport != nil },
@@ -124,14 +140,6 @@ struct ContentView: View {
             // prevents SwiftUI's automatic dismissal from racing the async
             // confirmation action before it consumes the request.
             set: { _ in }
-        )
-    }
-
-    private var errorTransition: AnyTransition {
-        if reduceMotion { return .opacity }
-        return .asymmetric(
-            insertion: .offset(y: -8).combined(with: .opacity),
-            removal: .opacity
         )
     }
 

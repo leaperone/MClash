@@ -121,6 +121,8 @@ struct AppRoutingRuleEvidencePresentation: Equatable {
             case .exact: "Exact host \(host.value)"
             case .suffix: "Host suffix \(host.value) (the base host or a subdomain)"
             }
+        case let .hostPattern(pattern):
+            "Hostname pattern \(quoted(pattern.pattern))"
         }
     }
 

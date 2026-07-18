@@ -227,10 +227,101 @@ public struct HostMatcher: Codable, Hashable, Sendable {
     }
 }
 
+/// A Proxifier-compatible hostname mask. This is deliberately separate from
+/// `HostMatcher`: exact/suffix rules keep their domain-boundary semantics,
+/// while imported masks such as `*github*` retain their wildcard behavior.
+public struct HostPatternMatcher: Codable, Hashable, Sendable {
+    public let pattern: String
+
+    public init(pattern: String) throws {
+        let normalized = pattern.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let allowedPunctuation: Set<Character> = [".", "-", "_", "*", "?"]
+        guard !normalized.isEmpty,
+              normalized.utf8.count <= 253,
+              normalized.contains(where: { $0 != "*" && $0 != "?" }),
+              normalized.allSatisfy({
+                  $0.isLetter || $0.isNumber || allowedPunctuation.contains($0)
+              })
+        else {
+            throw NetworkRuleValidationError.invalidDomain(pattern)
+        }
+        self.pattern = normalized
+    }
+
+    public func matches(_ hostname: String) -> Bool {
+        let candidate = hostname
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return Self.wildcardMatch(pattern: Array(pattern), candidate: Array(candidate))
+    }
+
+    /// Returns the literal suffix for the common `*example.com` form. The
+    /// engine indexes these masks so large imported domain lists do not
+    /// perform thousands of wildcard scans for every flow.
+    public var indexedLooseSuffix: String? {
+        guard pattern.first == "*" else { return nil }
+        let suffix = String(pattern.dropFirst())
+        guard !suffix.isEmpty,
+              !suffix.contains("*"),
+              !suffix.contains("?") else { return nil }
+        return suffix
+    }
+
+    private static func wildcardMatch(pattern: [Character], candidate: [Character]) -> Bool {
+        var patternIndex = 0
+        var candidateIndex = 0
+        var starIndex: Int?
+        var starCandidateIndex = 0
+
+        while candidateIndex < candidate.count {
+            if patternIndex < pattern.count,
+               pattern[patternIndex] == "?" || pattern[patternIndex] == candidate[candidateIndex] {
+                patternIndex += 1
+                candidateIndex += 1
+            } else if patternIndex < pattern.count, pattern[patternIndex] == "*" {
+                starIndex = patternIndex
+                patternIndex += 1
+                starCandidateIndex = candidateIndex
+            } else if let starIndex {
+                patternIndex = starIndex + 1
+                starCandidateIndex += 1
+                candidateIndex = starCandidateIndex
+            } else {
+                return false
+            }
+        }
+
+        while patternIndex < pattern.count, pattern[patternIndex] == "*" {
+            patternIndex += 1
+        }
+        return patternIndex == pattern.count
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pattern
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let pattern = try container.decode(String.self, forKey: .pattern)
+        do {
+            try self.init(pattern: pattern)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .pattern,
+                in: container,
+                debugDescription: String(describing: error)
+            )
+        }
+    }
+}
+
 public enum DestinationMatcher: Codable, Hashable, Sendable {
     case ip(IPAddress)
     case network(IPNetwork)
     case host(HostMatcher)
+    case hostPattern(HostPatternMatcher)
 }
 
 public enum MihomoRoute: Codable, Hashable, Sendable {

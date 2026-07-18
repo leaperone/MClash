@@ -172,6 +172,26 @@ struct FlowDecisionAdapterTests {
         #expect(unavailable.ruleEvidence?.destination == .unconstrained)
     }
 
+    @Test("A prepared configuration reuses its compiled engine across flow decisions")
+    func preparedConfigurationIsReusable() throws {
+        let prepared = PreparedCaptureConfiguration(
+            try loaded(action: .mihomo(.profileRules), unavailableFallback: .reject)
+        )
+        #expect(prepared.containsCompiledRuleEngine)
+
+        let adapter = FlowTrafficDecisionAdapter()
+        let context = try resolvedContext()
+        for _ in 0 ..< 32 {
+            let decision = adapter.decide(
+                preparedConfiguration: prepared,
+                context: context,
+                captureEnabled: true,
+                mihomoAvailable: false
+            )
+            #expect(decision.disposition == .reject)
+        }
+    }
+
     @Test
     func disabledInvalidConfigurationAndContextAreDistinctFailOpenReasons() throws {
         let adapter = FlowTrafficDecisionAdapter()

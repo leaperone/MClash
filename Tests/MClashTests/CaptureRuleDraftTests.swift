@@ -92,6 +92,31 @@ struct CaptureRuleDraftTests {
         )
     }
 
+    @Test("Multiple application and hostname wildcard patterns round-trip")
+    func multipleImportedPatternsRoundTrip() throws {
+        let rule = try CaptureRule(
+            id: "imported",
+            priority: 10,
+            sources: [
+                .applicationIdentifierPattern(
+                    try ApplicationIdentifierPatternMatcher(pattern: "example app")
+                ),
+                .applicationIdentifierPattern(
+                    try ApplicationIdentifierPatternMatcher(pattern: "com.example.*")
+                ),
+            ],
+            destinations: [
+                .hostPattern(try HostPatternMatcher(pattern: "*example.com")),
+            ],
+            protocols: [.tcp],
+            action: .mihomo(.profileRules)
+        )
+
+        let draft = try CaptureRuleDraft(rule: rule)
+        #expect(draft.applicationIdentifierPattern == "example app; com.example.*")
+        #expect(try draft.makeRule() == rule)
+    }
+
     @Test("Single ports and inclusive ranges map to PortRange")
     func parsesPortRanges() throws {
         var draft = CaptureRuleDraft(identifier: "ports", matchesTCP: true, matchesUDP: false)
@@ -103,6 +128,13 @@ struct CaptureRuleDraftTests {
         #expect(
             try draft.makeRule().portRanges == [PortRange(lowerBound: 8_000, upperBound: 9_000)]
         )
+
+        draft.portRange = "53; 443, 8000-9000; 53"
+        #expect(try draft.makeRule().portRanges == [
+            PortRange(53),
+            PortRange(443),
+            PortRange(lowerBound: 8_000, upperBound: 9_000),
+        ])
     }
 
     @Test("Direct and reject actions are generated without Mihomo indirection")

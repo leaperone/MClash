@@ -1,6 +1,7 @@
 import MClashNetworkShared
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AppRoutingView: View {
     private enum Workspace: String, CaseIterable, Identifiable {
@@ -8,6 +9,22 @@ struct AppRoutingView: View {
         case activity = "Activity"
 
         var id: Self { self }
+    }
+
+    private enum InspectorPresentation: Equatable {
+        case popover
+        case attached
+
+        func presentation(forFullWidth width: CGFloat) -> Self {
+            let attachWidth: CGFloat = 1_100
+            let detachWidth: CGFloat = 980
+            switch self {
+            case .popover:
+                return width >= attachWidth ? .attached : .popover
+            case .attached:
+                return width < detachWidth ? .popover : .attached
+            }
+        }
     }
 
     @Bindable var model: AppModel
@@ -20,24 +37,24 @@ struct AppRoutingView: View {
     @State private var showingEditor = false
     @State private var editorError: String?
     @State private var candidateRefreshRequest = 0
-    @State private var isRefreshingApplications = false
     @State private var workspace: Workspace = .rules
     @State private var activitySearchText = ""
     @State private var activityFilter: AppRoutingActivityFilter = .focused
     @State private var selectedActivityID: UUID?
     @State private var activityInspectorPresented = false
-    @State private var appliedRuleRevision: UInt64?
-    @State private var appliedRuleRevisionAt: Date?
+    @State private var activityInspectorPresentation: InspectorPresentation = .popover
     @State private var showingDNSReplacementConfirmation = false
     @State private var showingAppRoutingEnableConfirmation = false
     @State private var advancedDNSExpanded = false
+    @State private var showingProxifierImporter = false
+    @State private var proxifierImportPlan: ProxifierRuleImportPlan?
+    @State private var proxifierImportError: String?
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 statusHeader
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(1)
+                    .frame(height: 86)
                 Divider()
 
                 ZStack {
@@ -62,19 +79,27 @@ struct AppRoutingView: View {
                         activityActionBar
                     }
                 }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(1)
+                    .frame(height: 46)
             }
             // GeometryReader supplies the finite detail-column dimensions.
             // Without this clamp, the empty state's flexible height can make
             // NavigationSplitView adopt an oversized ideal height and clip
             // both the sidebar rows and this page's fixed controls offscreen.
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .onAppear { updateActivityInspectorPresentation(for: geometry.size.width) }
+            .onChange(of: geometry.size.width) { _, width in
+                updateActivityInspectorPresentation(for: width)
+            }
         }
         .navigationTitle("App Routing")
         .mclashPageSurface()
         .task(id: candidateRefreshRequest) {
             await refreshApplications(request: candidateRefreshRequest)
+        }
+        .onChange(of: workspace) { _, workspace in
+            if workspace != .activity {
+                activityInspectorPresented = false
+            }
         }
         .sheet(isPresented: $showingEditor) {
             CaptureRuleEditorSheet(
@@ -89,20 +114,21 @@ struct AppRoutingView: View {
                 save(rule)
             }
         }
-        .inspector(isPresented: $activityInspectorPresented) {
-            if let activity = selectedActivity {
-                AppRoutingFlowInspector(
-                    activity: activity,
-                    ledgerEntry: model.appRoutingFlowEntries[activity.flowIdentifier]
-                )
-                .inspectorColumnWidth(min: 300, ideal: 360, max: 460)
-            } else {
-                ContentUnavailableView(
-                    "Select an activity",
-                    systemImage: "sidebar.right",
-                    description: Text("Choose a flow to inspect every routing stage.")
-                )
+        .sheet(item: $proxifierImportPlan) { plan in
+            ProxifierRuleImportSheet(plan: plan) { importedRules in
+                proxifierImportPlan = nil
+                apply(rules + importedRules)
             }
+        }
+        .fileImporter(
+            isPresented: $showingProxifierImporter,
+            allowedContentTypes: [.proxifierProfile, .xml],
+            allowsMultipleSelection: false,
+            onCompletion: importProxifierProfile
+        )
+        .inspector(isPresented: attachedActivityInspectorBinding) {
+            activityInspectorContent
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 460)
         }
         .confirmationDialog(
             "Enable App Routing?",
@@ -131,54 +157,183 @@ struct AppRoutingView: View {
     }
 
     private var statusHeader: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 18) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Label(statusTitle, systemImage: statusSymbol)
-                            .font(.headline)
-                            .foregroundStyle(statusColor)
-                        Text(headerCount)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Text(headerDescription)
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                HStack(spacing: 7) {
+                    Label(statusTitle, systemImage: statusSymbol)
+                        .font(.headline)
+                        .foregroundStyle(statusColor)
+                        .lineLimit(1)
+                    Text(headerCount)
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer(minLength: 24)
-
-                Toggle("Enable App Routing", isOn: enabled)
-                    .toggleStyle(.switch)
-                    .disabled(
-                        model.pendingNetworkCaptureEnabled != nil
-                            || !model.canPerform(.changeNetworkCapture)
-                    )
-            }
-
-            Picker("App Routing workspace", selection: $workspace) {
-                ForEach(Workspace.allCases) { item in
-                    Text(item.rawValue).tag(item)
+                Picker("App Routing workspace", selection: $workspace) {
+                    ForEach(Workspace.allCases) { item in
+                        Text(item.rawValue).tag(item)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .frame(width: 240)
+
+                HStack(spacing: 10) {
+                    Menu {
+                        Toggle("Include DNS with App Routing", isOn: dnsEnabled)
+                        Divider()
+                        Button("Open Attention") { model.selection = .attention }
+                        Button("Open Logs") { model.selection = .logs }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .help("App Routing options")
+
+                    Toggle("Enabled", isOn: enabled)
+                        .toggleStyle(.switch)
+                        .disabled(
+                            model.pendingNetworkCaptureEnabled != nil
+                                || !model.canPerform(.changeNetworkCapture)
+                        )
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 300)
+            .frame(height: 48)
 
-            dataPlaneStatus
+            Divider()
 
-            advancedDNSSettings
-
-            if workspace == .activity {
-                activitySummary
+            HStack(spacing: 8) {
+                Image(systemName: compactStatusSymbol)
+                    .foregroundStyle(compactStatusColor)
+                    .frame(width: 16)
+                    .accessibilityHidden(true)
+                Text(compactStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(compactStatusHelp)
+                Spacer(minLength: 12)
+                compactStatusActions
             }
-
-            statusNotice
+            .frame(height: 37)
         }
         .padding(.horizontal, MClashLayout.pagePadding)
-        .padding(.vertical, 20)
+    }
+
+    private var compactStatusMessage: String {
+        if proxifierImportError != nil { return "The Proxifier profile could not be opened." }
+        if editorError != nil { return "The last rule change could not be applied." }
+
+        switch model.networkCaptureState {
+        case .waitingForConnection:
+            return "Rules are saved. Connect MClash to start routing."
+        case .awaitingUserApproval:
+            return "macOS approval is required before application traffic can be captured."
+        case .requiresReboot:
+            return "Restart this Mac to finish enabling the Network Extension."
+        case .failed:
+            return "App Routing could not start. Review Attention or retry."
+        case .enabling:
+            return "Starting application and DNS routing…"
+        case .disabling:
+            return "Stopping App Routing and restoring normal network handling…"
+        case .off:
+            return model.networkCapturePreferences.dnsEnabled
+                ? "Rules are saved. DNS will start together with App Routing."
+                : "Rules are saved. DNS is excluded in App Routing options."
+        case .on:
+            break
+        }
+
+        if model.dnsProxyRuntimeError != nil || model.dnsProxyAutomaticallyDisabled {
+            return "Application traffic is active; DNS routing needs attention."
+        }
+        if model.appRoutingProviderLastVerifiedAt == nil {
+            return "Traffic capture is starting; waiting for Provider verification."
+        }
+        if workspace == .activity {
+            let active = model.appRoutingActivities.count(where: {
+                $0.endedAt == nil && $0.relayState != .failed
+            })
+            return "\(formattedCount(active)) active · ↓ \(formattedActivityRate(model.appRoutingTrafficRates.measured.download)) · ↑ \(formattedActivityRate(model.appRoutingTrafficRates.measured.upload))"
+        }
+        return model.networkCapturePreferences.dnsEnabled
+            ? "Application traffic and DNS are active through MClash."
+            : "Application traffic is active; DNS remains with the system resolver."
+    }
+
+    private var compactStatusHelp: String {
+        if let proxifierImportError { return proxifierImportError }
+        if let editorError { return editorError }
+        if case let .failed(message) = model.networkCaptureState { return message }
+        if let dnsError = model.dnsProxyRuntimeError { return dnsError }
+        return compactStatusMessage
+    }
+
+    private var compactStatusSymbol: String {
+        if proxifierImportError != nil || editorError != nil { return "exclamationmark.triangle.fill" }
+        if model.dnsProxyRuntimeError != nil || model.dnsProxyAutomaticallyDisabled {
+            return "exclamationmark.triangle.fill"
+        }
+        return switch model.networkCaptureState {
+        case .on: "checkmark.circle.fill"
+        case .waitingForConnection: "pause.circle.fill"
+        case .enabling, .disabling: "arrow.clockwise"
+        case .awaitingUserApproval: "lock.shield.fill"
+        case .requiresReboot: "restart.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .off: "circle"
+        }
+    }
+
+    private var compactStatusColor: Color {
+        if proxifierImportError != nil || editorError != nil { return .red }
+        if model.dnsProxyRuntimeError != nil || model.dnsProxyAutomaticallyDisabled {
+            return .orange
+        }
+        return statusColor
+    }
+
+    @ViewBuilder
+    private var compactStatusActions: some View {
+        Group {
+            if proxifierImportError != nil {
+                Button("Dismiss") { proxifierImportError = nil }
+            } else if editorError != nil {
+                Button("Dismiss") { editorError = nil }
+            } else if model.dnsProxyRuntimeError != nil || model.dnsProxyAutomaticallyDisabled {
+                HStack(spacing: 6) {
+                    Button("Retry DNS") {
+                        Task { await model.retryDNSCaptureActivation() }
+                    }
+                    Button("Attention") { model.selection = .attention }
+                }
+            } else {
+                switch model.networkCaptureState {
+                case .waitingForConnection:
+                    Button("Connect") { Task { await model.connect() } }
+                        .disabled(!model.canPerform(.connection))
+                case .awaitingUserApproval:
+                    Button("Open Settings") { SMAppService.openSystemSettingsLoginItems() }
+                case .failed:
+                    HStack(spacing: 6) {
+                        Button("Retry") {
+                            Task { await model.retryNetworkCaptureActivation() }
+                        }
+                        Button("Attention") { model.selection = .attention }
+                    }
+                case .requiresReboot:
+                    Button("Attention") { model.selection = .attention }
+                case .off, .enabling, .on, .disabling:
+                    Color.clear
+                }
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .frame(width: 190, alignment: .trailing)
     }
 
     private var dataPlaneStatus: some View {
@@ -946,6 +1101,18 @@ struct AppRoutingView: View {
             }
             .keyboardShortcut("n", modifiers: .command)
 
+            Menu {
+                Button {
+                    proxifierImportError = nil
+                    showingProxifierImporter = true
+                } label: {
+                    Label("Proxifier Profile…", systemImage: "arrow.down.doc")
+                }
+            } label: {
+                Label("Import", systemImage: "square.and.arrow.down")
+            }
+            .help("Import routing rules from a Proxifier .ppx profile")
+
             Button("Duplicate", action: cloneSelectedRule)
                 .disabled(selectedRule == nil)
             Button("Edit…", action: editSelectedRule)
@@ -969,41 +1136,11 @@ struct AppRoutingView: View {
             .disabled(!canMoveSelectedRule(by: 1))
 
             Spacer()
-
-            if let editorError {
-                Label(editorError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
-                    .help(editorError)
-            }
-
-            if let appliedRuleRevision, let appliedRuleRevisionAt {
-                Label(
-                    "Applied · revision \(appliedRuleRevision) · \(appliedRuleRevisionAt.formatted(.relative(presentation: .named)))",
-                    systemImage: "checkmark.circle.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.green)
-            }
-
-            Button(action: requestApplicationRefresh) {
-                if isRefreshingApplications {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Refreshing…")
-                    }
-                } else {
-                    Text("Refresh Applications")
-                }
-            }
-            .disabled(isRefreshingApplications)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
         .padding(.horizontal, MClashLayout.pagePadding)
-        .padding(.vertical, 12)
+        .frame(height: 46)
         .disabled(!model.canPerform(.changeNetworkCapture))
     }
 
@@ -1068,6 +1205,11 @@ struct AppRoutingView: View {
                 Label("Inspect", systemImage: "sidebar.right")
             }
             .disabled(selectedActivity == nil)
+            .help(activityInspectorPresented ? "Hide activity details" : "Show activity details")
+            .popover(isPresented: popoverActivityInspectorBinding, arrowEdge: .top) {
+                activityInspectorContent
+                    .frame(width: 380, height: 520)
+            }
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -1141,6 +1283,58 @@ struct AppRoutingView: View {
     private var selectedActivity: AppRoutingActivity? {
         guard let selectedActivityID else { return nil }
         return model.appRoutingActivities.first { $0.flowIdentifier == selectedActivityID }
+    }
+
+    @ViewBuilder
+    private var activityInspectorContent: some View {
+        if let activity = selectedActivity {
+            AppRoutingFlowInspector(
+                activity: activity,
+                ledgerEntry: model.appRoutingFlowEntries[activity.flowIdentifier]
+            )
+        } else {
+            ContentUnavailableView(
+                "Select an activity",
+                systemImage: "sidebar.right",
+                description: Text("Choose a flow to inspect every routing stage.")
+            )
+        }
+    }
+
+    private var attachedActivityInspectorBinding: Binding<Bool> {
+        Binding(
+            get: {
+                activityInspectorPresented && activityInspectorPresentation == .attached
+            },
+            set: { presented in
+                guard activityInspectorPresentation == .attached else { return }
+                activityInspectorPresented = presented
+            }
+        )
+    }
+
+    private var popoverActivityInspectorBinding: Binding<Bool> {
+        Binding(
+            get: {
+                activityInspectorPresented && activityInspectorPresentation == .popover
+            },
+            set: { presented in
+                guard activityInspectorPresentation == .popover else { return }
+                activityInspectorPresented = presented
+            }
+        )
+    }
+
+    private func updateActivityInspectorPresentation(for width: CGFloat) {
+        guard width > 0 else { return }
+        let reconstructedFullWidth = width
+            + (activityInspectorPresented && activityInspectorPresentation == .attached ? 360 : 0)
+        let next = activityInspectorPresentation.presentation(
+            forFullWidth: reconstructedFullWidth
+        )
+        if next != activityInspectorPresentation {
+            activityInspectorPresentation = next
+        }
     }
 
     private func activityMatchesFilter(_ activity: AppRoutingActivity) -> Bool {
@@ -1522,7 +1716,9 @@ struct AppRoutingView: View {
     }
 
     private var nextPriority: Int {
-        (rules.map(\.priority).max() ?? 0) + 10
+        let maximum = rules.map(\.priority).max() ?? 0
+        let (candidate, overflow) = maximum.addingReportingOverflow(10)
+        return overflow ? Int.max : candidate
     }
 
     private func addRule() {
@@ -1651,8 +1847,6 @@ struct AppRoutingView: View {
                     rules,
                     enabled: model.networkCapturePreferences.enabled
                 )
-                appliedRuleRevision = model.networkCapturePreferences.snapshot.revision
-                appliedRuleRevisionAt = Date()
             } catch {
                 editorError = error.localizedDescription
             }
@@ -1691,14 +1885,42 @@ struct AppRoutingView: View {
         candidateRefreshRequest &+= 1
     }
 
-    private func refreshApplications(request: Int) async {
-        isRefreshingApplications = true
-        defer {
-            if request == candidateRefreshRequest {
-                isRefreshingApplications = false
+    private func importProxifierProfile(_ result: Result<[URL], Error>) {
+        switch result {
+        case let .failure(error):
+            proxifierImportError = error.localizedDescription
+        case let .success(urls):
+            guard let url = urls.first else { return }
+            let canAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if canAccess { url.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+                let sourceName = url.lastPathComponent
+                let existingRules = rules
+                Task {
+                    do {
+                        let plan = try await Task.detached(priority: .userInitiated) {
+                            try ProxifierRuleImporter().makePlan(
+                                data: data,
+                                sourceName: sourceName,
+                                existingRules: existingRules
+                            )
+                        }.value
+                        proxifierImportError = nil
+                        proxifierImportPlan = plan
+                    } catch {
+                        proxifierImportError = error.localizedDescription
+                    }
+                }
+            } catch {
+                proxifierImportError = error.localizedDescription
             }
         }
+    }
 
+    private func refreshApplications(request: Int) async {
         let candidates = await ApplicationCaptureCandidateProvider().loadRunningCandidates()
         guard !Task.isCancelled, request == candidateRefreshRequest else { return }
         applicationCandidates = candidates.applications
@@ -1733,6 +1955,8 @@ struct AppRoutingView: View {
             case let .network(network): network.presentation
             case let .host(host):
                 host.kind == .suffix ? "*.\(host.value)" : host.value
+            case let .hostPattern(pattern):
+                pattern.pattern
             }
         }.joined(separator: ", ")
     }

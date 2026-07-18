@@ -7,8 +7,14 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     private struct State: Sendable {
         var revision: UInt64 = 0
         var captureEnabled = false
-        var configuration: CaptureConfigurationLoadResult = .failOpen(.missingEncodedSnapshot)
+        var preparedConfiguration = PreparedCaptureConfiguration(
+            .failOpen(.missingEncodedSnapshot)
+        )
         var mihomoSOCKSConfigurations: [MihomoRoute: ProviderSOCKSConfiguration] = [:]
+
+        var configuration: CaptureConfigurationLoadResult {
+            preparedConfiguration.loadResult
+        }
     }
 
     private let lock = NSLock()
@@ -26,11 +32,14 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             ProviderConfigurationKey.captureConfigurationSnapshot
         ] as? Data
         let loadResult = CaptureConfigurationSnapshotLoader().load(encodedSnapshot)
+        // Compile destination indexes once per provider configuration load,
+        // never once per intercepted connection.
+        let preparedConfiguration = PreparedCaptureConfiguration(loadResult)
 
         lock.lock()
         state.revision = Self.uint64(configuration?[ProviderConfigurationKey.revision]) ?? 0
         state.captureEnabled = captureEnabled
-        state.configuration = loadResult
+        state.preparedConfiguration = preparedConfiguration
         state.mihomoSOCKSConfigurations = ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
         ) ?? [:]
@@ -222,7 +231,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     func failOpen(_ failure: FlowContextConversionFailure) -> FlowTrafficDecision {
         let currentState = snapshotState()
         return decisionAdapter.decide(
-            configuration: currentState.configuration,
+            preparedConfiguration: currentState.preparedConfiguration,
             context: .failOpen(failure),
             captureEnabled: currentState.captureEnabled,
             mihomoAvailable: false
@@ -259,7 +268,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             isTrustedMClashComponent: trustedComponentPolicy.contains(identityResolution)
         )
         let decision = decisionAdapter.decide(
-            configuration: currentState.configuration,
+            preparedConfiguration: currentState.preparedConfiguration,
             context: context,
             captureEnabled: currentState.captureEnabled,
             mihomoAvailable: !currentState.mihomoSOCKSConfigurations.isEmpty

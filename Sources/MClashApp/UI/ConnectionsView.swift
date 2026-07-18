@@ -195,47 +195,39 @@ struct ConnectionsView: View {
                     Text(entry.application.displayName)
                         .lineLimit(1)
                 }
-                .width(min: 130, ideal: 190)
+                .width(min: 120, ideal: 170)
 
                 TableColumn("Destination") { entry in
                     Text(ledgerDestination(entry.destination))
                         .lineLimit(1)
                         .help(ledgerDestination(entry.destination))
                 }
-                .width(min: 170, ideal: 240)
+                .width(min: 150, ideal: 220)
 
-                TableColumn("Capture") { entry in
-                    Text(captureOriginTitle(entry.captureOrigin))
-                        .lineLimit(1)
-                }
-                .width(min: 100, ideal: 130)
-
-                TableColumn("Result") { entry in
-                    Text(outcomeTitle(entry.outcome))
+                TableColumn("Decision") { entry in
+                    Text("\(outcomeTitle(entry.outcome)) · \(historyRuleTitle(entry))")
                         .foregroundStyle(outcomeColor(entry.outcome))
-                }
-                .width(min: 90, ideal: 120)
-
-                TableColumn("Rule") { entry in
-                    Text(historyRuleTitle(entry))
                         .lineLimit(1)
-                        .help(historyRuleHelp(entry))
+                        .help(
+                            "Capture: \(captureOriginTitle(entry.captureOrigin))\n"
+                                + historyRuleHelp(entry)
+                        )
                 }
-                .width(min: 120, ideal: 180)
+                .width(min: 130, ideal: 180)
 
                 TableColumn("Route") { entry in
                     Text(historyRouteTitle(entry))
                         .lineLimit(1)
                         .help(historyRouteHelp(entry))
                 }
-                .width(min: 140, ideal: 220)
+                .width(min: 120, ideal: 180)
 
                 TableColumn("Traffic") { entry in
                     Text(ledgerTrafficTitle(entry))
                         .monospacedDigit()
                         .help(ledgerTrafficHelp(entry))
                 }
-                .width(min: 105, ideal: 140)
+                .width(min: 92, ideal: 120)
 
                 TableColumn("Ended") { entry in
                     if let endedAt = entry.endedAt {
@@ -246,7 +238,7 @@ struct ConnectionsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .width(86)
+                .width(70)
                 }
             }
         }
@@ -359,30 +351,38 @@ struct ConnectionsView: View {
             sortOrder: sortOrder
         )
 
-        Group {
-            switch workspace {
-            case .live:
-                liveWorkspace(presentation: presentation)
-            case .apps:
-                applicationWorkspace
-            case .routes:
-                routeWorkspace
-            case .history:
-                historyWorkspace
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                trafficHeader(
+                    presentation: presentation,
+                    compact: geometry.size.width < 800
+                )
+                    .frame(height: 48)
+                Divider()
+
+                ZStack {
+                    switch workspace {
+                    case .live:
+                        liveWorkspace(presentation: presentation)
+                    case .apps:
+                        applicationWorkspace
+                    case .routes:
+                        routeWorkspace
+                    case .history:
+                        historyWorkspace
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .onAppear { updateWorkspaceWidth(geometry.size.width) }
+            .onChange(of: geometry.size.width) { _, width in
+                updateWorkspaceWidth(width)
             }
         }
         .navigationTitle("Traffic")
         .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { updateWorkspaceWidth(geometry.size.width) }
-                    .onChange(of: geometry.size.width) { _, width in
-                        updateWorkspaceWidth(width)
-                    }
-            }
-        }
         .inspector(isPresented: attachedInspectorBinding) {
             connectionInspector(presentation.selectedConnection)
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 440)
@@ -441,109 +441,127 @@ struct ConnectionsView: View {
         .sheet(isPresented: $showingClosedHistory) {
             ClosedConnectionsHistoryView(model: model)
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if model.errorMessage == nil,
-               let notice = trafficDataNotice {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.clockwise")
-                        .foregroundStyle(.orange)
-                        .accessibilityHidden(true)
-                    Text(notice)
-                        .font(.callout)
-                    Spacer()
+    }
+
+    private func trafficHeader(
+        presentation: ConnectionPresentationSnapshot,
+        compact: Bool
+    ) -> some View {
+        HStack(spacing: 12) {
+            Picker("Traffic Workspace", selection: $workspace) {
+                ForEach(Workspace.allCases) { item in
+                    Text(item.rawValue).tag(item)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.bar)
-                .overlay(alignment: .bottom) { Divider() }
             }
-        }
-        .toolbar {
-            ToolbarItemGroup {
-                Picker("Traffic Workspace", selection: $workspace) {
-                    ForEach(Workspace.allCases) { item in
-                        Text(item.rawValue).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 300)
+            .pickerStyle(.segmented)
+            .frame(width: compact ? 240 : 300)
 
+            Divider()
+                .frame(height: 20)
+
+            if compact {
+                Label(
+                    compactTrafficHeaderSummary(presentation: presentation),
+                    systemImage: trafficDataNotice == nil ? "waveform.path.ecg" : "arrow.clockwise"
+                )
+                .labelStyle(.iconOnly)
+                .foregroundStyle(trafficDataNotice == nil ? Color.secondary : Color.orange)
+                .help(trafficDataNotice ?? trafficHeaderSummary(presentation: presentation))
+                .accessibilityLabel(trafficHeaderSummary(presentation: presentation))
+            } else {
+                Label(
+                    trafficHeaderSummary(presentation: presentation),
+                    systemImage: trafficDataNotice == nil ? "waveform.path.ecg" : "arrow.clockwise"
+                )
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(trafficDataNotice == nil ? Color.secondary : Color.orange)
+                .lineLimit(1)
+                .help(trafficDataNotice ?? trafficHeaderSummary(presentation: presentation))
+            }
+
+            Spacer(minLength: 12)
+
+            Group {
                 if workspace == .live {
-                    Text(presentation.connectionCountLabel)
-                        .foregroundStyle(.secondary)
-
-                    if let downloadTotal = presentation.downloadTotal,
-                       let uploadTotal = presentation.uploadTotal {
-                        Label(formattedByteCount(downloadTotal), systemImage: "arrow.down")
-                            .font(.callout.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .help("Mihomo session download")
-                        Label(formattedByteCount(uploadTotal), systemImage: "arrow.up")
-                            .font(.callout.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .help("Mihomo session upload")
-                    }
-
                     inspectorButton(selectedConnection: presentation.selectedConnection)
+                } else {
+                    Color.clear.accessibilityHidden(true)
+                }
+            }
+            .frame(width: 86)
 
+            Group {
+                switch workspace {
+                case .live:
                     Button {
                         confirmingCloseAll = true
                     } label: {
-                        if model.isPerforming(.closeAllConnections) {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("Close All", systemImage: "xmark.circle")
-                        }
+                        Label("Close All", systemImage: "xmark.circle")
+                            .opacity(model.isPerforming(.closeAllConnections) ? 0 : 1)
+                            .overlay {
+                                if model.isPerforming(.closeAllConnections) {
+                                    ProgressView().controlSize(.small)
+                                }
+                            }
                     }
                     .disabled(
                         !presentation.hasConnections
                             || !model.canPerform(.closeAllConnections)
                     )
                     .help("Close every active connection")
-                } else {
-                    Text(workspaceSummary)
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(.secondary)
-
-                    if unmeasuredHandoffCount > 0 {
-                        Label(
-                            "\(formattedCount(unmeasuredHandoffCount)) unmeasured",
-                            systemImage: "arrow.uturn.right"
-                        )
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                        .help("Built-in bypass and fail-open flows were handed back to macOS. Their payload after handoff is not reported as zero.")
+                case .history:
+                    Button("Clear History", role: .destructive) {
+                        confirmingClearTrafficHistory = true
                     }
-
-                    if workspace == .history {
-                        Button("Clear History", role: .destructive) {
-                            confirmingClearTrafficHistory = true
-                        }
-                        .disabled(!hasTrafficHistoryToClear)
-                    }
+                    .disabled(!hasTrafficHistoryToClear)
+                case .apps, .routes:
+                    Color.clear.accessibilityHidden(true)
                 }
             }
+            .frame(width: 96)
         }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .padding(.horizontal, MClashLayout.pagePadding)
+    }
+
+    private func compactTrafficHeaderSummary(
+        presentation: ConnectionPresentationSnapshot
+    ) -> String {
+        if trafficDataNotice != nil { return "Traffic data reconnecting" }
+        if workspace == .live { return presentation.connectionCountLabel }
+        return workspaceSummary
+    }
+
+    private func trafficHeaderSummary(
+        presentation: ConnectionPresentationSnapshot
+    ) -> String {
+        if trafficDataNotice != nil { return "Live data reconnecting · last-known rows shown" }
+        if workspace == .live {
+            var parts = [presentation.connectionCountLabel]
+            if let download = presentation.downloadTotal,
+               let upload = presentation.uploadTotal {
+                parts.append("↓ \(formattedByteCount(download)) · ↑ \(formattedByteCount(upload))")
+            }
+            return parts.joined(separator: " · ")
+        }
+        if unmeasuredHandoffCount > 0 {
+            return "\(workspaceSummary) · \(formattedCount(unmeasuredHandoffCount)) pass-through unmeasured"
+        }
+        return workspaceSummary
     }
 
     @ViewBuilder
     private var persistentTrafficHistoryControl: some View {
-        switch model.trafficHistoryRuntimeState {
-        case .notConfigured:
-            HStack(alignment: .center, spacing: 14) {
-                Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
-                    .font(.title2)
-                    .foregroundStyle(.blue)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Keep traffic totals between launches?")
-                        .font(.callout.weight(.semibold))
-                    Text("Local-only aggregates keep app identity, rule name, proxy chain, outcome, and byte coverage. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        HStack(spacing: 10) {
+            switch model.trafficHistoryRuntimeState {
+            case .notConfigured:
+                Label(
+                    "Keep private aggregate totals between launches?",
+                    systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+                )
+                .font(.callout.weight(.medium))
+                .help("Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted.")
                 Spacer(minLength: 12)
                 Button("Session Only") {
                     Task { await model.setPersistentTrafficHistoryEnabled(false) }
@@ -552,49 +570,31 @@ struct ConnectionsView: View {
                     Task { await model.setPersistentTrafficHistoryEnabled(true) }
                 }
                 .buttonStyle(.borderedProminent)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
 
-        case .sessionOnly:
-            HStack(spacing: 10) {
+            case .sessionOnly:
                 Label("Session history only", systemImage: "memorychip")
                     .font(.callout.weight(.medium))
-                Text("Detailed completed flows disappear when MClash quits.")
+                Text("Completed flow details reset when MClash quits.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
                 Button("Keep Local History") {
                     Task { await model.setPersistentTrafficHistoryEnabled(true) }
                 }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
 
-        case .loading:
-            HStack(spacing: 10) {
+            case .loading:
                 ProgressView()
                     .controlSize(.small)
                 Text("Opening private local traffic history…")
                     .font(.callout)
                 Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
 
-        case let .unavailable(message):
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill")
+            case let .unavailable(message):
+                Label("Persistent history unavailable", systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Persistent history unavailable")
-                        .font(.callout.weight(.semibold))
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                    .help(message)
                 Spacer(minLength: 12)
                 Button("Use Session Only") {
                     Task { await model.setPersistentTrafficHistoryEnabled(false) }
@@ -603,13 +603,58 @@ struct ConnectionsView: View {
                     Task { await model.setPersistentTrafficHistoryEnabled(true) }
                 }
                 .buttonStyle(.borderedProminent)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
 
-        case let .ready(lastUpdatedAt):
-            persistentTrafficHistorySummary(lastUpdatedAt: lastUpdatedAt)
+            case let .ready(lastUpdatedAt):
+                Picker("History Range", selection: $persistentHistoryPeriod) {
+                    Text("Today").tag(TrafficHistoryPeriod.today)
+                    Text("This Week").tag(TrafficHistoryPeriod.week)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 190)
+
+                Text(persistentHistoryCompactSummary(lastUpdatedAt: lastUpdatedAt))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Menu {
+                    ForEach(TrafficHistoryRetention.allCases, id: \.rawValue) { retention in
+                        Button {
+                            Task { await model.setTrafficHistoryRetention(retention) }
+                        } label: {
+                            if retention == model.trafficHistoryRetention {
+                                Label(retentionTitle(retention), systemImage: "checkmark")
+                            } else {
+                                Text(retentionTitle(retention))
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Use Session Only") {
+                        Task { await model.setPersistentTrafficHistoryEnabled(false) }
+                    }
+                } label: {
+                    Label("Keep \(model.trafficHistoryRetention.rawValue) Days", systemImage: "calendar")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
         }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .padding(.horizontal, 16)
+        .frame(height: 52)
+    }
+
+    private func persistentHistoryCompactSummary(lastUpdatedAt: Date?) -> String {
+        guard let snapshot = persistentTrafficHistorySnapshot else {
+            return "Preparing aggregate totals…"
+        }
+        var summary = "\(persistentByteCount(snapshot.totals.exactTotalBytes)) measured · \(formattedCount(Int(clamping: snapshot.totals.completedFlowCount))) completed"
+        if let lastUpdatedAt {
+            summary += " · updated \(lastUpdatedAt.formatted(.relative(presentation: .named)))"
+        }
+        return summary
     }
 
     private func persistentTrafficHistorySummary(lastUpdatedAt: Date?) -> some View {

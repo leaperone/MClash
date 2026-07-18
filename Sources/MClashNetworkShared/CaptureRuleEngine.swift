@@ -213,11 +213,31 @@ public struct RuleHostDestinationEvidence: Codable, Hashable, Sendable {
     }
 }
 
+public struct RuleHostPatternDestinationEvidence: Codable, Hashable, Sendable {
+    public static let maximumPatternLength = 253
+
+    public let pattern: String
+
+    public init(pattern: String) {
+        self.pattern = String(pattern.prefix(Self.maximumPatternLength))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pattern
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(pattern: try container.decode(String.self, forKey: .pattern))
+    }
+}
+
 public enum RuleDestinationMatchEvidence: Codable, Hashable, Sendable {
     case unconstrained
     case ip(IPAddress)
     case network(IPNetwork)
     case host(RuleHostDestinationEvidence)
+    case hostPattern(RuleHostPatternDestinationEvidence)
 }
 
 public enum RuleProtocolMatchEvidence: Codable, Hashable, Sendable {
@@ -320,9 +340,120 @@ public struct BuiltInBypassPolicy: Sendable {
 }
 
 public struct CaptureRuleEngine: Sendable {
+    private struct IndexedDestination: Sendable {
+        let insertionIndex: Int
+        let matcher: DestinationMatcher
+    }
+
+    /// Compiles the common exact/suffix forms into lookup tables. Proxifier
+    /// profiles commonly contain thousands of hostname masks in one rule;
+    /// evaluating those as a linear wildcard list for every flow causes an
+    /// avoidable CPU spike.
+    private struct CompiledDestinations: Sendable {
+        let exactIPs: [IPAddress: IndexedDestination]
+        let networks: [IndexedDestination]
+        let exactHosts: [String: IndexedDestination]
+        let domainSuffixes: [String: IndexedDestination]
+        let looseSuffixes: [String: IndexedDestination]
+        let generalHostPatterns: [IndexedDestination]
+
+        init(_ matchers: [DestinationMatcher]) {
+            var exactIPs: [IPAddress: IndexedDestination] = [:]
+            var networks: [IndexedDestination] = []
+            var exactHosts: [String: IndexedDestination] = [:]
+            var domainSuffixes: [String: IndexedDestination] = [:]
+            var looseSuffixes: [String: IndexedDestination] = [:]
+            var generalHostPatterns: [IndexedDestination] = []
+
+            for (index, matcher) in matchers.enumerated() {
+                let indexed = IndexedDestination(insertionIndex: index, matcher: matcher)
+                switch matcher {
+                case let .ip(address):
+                    if exactIPs[address] == nil { exactIPs[address] = indexed }
+                case .network:
+                    networks.append(indexed)
+                case let .host(host):
+                    switch host.kind {
+                    case .exact:
+                        if exactHosts[host.value] == nil { exactHosts[host.value] = indexed }
+                    case .suffix:
+                        if domainSuffixes[host.value] == nil {
+                            domainSuffixes[host.value] = indexed
+                        }
+                    }
+                case let .hostPattern(pattern):
+                    if let suffix = pattern.indexedLooseSuffix {
+                        if looseSuffixes[suffix] == nil { looseSuffixes[suffix] = indexed }
+                    } else {
+                        generalHostPatterns.append(indexed)
+                    }
+                }
+            }
+
+            self.exactIPs = exactIPs
+            self.networks = networks
+            self.exactHosts = exactHosts
+            self.domainSuffixes = domainSuffixes
+            self.looseSuffixes = looseSuffixes
+            self.generalHostPatterns = generalHostPatterns
+        }
+
+        func match(_ destination: FlowDestination) -> RuleDestinationMatchEvidence? {
+            var best: IndexedDestination?
+
+            func consider(_ candidate: IndexedDestination?) {
+                guard let candidate else { return }
+                if best == nil || candidate.insertionIndex < best!.insertionIndex {
+                    best = candidate
+                }
+            }
+
+            if let address = destination.ipAddress {
+                consider(exactIPs[address])
+                for indexed in networks {
+                    guard case let .network(network) = indexed.matcher,
+                          network.contains(address) else { continue }
+                    consider(indexed)
+                }
+            }
+
+            if let hostname = destination.hostname {
+                let normalized = Self.normalizedHostname(hostname)
+                consider(exactHosts[normalized])
+
+                let labels = normalized.split(separator: ".", omittingEmptySubsequences: true)
+                for index in labels.indices {
+                    let suffix = labels[index...].joined(separator: ".")
+                    consider(domainSuffixes[suffix])
+                }
+
+                let characters = Array(normalized)
+                for index in characters.indices {
+                    consider(looseSuffixes[String(characters[index...])])
+                }
+
+                for indexed in generalHostPatterns {
+                    guard case let .hostPattern(pattern) = indexed.matcher,
+                          pattern.matches(normalized) else { continue }
+                    consider(indexed)
+                }
+            }
+
+            guard let best else { return nil }
+            return CaptureRuleEngine.destinationEvidence(for: best.matcher)
+        }
+
+        private static func normalizedHostname(_ hostname: String) -> String {
+            var result = hostname.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            while result.last == "." { result.removeLast() }
+            return result
+        }
+    }
+
     private struct OrderedRule: Sendable {
         let rule: CaptureRule
         let insertionIndex: Int
+        let destinations: CompiledDestinations
     }
 
     private let orderedRules: [OrderedRule]
@@ -330,7 +461,13 @@ public struct CaptureRuleEngine: Sendable {
 
     public init(snapshot: CaptureConfigurationSnapshot) {
         orderedRules = snapshot.rules.enumerated()
-            .map { OrderedRule(rule: $0.element, insertionIndex: $0.offset) }
+            .map {
+                OrderedRule(
+                    rule: $0.element,
+                    insertionIndex: $0.offset,
+                    destinations: CompiledDestinations($0.element.destinations)
+                )
+            }
             .sorted { lhs, rhs in
                 if lhs.rule.priority != rhs.rule.priority {
                     return lhs.rule.priority < rhs.rule.priority
@@ -354,7 +491,11 @@ public struct CaptureRuleEngine: Sendable {
 
         for orderedRule in orderedRules where orderedRule.rule.enabled {
             let rule = orderedRule.rule
-            if let evidence = Self.matchEvidence(for: rule, context: context) {
+            if let evidence = Self.matchEvidence(
+                for: rule,
+                compiledDestinations: orderedRule.destinations,
+                context: context
+            ) {
                 return RuleDecision(
                     action: rule.action,
                     unavailableFallback: rule.unavailableFallback,
@@ -373,6 +514,7 @@ public struct CaptureRuleEngine: Sendable {
 
     private static func matchEvidence(
         for rule: CaptureRule,
+        compiledDestinations: CompiledDestinations,
         context: FlowContext
     ) -> CaptureRuleDecisionEvidence? {
         let sourceEvidence: RuleSourceMatchEvidence
@@ -389,9 +531,7 @@ public struct CaptureRuleEngine: Sendable {
         let destinationEvidence: RuleDestinationMatchEvidence
         if rule.destinations.isEmpty {
             destinationEvidence = .unconstrained
-        } else if let evidence = rule.destinations.lazy.compactMap({ matcher in
-            matchEvidence(for: matcher, destination: context.destination)
-        }).first {
+        } else if let evidence = compiledDestinations.match(context.destination) {
             destinationEvidence = evidence
         } else {
             return nil
@@ -510,6 +650,24 @@ public struct CaptureRuleEngine: Sendable {
         case let .host(host):
             guard let hostname = destination.hostname, host.matches(hostname) else { return nil }
             return .host(RuleHostDestinationEvidence(kind: host.kind, value: host.value))
+        case let .hostPattern(pattern):
+            guard let hostname = destination.hostname, pattern.matches(hostname) else { return nil }
+            return .hostPattern(RuleHostPatternDestinationEvidence(pattern: pattern.pattern))
+        }
+    }
+
+    private static func destinationEvidence(
+        for matcher: DestinationMatcher
+    ) -> RuleDestinationMatchEvidence {
+        switch matcher {
+        case let .ip(address):
+            .ip(address)
+        case let .network(network):
+            .network(network)
+        case let .host(host):
+            .host(RuleHostDestinationEvidence(kind: host.kind, value: host.value))
+        case let .hostPattern(pattern):
+            .hostPattern(RuleHostPatternDestinationEvidence(pattern: pattern.pattern))
         }
     }
 }

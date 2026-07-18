@@ -323,6 +323,51 @@ struct CaptureRuleEngineTests {
         #expect(exactIPDecision.evidence?.destination == .ip(try IPAddress("203.0.113.8")))
     }
 
+    @Test("Hostname globs preserve Proxifier semantics and large loose-suffix lists stay indexed")
+    func hostGlobMatcherAndIndex() throws {
+        let strictSubdomain = try CaptureRule(
+            id: "strict-subdomain",
+            priority: 1,
+            destinations: [.hostPattern(try HostPatternMatcher(pattern: "*.example.com"))],
+            action: .reject
+        )
+        let root = try FlowContext(
+            source: source(),
+            destination: FlowDestination(hostname: "example.com", port: 443),
+            transportProtocol: .tcp
+        )
+        #expect(try engine([strictSubdomain]).evaluate(root).cause == .defaultDirect)
+
+        let subdomain = try FlowContext(
+            source: source(),
+            destination: FlowDestination(hostname: "api.example.com", port: 443),
+            transportProtocol: .tcp
+        )
+        #expect(try engine([strictSubdomain]).evaluate(subdomain).cause == .matchedRule("strict-subdomain"))
+
+        let masks = try (0 ..< 3_000).map { index in
+            DestinationMatcher.hostPattern(
+                try HostPatternMatcher(pattern: "*domain\(index).example")
+            )
+        }
+        let largeRule = try CaptureRule(
+            id: "large-import",
+            priority: 1,
+            destinations: masks,
+            action: .mihomo(.profileRules)
+        )
+        let target = try FlowContext(
+            source: source(),
+            destination: FlowDestination(hostname: "api.domain2999.example", port: 443),
+            transportProtocol: .tcp
+        )
+        let decision = try engine([largeRule]).evaluate(target)
+        #expect(decision.cause == .matchedRule("large-import"))
+        #expect(decision.evidence?.destination == .hostPattern(
+            RuleHostPatternDestinationEvidence(pattern: "*domain2999.example")
+        ))
+    }
+
     @Test
     func testEvidenceDistinguishesSignedPatternPathProcessAndUserIdentity() throws {
         let signedRule = try CaptureRule(

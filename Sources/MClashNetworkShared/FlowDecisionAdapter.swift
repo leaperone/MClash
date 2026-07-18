@@ -224,6 +224,22 @@ public enum CaptureConfigurationLoadResult: Codable, Hashable, Sendable {
     }
 }
 
+/// A validated capture snapshot together with its compiled rule indexes.
+///
+/// Network providers keep one instance for the lifetime of a configuration
+/// revision so large hostname groups are compiled once, not once per flow.
+public struct PreparedCaptureConfiguration: Sendable {
+    public let loadResult: CaptureConfigurationLoadResult
+    fileprivate let ruleEngine: CaptureRuleEngine?
+
+    public init(_ loadResult: CaptureConfigurationLoadResult) {
+        self.loadResult = loadResult
+        ruleEngine = loadResult.snapshot.map(CaptureRuleEngine.init(snapshot:))
+    }
+
+    var containsCompiledRuleEngine: Bool { ruleEngine != nil }
+}
+
 public struct CaptureConfigurationSnapshotLoader: Sendable {
     public static let maximumEncodedSize = 8 * 1_024 * 1_024
     public static let maximumRuleCount = 10_000
@@ -312,6 +328,21 @@ public struct FlowTrafficDecisionAdapter: Sendable {
         captureEnabled: Bool,
         mihomoAvailable: Bool
     ) -> FlowTrafficDecision {
+        decide(
+            preparedConfiguration: PreparedCaptureConfiguration(configuration),
+            context: context,
+            captureEnabled: captureEnabled,
+            mihomoAvailable: mihomoAvailable
+        )
+    }
+
+    public func decide(
+        preparedConfiguration: PreparedCaptureConfiguration,
+        context: FlowContextResolution,
+        captureEnabled: Bool,
+        mihomoAvailable: Bool
+    ) -> FlowTrafficDecision {
+        let configuration = preparedConfiguration.loadResult
         guard captureEnabled else {
             return FlowTrafficDecision(
                 disposition: .failOpen,
@@ -343,7 +374,11 @@ public struct FlowTrafficDecisionAdapter: Sendable {
             )
         }
 
-        let ruleDecision = CaptureRuleEngine(snapshot: snapshot).evaluate(flowContext)
+        // A loaded prepared configuration always owns the engine compiled from
+        // this snapshot. Keep a defensive fallback for future enum evolution.
+        let ruleEngine = preparedConfiguration.ruleEngine
+            ?? CaptureRuleEngine(snapshot: snapshot)
+        let ruleDecision = ruleEngine.evaluate(flowContext)
         switch ruleDecision.action {
         case .direct:
             return FlowTrafficDecision(
