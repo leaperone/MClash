@@ -3,9 +3,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension UTType {
-    static var proxifierProfile: UTType {
-        UTType(filenameExtension: "ppx", conformingTo: .xml) ?? .xml
-    }
+    /// Must match the imported type declaration in Support/Info.plist.
+    static let proxifierProfile = UTType(
+        importedAs: "one.leaper.mclash.proxifier-profile",
+        conformingTo: .xml
+    )
 }
 
 struct ProxifierRuleImportSheet: View {

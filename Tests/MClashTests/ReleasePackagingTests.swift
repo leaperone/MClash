@@ -1,5 +1,7 @@
 import Foundation
+@testable import MClashApp
 import Testing
+import UniformTypeIdentifiers
 
 @Suite("Release packaging")
 struct ReleasePackagingTests {
@@ -68,6 +70,29 @@ struct ReleasePackagingTests {
             extensionEntitlements["com.apple.developer.team-identifier"] as? String
                 == teamIdentifier
         )
+    }
+
+    @Test("Host bundle registers the Proxifier PPX file type")
+    func hostRegistersProxifierProfileType() throws {
+        #expect(
+            UTType.proxifierProfile.identifier
+                == "one.leaper.mclash.proxifier-profile"
+        )
+
+        let hostInfo = try plist(at: repositoryRoot.appendingPathComponent("Support/Info.plist"))
+        let declarations = try #require(
+            hostInfo["UTImportedTypeDeclarations"] as? [[String: Any]]
+        )
+        let declaration = try #require(declarations.first(where: {
+            $0["UTTypeIdentifier"] as? String
+                == "one.leaper.mclash.proxifier-profile"
+        }))
+        let conformsTo = try #require(declaration["UTTypeConformsTo"] as? [String])
+        #expect(conformsTo.contains("public.xml"))
+
+        let tags = try #require(declaration["UTTypeTagSpecification"] as? [String: Any])
+        let extensions = try #require(tags["public.filename-extension"] as? [String])
+        #expect(extensions.contains("ppx"))
     }
 
     private var repositoryRoot: URL {
