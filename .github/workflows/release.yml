@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.1.13"
+        default: "1.1.14"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
