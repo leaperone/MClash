@@ -433,6 +433,7 @@ struct AppModelSafetyTests {
     @Test("Connection snapshots feed bounded observed route traffic")
     func connectionSnapshotsFeedTrafficAttribution() throws {
         let model = AppModel()
+        model.setMainWindowVisible(true)
         model.applyConnectionSnapshot(
             try connectionSnapshot(upload: 10, download: 20),
             generation: 7

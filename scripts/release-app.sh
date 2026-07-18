@@ -16,6 +16,7 @@ architecture="${MCLASH_ARCHITECTURE:-$(uname -m)}"
 host_devid_profile="${MCLASH_HOST_DEVID_PROFILE_PATH:-}"
 network_extension_devid_profile="${MCLASH_NETWORK_EXTENSION_DEVID_PROFILE_PATH:-}"
 host_devid_entitlements="${MCLASH_HOST_DEVID_ENTITLEMENTS:-${repo_root}/Support/Signing/MClash-DeveloperID.entitlements}"
+cli_devid_entitlements="${MCLASH_CLI_DEVID_ENTITLEMENTS:-${repo_root}/Support/Signing/MClashCLI-DeveloperID.entitlements}"
 network_extension_devid_entitlements="${MCLASH_NETWORK_EXTENSION_DEVID_ENTITLEMENTS:-${repo_root}/Support/NetworkExtension/MClashNetworkExtension.DeveloperID.entitlements}"
 host_bundle_id="one.leaper.mclash"
 network_extension_bundle_id="one.leaper.mclash.network-extension"
@@ -25,7 +26,10 @@ if [[ -n "${application_identifier_prefix}" && "${application_identifier_prefix}
 fi
 signing_team_identifier="${apple_team_id:-${application_identifier_prefix%.}}"
 host_application_identifier="${application_identifier_prefix}${host_bundle_id}"
+cli_application_identifier="${application_identifier_prefix}${host_bundle_id}.cli"
 extension_application_identifier="${application_identifier_prefix}${network_extension_bundle_id}"
+host_keychain_group="${application_identifier_prefix}${host_bundle_id}.authorization"
+cli_keychain_group="${application_identifier_prefix}${host_bundle_id}.cli"
 
 if [[ -z "${version}" || -z "${build_number}" || -z "${identity}" ]]; then
   print -u2 "Set MCLASH_VERSION, MCLASH_BUILD_NUMBER, and CODE_SIGN_IDENTITY."
@@ -47,6 +51,7 @@ for required_file in \
   "${host_devid_profile}" \
   "${network_extension_devid_profile}" \
   "${host_devid_entitlements}" \
+  "${cli_devid_entitlements}" \
   "${network_extension_devid_entitlements}"
 do
   if [[ -z "${required_file}" || ! -s "${required_file}" ]]; then
@@ -161,10 +166,29 @@ verify_signed_entitlements() {
   rm -f "${entitlements}"
 }
 
+verify_keychain_identity() {
+  local target_path="$1"
+  local expected_application_identifier="$2"
+  local expected_keychain_group="$3"
+  local entitlements
+  entitlements="$(mktemp "${TMPDIR:-/tmp}/mclash-keychain-entitlements.XXXXXX")"
+  codesign -d --entitlements :- "${target_path}" > "${entitlements}" 2>/dev/null
+  plutil -lint "${entitlements}" >/dev/null
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${entitlements}" 2>/dev/null)" != "${expected_application_identifier}" ]] || \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${entitlements}" 2>/dev/null)" != "${signing_team_identifier}" ]] || \
+     ! plist_array_contains "${entitlements}" "keychain-access-groups" "${expected_keychain_group}"; then
+    rm -f "${entitlements}"
+    print -u2 "Signed Keychain identity is incomplete: ${target_path}"
+    exit 1
+  fi
+  rm -f "${entitlements}"
+}
+
 sign_application() {
   local app="$1"
   local sparkle="${app}/Contents/Frameworks/Sparkle.framework"
   local core="${app}/Contents/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+  local automation_cli="${app}/Contents/Helpers/mclashctl"
   local system_extension="${app}/Contents/Library/SystemExtensions/${network_extension_bundle_id}.systemextension"
 
   if [[ -d "${sparkle}" ]]; then
@@ -192,6 +216,10 @@ sign_application() {
     print -u2 "Bundled core is missing: ${core}"
     exit 1
   fi
+  if [[ ! -x "${automation_cli}" ]]; then
+    print -u2 "Bundled automation CLI is missing: ${automation_cli}"
+    exit 1
+  fi
   if [[ ! -d "${system_extension}" ]]; then
     print -u2 "Bundled Network Extension is missing: ${system_extension}"
     exit 1
@@ -207,6 +235,7 @@ sign_application() {
     "${app}/Contents/embedded.provisionprofile" \
     "${system_extension}/Contents/embedded.provisionprofile"
 
+  sign_path "${automation_cli}" --entitlements "${cli_devid_entitlements}"
   sign_path "${core}"
   sign_path "${system_extension}" --entitlements "${network_extension_devid_entitlements}"
   sign_path "${app}" --entitlements "${host_devid_entitlements}"
@@ -218,6 +247,8 @@ sign_application() {
   fi
   verify_signed_entitlements "${system_extension}" 0 "${extension_application_identifier}"
   verify_signed_entitlements "${app}" 1 "${host_application_identifier}"
+  verify_keychain_identity "${app}" "${host_application_identifier}" "${host_keychain_group}"
+  verify_keychain_identity "${automation_cli}" "${cli_application_identifier}" "${cli_keychain_group}"
 }
 
 export CONFIGURATION=release

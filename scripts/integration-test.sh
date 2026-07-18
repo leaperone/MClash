@@ -63,8 +63,22 @@ swiftc -swift-version 6 \
 
 application_sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
 application_sources=("${(@)application_sources:#*/App/MClashApp.swift}")
+automation_sources=("${repo_root}"/Sources/MClashAutomationProtocol/**/*.swift(N))
 network_shared_sources=("${repo_root}"/Sources/MClashNetworkShared/**/*.swift(N))
 network_shared_library="${build_dir}/libMClashNetworkShared.a"
+swiftc \
+  -parse-as-library \
+  -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
+  -emit-module \
+  -emit-library \
+  -static \
+  -module-name MClashAutomationProtocol \
+  -framework Security \
+  "${automation_sources[@]}" \
+  -emit-module-path "${build_dir}/MClashAutomationProtocol.swiftmodule" \
+  -o "${build_dir}/libMClashAutomationProtocol.a"
 swiftc \
   -parse-as-library \
   -swift-version 6 \
@@ -94,6 +108,7 @@ swiftc -parse-as-library -swift-version 6 \
   -I "${build_dir}" \
   -L "${build_dir}" \
   -lMClashNetworkShared \
+  -lMClashAutomationProtocol \
   -Xlinker -rpath \
   -Xlinker "${sparkle_framework_dir}" \
   "${application_sources[@]}" \

@@ -4,19 +4,43 @@ import ServiceManagement
 
 @MainActor
 struct LoginItemManager {
+    private static let agentPlistName = "one.leaper.mclash.login.plist"
+
+    private var backgroundAgent: SMAppService {
+        SMAppService.agent(plistName: Self.agentPlistName)
+    }
+
     var isEnabled: Bool {
-        SMAppService.mainApp.status == .enabled
+        backgroundAgent.status == .enabled
+            || SMAppService.mainApp.status == .enabled
     }
 
     func setEnabled(_ enabled: Bool) throws {
-        let service = SMAppService.mainApp
         if enabled {
-            guard service.status != .enabled else { return }
-            try service.register()
+            if SMAppService.mainApp.status == .enabled
+                || SMAppService.mainApp.status == .requiresApproval {
+                try SMAppService.mainApp.unregister()
+            }
+            guard backgroundAgent.status != .enabled else { return }
+            try backgroundAgent.register()
         } else {
-            guard service.status == .enabled || service.status == .requiresApproval else { return }
-            try service.unregister()
+            if backgroundAgent.status == .enabled
+                || backgroundAgent.status == .requiresApproval {
+                try backgroundAgent.unregister()
+            }
+            if SMAppService.mainApp.status == .enabled
+                || SMAppService.mainApp.status == .requiresApproval {
+                try SMAppService.mainApp.unregister()
+            }
         }
+    }
+
+    func migrateLegacyRegistrationIfNeeded() throws {
+        guard SMAppService.mainApp.status == .enabled else { return }
+        if backgroundAgent.status != .enabled {
+            try backgroundAgent.register()
+        }
+        try SMAppService.mainApp.unregister()
     }
 }
 #endif

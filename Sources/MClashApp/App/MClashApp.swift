@@ -5,7 +5,9 @@ struct MClashApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var applicationDelegate
     @State private var model = AppModel()
     @State private var applicationUpdater = ApplicationUpdater()
-    @State private var mainWindowContentIsActive = true
+    @State private var automationServer = AutomationSocketServer()
+    @State private var mainWindowContentIsActive = ApplicationDelegate
+        .initialWindowShouldPresent(arguments: CommandLine.arguments)
 
     var body: some Scene {
         Window("MClash", id: "main") {
@@ -85,7 +87,20 @@ struct MClashApp: App {
         applicationDelegate.forceShutdownHandler = { [weak model] in
             await model?.forceShutdown()
         }
+        applicationDelegate.willTerminateHandler = { [automationServer] in
+            automationServer.stop()
+        }
         await model.prepare()
+        do {
+            try automationServer.start(
+                model: model,
+                updater: applicationUpdater
+            ) { destination in
+                showMainWindow(destination: destination)
+            }
+        } catch {
+            model.errorMessage = "External automation could not start: \(error.localizedDescription)"
+        }
     }
 }
 

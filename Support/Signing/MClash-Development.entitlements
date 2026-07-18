@@ -11,5 +11,9 @@
 	<true/>
 	<key>com.apple.security.get-task-allow</key>
 	<true/>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)one.leaper.mclash.authorization</string>
+	</array>
 </dict>
 </plist>

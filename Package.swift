@@ -8,6 +8,11 @@ let package = Package(
     ],
     products: [
         .executable(name: "MClash", targets: ["MClashApp"]),
+        .library(
+            name: "MClashAutomationProtocol",
+            targets: ["MClashAutomationProtocol"]
+        ),
+        .executable(name: "mclashctl", targets: ["MClashCLI"]),
         .library(name: "MClashNetworkShared", targets: ["MClashNetworkShared"]),
         .executable(name: "MClashNetworkExtension", targets: ["MClashNetworkExtension"])
     ],
@@ -19,12 +24,18 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "MClashAutomationProtocol",
+            path: "Sources/MClashAutomationProtocol",
+            linkerSettings: [.linkedFramework("Security")]
+        ),
+        .target(
             name: "MClashNetworkShared",
             path: "Sources/MClashNetworkShared"
         ),
         .executableTarget(
             name: "MClashApp",
             dependencies: [
+                "MClashAutomationProtocol",
                 "MClashNetworkShared",
                 .product(name: "Sparkle", package: "Sparkle")
             ],
@@ -40,6 +51,11 @@ let package = Package(
             ]
         ),
         .executableTarget(
+            name: "MClashCLI",
+            dependencies: ["MClashAutomationProtocol"],
+            path: "Sources/MClashCLI"
+        ),
+        .executableTarget(
             name: "MClashNetworkExtension",
             dependencies: ["MClashNetworkShared"],
             path: "Sources/MClashNetworkExtension",
@@ -51,8 +67,13 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "MClashAutomationProtocolTests",
+            dependencies: ["MClashAutomationProtocol"],
+            path: "Tests/MClashAutomationProtocolTests"
+        ),
+        .testTarget(
             name: "MClashTests",
-            dependencies: ["MClashApp"],
+            dependencies: ["MClashApp", "MClashAutomationProtocol"],
             path: "Tests/MClashTests"
         ),
         .testTarget(

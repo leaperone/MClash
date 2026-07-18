@@ -274,7 +274,7 @@ struct LogsView: View {
             "# Attention items: \(model.operationalIssues.count)",
             "# Recognized credentials: redacted",
             "# Source filter: \(sourceFilter.title)",
-            "# Search: \(query.isEmpty ? "None" : query)",
+            "# Search filter applied: \(query.isEmpty ? "No" : "Yes")",
             "# Entries: \(logs.count)",
             "",
             "## Operational issues",

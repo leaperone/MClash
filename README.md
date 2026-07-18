@@ -29,6 +29,8 @@ WebSocket API.
 - Optional automatic connection reset after routing mode or node changes
 - Signed Sparkle updates from GitHub Releases with automatic checking,
   background downloads, and user-approved installation and relaunch
+- Versioned local JSON-RPC automation with a signed, bundled `mclashctl` for
+  AI agents, scripts, and other same-user tools
 
 TUN mode will be implemented behind a signed, narrow XPC privileged helper. It
 is intentionally not handled through arbitrary shell commands or a root-owned
@@ -65,6 +67,54 @@ profile transaction, and proxy restoration behavior.
 verifies its upstream archive checksum and recorded unpacked SHA-256, and embeds
 it in the application as `mclash-mihomo`. End users never select or download a
 core.
+
+## Automation API
+
+Release builds include `MClash.app/Contents/Helpers/mclashctl`. The CLI starts
+MClash in the background when needed, discovers its private per-user Unix
+socket, and prints one JSON-RPC response to stdout:
+
+```sh
+/Applications/MClash.app/Contents/Helpers/mclashctl capabilities --pretty
+/Applications/MClash.app/Contents/Helpers/mclashctl status --pretty
+/Applications/MClash.app/Contents/Helpers/mclashctl core.connect
+/Applications/MClash.app/Contents/Helpers/mclashctl routing.mode.set \
+  --params '{"mode":"rule"}'
+```
+
+For a stable shell command, link—not copy—the signed helper:
+
+```sh
+mkdir -p ~/.local/bin
+ln -sf /Applications/MClash.app/Contents/Helpers/mclashctl ~/.local/bin/mclashctl
+```
+
+`system.capabilities` is the authoritative, machine-readable operation list.
+It covers application/window lifecycle, settings and updates, core lifecycle,
+profiles and backups, runtime overrides, routing and proxy selection, Mihomo
+rules/providers, System Proxy, App Routing, connections/history, logs, and
+diagnostics. Destructive operations fail with `confirmation_required` unless
+the caller passes `--allow-interaction`; MClash then shows a local one-time
+approval dialog naming the exact operation.
+
+On first use, `mclashctl` asks MClash to pair locally. The approval dialog shows
+the executable identity and requested scopes; the resulting 256-bit token is
+kept in the caller's macOS Keychain, while MClash stores only its SHA-256 hash.
+Tokens are bound to the client's code identity, expire after 180 days, and can
+be listed or revoked through `auth.clients.*`.
+
+The bundled CLI is a user-level broker: granting `mclashctl` a scope allows
+processes under the same macOS login to invoke that scope through the helper.
+Agents that require separate trust identities should use independently signed
+native clients. Stable `--request-id` values make mutation recovery idempotent;
+secret parameters can be supplied with `--params-stdin` or `--params-file`.
+
+The endpoint never listens on TCP or LAN, accepts only paired clients with the
+same macOS user ID, and does not expose the Mihomo controller secret, Network
+Extension credentials, or full subscription URLs. Read calls return cached
+state and freshness metadata, so a background AI client does not reactivate
+the high-frequency UI telemetry streams. Protocol and command details are in
+[`docs/AUTOMATION.md`](docs/AUTOMATION.md).
 
 ## Bundled mihomo Alpha artifact
 

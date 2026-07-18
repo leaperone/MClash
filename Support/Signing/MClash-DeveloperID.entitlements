@@ -17,5 +17,9 @@
 	<array>
 		<string>5UAHRS482C.one.leaper.mclash</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>5UAHRS482C.one.leaper.mclash.authorization</string>
+	</array>
 </dict>
 </plist>

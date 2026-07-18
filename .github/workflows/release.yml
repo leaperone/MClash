@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.1.16"
+        default: "1.1.17"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -80,9 +80,34 @@ jobs:
             echo "prerelease=${prerelease}"
           } >> "${GITHUB_OUTPUT}"
 
+  verify:
+    name: Verify source and tests
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Typecheck and link all products
+        shell: zsh {0}
+        run: ./scripts/typecheck.sh
+
+      - name: Run unit tests
+        shell: zsh {0}
+        run: ./scripts/test-direct.sh
+
+      - name: Run integration tests
+        shell: zsh {0}
+        run: ./scripts/integration-test.sh
+
   release:
     name: Sign, notarize, and publish
-    needs: prepare
+    needs: [prepare, verify]
     runs-on: macos-15
     timeout-minutes: 60
     environment:

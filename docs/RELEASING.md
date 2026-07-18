@@ -37,7 +37,7 @@ git tag -s v1.0.0 -m "MClash 1.0.0"
 git push origin v1.0.0
 ```
 
-Alternatively, open **Actions → Release → Run workflow**, enter the version and optional build number, then approve the protected `release` environment. Manual dispatch creates the GitHub tag when the Release is published.
+Alternatively, after pushing the version tag, open **Actions → Release → Run workflow** to rerun that existing tag with an optional build number, then approve the protected `release` environment. Manual dispatch intentionally refuses an unpushed tag.
 
 The workflow performs these operations:
 

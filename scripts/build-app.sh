@@ -18,20 +18,25 @@ sparkle_framework="${sparkle_framework_dir}/Sparkle.framework"
 host_devid_profile="${MCLASH_HOST_DEVID_PROFILE_PATH:-}"
 network_extension_devid_profile="${MCLASH_NETWORK_EXTENSION_DEVID_PROFILE_PATH:-}"
 host_devid_entitlements="${MCLASH_HOST_DEVID_ENTITLEMENTS:-${repo_root}/Support/Signing/MClash-DeveloperID.entitlements}"
+cli_devid_entitlements="${MCLASH_CLI_DEVID_ENTITLEMENTS:-${repo_root}/Support/Signing/MClashCLI-DeveloperID.entitlements}"
 network_extension_devid_entitlements="${MCLASH_NETWORK_EXTENSION_DEVID_ENTITLEMENTS:-${repo_root}/Support/NetworkExtension/MClashNetworkExtension.DeveloperID.entitlements}"
 host_bundle_id="one.leaper.mclash"
 network_extension_bundle_id="one.leaper.mclash.network-extension"
 system_extension="${contents}/Library/SystemExtensions/${network_extension_bundle_id}.systemextension"
 system_extension_contents="${system_extension}/Contents"
 network_extension_info_source="${repo_root}/Support/NetworkExtension/Info.plist"
+login_agent_source="${repo_root}/Support/LaunchAgents/one.leaper.mclash.login.plist"
 team_identifier_prefix="${MCLASH_TEAM_IDENTIFIER_PREFIX:-${APPLE_TEAM_ID:-}}"
 if [[ -n "${team_identifier_prefix}" && "${team_identifier_prefix}" != *. ]]; then
   team_identifier_prefix="${team_identifier_prefix}."
 fi
 team_identifier="${APPLE_TEAM_ID:-${team_identifier_prefix%.}}"
 host_application_identifier="${team_identifier_prefix}${host_bundle_id}"
+cli_application_identifier="${team_identifier_prefix}${host_bundle_id}.cli"
 extension_application_identifier="${team_identifier_prefix}${network_extension_bundle_id}"
 app_group_identifier="${host_application_identifier}"
+host_keychain_group="${team_identifier_prefix}${host_bundle_id}.authorization"
+cli_keychain_group="${team_identifier_prefix}${host_bundle_id}.cli"
 
 plist_array_contains() {
   local plist="$1"
@@ -87,7 +92,11 @@ if ! grep -Fq "${MIHOMO_ALPHA_REVISION}" "${corresponding_source}"; then
 fi
 
 application_sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
+automation_sources=("${repo_root}"/Sources/MClashAutomationProtocol/**/*.swift(N))
+cli_sources=("${repo_root}"/Sources/MClashCLI/**/*.swift(N))
 binary_output="${build_root}/MClash"
+automation_library="${build_root}/libMClashAutomationProtocol.a"
+cli_binary_output="${build_root}/mclashctl"
 network_shared_sources=("${repo_root}"/Sources/MClashNetworkShared/**/*.swift(N))
 network_extension_sources=("${repo_root}"/Sources/MClashNetworkExtension/**/*.swift(N))
 network_shared_library="${build_root}/libMClashNetworkShared.a"
@@ -101,6 +110,22 @@ if [[ ! -s "${network_extension_info_source}" ]]; then
   exit 1
 fi
 mkdir -p "${build_root}"
+swiftc \
+  -parse-as-library \
+  -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
+  -O \
+  -whole-module-optimization \
+  -target "${architecture}-apple-macosx14.0" \
+  -emit-module \
+  -emit-library \
+  -static \
+  -module-name MClashAutomationProtocol \
+  -framework Security \
+  "${automation_sources[@]}" \
+  -emit-module-path "${build_root}/MClashAutomationProtocol.swiftmodule" \
+  -o "${automation_library}"
 swiftc \
   -parse-as-library \
   -swift-version 6 \
@@ -138,10 +163,26 @@ swiftc \
   -I "${build_root}" \
   -L "${build_root}" \
   -lMClashNetworkShared \
+  -lMClashAutomationProtocol \
   -Xlinker -rpath \
   -Xlinker @executable_path/../Frameworks \
   "${application_sources[@]}" \
   -o "${binary_output}"
+swiftc \
+  -parse-as-library \
+  -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
+  -O \
+  -whole-module-optimization \
+  -target "${architecture}-apple-macosx14.0" \
+  -framework AppKit \
+  -framework Security \
+  -I "${build_root}" \
+  -L "${build_root}" \
+  -lMClashAutomationProtocol \
+  "${cli_sources[@]}" \
+  -o "${cli_binary_output}"
 swiftc \
   -swift-version 6 \
   -strict-concurrency=complete \
@@ -163,16 +204,21 @@ swiftc \
 rm -rf "${app_bundle}"
 mkdir -p \
   "${contents}/MacOS" \
+  "${contents}/Helpers" \
   "${contents}/Frameworks" \
+  "${contents}/Library/LaunchAgents" \
   "${contents}/Resources/Core" \
   "${contents}/Resources/GeoData" \
   "${contents}/Resources/ThirdParty" \
   "${system_extension_contents}/MacOS"
 cp "${binary_output}" "${contents}/MacOS/MClash"
+cp "${cli_binary_output}" "${contents}/Helpers/mclashctl"
 cp "${network_extension_binary_output}" "${system_extension_contents}/MacOS/MClashNetworkExtension"
 ditto "${sparkle_framework}" "${contents}/Frameworks/Sparkle.framework"
 cp "${repo_root}/Support/Info.plist" "${contents}/Info.plist"
 cp "${network_extension_info_source}" "${system_extension_contents}/Info.plist"
+cp "${login_agent_source}" "${contents}/Library/LaunchAgents/one.leaper.mclash.login.plist"
+plutil -lint "${contents}/Library/LaunchAgents/one.leaper.mclash.login.plist" >/dev/null
 cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
 ditto "${geodata_source}" "${contents}/Resources/GeoData"
 cp "${license_source}" "${contents}/Resources/GeoData/LICENSE.txt"
@@ -221,6 +267,7 @@ fi
 
 packaged_core="${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
 if [[ "${code_sign_identity}" == "-" ]]; then
+  codesign --force --sign - "${contents}/Helpers/mclashctl"
   codesign --force --sign - "${packaged_core}"
   codesign --force \
     --entitlements "${network_extension_devid_entitlements}" \
@@ -233,6 +280,7 @@ else
     "${host_devid_profile}" \
     "${network_extension_devid_profile}" \
     "${host_devid_entitlements}" \
+    "${cli_devid_entitlements}" \
     "${network_extension_devid_entitlements}"
   do
     if [[ -z "${required_file}" || ! -s "${required_file}" ]]; then
@@ -336,6 +384,9 @@ else
   codesign --force --options runtime --timestamp \
     --sign "${code_sign_identity}" "${contents}/Frameworks/Sparkle.framework"
   codesign --force --options runtime --timestamp \
+    --entitlements "${cli_devid_entitlements}" \
+    --sign "${code_sign_identity}" "${contents}/Helpers/mclashctl"
+  codesign --force --options runtime --timestamp \
     --sign "${code_sign_identity}" "${packaged_core}"
   codesign --force --options runtime --timestamp \
     --entitlements "${network_extension_devid_entitlements}" \
@@ -345,14 +396,17 @@ else
     --sign "${code_sign_identity}" "${app_bundle}"
 fi
 codesign --verify --strict --verbose=2 "${packaged_core}"
+codesign --verify --strict --verbose=2 "${contents}/Helpers/mclashctl"
 if [[ -d "${system_extension}" ]]; then
   codesign --verify --strict --verbose=2 "${system_extension}"
 fi
 codesign --verify --deep --strict --verbose=2 "${app_bundle}"
 if [[ "${code_sign_identity}" != "-" ]]; then
   signed_host_entitlements="${build_root}/MClash.signed-entitlements.plist"
+  signed_cli_entitlements="${build_root}/mclashctl.signed-entitlements.plist"
   signed_extension_entitlements="${build_root}/MClashNetworkExtension.signed-entitlements.plist"
   codesign -d --entitlements :- "${app_bundle}" > "${signed_host_entitlements}" 2>/dev/null
+  codesign -d --entitlements :- "${contents}/Helpers/mclashctl" > "${signed_cli_entitlements}" 2>/dev/null
   codesign -d --entitlements :- "${system_extension}" > "${signed_extension_entitlements}" 2>/dev/null
   for signed_entitlements in \
     "${signed_host_entitlements}" \
@@ -367,9 +421,23 @@ if [[ "${code_sign_identity}" != "-" ]]; then
       exit 1
     fi
   done
+  plutil -lint "${signed_cli_entitlements}" >/dev/null
+  if ! plist_array_contains "${signed_host_entitlements}" "keychain-access-groups" "${host_keychain_group}"; then
+    print -u2 "Signed host is missing Keychain group ${host_keychain_group}."
+    exit 1
+  fi
+  if ! plist_array_contains "${signed_cli_entitlements}" "keychain-access-groups" "${cli_keychain_group}"; then
+    print -u2 "Signed mclashctl is missing Keychain group ${cli_keychain_group}."
+    exit 1
+  fi
   if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${signed_host_entitlements}" 2>/dev/null)" != "${host_application_identifier}" ]] || \
      [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${signed_host_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
     print -u2 "Signed host identity does not match ${host_application_identifier} / ${team_identifier}."
+    exit 1
+  fi
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${signed_cli_entitlements}" 2>/dev/null)" != "${cli_application_identifier}" ]] || \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${signed_cli_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
+    print -u2 "Signed mclashctl identity does not match ${cli_application_identifier} / ${team_identifier}."
     exit 1
   fi
   if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${signed_extension_entitlements}" 2>/dev/null)" != "${extension_application_identifier}" ]] || \

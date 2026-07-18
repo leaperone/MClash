@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MClashAutomationProtocol
 import MClashNetworkShared
 import Observation
 import Security
@@ -355,7 +356,7 @@ final class AppModel {
             presentationDemandDidChange()
         }
     }
-    private(set) var mainWindowIsVisible = true
+    private(set) var mainWindowIsVisible = false
     private(set) var menuBarContentIsVisible = false
     private(set) var appRoutingActivityViewIsVisible = false
     var coreState: CoreRunState = .stopped
@@ -734,6 +735,14 @@ final class AppModel {
         preparationInProgress = true
         defer { preparationInProgress = false }
 
+        do {
+            try LoginItemManager().migrateLegacyRegistrationIfNeeded()
+            launchAtLogin = LoginItemManager().isEnabled
+        } catch {
+            appendSupervisorLog(
+                "Launch at Login could not be migrated to background mode: \(error.localizedDescription)"
+            )
+        }
         await prepareTrafficHistoryPersistenceIfNeeded()
 
         do {
@@ -1098,6 +1107,74 @@ final class AppModel {
         }
     }
 
+    func importProfile(
+        data: Data,
+        suggestedFileName: String,
+        activate: Bool = true
+    ) async throws -> ProfileMetadata {
+        guard begin(.importProfile) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.importProfile) }
+        guard let profileStore, let profileLayout else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        guard !data.isEmpty,
+              data.count <= MClashAutomationProtocol.maximumInlineProfileSize else {
+            throw AppModelError.profileActivationFailed(
+                "The imported profile must be between 1 byte and \(MClashAutomationProtocol.maximumInlineProfileSize) bytes."
+            )
+        }
+
+        let safeName = URL(fileURLWithPath: suggestedFileName).lastPathComponent
+        guard !safeName.isEmpty, safeName.utf8.count <= 128,
+              safeName.lowercased().hasSuffix(".yaml") || safeName.lowercased().hasSuffix(".yml") else {
+            throw AppModelError.profileActivationFailed(
+                "The imported profile filename must end in .yaml or .yml."
+            )
+        }
+        let stagingDirectory = profileLayout.rootDirectory
+            .appendingPathComponent("Automation", isDirectory: true)
+            .appendingPathComponent("Staging", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: stagingDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let importDirectory = stagingDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: importDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: importDirectory) }
+        let stagedURL = importDirectory.appendingPathComponent(safeName, isDirectory: false)
+        try data.write(to: stagedURL, options: .withoutOverwriting)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: stagedURL.path
+        )
+        let previousProfileID = activeProfileID
+        let profile = try await profileStore.importProfile(from: stagedURL)
+        profiles = try await profileStore.profiles()
+        if activate {
+            do {
+                try await performActivateProfile(profile.id)
+            } catch {
+                try await rollbackNewProfile(
+                    profile.id,
+                    previousProfileID: previousProfileID,
+                    activationError: error
+                )
+            }
+        }
+        errorMessage = nil
+        return profile
+    }
+
     func addRemoteProfile(name: String, url: URL, activate: Bool = true) async throws {
         guard begin(.addRemoteProfile) else {
             throw AppModelError.operationInProgress
@@ -1110,6 +1187,7 @@ final class AppModel {
 
         do {
             let validator = try makeProfileValidator()
+            let previousProfileID = activeProfileID
             let profile = try await profileStore.createRemoteProfile(
                 name: name,
                 subscriptionURL: url,
@@ -1117,7 +1195,15 @@ final class AppModel {
             )
             profiles = try await profileStore.profiles()
             if activate {
-                try await performActivateProfile(profile.id)
+                do {
+                    try await performActivateProfile(profile.id)
+                } catch {
+                    try await rollbackNewProfile(
+                        profile.id,
+                        previousProfileID: previousProfileID,
+                        activationError: error
+                    )
+                }
             }
         } catch {
             appendSupervisorLog(
@@ -1140,6 +1226,35 @@ final class AppModel {
             appendSupervisorLog("Profile activation failed: \(error.localizedDescription)")
             throw error
         }
+    }
+
+    /// Profile creation plus activation is one automation transaction. If the
+    /// candidate cannot become active, remove it so callers never receive a
+    /// failure while an undisclosed persistent profile remains behind.
+    private func rollbackNewProfile(
+        _ createdProfileID: ProfileID,
+        previousProfileID: ProfileID?,
+        activationError: Error
+    ) async throws -> Never {
+        guard let profileStore, let profileLayout else {
+            throw activationError
+        }
+        do {
+            if activeProfileID == createdProfileID {
+                try await profileStore.setActiveProfile(previousProfileID)
+                activeProfileID = previousProfileID
+                activeConfigURL = previousProfileID.map {
+                    profileLayout.configurationURL(for: $0)
+                }
+                await refreshActiveProfileListenerPorts()
+            }
+            try await profileStore.removeProfile(createdProfileID)
+            profiles = try await profileStore.profiles()
+        } catch {
+            let message = "\(activationError.localizedDescription) Rolling back the newly created profile failed: \(error.localizedDescription)"
+            throw AppModelError.profileActivationFailed(message)
+        }
+        throw activationError
     }
 
     func updateProfile(
@@ -1196,14 +1311,16 @@ final class AppModel {
         pendingSubscriptionImport = nil
     }
 
-    func confirmPendingSubscriptionImport(_ request: SubscriptionImportRequest) async {
-        guard pendingSubscriptionImport == request else { return }
+    @discardableResult
+    func confirmPendingSubscriptionImport(_ request: SubscriptionImportRequest) async -> Bool {
+        guard pendingSubscriptionImport == request else { return false }
         pendingSubscriptionImport = nil
 
         do {
             try await addRemoteProfile(name: request.name, url: request.url, activate: false)
             selection = .profiles
             errorMessage = nil
+            return true
         } catch {
             let message = redactedSubscriptionMessage(
                 error.localizedDescription,
@@ -1211,6 +1328,7 @@ final class AppModel {
             )
             errorMessage = message
             appendSupervisorLog("Confirmed subscription import failed: \(message)")
+            return false
         }
     }
 
@@ -1245,12 +1363,13 @@ final class AppModel {
         )
     }
 
-    func exportBackup() async {
-        guard begin(.exportBackup) else { return }
+    @discardableResult
+    func exportBackup() async -> Bool? {
+        guard begin(.exportBackup) else { return false }
         defer { end(.exportBackup) }
         guard let profileLayout else {
             errorMessage = "The application state directory is unavailable."
-            return
+            return false
         }
 
         let panel = NSSavePanel()
@@ -1258,7 +1377,7 @@ final class AppModel {
         panel.prompt = "Export"
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = "MClash-\(Date().ISO8601Format().prefix(10)).mclashbackup"
-        guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+        guard panel.runModal() == .OK, let destinationURL = panel.url else { return nil }
 
         do {
             try await profileBackupService.exportBackup(
@@ -1266,17 +1385,20 @@ final class AppModel {
                 to: destinationURL
             )
             errorMessage = nil
+            return true
         } catch {
             recordOperationFailure(error, context: "Backup export")
+            return false
         }
     }
 
-    func restoreBackup() async {
-        guard begin(.restoreBackup) else { return }
+    @discardableResult
+    func restoreBackup() async -> Bool? {
+        guard begin(.restoreBackup) else { return false }
         defer { end(.restoreBackup) }
         guard let profileLayout, let profileStore else {
             errorMessage = "The application state directory is unavailable."
-            return
+            return false
         }
 
         let panel = NSOpenPanel()
@@ -1285,11 +1407,11 @@ final class AppModel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let backupURL = panel.url else { return }
+        guard panel.runModal() == .OK, let backupURL = panel.url else { return nil }
 
         let shouldReconnect = isConnected || isBusy
         let shouldRestoreSystemProxy = systemProxyEnabled
-        if shouldReconnect, !(await performDisconnect()) { return }
+        if shouldReconnect, !(await performDisconnect()) { return false }
 
         do {
             _ = try await profileBackupService.restoreBackup(
@@ -1324,6 +1446,7 @@ final class AppModel {
                 }
             }
             errorMessage = nil
+            return true
         } catch {
             recordOperationFailure(error, context: "Backup restore")
             if shouldReconnect, activeConfigURL != nil {
@@ -1332,6 +1455,7 @@ final class AppModel {
                     await performEnableSystemProxy()
                 }
             }
+            return false
         }
     }
 
@@ -1678,18 +1802,23 @@ final class AppModel {
         return failures
     }
 
-    func refreshProfile(_ id: ProfileID) async {
-        guard begin(.refreshProfile(id)) else { return }
+    @discardableResult
+    func refreshProfile(_ id: ProfileID) async -> Bool {
+        guard begin(.refreshProfile(id)) else { return false }
         defer { end(.refreshProfile(id)) }
 
-        _ = await performRefreshProfile(id)
+        switch await performRefreshProfile(id) {
+        case .updated, .unchanged: return true
+        case .failed: return false
+        }
     }
 
-    func refreshAllProfiles() async {
-        guard begin(.refreshAllProfiles) else { return }
+    @discardableResult
+    func refreshAllProfiles() async -> ProfileBatchUpdateReceipt? {
+        guard begin(.refreshAllProfiles) else { return nil }
         defer { end(.refreshAllProfiles) }
 
-        guard let profileStore else { return }
+        guard let profileStore else { return nil }
         do {
             let ids = try await profileStore.remoteProfileIDs()
             var updatedCount = 0
@@ -1709,10 +1838,12 @@ final class AppModel {
                 unchangedCount: unchangedCount,
                 failedCount: failedCount
             )
+            return profileBatchUpdateReceipt
         } catch is CancellationError {
-            return
+            return nil
         } catch {
             recordOperationFailure(error, context: "Subscription refresh")
+            return nil
         }
     }
 
@@ -2109,20 +2240,24 @@ final class AppModel {
         }
     }
 
-    func refreshRules() async {
-        guard begin(.refreshRules) else { return }
+    @discardableResult
+    func refreshRules() async -> Bool {
+        guard begin(.refreshRules) else { return false }
         defer { end(.refreshRules) }
 
-        guard let apiClient else { return }
+        guard let apiClient else { return false }
         await loadRules(using: apiClient, generation: controllerGeneration)
+        return rulesErrorMessage == nil
     }
 
-    func refreshProviders() async {
-        guard begin(.refreshProviders) else { return }
+    @discardableResult
+    func refreshProviders() async -> Bool {
+        guard begin(.refreshProviders) else { return false }
         defer { end(.refreshProviders) }
 
-        guard let apiClient else { return }
+        guard let apiClient else { return false }
         await loadProviders(using: apiClient, generation: controllerGeneration)
+        return providersErrorMessage == nil
     }
 
     func providerOperationReceipt(
@@ -2227,43 +2362,49 @@ final class AppModel {
         providerOperationReceipts[providerReceiptKey(kind, providerName: providerName)] = receipt
     }
 
-    func closeConnection(_ id: String) async {
-        guard begin(.closeConnection(id)) else { return }
+    @discardableResult
+    func closeConnection(_ id: String) async -> Bool {
+        guard begin(.closeConnection(id)) else { return false }
         defer { end(.closeConnection(id)) }
 
-        guard let apiClient else { return }
+        guard let apiClient else { return false }
         let generation = controllerGeneration
         do {
             try await apiClient.closeConnection(id: id)
-            guard generation == controllerGeneration else { return }
+            guard generation == controllerGeneration else { return false }
             for _ in 0..<20
             where generation == controllerGeneration
                 && connections?.connections.contains(where: { $0.id == id }) == true {
                 try? await Task.sleep(for: .milliseconds(100))
             }
+            return true
         } catch {
-            guard generation == controllerGeneration else { return }
+            guard generation == controllerGeneration else { return false }
             recordOperationFailure(error, context: "Close connection")
+            return false
         }
     }
 
-    func closeAllConnections() async {
-        guard begin(.closeAllConnections) else { return }
+    @discardableResult
+    func closeAllConnections() async -> Bool {
+        guard begin(.closeAllConnections) else { return false }
         defer { end(.closeAllConnections) }
 
-        guard let apiClient else { return }
+        guard let apiClient else { return false }
         let generation = controllerGeneration
         do {
             try await apiClient.closeAllConnections()
-            guard generation == controllerGeneration else { return }
+            guard generation == controllerGeneration else { return false }
             for _ in 0..<20
             where generation == controllerGeneration
                 && connections?.connections.isEmpty == false {
                 try? await Task.sleep(for: .milliseconds(100))
             }
+            return true
         } catch {
-            guard generation == controllerGeneration else { return }
+            guard generation == controllerGeneration else { return false }
             recordOperationFailure(error, context: "Close all connections")
+            return false
         }
     }
 
@@ -2937,9 +3078,10 @@ final class AppModel {
         }
     }
 
-    func setSystemProxyGuardPaused(_ paused: Bool) async {
+    @discardableResult
+    func setSystemProxyGuardPaused(_ paused: Bool) async -> Bool {
         var preferences = systemProxyPreferences
-        guard preferences.guardEnabled == paused else { return }
+        guard preferences.guardEnabled == paused else { return true }
         preferences.guardEnabled = !paused
         do {
             try await applySystemProxyPreferences(preferences)
@@ -2948,11 +3090,31 @@ final class AppModel {
                     ? "System proxy guard paused; current macOS proxy settings were left in place."
                     : "System proxy guard resumed and verified."
             )
+            return true
         } catch {
             recordOperationFailure(
                 error,
                 context: paused ? "Pause system proxy guard" : "Resume system proxy guard"
             )
+            return false
+        }
+    }
+
+    func verifySystemProxyGuardNow() async throws {
+        guard systemProxyEnabled else {
+            throw AppModelError.profileActivationFailed(
+                "The macOS System Proxy is not enabled."
+            )
+        }
+        guard let endpoints = currentSystemProxyEndpoints() else {
+            throw AppModelError.localProxyPortsUnavailable
+        }
+        await performSystemProxyGuardCheck(
+            endpoints: endpoints,
+            bypassDomains: systemProxyPreferences.effectiveBypassDomains
+        )
+        if let failure = systemProxyGuardFailure {
+            throw AppModelError.profileActivationFailed(failure.reason)
         }
     }
 
@@ -3184,7 +3346,8 @@ final class AppModel {
         scheduleFlowLedgerRefresh()
     }
 
-    func clearAppRoutingActivity() async {
+    @discardableResult
+    func clearAppRoutingActivity() async -> Bool {
         do {
             if networkCaptureIsActive {
                 try await networkExtensionControl.clearAppRoutingActivity()
@@ -3199,8 +3362,10 @@ final class AppModel {
             appRoutingActivityDroppedCount = 0
             appRoutingActivityCoverageStartedAt = Date()
             scheduleFlowLedgerRefresh()
+            return true
         } catch {
             appRoutingActivityError = error.localizedDescription
+            return false
         }
     }
 
@@ -3235,11 +3400,12 @@ final class AppModel {
         }
     }
 
-    func clearTrafficHistory() async {
+    @discardableResult
+    func clearTrafficHistory() async -> Bool {
         clearClosedConnectionHistory()
-        await clearAppRoutingActivity()
+        guard await clearAppRoutingActivity() else { return false }
 
-        guard let store = persistentTrafficHistoryStore else { return }
+        guard let store = persistentTrafficHistoryStore else { return true }
         do {
             _ = try await store.clear()
             persistedTrafficHistoryIdentifiers.removeAll(keepingCapacity: true)
@@ -3247,10 +3413,12 @@ final class AppModel {
             queuedTrafficHistoryCompletions.removeAll(keepingCapacity: true)
             queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: true)
             await refreshPersistentTrafficHistorySnapshots()
+            return true
         } catch {
             markPersistentTrafficHistoryUnavailable(
                 "MClash could not clear the persistent traffic history: \(error.localizedDescription)"
             )
+            return false
         }
     }
 

@@ -18,6 +18,13 @@ struct FlowLedger: Sendable {
     /// parsing off the main actor and prevents every view refresh from scanning
     /// all active and recently closed connections again.
     private(set) var latestNonDirectRouteAt: Date?
+    /// Aggregates are built with the ledger on its detached worker. Keeping
+    /// them here prevents views and automation polling from repeatedly doing
+    /// full scans and sorts on the main actor.
+    private(set) var applicationAggregates: [FlowLedgerApplicationAggregate]
+    private(set) var routeAggregates: [FlowLedgerRouteAggregate]
+    private(set) var outcomeAggregates: [FlowLedgerOutcomeAggregate]
+    private(set) var completedEntries: [FlowLedgerEntry]
 
     init(
         activeConnections: [MihomoConnection],
@@ -51,6 +58,10 @@ struct FlowLedger: Sendable {
     ) {
         entries = []
         latestNonDirectRouteAt = nil
+        applicationAggregates = []
+        routeAggregates = []
+        outcomeAggregates = []
+        completedEntries = []
 
         guard !Task<Never, Never>.isCancelled else { return }
         let deduplicatedConnections = Self.deduplicated(mihomoConnections)
@@ -110,6 +121,10 @@ struct FlowLedger: Sendable {
 
         entries = builtEntries.sorted(by: Self.entriesAreMoreRecent)
         latestNonDirectRouteAt = Self.latestNonDirectRouteDate(in: builtEntries)
+        applicationAggregates = Self.makeApplicationAggregates(from: builtEntries)
+        routeAggregates = Self.makeRouteAggregates(from: builtEntries)
+        outcomeAggregates = Self.makeOutcomeAggregates(from: builtEntries)
+        completedEntries = entries.filter { !$0.state.isActive }
     }
 
     func recentEntries(limit: Int, since cutoff: Date? = nil) -> [FlowLedgerEntry] {
@@ -123,7 +138,9 @@ struct FlowLedger: Sendable {
             .map { $0 }
     }
 
-    var applicationAggregates: [FlowLedgerApplicationAggregate] {
+    private static func makeApplicationAggregates(
+        from entries: [FlowLedgerEntry]
+    ) -> [FlowLedgerApplicationAggregate] {
         var aggregates: [FlowLedgerApplicationKey: FlowLedgerApplicationAggregate] = [:]
         for entry in entries {
             let key = entry.application.key
@@ -143,7 +160,9 @@ struct FlowLedger: Sendable {
         }
     }
 
-    var routeAggregates: [FlowLedgerRouteAggregate] {
+    private static func makeRouteAggregates(
+        from entries: [FlowLedgerEntry]
+    ) -> [FlowLedgerRouteAggregate] {
         var aggregates: [FlowLedgerRouteKey: FlowLedgerRouteAggregate] = [:]
         for entry in entries {
             let key = entry.routeKey
@@ -160,7 +179,9 @@ struct FlowLedger: Sendable {
         }
     }
 
-    var outcomeAggregates: [FlowLedgerOutcomeAggregate] {
+    private static func makeOutcomeAggregates(
+        from entries: [FlowLedgerEntry]
+    ) -> [FlowLedgerOutcomeAggregate] {
         var aggregates: [FlowLedgerOutcome: FlowLedgerOutcomeAggregate] = [:]
         for entry in entries {
             var aggregate = aggregates[entry.outcome]

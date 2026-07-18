@@ -64,8 +64,24 @@ mkdir -p "${build_dir}"
 
 sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
 tests=("${repo_root}"/Tests/MClashTests/*.swift(N))
+automation_sources=("${repo_root}"/Sources/MClashAutomationProtocol/*.swift(N))
+automation_tests=("${repo_root}"/Tests/MClashAutomationProtocolTests/*.swift(N))
 network_shared_sources=("${repo_root}"/Sources/MClashNetworkShared/*.swift(N))
 network_shared_tests=("${repo_root}"/Tests/MClashNetworkSharedTests/*.swift(N))
+
+swiftc \
+  -parse-as-library \
+  -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
+  -enable-testing \
+  -emit-module \
+  -emit-library \
+  -module-name MClashAutomationProtocol \
+  -framework Security \
+  "${automation_sources[@]}" \
+  -emit-module-path "${build_dir}/MClashAutomationProtocol.swiftmodule" \
+  -o "${build_dir}/libMClashAutomationProtocol.dylib"
 
 swiftc \
   -parse-as-library \
@@ -100,6 +116,7 @@ swiftc \
   -I "${build_dir}" \
   -L "${build_dir}" \
   -lMClashNetworkShared \
+  -lMClashAutomationProtocol \
   -F "${sparkle_framework_dir}" \
   -framework Sparkle \
   "${sources[@]}" \
@@ -114,6 +131,7 @@ swiftc \
   -L "${build_dir}" \
   -lMClashApp \
   -lMClashNetworkShared \
+  -lMClashAutomationProtocol \
   -F "${sparkle_framework_dir}" \
   -framework Sparkle \
   -lsqlite3 \
@@ -156,3 +174,26 @@ swiftc \
   -o "${build_dir}/MClashNetworkSharedPackageTests"
 
 "${build_dir}/MClashNetworkSharedPackageTests"
+
+swiftc \
+  -parse-as-library \
+  -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
+  -I "${build_dir}" \
+  -L "${build_dir}" \
+  -lMClashAutomationProtocol \
+  -F "${frameworks}" \
+  -framework Testing \
+  -plugin-path "${plugins}" \
+  "${automation_tests[@]}" \
+  "${repo_root}/Tests/TestRunner.swift" \
+  -Xlinker -rpath \
+  -Xlinker "${build_dir}" \
+  -Xlinker -rpath \
+  -Xlinker "${frameworks}" \
+  -Xlinker -rpath \
+  -Xlinker "${testing_interop}" \
+  -o "${build_dir}/MClashAutomationProtocolPackageTests"
+
+"${build_dir}/MClashAutomationProtocolPackageTests"

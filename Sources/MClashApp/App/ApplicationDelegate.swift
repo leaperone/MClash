@@ -4,11 +4,18 @@ import AppKit
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     var shutdownHandler: (@MainActor () async -> Bool)?
     var forceShutdownHandler: (@MainActor () async -> Void)?
+    var willTerminateHandler: (@MainActor () -> Void)?
     private var terminationInProgress = false
     private var mainWindow: NSWindow?
     private var mainWindowObservers: [NSObjectProtocol] = []
     private var mainWindowVisibilityHandler: (@MainActor (Bool) -> Void)?
-    private var shouldPresentInitialMainWindow = true
+    private var shouldPresentInitialMainWindow = ApplicationDelegate.initialWindowShouldPresent(
+        arguments: CommandLine.arguments
+    )
+
+    static func initialWindowShouldPresent(arguments: [String]) -> Bool {
+        !arguments.contains("--mclash-background")
+    }
 
     func registerMainWindow(
         _ window: NSWindow,
@@ -30,6 +37,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             shouldPresentInitialMainWindow = false
             showMainWindow()
         } else {
+            window.orderOut(nil)
             visibilityDidChange(mainWindowShouldMountPresentation)
         }
     }
@@ -38,6 +46,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication
     ) -> Bool {
         false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        willTerminateHandler?()
     }
 
     func applicationShouldHandleReopen(
