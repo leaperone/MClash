@@ -176,9 +176,11 @@ public enum ProcessIdentityResolution: Codable, Hashable, Sendable {
     }
 }
 
-/// Identifies MClash-owned processes whose traffic must never be sent back
-/// through the transparent proxy. A resolved identity requires both the exact
-/// signing identifier and Developer ID team. The kernel-published
+/// Identifies MClash data-plane processes whose traffic must never be sent back
+/// through the transparent proxy. The host application is intentionally not a
+/// member: its update, subscription, and API traffic may use App Routing like
+/// any other application. A resolved identity requires both the exact signing
+/// identifier and Developer ID team. The kernel-published
 /// `NEFlowMetaData.sourceAppSigningIdentifier` can also be used when process
 /// inspection is unavailable because it is not supplied by the application.
 public struct TrustedMClashComponentPolicy: Sendable {
@@ -186,7 +188,6 @@ public struct TrustedMClashComponentPolicy: Sendable {
 
     private static let signingIdentifiers: Set<String> = [
         "mclash-mihomo",
-        "one.leaper.mclash",
         "one.leaper.mclash.network-extension",
     ]
 

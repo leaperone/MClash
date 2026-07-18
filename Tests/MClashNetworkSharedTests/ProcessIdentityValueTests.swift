@@ -104,6 +104,10 @@ struct ProcessIdentityValueTests {
             teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
         )))
         #expect(policy.contains(resolution(
+            signingIdentifier: "one.leaper.mclash.network-extension",
+            teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
+        )))
+        #expect(!policy.contains(resolution(
             signingIdentifier: "one.leaper.mclash",
             teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
         )))
@@ -133,8 +137,9 @@ struct ProcessIdentityValueTests {
     func trustedMClashPolicyAcceptsOnlyExactKernelMetadataIdentifiers() {
         let policy = TrustedMClashComponentPolicy()
 
-        #expect(policy.contains(metadataSigningIdentifier: "one.leaper.mclash"))
+        #expect(policy.contains(metadataSigningIdentifier: "one.leaper.mclash.network-extension"))
         #expect(policy.contains(metadataSigningIdentifier: "  MClash-Mihomo  "))
+        #expect(!policy.contains(metadataSigningIdentifier: "one.leaper.mclash"))
         #expect(!policy.contains(metadataSigningIdentifier: "mclash"))
         #expect(!policy.contains(metadataSigningIdentifier: "one.leaper.mclash.fake"))
     }

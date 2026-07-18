@@ -121,6 +121,41 @@ struct CaptureRuleEngineTests {
     }
 
     @Test
+    func testMClashHostCanUseAppRoutingForGitHubWhileDataPlaneComponentsBypass() throws {
+        let rule = try CaptureRule(
+            id: "mclash-github",
+            priority: 1,
+            sources: [.applicationIdentifierPattern(
+                try ApplicationIdentifierPatternMatcher(pattern: "one.leaper.mclash")
+            )],
+            destinations: [.host(try HostMatcher(kind: .suffix, value: "github.com"))],
+            action: .mihomo(.profileRules)
+        )
+        let engine = try engine([rule])
+        let host = source(
+            signingIdentifier: "one.leaper.mclash",
+            bundleIdentifier: "one.leaper.mclash"
+        )
+
+        let hostDecision = engine.evaluate(try context(
+            source: host,
+            hostname: "api.github.com"
+        ))
+        #expect(hostDecision.action == .mihomo(.profileRules))
+        #expect(hostDecision.cause == .matchedRule("mclash-github"))
+
+        let dataPlaneDecision = engine.evaluate(try context(
+            source: source(
+                signingIdentifier: "mclash-mihomo",
+                isTrustedMClashComponent: true
+            ),
+            hostname: "api.github.com"
+        ))
+        #expect(dataPlaneDecision.action == .direct)
+        #expect(dataPlaneDecision.cause == .builtInBypass(.trustedMClashComponent))
+    }
+
+    @Test
     func testApplicationIdentityRequiresDesignatedRequirementAndSpecifiedFields() throws {
         let matcher = ApplicationSourceMatcher(
             designatedRequirement: "REQ",
