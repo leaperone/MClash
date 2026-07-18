@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.1.7"
+        default: "1.1.8"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -361,6 +361,20 @@ jobs:
             "${extension_plist}" \
             "one.leaper.mclash.network-extension" \
             0
+          host_profile_application_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "${host_plist}")"
+          extension_profile_application_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "${extension_plist}")"
+          for identity_pair in \
+            "${host_entitlements}|${host_profile_application_identifier}" \
+            "${extension_entitlements}|${extension_profile_application_identifier}"
+          do
+            entitlement_file="${identity_pair%%|*}"
+            expected_application_identifier="${identity_pair#*|}"
+            if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${entitlement_file}" 2>/dev/null)" != "${expected_application_identifier}" ]] || \
+               [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${entitlement_file}" 2>/dev/null)" != "${APPLE_TEAM_ID}" ]]; then
+              print -u2 "${entitlement_file:t} identity does not match its provisioning profile."
+              exit 1
+            fi
+          done
           host_application_prefix="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationIdentifierPrefix:0' "${host_plist}")"
           extension_application_prefix="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationIdentifierPrefix:0' "${extension_plist}")"
           if [[ "${host_application_prefix}" != "${extension_application_prefix}" ]]; then

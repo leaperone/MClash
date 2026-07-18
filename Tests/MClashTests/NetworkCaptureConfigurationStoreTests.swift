@@ -14,10 +14,52 @@ struct NetworkCaptureConfigurationStoreTests {
         let value = try await store.load()
 
         #expect(!value.enabled)
-        #expect(!value.dnsEnabled)
+        #expect(value.dnsEnabled)
         #expect(value.failOpen)
         #expect(value.snapshot.revision == 0)
         #expect(value.snapshot.rules.isEmpty)
+    }
+
+    @Test("Version 1 settings migrate DNS to the coupled default")
+    func legacyIndependentDNSSettingMigratesToEnabled() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try NetworkCaptureConfigurationStore(applicationRoot: fixture.root)
+        let snapshot = try CaptureConfigurationSnapshot(revision: 7, rules: [])
+        let legacyPreferences = try NetworkCapturePreferences(
+            enabled: true,
+            dnsEnabled: false,
+            snapshot: snapshot
+        )
+        let document = LegacyDocument(
+            schemaVersion: 1,
+            preferences: legacyPreferences
+        )
+        let layout = NetworkCaptureStorageLayout(applicationRoot: fixture.root)
+        try JSONEncoder().encode(document).write(to: layout.preferencesURL)
+
+        let migrated = try await store.load()
+
+        #expect(migrated.enabled)
+        #expect(migrated.dnsEnabled)
+        #expect(migrated.snapshot.revision == 7)
+    }
+
+    @Test("Current settings preserve an explicit advanced DNS opt-out")
+    func currentAdvancedDNSOptOutPersists() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try NetworkCaptureConfigurationStore(applicationRoot: fixture.root)
+
+        let saved = try await store.replaceRules(
+            [],
+            enabled: false,
+            dnsEnabled: false
+        )
+        let loaded = try await store.load()
+
+        #expect(!saved.dnsEnabled)
+        #expect(loaded == saved)
     }
 
     @Test("Rule replacement advances revision and persists privately")
@@ -83,6 +125,11 @@ struct NetworkCaptureConfigurationStoreTests {
             try await store.load()
         }
     }
+}
+
+private struct LegacyDocument: Encodable {
+    let schemaVersion: Int
+    let preferences: NetworkCapturePreferences
 }
 
 private struct Fixture {

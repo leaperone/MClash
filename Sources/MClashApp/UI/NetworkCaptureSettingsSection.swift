@@ -41,6 +41,7 @@ struct AppRoutingView: View {
     @State private var appliedRuleRevisionAt: Date?
     @State private var showingDNSReplacementConfirmation = false
     @State private var showingAppRoutingEnableConfirmation = false
+    @State private var advancedDNSExpanded = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -179,6 +180,8 @@ struct AppRoutingView: View {
 
             dataPlaneStatus
 
+            advancedDNSSettings
+
             if workspace == .activity {
                 activitySummary
             }
@@ -208,26 +211,35 @@ struct AppRoutingView: View {
                 symbol: dnsDataPlaneSymbol,
                 color: dnsDataPlaneColor
             ) {
-                VStack(alignment: .trailing, spacing: 6) {
-                    Toggle("Route DNS through Mihomo", isOn: dnsEnabled)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .disabled(
-                            model.pendingNetworkCaptureEnabled != nil
-                                || !model.canPerform(.changeNetworkCapture)
-                        )
-                        .help("Route ordinary system DNS TCP/UDP flows through the private Mihomo listener. App-implemented DoH cannot be identified as DNS.")
-                    if model.dnsProxyAutomaticallyDisabled
-                        || model.dnsProxyRuntimeError != nil {
-                        Button("Retry") {
-                            Task { await model.retryDNSCaptureActivation() }
-                        }
-                        .controlSize(.small)
-                        .disabled(!model.canPerform(.changeNetworkCapture))
+                if model.dnsProxyAutomaticallyDisabled
+                    || model.dnsProxyRuntimeError != nil {
+                    Button("Retry") {
+                        Task { await model.retryDNSCaptureActivation() }
                     }
+                    .controlSize(.small)
+                    .disabled(!model.canPerform(.changeNetworkCapture))
                 }
             }
         }
+    }
+
+    private var advancedDNSSettings: some View {
+        DisclosureGroup("Advanced DNS Routing", isExpanded: $advancedDNSExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Include DNS when App Routing is enabled", isOn: dnsEnabled)
+                    .toggleStyle(.switch)
+                    .disabled(
+                        model.pendingNetworkCaptureEnabled != nil
+                            || !model.canPerform(.changeNetworkCapture)
+                    )
+                Text("Recommended. DNS Routing normally starts and stops with App Routing. Turn this off only when another DNS Proxy must remain responsible for system DNS. App-provided DoH cannot be identified as DNS traffic.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 6)
+        }
+        .font(.callout)
     }
 
     private func dataPlaneCard<Actions: View>(
@@ -322,7 +334,7 @@ struct AppRoutingView: View {
     }
 
     private var dnsDataPlaneTitle: String {
-        if model.dnsProxyAutomaticallyDisabled { return "System DNS Restored" }
+        if model.dnsProxyAutomaticallyDisabled { return "Stopped with App Routing" }
         guard model.networkCapturePreferences.dnsEnabled else { return "Off" }
         guard model.networkCapturePreferences.enabled else { return "Starts with App Routing" }
         if let status = model.dnsProxyRuntimeStatus, status.isOperational {
@@ -336,10 +348,14 @@ struct AppRoutingView: View {
 
     private var dnsDataPlaneDetail: String {
         if let error = model.dnsProxyRuntimeError { return error }
+        guard model.networkCapturePreferences.dnsEnabled else {
+            return "DNS is excluded by the Advanced DNS Routing setting; the current macOS resolver remains responsible."
+        }
+        guard model.networkCapturePreferences.enabled else {
+            return "DNS Routing will start with App Routing and stop when App Routing is turned off."
+        }
         guard let status = model.dnsProxyRuntimeStatus else {
-            return model.networkCapturePreferences.dnsEnabled
-                ? "Waiting for a matching DNS Provider heartbeat and Mihomo backend probe."
-                : "Ordinary DNS remains on the current macOS resolver."
+            return "Waiting for a matching DNS Provider heartbeat and Mihomo backend probe."
         }
         let (totalBytes, overflow) = status.uploadBytes.addingReportingOverflow(
             status.downloadBytes
@@ -361,27 +377,28 @@ struct AppRoutingView: View {
         if model.dnsProxyAutomaticallyDisabled { return "arrow.uturn.backward.circle.fill" }
         if model.dnsProxyRuntimeStatus?.isOperational == true { return "checkmark.shield.fill" }
         if model.dnsProxyRuntimeError != nil { return "exclamationmark.triangle.fill" }
-        return model.networkCapturePreferences.dnsEnabled ? "arrow.clockwise" : "network"
+        guard model.networkCapturePreferences.dnsEnabled else { return "network" }
+        return model.networkCapturePreferences.enabled ? "arrow.clockwise" : "link.circle"
     }
 
     private var dnsDataPlaneColor: Color {
         if model.dnsProxyAutomaticallyDisabled { return .orange }
         if model.dnsProxyRuntimeStatus?.isOperational == true { return .green }
         if model.dnsProxyRuntimeError != nil { return .red }
-        return model.networkCapturePreferences.dnsEnabled ? .orange : .secondary
+        return model.networkCapturePreferences.dnsEnabled
+            && model.networkCapturePreferences.enabled ? .orange : .secondary
     }
 
     private var dnsEnabled: Binding<Bool> {
         Binding(
             get: {
                 model.networkCapturePreferences.dnsEnabled
-                    && !model.dnsProxyAutomaticallyDisabled
             },
             set: { value in
-                if value {
+                if value && model.networkCapturePreferences.enabled {
                     showingDNSReplacementConfirmation = true
                 } else {
-                    Task { await model.setDNSCaptureEnabled(false) }
+                    Task { await model.setDNSCaptureEnabled(value) }
                 }
             }
         )
@@ -451,7 +468,7 @@ struct AppRoutingView: View {
             case .savedForNextActivation:
                 statusNotice(
                     title: "Settings saved without interrupting Mihomo",
-                    message: "App Routing is off, so the rules and DNS preference were saved for the next activation. Completed in \(formattedDuration(receipt.duration)).",
+                    message: "App Routing is off, so the rules and advanced DNS preference were saved for the next activation. Completed in \(formattedDuration(receipt.duration)).",
                     symbol: "checkmark.circle.fill",
                     color: .green
                 ) { EmptyView() }
@@ -495,7 +512,11 @@ struct AppRoutingView: View {
     ) -> String {
         var facts = [
             enabled ? "App Routing is enabled" : "App Routing is disabled",
-            dnsEnabled && enabled ? "DNS routing requested" : "DNS routing is off",
+            dnsEnabled && enabled
+                ? "DNS Routing started with App Routing"
+                : dnsEnabled
+                    ? "DNS Routing stopped with App Routing"
+                    : "DNS Routing is excluded in Advanced settings",
         ]
         if systemProxyWasDisabled {
             facts.append("the previously enabled System Proxy was restored to its saved macOS configuration")
@@ -1413,6 +1434,15 @@ struct AppRoutingView: View {
             "MClash will restart the Mihomo core, which can close current connections.",
             "macOS may ask you to approve the MClash Network Filter."
         ]
+        if model.networkCapturePreferences.dnsEnabled {
+            effects.append(
+                "DNS Routing will start at the same time and can replace Proxifier DNS or another active macOS DNS Proxy."
+            )
+        } else {
+            effects.append(
+                "DNS Routing is excluded by the Advanced DNS Routing setting."
+            )
+        }
         if model.systemProxyEnabled {
             effects.insert(
                 "The currently enabled MClash System Proxy will be turned off because the two capture modes are mutually exclusive.",

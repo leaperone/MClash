@@ -17,7 +17,15 @@ host_devid_profile="${MCLASH_HOST_DEVID_PROFILE_PATH:-}"
 network_extension_devid_profile="${MCLASH_NETWORK_EXTENSION_DEVID_PROFILE_PATH:-}"
 host_devid_entitlements="${MCLASH_HOST_DEVID_ENTITLEMENTS:-${repo_root}/Support/Signing/MClash-DeveloperID.entitlements}"
 network_extension_devid_entitlements="${MCLASH_NETWORK_EXTENSION_DEVID_ENTITLEMENTS:-${repo_root}/Support/NetworkExtension/MClashNetworkExtension.DeveloperID.entitlements}"
+host_bundle_id="one.leaper.mclash"
 network_extension_bundle_id="one.leaper.mclash.network-extension"
+application_identifier_prefix="${MCLASH_TEAM_IDENTIFIER_PREFIX:-${apple_team_id}}"
+if [[ -n "${application_identifier_prefix}" && "${application_identifier_prefix}" != *. ]]; then
+  application_identifier_prefix="${application_identifier_prefix}."
+fi
+signing_team_identifier="${apple_team_id:-${application_identifier_prefix%.}}"
+host_application_identifier="${application_identifier_prefix}${host_bundle_id}"
+extension_application_identifier="${application_identifier_prefix}${network_extension_bundle_id}"
 
 if [[ -z "${version}" || -z "${build_number}" || -z "${identity}" ]]; then
   print -u2 "Set MCLASH_VERSION, MCLASH_BUILD_NUMBER, and CODE_SIGN_IDENTITY."
@@ -112,6 +120,7 @@ plist_array_contains() {
 verify_signed_entitlements() {
   local target_path="$1"
   local requires_system_extension_install="$2"
+  local expected_application_identifier="$3"
   local entitlements
   entitlements="$(mktemp "${TMPDIR:-/tmp}/mclash-signed-entitlements.XXXXXX")"
 
@@ -135,6 +144,12 @@ verify_signed_entitlements() {
     "dns-proxy-systemextension"; then
     rm -f "${entitlements}"
     print -u2 "Signed Network Extension entitlements are incomplete: ${target_path}"
+    exit 1
+  fi
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${entitlements}" 2>/dev/null)" != "${expected_application_identifier}" ]] || \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${entitlements}" 2>/dev/null)" != "${signing_team_identifier}" ]]; then
+    rm -f "${entitlements}"
+    print -u2 "Signed identity does not match ${expected_application_identifier} / ${signing_team_identifier}: ${target_path}"
     exit 1
   fi
   if [[ "${requires_system_extension_install}" == "1" ]] && \
@@ -201,8 +216,8 @@ sign_application() {
     print -u2 "Embedded provisioning profiles do not match the validated release profiles."
     exit 1
   fi
-  verify_signed_entitlements "${system_extension}" 0
-  verify_signed_entitlements "${app}" 1
+  verify_signed_entitlements "${system_extension}" 0 "${extension_application_identifier}"
+  verify_signed_entitlements "${app}" 1 "${host_application_identifier}"
 }
 
 export CONFIGURATION=release

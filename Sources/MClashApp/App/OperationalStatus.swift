@@ -269,13 +269,13 @@ extension AppModel {
                     severity: .error,
                     subsystem: .appRouting,
                     title: restored
-                        ? "DNS routing was stopped and system DNS was restored"
+                        ? "App Routing stopped after DNS verification failed"
                         : "DNS routing is unverified",
                     consequence: restored
-                        ? "App Routing remains enabled, but ordinary DNS is no longer being sent through MClash."
+                        ? "MClash stopped application capture and DNS together; macOS system DNS was restored."
                         : "MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener.",
                     technicalDetail: dnsProxyRuntimeError,
-                    primaryActionTitle: "Retry DNS Routing",
+                    primaryActionTitle: "Retry App Routing",
                     primaryAction: .openAppRouting,
                     secondaryActionTitle: "View Logs",
                     secondaryAction: .openLogs

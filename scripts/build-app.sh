@@ -19,6 +19,7 @@ host_devid_profile="${MCLASH_HOST_DEVID_PROFILE_PATH:-}"
 network_extension_devid_profile="${MCLASH_NETWORK_EXTENSION_DEVID_PROFILE_PATH:-}"
 host_devid_entitlements="${MCLASH_HOST_DEVID_ENTITLEMENTS:-${repo_root}/Support/Signing/MClash-DeveloperID.entitlements}"
 network_extension_devid_entitlements="${MCLASH_NETWORK_EXTENSION_DEVID_ENTITLEMENTS:-${repo_root}/Support/NetworkExtension/MClashNetworkExtension.DeveloperID.entitlements}"
+host_bundle_id="one.leaper.mclash"
 network_extension_bundle_id="one.leaper.mclash.network-extension"
 system_extension="${contents}/Library/SystemExtensions/${network_extension_bundle_id}.systemextension"
 system_extension_contents="${system_extension}/Contents"
@@ -28,6 +29,9 @@ if [[ -n "${team_identifier_prefix}" && "${team_identifier_prefix}" != *. ]]; th
   team_identifier_prefix="${team_identifier_prefix}."
 fi
 developer_id_app_group="${team_identifier_prefix}one.leaper.mclash"
+team_identifier="${APPLE_TEAM_ID:-${team_identifier_prefix%.}}"
+host_application_identifier="${team_identifier_prefix}${host_bundle_id}"
+extension_application_identifier="${team_identifier_prefix}${network_extension_bundle_id}"
 
 plist_array_contains() {
   local plist="$1"
@@ -244,6 +248,10 @@ else
     print -u2 "MCLASH_TEAM_IDENTIFIER_PREFIX or APPLE_TEAM_ID is required for Developer ID builds."
     exit 1
   fi
+  if [[ -z "${team_identifier}" ]]; then
+    print -u2 "APPLE_TEAM_ID or MCLASH_TEAM_IDENTIFIER_PREFIX is required to verify Developer ID identities."
+    exit 1
+  fi
   extension_info="${system_extension}/Contents/Info.plist"
   if [[ ! -s "${extension_info}" ]]; then
     print -u2 "The Network Extension Info.plist is missing: ${extension_info}"
@@ -269,6 +277,11 @@ else
     print -u2 "Host entitlements must authorize system extension installation."
     exit 1
   fi
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${host_devid_entitlements}" 2>/dev/null)" != "${host_application_identifier}" ]] || \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${host_devid_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
+    print -u2 "Host entitlements must declare ${host_application_identifier} for Apple team ${team_identifier}."
+    exit 1
+  fi
   if ! plist_array_contains \
     "${network_extension_devid_entitlements}" \
     "com.apple.developer.networking.networkextension" \
@@ -278,6 +291,11 @@ else
     "com.apple.developer.networking.networkextension" \
     "dns-proxy-systemextension"; then
     print -u2 "Network Extension entitlements must authorize both provider types."
+    exit 1
+  fi
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${network_extension_devid_entitlements}" 2>/dev/null)" != "${extension_application_identifier}" ]] || \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${network_extension_devid_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
+    print -u2 "Network Extension entitlements must declare ${extension_application_identifier} for Apple team ${team_identifier}."
     exit 1
   fi
   for entitlement_file in \
@@ -349,5 +367,15 @@ if [[ "${code_sign_identity}" != "-" ]]; then
       exit 1
     fi
   done
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${signed_host_entitlements}" 2>/dev/null)" != "${host_application_identifier}" ]] || \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${signed_host_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
+    print -u2 "Signed host identity does not match ${host_application_identifier} / ${team_identifier}."
+    exit 1
+  fi
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${signed_extension_entitlements}" 2>/dev/null)" != "${extension_application_identifier}" ]] || \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${signed_extension_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
+    print -u2 "Signed Network Extension identity does not match ${extension_application_identifier} / ${team_identifier}."
+    exit 1
+  fi
 fi
 print "Built MClash ${app_version} (${build_number}) at ${app_bundle} with mihomo ${MIHOMO_ALPHA_VERSION} (${packaged_hash})"

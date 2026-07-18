@@ -1,4 +1,10 @@
 import MClashNetworkShared
+import OSLog
+
+private let networkExtensionControlLogger = Logger(
+    subsystem: "one.leaper.mclash",
+    category: "NetworkExtensionControl"
+)
 
 protocol NetworkExtensionControlling: Sendable {
     func enable(
@@ -10,7 +16,6 @@ protocol NetworkExtensionControlling: Sendable {
     func currentState() async -> NetworkExtensionControlState
     func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus?
-    func disableDNSProxyAfterFailure() async throws
     func appRoutingActivity(after cursor: UInt64, limit: Int) async throws
         -> AppRoutingActivityBatch
     func clearAppRoutingActivity() async throws
@@ -25,7 +30,6 @@ extension NetworkExtensionControlling {
 
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus? { nil }
 
-    func disableDNSProxyAfterFailure() async throws {}
 }
 
 actor NetworkExtensionControlService: NetworkExtensionControlling {
@@ -58,6 +62,9 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
         _ configuration: NetworkExtensionRuntimeConfiguration,
         progress reportProgress: @escaping @Sendable (NetworkExtensionEnableProgress) -> Void
     ) async throws -> NetworkExtensionEnableOutcome {
+        networkExtensionControlLogger.notice(
+            "Enable requested revision=\(configuration.revision, privacy: .public) dns=\(configuration.dnsEnabled, privacy: .public) cachedPhase=\(self.state.phase.rawValue, privacy: .public)"
+        )
         if state.phase == .running,
            state.revision == configuration.revision,
            state.dnsRequested == configuration.dnsEnabled
@@ -70,6 +77,9 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                await dnsRuntimeMatches(configuration)
             {
                 activeConfiguration = configuration
+                networkExtensionControlLogger.notice(
+                    "Existing data plane verified revision=\(configuration.revision, privacy: .public)"
+                )
                 return .running
             }
         }
@@ -96,14 +106,23 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
             if result == .requiresReboot {
                 activeConfiguration = nil
                 try transition(.rebootRequired)
+                networkExtensionControlLogger.notice(
+                    "System Extension activation requires reboot revision=\(configuration.revision, privacy: .public)"
+                )
                 return .requiresReboot
             }
             try transition(.systemExtensionActivated)
+            networkExtensionControlLogger.debug(
+                "System Extension active revision=\(configuration.revision, privacy: .public)"
+            )
 
             operation = .configureTransparentProxy
             try await transparentProxy.configure(configuration)
             try await transparentProxy.reload()
             try transition(.transparentProxyConfigured)
+            networkExtensionControlLogger.debug(
+                "Transparent Proxy preferences verified revision=\(configuration.revision, privacy: .public)"
+            )
 
             operation = .startTransparentProxy
             try await transparentProxy.start()
@@ -118,15 +137,24 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                 )
             }
             try transition(.transparentProxyStarted)
+            networkExtensionControlLogger.notice(
+                "Transparent Proxy Provider verified revision=\(providerStatus.revision, privacy: .public) running=\(providerStatus.running, privacy: .public) capture=\(providerStatus.captureEnabled, privacy: .public)"
+            )
 
             if configuration.dnsEnabled {
                 operation = .configureDNSProxy
                 try await dnsProxy.configureAndEnable(configuration)
                 try await dnsProxy.reload()
                 try transition(.dnsProxyConfigured)
+                networkExtensionControlLogger.notice(
+                    "DNS Proxy preferences and Provider heartbeat verified revision=\(configuration.revision, privacy: .public)"
+                )
             }
 
             activeConfiguration = configuration
+            networkExtensionControlLogger.notice(
+                "Enable committed revision=\(configuration.revision, privacy: .public) dns=\(configuration.dnsEnabled, privacy: .public)"
+            )
             return .running
         } catch {
             activeConfiguration = nil
@@ -159,11 +187,17 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                     message: ([primary.message] + rollbackFailures).joined(separator: " · ")
                 )
             try? transition(.failed(failure))
+            networkExtensionControlLogger.error(
+                "Enable rolled back revision=\(configuration.revision, privacy: .public) operation=\(operation.rawValue, privacy: .public) error=\(failure.localizedDescription, privacy: .public) rollbackFailures=\(rollbackFailures.count, privacy: .public)"
+            )
             throw failure
         }
     }
 
     func disable() async throws {
+        networkExtensionControlLogger.notice(
+            "Disable requested cachedPhase=\(self.state.phase.rawValue, privacy: .public) revision=\(String(describing: self.state.revision), privacy: .public)"
+        )
         let hasTrackedOperation = state.phase != .inactive && state.phase != .uninstalled
         if hasTrackedOperation {
             try transition(.beginDisable)
@@ -180,6 +214,9 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                 underlying: error
             )
             try? transition(.failed(failure))
+            networkExtensionControlLogger.error(
+                "Disable failed operation=\(failure.operation.rawValue, privacy: .public) error=\(failure.localizedDescription, privacy: .public)"
+            )
             throw failure
         }
 
@@ -194,9 +231,13 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                 underlying: error
             )
             try? transition(.failed(failure))
+            networkExtensionControlLogger.error(
+                "Disable failed operation=\(failure.operation.rawValue, privacy: .public) error=\(failure.localizedDescription, privacy: .public)"
+            )
             throw failure
         }
         activeConfiguration = nil
+        networkExtensionControlLogger.notice("Disable committed; DNS and Transparent Proxy are off")
     }
 
     func uninstall() async throws -> NetworkExtensionUninstallOutcome {
@@ -240,13 +281,6 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus? {
         guard let activeConfiguration, activeConfiguration.dnsEnabled else { return nil }
         return try await dnsProxy.runtimeStatus(for: activeConfiguration)
-    }
-
-    func disableDNSProxyAfterFailure() async throws {
-        try await dnsProxy.disable()
-        if state.phase == .running {
-            state.dnsRequested = false
-        }
     }
 
     func appRoutingActivity(

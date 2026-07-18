@@ -130,6 +130,7 @@ enum NetworkExtensionControlOperation: String, Equatable, Sendable {
     case configureTransparentProxy
     case startTransparentProxy
     case configureDNSProxy
+    case inspectDNSProxy
     case disableDNSProxy
     case stopTransparentProxy
     case deactivateSystemExtension
@@ -170,6 +171,7 @@ private extension NetworkExtensionControlOperation {
         case .configureTransparentProxy: "Network filter configuration"
         case .startTransparentProxy: "Network filter startup"
         case .configureDNSProxy: "DNS proxy configuration"
+        case .inspectDNSProxy: "DNS proxy status"
         case .disableDNSProxy: "DNS proxy shutdown"
         case .stopTransparentProxy: "Network filter shutdown"
         case .deactivateSystemExtension: "System extension removal"

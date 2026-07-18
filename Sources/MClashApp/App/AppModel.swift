@@ -2156,6 +2156,8 @@ final class AppModel {
             try await applyNetworkCaptureRules(
                 networkCapturePreferences.snapshot.rules,
                 enabled: enabled,
+                // DNS follows the App Routing lifecycle by default. The saved
+                // value can only differ through the explicitly advanced opt-out.
                 dnsEnabled: networkCapturePreferences.dnsEnabled
             )
         } catch {
@@ -2519,6 +2521,11 @@ final class AppModel {
         stopAppRoutingActivityMonitor()
         do {
             try await networkExtensionControl.disable()
+            // An explicit App Routing shutdown is also the end of the coupled
+            // DNS lifecycle. Clear a prior runtime failure so the next enable
+            // performs a fresh DNS activation instead of displaying stale state.
+            dnsProxyAutomaticallyDisabled = false
+            dnsProxyRuntimeError = nil
             networkCaptureState = .off
             return true
         } catch {
@@ -4051,17 +4058,26 @@ final class AppModel {
             dnsProxyRuntimeFailureCount = 0
             dnsProxyLastVerifiedAt = Date()
         } catch {
+            let runtimeFailure = error
             dnsProxyRuntimeFailureCount += 1
-            dnsProxyRuntimeError = error.localizedDescription
+            dnsProxyRuntimeError = runtimeFailure.localizedDescription
             guard dnsProxyRuntimeFailureCount >= 2 else { return }
             do {
-                try await networkExtensionControl.disableDNSProxyAfterFailure()
+                // DNS is part of the default App Routing data plane. If its
+                // persisted manager or Provider heartbeat cannot be verified,
+                // stop both providers so the UI never claims a partially
+                // active routing mode.
+                try await networkExtensionControl.disable()
                 dnsProxyAutomaticallyDisabled = true
-                dnsProxyRuntimeError = "DNS Routing was automatically turned off because its Provider heartbeat or Mihomo backend could not be verified. System DNS has been restored; App Routing is still running. Last error: \(error.localizedDescription)"
-                appendSupervisorLog(dnsProxyRuntimeError ?? "DNS Routing was turned off.")
-            } catch {
-                dnsProxyRuntimeError = "DNS Routing failed and MClash could not confirm that macOS disabled it: \(error.localizedDescription)"
-                appendSupervisorLog(dnsProxyRuntimeError ?? "DNS Routing shutdown failed.")
+                let message = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: \(runtimeFailure.localizedDescription)"
+                dnsProxyRuntimeError = message
+                networkCaptureState = .failed(message)
+                appendSupervisorLog(message)
+            } catch let shutdownFailure {
+                let message = "DNS Routing became unverified and MClash could not confirm that the coupled App Routing data plane shut down safely. Runtime error: \(runtimeFailure.localizedDescription) Shutdown error: \(shutdownFailure.localizedDescription)"
+                dnsProxyRuntimeError = message
+                networkCaptureState = .failed(message)
+                appendSupervisorLog(message)
             }
         }
     }

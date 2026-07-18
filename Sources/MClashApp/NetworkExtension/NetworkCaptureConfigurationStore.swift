@@ -9,7 +9,7 @@ struct NetworkCapturePreferences: Codable, Equatable, Sendable {
 
     init(
         enabled: Bool,
-        dnsEnabled: Bool = false,
+        dnsEnabled: Bool = true,
         failOpen: Bool = true,
         snapshot: CaptureConfigurationSnapshot
     ) throws {
@@ -24,7 +24,11 @@ struct NetworkCapturePreferences: Codable, Equatable, Sendable {
         // The empty, current-schema snapshot is structurally infallible. Keeping
         // the fallback here lets a missing settings document always fail open.
         let snapshot = try! CaptureConfigurationSnapshot(revision: 0, rules: [])
-        return try! NetworkCapturePreferences(enabled: false, snapshot: snapshot)
+        return try! NetworkCapturePreferences(
+            enabled: false,
+            dnsEnabled: true,
+            snapshot: snapshot
+        )
     }
 }
 
@@ -69,7 +73,8 @@ enum NetworkCaptureConfigurationStoreError: Error, Equatable, LocalizedError, Se
 /// same staged atomic replacement path used by runtime configuration. A bad or
 /// missing document never silently enables interception.
 actor NetworkCaptureConfigurationStore {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
+    private static let independentlyManagedDNSSchemaVersion = 1
     static let maximumRuleCount = 10_000
     static let maximumDocumentSize = 8 * 1_024 * 1_024
 
@@ -124,12 +129,27 @@ actor NetworkCaptureConfigurationStore {
             )
         }
         let probe = try decoder.decode(SchemaVersionProbe.self, from: data)
-        guard probe.schemaVersion == Self.currentSchemaVersion else {
+        guard probe.schemaVersion == Self.currentSchemaVersion
+                || probe.schemaVersion == Self.independentlyManagedDNSSchemaVersion else {
             throw NetworkCaptureConfigurationStoreError.unsupportedSchemaVersion(
                 probe.schemaVersion
             )
         }
-        let preferences = try decoder.decode(Document.self, from: data).preferences
+        let decoded = try decoder.decode(Document.self, from: data).preferences
+        let preferences: NetworkCapturePreferences
+        if probe.schemaVersion == Self.independentlyManagedDNSSchemaVersion {
+            // Version 1 exposed DNS as an independent daily switch and defaulted
+            // it to off. Treat every v1 value as legacy UI state so an upgrade
+            // cannot leave DNS silently excluded while App Routing is enabled.
+            preferences = try NetworkCapturePreferences(
+                enabled: decoded.enabled,
+                dnsEnabled: true,
+                failOpen: decoded.failOpen,
+                snapshot: decoded.snapshot
+            )
+        } else {
+            preferences = decoded
+        }
         try validate(preferences)
         return preferences
     }
