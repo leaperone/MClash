@@ -1,24 +1,6 @@
 import Foundation
 import MClashNetworkShared
 
-enum CaptureRuleDestinationKind: String, CaseIterable, Identifiable, Sendable {
-    case any
-    case ipAddress
-    case network
-    case domain
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .any: "Any destination"
-        case .ipAddress: "Single IP"
-        case .network: "IP network (CIDR)"
-        case .domain: "Domain"
-        }
-    }
-}
-
 enum CaptureRuleDraftAction: String, CaseIterable, Identifiable, Sendable {
     case direct
     case reject
@@ -77,7 +59,7 @@ extension CaptureRuleDraftError: LocalizedError {
         case let .invalidPortRange(value):
             "Port must be 1–65535 or a range such as 8000-9000; received \(value)."
         case .noMatchCriteria:
-            "Add an application, executable, user, destination, protocol restriction, or port restriction."
+            "Add an application, domain, IP/CIDR, executable, user, protocol restriction, or port restriction."
         case .missingMihomoGroup:
             "Choose a Mihomo policy group."
         case let .unsupportedExistingRule(reason):
@@ -90,9 +72,10 @@ extension CaptureRuleDraftError: LocalizedError {
 
 /// Editable, UI-friendly representation of the targeted capture rule subset.
 ///
-/// Empty source fields are omitted. Sources selected together retain the
-/// shared rule engine's OR semantics, while source, destination, transport,
-/// and port fields are combined with AND semantics by `CaptureRuleEngine`.
+/// Empty source fields are omitted and therefore match every application.
+/// Matchers within source and destination groups use OR semantics, while
+/// source, destination, transport, and port groups are combined with AND
+/// semantics by `CaptureRuleEngine`.
 struct CaptureRuleDraft: Equatable, Sendable {
     var identifier: String
     var enabled: Bool
@@ -102,9 +85,9 @@ struct CaptureRuleDraft: Equatable, Sendable {
     var applicationIdentifierPattern: String
     var executablePath: String
     var userID: String
-    var destinationKind: CaptureRuleDestinationKind
-    var destinationValue: String
-    var domainKind: HostMatcher.Kind
+    var destinations: [DestinationMatcher]
+    var domainInput: String
+    var networkInput: String
     var matchesTCP: Bool
     var matchesUDP: Bool
     var portRange: String
@@ -121,9 +104,9 @@ struct CaptureRuleDraft: Equatable, Sendable {
         applicationIdentifierPattern: String = "",
         executablePath: String = "",
         userID: String = "",
-        destinationKind: CaptureRuleDestinationKind = .any,
-        destinationValue: String = "",
-        domainKind: HostMatcher.Kind = .exact,
+        destinations: [DestinationMatcher] = [],
+        domainInput: String = "",
+        networkInput: String = "",
         matchesTCP: Bool = true,
         matchesUDP: Bool = true,
         portRange: String = "",
@@ -139,9 +122,9 @@ struct CaptureRuleDraft: Equatable, Sendable {
         self.applicationIdentifierPattern = applicationIdentifierPattern
         self.executablePath = executablePath
         self.userID = userID
-        self.destinationKind = destinationKind
-        self.destinationValue = destinationValue
-        self.domainKind = domainKind
+        self.destinations = destinations
+        self.domainInput = domainInput
+        self.networkInput = networkInput
         self.matchesTCP = matchesTCP
         self.matchesUDP = matchesUDP
         self.portRange = portRange
@@ -217,23 +200,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         executablePath = executableMatchers.first?.canonicalPath ?? ""
         userID = userIDs.first.map(String.init) ?? ""
 
-        guard rule.destinations.count <= 1 else {
-            throw CaptureRuleDraftError.unsupportedExistingRule("multiple destination matchers")
-        }
-        if let destination = rule.destinations.first {
-            switch destination {
-            case let .ip(address):
-                destinationKind = .ipAddress
-                destinationValue = address.presentation
-            case let .network(network):
-                destinationKind = .network
-                destinationValue = network.presentation
-            case let .host(host):
-                destinationKind = .domain
-                destinationValue = host.value
-                domainKind = host.kind
-            }
-        }
+        destinations = rule.destinations
 
         guard rule.portRanges.count <= 1 else {
             throw CaptureRuleDraftError.unsupportedExistingRule("multiple port ranges")
@@ -284,6 +251,41 @@ struct CaptureRuleDraft: Equatable, Sendable {
     mutating func useSelectedApplicationExecutable() {
         guard let selectedApplication, !selectedApplication.executablePath.isEmpty else { return }
         executablePath = selectedApplication.executablePath
+    }
+
+    var domainDestinations: [DestinationMatcher] {
+        destinations.filter {
+            if case .host = $0 { return true }
+            return false
+        }
+    }
+
+    var networkDestinations: [DestinationMatcher] {
+        destinations.filter {
+            switch $0 {
+            case .ip, .network: return true
+            case .host: return false
+            }
+        }
+    }
+
+    var destinationPreviewLabels: [String] {
+        let matchers = (try? destinationMatchers()) ?? destinations
+        return matchers.map(Self.destinationLabel)
+    }
+
+    mutating func commitDomainInput() throws {
+        appendUnique(try Self.domainMatchers(from: domainInput))
+        domainInput = ""
+    }
+
+    mutating func commitNetworkInput() throws {
+        appendUnique(try Self.networkMatchers(from: networkInput))
+        networkInput = ""
+    }
+
+    mutating func removeDestination(_ matcher: DestinationMatcher) {
+        destinations.removeAll { $0 == matcher }
     }
 
     var validationMessage: String? {
@@ -407,31 +409,95 @@ struct CaptureRuleDraft: Equatable, Sendable {
     }
 
     private func destinationMatchers() throws -> [DestinationMatcher] {
-        let value = destinationValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch destinationKind {
-        case .any:
-            return []
-        case .ipAddress:
-            do {
-                return [.ip(try IPAddress(value))]
-            } catch {
-                throw CaptureRuleDraftError.invalidIPAddress(value)
+        var result = destinations
+        Self.appendUnique(try Self.domainMatchers(from: domainInput), to: &result)
+        Self.appendUnique(try Self.networkMatchers(from: networkInput), to: &result)
+        return result
+    }
+
+    private mutating func appendUnique(_ matchers: [DestinationMatcher]) {
+        Self.appendUnique(matchers, to: &destinations)
+    }
+
+    private static func appendUnique(
+        _ matchers: [DestinationMatcher],
+        to result: inout [DestinationMatcher]
+    ) {
+        for matcher in matchers where !result.contains(matcher) {
+            result.append(matcher)
+        }
+    }
+
+    private static func domainMatchers(from input: String) throws -> [DestinationMatcher] {
+        var result: [DestinationMatcher] = []
+        for originalEntry in splitEntries(input) {
+            var entry = originalEntry
+            let kind: HostMatcher.Kind
+            if entry.hasPrefix("=") {
+                kind = .exact
+                entry.removeFirst()
+            } else {
+                kind = .suffix
+                if entry.hasPrefix("*.") {
+                    entry.removeFirst(2)
+                } else if entry.hasPrefix(".") {
+                    entry.removeFirst()
+                }
             }
-        case .network:
-            do {
-                return [.network(try IPNetwork(value))]
-            } catch {
-                throw CaptureRuleDraftError.invalidNetwork(value)
+
+            if entry.contains("://"),
+               let host = URL(string: entry)?.host {
+                entry = host
             }
-        case .domain:
+
             do {
-                let usesWildcard = value.hasPrefix("*.")
-                let normalizedValue = usesWildcard ? String(value.dropFirst(2)) : value
-                let kind: HostMatcher.Kind = usesWildcard ? .suffix : domainKind
-                return [.host(try HostMatcher(kind: kind, value: normalizedValue))]
+                appendUnique([.host(try HostMatcher(kind: kind, value: entry))], to: &result)
             } catch {
-                throw CaptureRuleDraftError.invalidDomain(value)
+                throw CaptureRuleDraftError.invalidDomain(originalEntry)
             }
+        }
+        return result
+    }
+
+    private static func networkMatchers(from input: String) throws -> [DestinationMatcher] {
+        var result: [DestinationMatcher] = []
+        for entry in splitEntries(input) {
+            if entry.contains("/") {
+                do {
+                    appendUnique([.network(try IPNetwork(entry))], to: &result)
+                } catch {
+                    throw CaptureRuleDraftError.invalidNetwork(entry)
+                }
+            } else {
+                do {
+                    appendUnique([.ip(try IPAddress(entry))], to: &result)
+                } catch {
+                    throw CaptureRuleDraftError.invalidIPAddress(entry)
+                }
+            }
+        }
+        return result
+    }
+
+    private static func splitEntries(_ input: String) -> [String] {
+        let separators = CharacterSet.whitespacesAndNewlines
+            .union(CharacterSet(charactersIn: ",;"))
+        return input.components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    static func destinationLabel(_ matcher: DestinationMatcher) -> String {
+        switch matcher {
+        case let .host(host):
+            switch host.kind {
+            case .exact: "=\(host.value)"
+            case .suffix: "*.\(host.value)"
+            }
+        case let .ip(address):
+            address.presentation
+        case let .network(network):
+            network.presentation
         }
     }
 

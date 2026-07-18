@@ -28,8 +28,7 @@ struct CaptureRuleDraftTests {
             priority: 10,
             selectedApplication: candidate,
             userID: "501",
-            destinationKind: .ipAddress,
-            destinationValue: "203.0.113.8",
+            networkInput: "203.0.113.8",
             matchesTCP: true,
             matchesUDP: false,
             portRange: "443",
@@ -59,31 +58,23 @@ struct CaptureRuleDraftTests {
         #expect(executable.designatedRequirement == candidate.matcher.designatedRequirement)
     }
 
-    @Test("CIDR and suffix-domain targets normalize through shared validation")
+    @Test("Domain groups, IPs, and CIDRs normalize and deduplicate")
     func normalizesDestinationMatchers() throws {
-        var networkDraft = CaptureRuleDraft(
-            identifier: "network",
-            destinationKind: .network,
-            destinationValue: "192.0.2.99/24"
+        let draft = CaptureRuleDraft(
+            identifier: "openai",
+            domainInput: "Example.COM., *.api.example.com; =login.example.com\nexample.com",
+            networkInput: "192.0.2.99/24, 203.0.113.8 203.0.113.8"
         )
-        var rule = try networkDraft.makeRule()
-        #expect(rule.destinations == [.network(try IPNetwork("192.0.2.0/24"))])
 
-        networkDraft.identifier = "domain"
-        networkDraft.destinationKind = .domain
-        networkDraft.destinationValue = "Example.COM."
-        networkDraft.domainKind = .suffix
-        rule = try networkDraft.makeRule()
-        #expect(rule.destinations == [.host(try HostMatcher(kind: .suffix, value: "example.com"))])
-
-        networkDraft.identifier = "wildcard"
-        networkDraft.destinationValue = "*.api.example.com"
-        networkDraft.domainKind = .exact
-        rule = try networkDraft.makeRule()
-        #expect(
-            rule.destinations
-                == [.host(try HostMatcher(kind: .suffix, value: "api.example.com"))]
-        )
+        let rule = try draft.makeRule()
+        #expect(rule.sources.isEmpty)
+        #expect(rule.destinations == [
+            .host(try HostMatcher(kind: .suffix, value: "example.com")),
+            .host(try HostMatcher(kind: .suffix, value: "api.example.com")),
+            .host(try HostMatcher(kind: .exact, value: "login.example.com")),
+            .network(try IPNetwork("192.0.2.0/24")),
+            .ip(try IPAddress("203.0.113.8")),
+        ])
     }
 
     @Test("Application identifier wildcard becomes a source matcher")
@@ -234,7 +225,7 @@ struct CaptureRuleDraftTests {
         let rebuilt = try draft.makeRule()
 
         #expect(draft.selectedApplication == candidate)
-        #expect(draft.destinationKind == .network)
+        #expect(draft.destinations == original.destinations)
         #expect(draft.portRange == "443-8443")
         #expect(rebuilt == original)
     }
@@ -279,20 +270,18 @@ struct CaptureRuleDraftTests {
         #expect(throws: CaptureRuleDraftError.invalidUserID("-1")) { try draft.makeRule() }
 
         draft.userID = ""
-        draft.destinationKind = .ipAddress
-        draft.destinationValue = "999.0.0.1"
+        draft.networkInput = "999.0.0.1"
         #expect(throws: CaptureRuleDraftError.invalidIPAddress("999.0.0.1")) {
             try draft.makeRule()
         }
 
-        draft.destinationKind = .network
-        draft.destinationValue = "192.0.2.1/99"
+        draft.networkInput = "192.0.2.1/99"
         #expect(throws: CaptureRuleDraftError.invalidNetwork("192.0.2.1/99")) {
             try draft.makeRule()
         }
 
-        draft.destinationKind = .domain
-        draft.destinationValue = "bad..example"
+        draft.networkInput = ""
+        draft.domainInput = "bad..example"
         #expect(throws: CaptureRuleDraftError.invalidDomain("bad..example")) {
             try draft.makeRule()
         }
@@ -322,7 +311,7 @@ struct CaptureRuleDraftTests {
         }
     }
 
-    @Test("Unsupported existing process and multi-target rules fail closed")
+    @Test("Unsupported provider process rules fail closed and multi-target rules round-trip")
     func rejectsUnsupportedExistingRules() throws {
         let processRule = try CaptureRule(
             id: "process",
@@ -350,13 +339,12 @@ struct CaptureRuleDraftTests {
             ],
             action: .direct
         )
-        #expect(
-            throws: CaptureRuleDraftError.unsupportedExistingRule(
-                "multiple destination matchers"
-            )
-        ) {
-            try CaptureRuleDraft(rule: destinations)
-        }
+        let destinationDraft = try CaptureRuleDraft(rule: destinations)
+        #expect(destinationDraft.destinations == destinations.destinations)
+        let rebuiltDestinations = try destinationDraft.makeRule()
+        #expect(rebuiltDestinations.sources == destinations.sources)
+        #expect(rebuiltDestinations.destinations == destinations.destinations)
+        #expect(rebuiltDestinations.action == destinations.action)
 
     }
 

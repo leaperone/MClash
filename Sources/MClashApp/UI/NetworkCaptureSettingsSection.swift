@@ -10,17 +10,6 @@ struct AppRoutingView: View {
         var id: Self { self }
     }
 
-    private enum ActivityFilter: String, CaseIterable, Identifiable {
-        case all = "All"
-        case active = "Active"
-        case viaMihomo = "Via Mihomo"
-        case direct = "Direct"
-        case rejected = "Rejected"
-        case failed = "Failed"
-
-        var id: Self { self }
-    }
-
     @Bindable var model: AppModel
 
     @State private var applicationCandidates: [ApplicationCaptureCandidate] = []
@@ -34,7 +23,7 @@ struct AppRoutingView: View {
     @State private var isRefreshingApplications = false
     @State private var workspace: Workspace = .rules
     @State private var activitySearchText = ""
-    @State private var activityFilter: ActivityFilter = .all
+    @State private var activityFilter: AppRoutingActivityFilter = .focused
     @State private var selectedActivityID: UUID?
     @State private var activityInspectorPresented = false
     @State private var appliedRuleRevision: UInt64?
@@ -827,21 +816,32 @@ struct AppRoutingView: View {
 
     @ViewBuilder
     private var activityWorkspace: some View {
+        let visibleActivities = filteredActivities
         if model.appRoutingActivities.isEmpty {
             ContentUnavailableView(
                 "No App Routing Activity",
                 systemImage: "waveform.path.ecg",
                 description: Text(activityEmptyDescription)
             )
-        } else if filteredActivities.isEmpty {
+        } else if showsOnlyHiddenDirectActivity(visibleActivities) {
+            ContentUnavailableView {
+                Label("Only Direct Activity", systemImage: "arrow.right")
+            } description: {
+                Text("Normal Direct traffic is hidden by default so proxy routes and problems stay easy to see.")
+            } actions: {
+                Button("Show All Activity") {
+                    activityFilter = .all
+                }
+            }
+        } else if visibleActivities.isEmpty {
             ContentUnavailableView.search(text: activitySearchText)
         } else {
-            activityTable
+            activityTable(visibleActivities)
         }
     }
 
-    private var activityTable: some View {
-        Table(filteredActivities, selection: $selectedActivityID) {
+    private func activityTable(_ activities: [AppRoutingActivity]) -> some View {
+        Table(activities, selection: $selectedActivityID) {
             TableColumn("Application / Process") { activity in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activityApplicationName(activity))
@@ -1010,12 +1010,13 @@ struct AppRoutingView: View {
     private var activityActionBar: some View {
         HStack(spacing: 10) {
             Picker("Outcome", selection: $activityFilter) {
-                ForEach(ActivityFilter.allCases) { filter in
+                ForEach(AppRoutingActivityFilter.allCases) { filter in
                     Text(filter.rawValue).tag(filter)
                 }
             }
             .pickerStyle(.menu)
             .frame(width: 120)
+            .help("Proxy & Issues hides normal Direct traffic while keeping failures and fallback routes visible.")
 
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
@@ -1072,6 +1073,12 @@ struct AppRoutingView: View {
         .controlSize(.small)
         .padding(.horizontal, MClashLayout.pagePadding)
         .padding(.vertical, 12)
+        .onChange(of: activityFilter) { _, _ in
+            discardHiddenActivitySelection()
+        }
+        .onChange(of: activitySearchText) { _, _ in
+            discardHiddenActivitySelection()
+        }
     }
 
     private var headerCount: String {
@@ -1079,7 +1086,11 @@ struct AppRoutingView: View {
         case .rules:
             "· \(orderedRules.count) \(orderedRules.count == 1 ? "rule" : "rules")"
         case .activity:
-            "· \(model.appRoutingActivities.count) flows"
+            if filteredActivities.count == model.appRoutingActivities.count {
+                "· \(filteredActivities.count) flows"
+            } else {
+                "· \(filteredActivities.count) shown · \(model.appRoutingActivities.count) retained"
+            }
         }
     }
 
@@ -1120,32 +1131,29 @@ struct AppRoutingView: View {
         }
     }
 
+    private func showsOnlyHiddenDirectActivity(_ visibleActivities: [AppRoutingActivity]) -> Bool {
+        activityFilter == .focused
+            && activitySearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !model.appRoutingActivities.isEmpty
+            && visibleActivities.isEmpty
+    }
+
     private var selectedActivity: AppRoutingActivity? {
         guard let selectedActivityID else { return nil }
         return model.appRoutingActivities.first { $0.flowIdentifier == selectedActivityID }
     }
 
     private func activityMatchesFilter(_ activity: AppRoutingActivity) -> Bool {
-        switch activityFilter {
-        case .all:
-            return true
-        case .active:
-            return activity.endedAt == nil
-                && activity.relayState != .completed
-                && activity.relayState != .failed
-        case .viaMihomo:
-            if case .mihomo = activity.effectiveAction {
-                return activity.relayState != .failed
-            }
-            return false
-        case .direct:
-            return activity.effectiveAction == .direct
-                || activity.effectiveAction == .failOpen
-        case .rejected:
-            return activity.effectiveAction == .reject
-        case .failed:
-            return activity.relayState == .failed
+        activityFilter.includes(activity)
+    }
+
+    private func discardHiddenActivitySelection() {
+        guard let selectedActivityID,
+              !filteredActivities.contains(where: { $0.flowIdentifier == selectedActivityID }) else {
+            return
         }
+        self.selectedActivityID = nil
+        activityInspectorPresented = false
     }
 
     private func activityApplicationName(_ activity: AppRoutingActivity) -> String {

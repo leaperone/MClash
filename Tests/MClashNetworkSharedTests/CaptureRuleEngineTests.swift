@@ -55,6 +55,72 @@ struct CaptureRuleEngineTests {
     }
 
     @Test
+    func testApplicationAndDomainGroupMustBothMatch() throws {
+        let application = ApplicationSourceMatcher(
+            designatedRequirement: "REQ",
+            signingIdentifier: "com.example.openai",
+            bundleIdentifier: "com.example.openai"
+        )
+        let rule = try CaptureRule(
+            id: "openai",
+            priority: 1,
+            sources: [.application(application)],
+            destinations: [
+                .host(try HostMatcher(kind: .suffix, value: "openai.com")),
+                .host(try HostMatcher(kind: .suffix, value: "oaistatic.com")),
+            ],
+            action: .mihomo(.profileRules)
+        )
+        let engine = try engine([rule])
+        let matchingApplication = source(
+            designatedRequirement: "REQ",
+            signingIdentifier: "com.example.openai",
+            bundleIdentifier: "com.example.openai"
+        )
+
+        #expect(engine.evaluate(try context(
+            source: matchingApplication,
+            hostname: "api.openai.com"
+        )).action == .mihomo(.profileRules))
+        #expect(engine.evaluate(try context(
+            source: matchingApplication,
+            hostname: "cdn.oaistatic.com"
+        )).action == .mihomo(.profileRules))
+        #expect(engine.evaluate(try context(
+            source: matchingApplication,
+            hostname: "example.com"
+        )).cause == .defaultDirect)
+        #expect(engine.evaluate(try context(
+            source: source(bundleIdentifier: "com.example.other"),
+            hostname: "api.openai.com"
+        )).cause == .defaultDirect)
+    }
+
+    @Test
+    func testDomainOnlyRuleMatchesEveryNonBypassedApplication() throws {
+        let rule = try CaptureRule(
+            id: "all-apps-openai",
+            priority: 1,
+            destinations: [.host(try HostMatcher(kind: .suffix, value: "openai.com"))],
+            action: .reject
+        )
+        let engine = try engine([rule])
+
+        #expect(engine.evaluate(try context(
+            source: source(bundleIdentifier: "com.example.first"),
+            hostname: "api.openai.com"
+        )).action == .reject)
+        #expect(engine.evaluate(try context(
+            source: source(bundleIdentifier: "com.example.second"),
+            hostname: "chat.openai.com"
+        )).action == .reject)
+        #expect(engine.evaluate(try context(
+            source: source(isTrustedMClashComponent: true),
+            hostname: "api.openai.com"
+        )).cause == .builtInBypass(.trustedMClashComponent))
+    }
+
+    @Test
     func testApplicationIdentityRequiresDesignatedRequirementAndSpecifiedFields() throws {
         let matcher = ApplicationSourceMatcher(
             designatedRequirement: "REQ",

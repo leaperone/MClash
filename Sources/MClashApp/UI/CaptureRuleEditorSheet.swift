@@ -43,7 +43,7 @@ struct CaptureRuleEditorSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("App Routing Rule")
                     .font(.title2.weight(.semibold))
-                Text("Choose an application and what MClash should do with its traffic. Add target restrictions only when you need them.")
+                Text("Choose an application, destinations, or both, then decide how matching traffic should be routed.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -51,6 +51,7 @@ struct CaptureRuleEditorSheet: View {
             Form {
                 ruleSection
                 applicationSection
+                destinationSection
                 actionSection
                 advancedSection
                 previewSection
@@ -90,7 +91,7 @@ struct CaptureRuleEditorSheet: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 610, idealWidth: 680, minHeight: 600, idealHeight: 700)
+        .frame(minWidth: 640, idealWidth: 700, minHeight: 640, idealHeight: 760)
         .onChange(of: draft) { _, _ in
             submissionError = nil
         }
@@ -112,9 +113,9 @@ struct CaptureRuleEditorSheet: View {
     }
 
     private var applicationSection: some View {
-        Section("Application") {
-            Picker("Running application", selection: selectedApplicationID) {
-                Text("Choose an application").tag(nil as String?)
+        Section("Application (Optional)") {
+            Picker("Application", selection: selectedApplicationID) {
+                Text("All applications").tag(nil as String?)
                 ForEach(displayedApplicationCandidates) { candidate in
                     Label {
                         Text(applicationLabel(candidate))
@@ -134,9 +135,72 @@ struct CaptureRuleEditorSheet: View {
             if let application = draft.selectedApplication {
                 selectedApplicationSummary(application)
             } else {
-                Text("Select a running application or choose any signed .app from your Mac.")
+                Text("This rule applies to every application except MClash's built-in safety bypasses. Select an app only when the rule should be app-specific.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var destinationSection: some View {
+        Section("Destinations (Optional)") {
+            Text("A flow may match any destination below. If an application is selected, both the application and one of these destinations must match.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Domains", systemImage: "globe")
+                    .font(.body.weight(.medium))
+
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    TextField(
+                        "openai.com, *.oaistatic.com",
+                        text: $draft.domainInput,
+                        axis: .vertical
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1 ... 3)
+                    .onSubmit(addDomains)
+
+                    Button("Add", action: addDomains)
+                        .disabled(draft.domainInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                Text("Bare domains include their subdomains. Prefix = for an exact hostname. Paste several values separated by commas, spaces, or new lines.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(draft.domainDestinations, id: \.self) { destination in
+                    destinationRow(destination)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("IP Addresses & Networks", systemImage: "network")
+                    .font(.body.weight(.medium))
+
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    TextField(
+                        "1.1.1.1, 104.18.0.0/16",
+                        text: $draft.networkInput,
+                        axis: .vertical
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.body.monospaced())
+                    .lineLimit(1 ... 3)
+                    .onSubmit(addNetworks)
+
+                    Button("Add", action: addNetworks)
+                        .disabled(draft.networkInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                Text("Accepts IPv4, IPv6, and CIDR networks. Domain matching uses the hostname macOS provides; if an app connects directly by IP, add that IP or CIDR here too.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(draft.networkDestinations, id: \.self) { destination in
+                    destinationRow(destination)
+                }
             }
         }
     }
@@ -214,28 +278,6 @@ struct CaptureRuleEditorSheet: View {
 
                     Divider()
 
-                    Picker("Target", selection: $draft.destinationKind) {
-                        ForEach(CaptureRuleDestinationKind.allCases) { kind in
-                            Text(kind.title).tag(kind)
-                        }
-                    }
-
-                    if draft.destinationKind != .any {
-                        TextField(destinationPlaceholder, text: $draft.destinationValue)
-                            .textFieldStyle(.roundedBorder)
-                            .font(draft.destinationKind == .domain ? .body : .body.monospaced())
-
-                        if draft.destinationKind == .domain {
-                            Picker("Domain match", selection: $draft.domainKind) {
-                                Text("Exact domain").tag(HostMatcher.Kind.exact)
-                                Text("Domain and subdomains (*.example.com)")
-                                    .tag(HostMatcher.Kind.suffix)
-                            }
-                        }
-                    }
-
-                    Divider()
-
                     LabeledContent("Transport") {
                         HStack(spacing: 18) {
                             Toggle("TCP", isOn: $draft.matchesTCP)
@@ -257,7 +299,7 @@ struct CaptureRuleEditorSheet: View {
                 .padding(.top, 8)
             }
 
-            Text("Use advanced matching for an exact process, executable, user, domain wildcard, IP/CIDR, protocol, or port range.")
+            Text("Use advanced matching for one running process, an app identifier pattern, executable path, user, protocol, port range, or fallback behavior.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -299,6 +341,24 @@ struct CaptureRuleEditorSheet: View {
                     .padding(.vertical, 3)
                     .background(.green.opacity(0.12), in: Capsule())
             }
+        }
+    }
+
+    private func destinationRow(_ destination: DestinationMatcher) -> some View {
+        HStack(spacing: 8) {
+            Text(CaptureRuleDraft.destinationLabel(destination))
+                .font(.callout.monospaced())
+                .textSelection(.enabled)
+            Spacer()
+            Button {
+                draft.removeDestination(destination)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove destination")
+            .accessibilityLabel("Remove \(CaptureRuleDraft.destinationLabel(destination))")
         }
     }
 
@@ -386,20 +446,18 @@ struct CaptureRuleEditorSheet: View {
         } else if !draft.executablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             source = URL(fileURLWithPath: draft.executablePath).lastPathComponent
         } else {
-            source = "Matching traffic"
+            source = "All applications"
         }
 
+        let destinations = draft.destinationPreviewLabels
         let target: String
-        switch draft.destinationKind {
-        case .any:
-            target = "any target"
-        case .domain:
-            let value = draft.destinationValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            target = draft.domainKind == .suffix && !value.hasPrefix("*.")
-                ? "*.\(value)"
-                : value
-        case .ipAddress, .network:
-            target = draft.destinationValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if destinations.isEmpty {
+            target = "any destination"
+        } else if destinations.count <= 3 {
+            target = destinations.joined(separator: ", ")
+        } else {
+            target = destinations.prefix(3).joined(separator: ", ")
+                + " +\(destinations.count - 3) more"
         }
 
         let port = draft.portRange.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -409,15 +467,6 @@ struct CaptureRuleEditorSheet: View {
             ? "Mihomo · \(draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines))"
             : draft.action.title
         return "\(source) → \(targetWithPort) → \(action)"
-    }
-
-    private var destinationPlaceholder: String {
-        switch draft.destinationKind {
-        case .any: ""
-        case .ipAddress: "IP address, for example 203.0.113.8"
-        case .network: "CIDR network, for example 203.0.113.0/24"
-        case .domain: "Domain or wildcard, for example *.example.com"
-        }
     }
 
     private func applicationLabel(_ candidate: ApplicationCaptureCandidate) -> String {
@@ -444,6 +493,24 @@ struct CaptureRuleEditorSheet: View {
             draft.selectedProcess = nil
             submissionError = nil
             suggestRuleName(for: candidate)
+        } catch {
+            submissionError = error.localizedDescription
+        }
+    }
+
+    private func addDomains() {
+        do {
+            try draft.commitDomainInput()
+            submissionError = nil
+        } catch {
+            submissionError = error.localizedDescription
+        }
+    }
+
+    private func addNetworks() {
+        do {
+            try draft.commitNetworkInput()
+            submissionError = nil
         } catch {
             submissionError = error.localizedDescription
         }
@@ -485,7 +552,6 @@ struct CaptureRuleEditorSheet: View {
                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !draft.executablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !draft.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || draft.destinationKind != .any
             || !draft.matchesTCP
             || !draft.matchesUDP
             || !draft.portRange.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
