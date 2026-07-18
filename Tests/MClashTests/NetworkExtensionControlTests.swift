@@ -194,6 +194,26 @@ struct NetworkExtensionControlTests {
         )
     }
 
+    @Test("System Extension validation failures explain the recovery action")
+    func systemExtensionValidationFailurePresentation() {
+        let underlying = NSError(
+            domain: "OSSystemExtensionErrorDomain",
+            code: 9,
+            userInfo: [
+                NSLocalizedDescriptionKey: "extension category returned error"
+            ]
+        )
+        let failure = NetworkExtensionControlFailure(
+            operation: .activateSystemExtension,
+            underlying: underlying
+        )
+
+        #expect(
+            failure.localizedDescription
+                == "System extension installation: macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application (OSSystemExtensionErrorDomain 9)"
+        )
+    }
+
     @Test("Connected provider must confirm the active revision")
     func providerRevisionIsVerified() async throws {
         let recorder = NetworkExtensionOperationRecorder()

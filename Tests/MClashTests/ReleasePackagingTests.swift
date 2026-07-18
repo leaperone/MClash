@@ -5,8 +5,8 @@ import Testing
 struct ReleasePackagingTests {
     private let teamIdentifier = "5UAHRS482C"
 
-    @Test("Mach service uses the profiled Network Extension application identity")
-    func machServiceUsesExtensionIdentity() throws {
+    @Test("Mach service is a child of the shared macOS App Group")
+    func machServiceUsesSharedAppGroupPrefix() throws {
         let hostEntitlements = try plist(
             at: repositoryRoot.appendingPathComponent(
                 "Support/Signing/MClash-DeveloperID.entitlements"
@@ -21,14 +21,22 @@ struct ReleasePackagingTests {
             at: repositoryRoot.appendingPathComponent("Support/NetworkExtension/Info.plist")
         )
 
-        #expect(hostEntitlements["com.apple.security.application-groups"] == nil)
-        #expect(extensionEntitlements["com.apple.security.application-groups"] == nil)
+        let expectedAppGroup = "\(teamIdentifier).one.leaper.mclash"
+        let hostGroups = try #require(
+            hostEntitlements["com.apple.security.application-groups"] as? [String]
+        )
+        let extensionGroups = try #require(
+            extensionEntitlements["com.apple.security.application-groups"] as? [String]
+        )
+        #expect(hostGroups.contains(expectedAppGroup))
+        #expect(extensionGroups.contains(expectedAppGroup))
 
         let networkExtension = try #require(
             extensionInfo["NetworkExtension"] as? [String: Any]
         )
         let machService = try #require(networkExtension["NEMachServiceName"] as? String)
         #expect(machService == "$(TeamIdentifierPrefix)one.leaper.mclash.network-extension")
+        #expect(networkExtension["NEProviderClasses"] != nil)
     }
 
     @Test("Developer ID signatures declare identities required for provider IPC")

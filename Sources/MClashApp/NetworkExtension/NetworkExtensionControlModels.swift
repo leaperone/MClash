@@ -170,7 +170,13 @@ struct NetworkExtensionControlFailure: Error, Equatable, Sendable, LocalizedErro
             return
         }
         let underlyingError = error as NSError
-        var message = underlyingError.localizedDescription
+        var message: String
+        if underlyingError.domain == "OSSystemExtensionErrorDomain",
+           underlyingError.code == 9 {
+            message = "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application"
+        } else {
+            message = underlyingError.localizedDescription
+        }
         if underlyingError.domain != NSCocoaErrorDomain {
             message += " (\(underlyingError.domain) \(underlyingError.code))"
         }
