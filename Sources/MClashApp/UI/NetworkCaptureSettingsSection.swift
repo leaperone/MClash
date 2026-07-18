@@ -96,7 +96,14 @@ struct AppRoutingView: View {
         .task(id: candidateRefreshRequest) {
             await refreshApplications(request: candidateRefreshRequest)
         }
+        .onAppear {
+            model.setAppRoutingActivityViewVisible(workspace == .activity)
+        }
+        .onDisappear {
+            model.setAppRoutingActivityViewVisible(false)
+        }
         .onChange(of: workspace) { _, workspace in
+            model.setAppRoutingActivityViewVisible(workspace == .activity)
             if workspace != .activity {
                 activityInspectorPresented = false
             }
@@ -855,7 +862,7 @@ struct AppRoutingView: View {
     }
 
     private var rulesTable: some View {
-        let statistics = appRuleStatistics
+        let statistics = model.appRoutingRuleStatistics
         return Table(orderedRules, selection: $selectedRuleID) {
             TableColumn("") { rule in
                 Button {
@@ -1563,42 +1570,6 @@ struct AppRoutingView: View {
         }.map(\.element)
     }
 
-    private var appRuleStatistics: [String: AppRuleActivityStatistics] {
-        model.appRoutingActivities.reduce(into: [:]) { result, activity in
-            guard let identifier = activity.matchedRuleIdentifier else { return }
-            var value = result[identifier] ?? .zero
-            value.matchCount += 1
-            if activity.endedAt == nil,
-               activity.relayState != .completed,
-               activity.relayState != .failed,
-               activity.relayState != .notApplicable {
-                value.activeCount += 1
-            }
-            if activity.relayState == .failed { value.failureCount += 1 }
-            value.lastMatchedAt = max(value.lastMatchedAt ?? .distantPast, activity.startedAt)
-
-            let isMeasured: Bool = switch activity.effectiveAction {
-            case .mihomo: true
-            case .direct: activity.payloadBytesAreMeasured == true
-            case .reject: true
-            case .failOpen: false
-            }
-            if isMeasured {
-                value.measuredBytes = saturatingRuleBytes(
-                    value.measuredBytes,
-                    activity.uploadBytes
-                )
-                value.measuredBytes = saturatingRuleBytes(
-                    value.measuredBytes,
-                    activity.downloadBytes
-                )
-            } else {
-                value.unmeasuredCount += 1
-            }
-            result[identifier] = value
-        }
-    }
-
     private func formattedRuleTraffic(_ bytes: UInt64, partial: Bool) -> String {
         let value = ByteCountFormatter.string(
             fromByteCount: Int64(clamping: bytes),
@@ -1607,16 +1578,11 @@ struct AppRoutingView: View {
         return partial ? "\(value)+" : value
     }
 
-    private func ruleTrafficHelp(_ statistics: AppRuleActivityStatistics) -> String {
+    private func ruleTrafficHelp(_ statistics: AppModel.AppRoutingRuleStatistics) -> String {
         guard statistics.unmeasuredCount > 0 else {
             return "Exact payload bytes observed for this rule in the current app session."
         }
         return "\(formattedRuleTraffic(statistics.measuredBytes, partial: false)) measured, plus \(formattedCount(statistics.unmeasuredCount)) pass-through flows whose payload was not observable."
-    }
-
-    private func saturatingRuleBytes(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
-        let (value, overflow) = lhs.addingReportingOverflow(rhs)
-        return overflow ? .max : value
     }
 
     private var selectedRule: CaptureRule? {
@@ -1991,17 +1957,6 @@ struct AppRoutingView: View {
         case .mihomo: .accentColor
         }
     }
-}
-
-private struct AppRuleActivityStatistics {
-    static let zero = AppRuleActivityStatistics()
-
-    var matchCount = 0
-    var activeCount = 0
-    var failureCount = 0
-    var measuredBytes: UInt64 = 0
-    var unmeasuredCount = 0
-    var lastMatchedAt: Date?
 }
 
 private struct AppRoutingFlowInspector: View {

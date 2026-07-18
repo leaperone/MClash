@@ -22,6 +22,25 @@ struct CoreStopPolicy: Sendable {
 actor CoreSupervisor {
     nonisolated let events: AsyncStream<CoreEvent>
 
+    /// Process pipes must always be drained, but decoding and forwarding every
+    /// Mihomo line is presentation work. This lock-backed gate is safe to read
+    /// directly from FileHandle callbacks without creating an actor Task for
+    /// each chunk while the Logs screen is not mounted.
+    private final class ProcessLogForwardingGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var enabled = false
+
+        func setEnabled(_ enabled: Bool) {
+            lock.withLock { self.enabled = enabled }
+        }
+
+        var isEnabled: Bool {
+            lock.withLock { enabled }
+        }
+    }
+
+    nonisolated private let processLogForwardingGate = ProcessLogForwardingGate()
+
     private final class ManagedProcess: @unchecked Sendable {
         let id = UUID()
         let process: Process
@@ -202,6 +221,10 @@ actor CoreSupervisor {
         continuation.finish()
     }
 
+    nonisolated func setProcessLogForwardingEnabled(_ enabled: Bool) {
+        processLogForwardingGate.setEnabled(enabled)
+    }
+
     func state() -> CoreRunState {
         currentState
     }
@@ -340,14 +363,20 @@ actor CoreSupervisor {
 
         standardOutput.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            Task { await self?.emitLog(text, stream: .standardOutput) }
+            guard !data.isEmpty,
+                  let self,
+                  self.processLogForwardingGate.isEnabled,
+                  let text = String(data: data, encoding: .utf8) else { return }
+            Task { await self.emitLog(text, stream: .standardOutput) }
         }
 
         standardError.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            Task { await self?.emitLog(text, stream: .standardError) }
+            guard !data.isEmpty,
+                  let self,
+                  self.processLogForwardingGate.isEnabled,
+                  let text = String(data: data, encoding: .utf8) else { return }
+            Task { await self.emitLog(text, stream: .standardError) }
         }
 
         process.terminationHandler = { [weak self] process in

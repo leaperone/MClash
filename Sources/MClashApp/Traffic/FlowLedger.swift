@@ -61,6 +61,10 @@ struct FlowLedger: Sendable {
                 }
             }
         )
+        let connectionIndex = ConnectionIndex(
+            records: deduplicatedConnections,
+            connectionStarts: connectionStarts
+        )
         var claimedConnectionIDs: Set<String> = []
         var builtEntries: [FlowLedgerEntry] = []
         builtEntries.reserveCapacity(
@@ -82,8 +86,7 @@ struct FlowLedger: Sendable {
             guard !Task<Never, Never>.isCancelled else { return }
             let match = Self.connectionMatch(
                 for: activity,
-                among: deduplicatedConnections,
-                connectionStarts: connectionStarts,
+                in: connectionIndex,
                 excluding: claimedConnectionIDs,
                 associationWindow: max(0, associationWindow)
             )
@@ -173,6 +176,122 @@ struct FlowLedger: Sendable {
         let association: FlowLedgerAssociation
     }
 
+    private struct IndexedConnection {
+        let record: FlowLedgerMihomoConnectionRecord
+        let startedAt: Date
+    }
+
+    private struct ConnectionDestinationKey: Hashable {
+        let host: String
+        let port: UInt16
+    }
+
+    private struct RelayConnectionKey: Hashable {
+        let destination: ConnectionDestinationKey
+        let sourcePort: UInt16
+    }
+
+    /// Narrows activity matching to connections which share a normalized
+    /// destination before applying protocol/time/relay-port tie breaking.
+    /// The previous implementation scanned every retained connection once per
+    /// activity, which became quadratic at the 2,000-activity retention limit.
+    private struct ConnectionIndex {
+        private let byDestination: [ConnectionDestinationKey: [IndexedConnection]]
+        private let byRelaySourcePort: [RelayConnectionKey: [IndexedConnection]]
+
+        init(
+            records: [FlowLedgerMihomoConnectionRecord],
+            connectionStarts: [String: Date]
+        ) {
+            var index: [ConnectionDestinationKey: [IndexedConnection]] = [:]
+            var relayIndex: [RelayConnectionKey: [IndexedConnection]] = [:]
+            for record in records {
+                guard !Task<Never, Never>.isCancelled,
+                      FlowLedger.isAppRoutingInbound(record.connection.metadata.inboundName),
+                      let portText = record.connection.metadata.destinationPort,
+                      let port = UInt16(portText),
+                      let startedAt = connectionStarts[record.connection.id]
+                else { continue }
+
+                let hosts = Set(
+                    [
+                        record.connection.metadata.host,
+                        record.connection.metadata.sniffHost,
+                        record.connection.metadata.destinationIP,
+                        record.connection.metadata.remoteDestination,
+                    ].compactMap(FlowLedger.normalizedHost)
+                )
+                let candidate = IndexedConnection(record: record, startedAt: startedAt)
+                for host in hosts {
+                    let destination = ConnectionDestinationKey(host: host, port: port)
+                    index[destination, default: []]
+                        .append(candidate)
+                    if let sourcePortText = record.connection.metadata.sourcePort,
+                       let sourcePort = UInt16(sourcePortText) {
+                        relayIndex[
+                            RelayConnectionKey(
+                                destination: destination,
+                                sourcePort: sourcePort
+                            ),
+                            default: []
+                        ].append(candidate)
+                    }
+                }
+            }
+            byDestination = index
+            byRelaySourcePort = relayIndex
+        }
+
+        func candidates(
+            for activity: AppRoutingActivity,
+            relaySourcePort: UInt16? = nil
+        ) -> [IndexedConnection] {
+            guard activity.destination.port > 0 else { return [] }
+            let hosts = Set(
+                [activity.destination.hostname, activity.destination.ipAddress]
+                    .compactMap(FlowLedger.normalizedHost)
+            )
+            guard !hosts.isEmpty else { return [] }
+
+            return candidates(
+                hosts: hosts,
+                destinationPort: activity.destination.port,
+                relaySourcePort: relaySourcePort
+            )
+        }
+
+        private func candidates(
+            hosts: Set<String>,
+            destinationPort: UInt16,
+            relaySourcePort: UInt16?
+        ) -> [IndexedConnection] {
+            var identifiers: Set<String> = []
+            var result: [IndexedConnection] = []
+            for host in hosts {
+                let destination = ConnectionDestinationKey(
+                    host: host,
+                    port: destinationPort
+                )
+                let candidates: [IndexedConnection]
+                if let relaySourcePort {
+                    candidates = byRelaySourcePort[
+                        RelayConnectionKey(
+                            destination: destination,
+                            sourcePort: relaySourcePort
+                        )
+                    ] ?? []
+                } else {
+                    candidates = byDestination[destination] ?? []
+                }
+                for candidate in candidates
+                where identifiers.insert(candidate.record.connection.id).inserted {
+                    result.append(candidate)
+                }
+            }
+            return result
+        }
+    }
+
     private static func deduplicated(
         _ records: [FlowLedgerMihomoConnectionRecord]
     ) -> [FlowLedgerMihomoConnectionRecord] {
@@ -190,32 +309,36 @@ struct FlowLedger: Sendable {
 
     private static func connectionMatch(
         for activity: AppRoutingActivity,
-        among records: [FlowLedgerMihomoConnectionRecord],
-        connectionStarts: [String: Date],
+        in index: ConnectionIndex,
         excluding claimedConnectionIDs: Set<String>,
         associationWindow: TimeInterval
     ) -> ConnectionMatch? {
         guard case .mihomo = activity.effectiveAction else { return nil }
 
-        let candidates = records.compactMap { record -> (record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval)? in
-            guard !Task<Never, Never>.isCancelled,
-                  !claimedConnectionIDs.contains(record.connection.id),
-                  isAppRoutingInbound(record.connection.metadata.inboundName),
-                  destinationMatches(activity, connection: record.connection),
-                  transportMatches(activity, connection: record.connection),
-                  let connectionStart = connectionStarts[record.connection.id]
-            else { return nil }
-            let delta = abs(connectionStart.timeIntervalSince(activity.startedAt))
-            guard delta <= associationWindow else { return nil }
-            return (record, delta)
+        func eligibleCandidates(
+            relaySourcePort: UInt16? = nil
+        ) -> [(record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval)] {
+            index.candidates(
+                for: activity,
+                relaySourcePort: relaySourcePort
+            ).compactMap {
+                candidate -> (
+                    record: FlowLedgerMihomoConnectionRecord,
+                    delta: TimeInterval
+                )? in
+                let record = candidate.record
+                guard !Task<Never, Never>.isCancelled,
+                      !claimedConnectionIDs.contains(record.connection.id),
+                      transportMatches(activity, connection: record.connection)
+                else { return nil }
+                let delta = abs(candidate.startedAt.timeIntervalSince(activity.startedAt))
+                guard delta <= associationWindow else { return nil }
+                return (record, delta)
+            }
         }
 
         if let relayLocalPort = activity.relayLocalPort {
-            let exact = candidates
-                .filter {
-                    UInt16($0.record.connection.metadata.sourcePort ?? "")
-                        == relayLocalPort
-                }
+            let exact = eligibleCandidates(relaySourcePort: relayLocalPort)
                 .min(by: candidateIsPreferred)
             if let exact {
                 return ConnectionMatch(
@@ -225,6 +348,7 @@ struct FlowLedger: Sendable {
             }
         }
 
+        let candidates = eligibleCandidates()
         guard let heuristic = candidates.min(by: candidateIsPreferred) else { return nil }
             return ConnectionMatch(
                 record: heuristic.record,

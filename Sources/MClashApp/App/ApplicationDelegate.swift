@@ -6,18 +6,38 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     var forceShutdownHandler: (@MainActor () async -> Void)?
     private var terminationInProgress = false
     private var mainWindow: NSWindow?
+    private var mainWindowObservers: [NSObjectProtocol] = []
+    private var mainWindowVisibilityHandler: (@MainActor (Bool) -> Void)?
     private var shouldPresentInitialMainWindow = true
 
-    func registerMainWindow(_ window: NSWindow) {
+    func registerMainWindow(
+        _ window: NSWindow,
+        visibilityDidChange: @escaping @MainActor (Bool) -> Void
+    ) {
+        mainWindowVisibilityHandler = visibilityDidChange
+        guard mainWindow !== window else { return }
+
+        removeMainWindowObservers()
         window.identifier = NSUserInterfaceItemIdentifier("MClash.MainWindow")
+        window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(
             width: MClashLayout.mainWindowMinimumWidth,
             height: MClashLayout.mainWindowMinimumHeight
         )
         mainWindow = window
-        guard shouldPresentInitialMainWindow else { return }
-        shouldPresentInitialMainWindow = false
-        showMainWindow()
+        observeMainWindow(window)
+        if shouldPresentInitialMainWindow {
+            shouldPresentInitialMainWindow = false
+            showMainWindow()
+        } else {
+            visibilityDidChange(mainWindowShouldMountPresentation)
+        }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(
+        _ sender: NSApplication
+    ) -> Bool {
+        false
     }
 
     func applicationShouldHandleReopen(
@@ -26,6 +46,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     ) -> Bool {
         showMainWindow()
         return true
+    }
+
+    func applicationDidHide(_ notification: Notification) {
+        mainWindowVisibilityHandler?(false)
+    }
+
+    func applicationDidUnhide(_ notification: Notification) {
+        mainWindowVisibilityHandler?(mainWindowShouldMountPresentation)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -77,7 +105,63 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             shouldPresentInitialMainWindow = true
             return
         }
+        mainWindowVisibilityHandler?(true)
         mainWindow.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    private func observeMainWindow(_ window: NSWindow) {
+        let center = NotificationCenter.default
+        mainWindowObservers.append(
+            center.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.mainWindow === window else { return }
+                    self.mainWindowVisibilityHandler?(false)
+                }
+            }
+        )
+        mainWindowObservers.append(
+            center.addObserver(
+                forName: NSWindow.didMiniaturizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.mainWindow === window else { return }
+                    self.mainWindowVisibilityHandler?(false)
+                }
+            }
+        )
+        mainWindowObservers.append(
+            center.addObserver(
+                forName: NSWindow.didDeminiaturizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.mainWindow === window else { return }
+                    self.mainWindowVisibilityHandler?(
+                        self.mainWindowShouldMountPresentation
+                    )
+                }
+            }
+        )
+    }
+
+    private var mainWindowShouldMountPresentation: Bool {
+        guard let mainWindow else { return false }
+        return mainWindow.isVisible
+            && !mainWindow.isMiniaturized
+            && !NSApplication.shared.isHidden
+    }
+
+    private func removeMainWindowObservers() {
+        let center = NotificationCenter.default
+        mainWindowObservers.forEach(center.removeObserver)
+        mainWindowObservers.removeAll()
     }
 }

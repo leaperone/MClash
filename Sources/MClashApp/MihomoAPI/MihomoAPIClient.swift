@@ -223,7 +223,10 @@ public actor MihomoAPIClient {
     }
 
     public func trafficStream() throws -> AsyncThrowingStream<MihomoTraffic, Error> {
-        try webSocketStream(pathComponents: ["traffic"])
+        try webSocketStream(
+            pathComponents: ["traffic"],
+            bufferingPolicy: .bufferingNewest(1)
+        )
     }
 
     public func logStream(
@@ -231,7 +234,8 @@ public actor MihomoAPIClient {
     ) throws -> AsyncThrowingStream<MihomoLogEntry, Error> {
         try webSocketStream(
             pathComponents: ["logs"],
-            queryItems: [URLQueryItem(name: "level", value: minimumLevel.rawValue)]
+            queryItems: [URLQueryItem(name: "level", value: minimumLevel.rawValue)],
+            bufferingPolicy: .bufferingNewest(250)
         )
     }
 
@@ -243,7 +247,8 @@ public actor MihomoAPIClient {
             queryItems: [
                 URLQueryItem(name: "level", value: minimumLevel.rawValue),
                 URLQueryItem(name: "format", value: "structured"),
-            ]
+            ],
+            bufferingPolicy: .bufferingNewest(250)
         )
     }
 
@@ -255,7 +260,8 @@ public actor MihomoAPIClient {
         }
         return try webSocketStream(
             pathComponents: ["connections"],
-            queryItems: [URLQueryItem(name: "interval", value: String(intervalMilliseconds))]
+            queryItems: [URLQueryItem(name: "interval", value: String(intervalMilliseconds))],
+            bufferingPolicy: .bufferingNewest(1)
         )
     }
 
@@ -327,7 +333,9 @@ public actor MihomoAPIClient {
 
     private func webSocketStream<Element: Decodable & Sendable>(
         pathComponents: [String],
-        queryItems: [URLQueryItem] = []
+        queryItems: [URLQueryItem] = [],
+        bufferingPolicy: AsyncThrowingStream<Element, Error>.Continuation.BufferingPolicy =
+            .unbounded
     ) throws -> AsyncThrowingStream<Element, Error> {
         let request = try makeRequest(
             method: "GET",
@@ -336,7 +344,7 @@ public actor MihomoAPIClient {
         )
         let socket = session.webSocketTask(with: request)
 
-        return AsyncThrowingStream { continuation in
+        return AsyncThrowingStream(bufferingPolicy: bufferingPolicy) { continuation in
             let receiveTask = Task {
                 socket.resume()
                 do {

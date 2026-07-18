@@ -3,7 +3,7 @@ import SwiftUI
 
 struct MenuBarContent: View {
     @Bindable var model: AppModel
-    @Environment(\.openWindow) private var openWindow
+    let presentMainWindow: @MainActor (AppModel.Destination) -> Void
     @State private var pickerGroupName: String?
 
     var body: some View {
@@ -47,6 +47,13 @@ struct MenuBarContent: View {
         .frame(width: 360, height: popoverHeight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("MClash quick controls")
+        .background {
+            MenuBarWindowVisibilityView { isVisible in
+                model.setMenuBarContentVisible(isVisible)
+            }
+        }
+        .onAppear { model.setMenuBarContentVisible(true) }
+        .onDisappear { model.setMenuBarContentVisible(false) }
     }
 
     private var statusHeader: some View {
@@ -761,10 +768,6 @@ struct MenuBarContent: View {
         return false
     }
 
-    private var appRoutingActivityIsCurrent: Bool {
-        model.liveStreamHealth[.appRouting]?.hasCurrentData == true
-    }
-
     private func liveTrafficValue(_ value: Int64) -> String {
         guard model.isConnected else { return "—" }
         switch model.liveStreamHealth[.traffic]?.phase ?? .inactive {
@@ -785,18 +788,6 @@ struct MenuBarContent: View {
         }
     }
 
-    private var activeAppRoutingRelayCount: Int {
-        model.appRoutingActivities.lazy.filter { activity in
-            guard activity.endedAt == nil else { return false }
-            switch activity.relayState {
-            case .pending, .connecting, .ready, .relaying:
-                return true
-            case .notApplicable, .completed, .failed:
-                return false
-            }
-        }.count
-    }
-
     private var enabledAppRoutingRuleCount: Int {
         model.networkCapturePreferences.snapshot.rules.lazy.filter(\.enabled).count
     }
@@ -813,17 +804,10 @@ struct MenuBarContent: View {
         case .enabling: return "Starting"
         case .awaitingUserApproval: return "Needs Approval"
         case .on:
-            switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
-            case .live:
-                return "\(formattedCount(activeAppRoutingRelayCount)) active "
-                    + (activeAppRoutingRelayCount == 1 ? "relay" : "relays")
-            case .connecting:
-                return "Verifying"
-            case .reconnecting, .stale:
-                return "Relays stale"
-            case .inactive:
-                return "Data unavailable"
+            if model.appRoutingProviderStatusFailureCount > 0 {
+                return "Verification retrying"
             }
+            return model.appRoutingProviderLastVerifiedAt == nil ? "Verifying" : "Running"
         case .disabling: return "Stopping"
         case .requiresReboot: return "Restart Required"
         case .failed: return "Failed"
@@ -833,7 +817,7 @@ struct MenuBarContent: View {
     private var appRoutingStatusSymbol: String {
         switch model.networkCaptureState {
         case .on:
-            return model.liveStreamHealth[.appRouting]?.hasCurrentData == true
+            return appRoutingProviderIsVerified
                 ? "checkmark.circle.fill"
                 : "exclamationmark.circle.fill"
         case .enabling, .disabling, .waitingForConnection: return "arrow.clockwise"
@@ -846,7 +830,7 @@ struct MenuBarContent: View {
     private var appRoutingStatusColor: Color {
         switch model.networkCaptureState {
         case .on:
-            return model.liveStreamHealth[.appRouting]?.hasCurrentData == true ? .green : .orange
+            return appRoutingProviderIsVerified ? .green : .orange
         case .enabling, .disabling, .waitingForConnection, .awaitingUserApproval, .requiresReboot:
             return .orange
         case .failed: return .red
@@ -856,22 +840,28 @@ struct MenuBarContent: View {
 
     private var appRoutingStatusHelp: String {
         switch model.networkCaptureState {
-        case .on where model.liveStreamHealth[.appRouting]?.hasCurrentData == true:
-            return "Provider activity is current. \(activeAppRoutingRelayCount) active "
-                + "\(activeAppRoutingRelayCount == 1 ? "relay" : "relays") and "
+        case .on where appRoutingProviderIsVerified:
+            let verifiedAt = model.appRoutingProviderLastVerifiedAt?.formatted(
+                .relative(presentation: .named)
+            ) ?? "recently"
+            return "The provider runtime was verified \(verifiedAt). "
                 + "\(enabledAppRoutingRuleCount) enabled "
                 + (enabledAppRoutingRuleCount == 1 ? "rule." : "rules.")
         case .on:
-            if let receivedAt = model.liveStreamHealth[.appRouting]?.lastReceivedAt {
-                return "Relay counts are not current. The provider was last verified "
-                    + receivedAt.formatted(.relative(presentation: .named)) + "."
+            if model.appRoutingProviderStatusFailureCount > 0 {
+                return "The provider runtime check is retrying. Open App Routing for details."
             }
-            return "Relay counts are unavailable until the provider responds."
+            return "The provider runtime is being verified."
         case .off:
             return "App Routing is off. Saved rules are not intercepting traffic."
         default:
             return "Open App Routing for provider status and recovery actions."
         }
+    }
+
+    private var appRoutingProviderIsVerified: Bool {
+        model.appRoutingProviderStatusFailureCount == 0
+            && model.appRoutingProviderLastVerifiedAt != nil
     }
 
     private var attentionTitle: String {
@@ -907,14 +897,91 @@ struct MenuBarContent: View {
     }
 
     private func showMainWindow(destination: AppModel.Destination) {
-        model.selection = destination
-        openWindow(id: "main")
-        NSApplication.shared.activate(ignoringOtherApps: true)
+        presentMainWindow(destination)
     }
 
     private var popoverHeight: CGFloat {
         if model.isConnected { return 600 }
         if !model.operationalIssues.isEmpty || issueMessage != nil { return 520 }
         return 480
+    }
+}
+
+/// `MenuBarExtra` may retain its SwiftUI root after ordering the panel out, so
+/// `onDisappear` alone is not a sufficient presentation-demand signal. Track
+/// the actual AppKit panel's key-window lifecycle to stop quick-metric streams
+/// whenever the menu closes.
+private struct MenuBarWindowVisibilityView: NSViewRepresentable {
+    let visibilityDidChange: @MainActor (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        resolveWindow(from: view, coordinator: context.coordinator)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        resolveWindow(from: nsView, coordinator: context.coordinator)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stopObserving()
+    }
+
+    private func resolveWindow(from view: NSView, coordinator: Coordinator) {
+        coordinator.visibilityDidChange = visibilityDidChange
+        guard !coordinator.resolutionIsPending else { return }
+        coordinator.resolutionIsPending = true
+        DispatchQueue.main.async { [weak view, weak coordinator] in
+            guard let coordinator else { return }
+            coordinator.resolutionIsPending = false
+            guard let window = view?.window else { return }
+            coordinator.observe(window)
+        }
+    }
+
+    @MainActor
+    final class Coordinator {
+        var visibilityDidChange: (@MainActor (Bool) -> Void)?
+        var resolutionIsPending = false
+        private weak var window: NSWindow?
+        private var observers: [NSObjectProtocol] = []
+
+        func observe(_ window: NSWindow) {
+            guard self.window !== window else { return }
+            stopObserving()
+            self.window = window
+            let center = NotificationCenter.default
+            observers.append(
+                center.addObserver(
+                    forName: NSWindow.didBecomeKeyNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.visibilityDidChange?(true) }
+                }
+            )
+            for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
+                observers.append(
+                    center.addObserver(forName: name, object: window, queue: .main) {
+                        [weak self] _ in
+                        MainActor.assumeIsolated { self?.visibilityDidChange?(false) }
+                    }
+                )
+            }
+            visibilityDidChange?(window.isVisible && window.isKeyWindow)
+        }
+
+        func stopObserving() {
+            let center = NotificationCenter.default
+            observers.forEach(center.removeObserver)
+            observers.removeAll()
+            visibilityDidChange?(false)
+            window = nil
+        }
     }
 }

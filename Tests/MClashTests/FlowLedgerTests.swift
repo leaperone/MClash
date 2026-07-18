@@ -47,6 +47,47 @@ struct FlowLedgerTests {
         #expect(!ledger.entries.contains { $0.id == .mihomo("exact") })
     }
 
+    @Test("A claimed relay-port candidate falls back to destination matching")
+    func claimedExactCandidateFallsBackToHeuristic() throws {
+        let first = appActivity(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            relayLocalPort: 55_001,
+            startedAt: baseDate
+        )
+        let second = appActivity(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            relayLocalPort: 55_001,
+            startedAt: baseDate
+        )
+        let exact = try connection(
+            id: "exact",
+            sourcePort: 55_001,
+            start: baseDate
+        )
+        let heuristic = try connection(
+            id: "heuristic",
+            sourcePort: 55_002,
+            start: baseDate.addingTimeInterval(1)
+        )
+
+        let ledger = FlowLedger(
+            activeConnections: [exact, heuristic],
+            appRoutingActivities: [second, first]
+        )
+
+        #expect(
+            entry(first.id, in: ledger).association
+                == .exactRelayPort(connectionID: "exact")
+        )
+        #expect(
+            entry(second.id, in: ledger).association
+                == .destinationAndStartTime(
+                    connectionID: "heuristic",
+                    difference: 1
+                )
+        )
+    }
+
     @Test("Destination and start time provide a bounded fallback association")
     func heuristicAssociationWithoutRelayPort() throws {
         let activity = appActivity(relayLocalPort: nil, startedAt: baseDate)
