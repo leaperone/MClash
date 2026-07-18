@@ -64,7 +64,7 @@ final class ProviderRuntimeState: @unchecked Sendable {
                 )
             }
             switch request.command {
-            case .status, .activity, .clearActivity:
+            case .status, .prepareDNS, .dnsStatus, .activity, .clearActivity:
                 return response(accepted: true, message: nil)
 
             case .quiesce:
@@ -124,7 +124,8 @@ final class ProviderRuntimeState: @unchecked Sendable {
             captureEnabled: storage.captureEnabled,
             failOpen: storage.failOpen,
             message: message,
-            activityBatch: nil
+            activityBatch: nil,
+            dnsRuntimeReport: nil
         )
     }
 

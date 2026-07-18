@@ -334,15 +334,15 @@ struct AppRoutingView: View {
     }
 
     private var dnsDataPlaneTitle: String {
-        if model.dnsProxyAutomaticallyDisabled { return "Stopped with App Routing" }
         guard model.networkCapturePreferences.dnsEnabled else { return "Off" }
         guard model.networkCapturePreferences.enabled else { return "Starts with App Routing" }
+        if model.dnsProxyRuntimeError != nil { return "Needs Attention" }
+        if model.dnsProxyAutomaticallyDisabled { return "Stopped with App Routing" }
         if let status = model.dnsProxyRuntimeStatus, status.isOperational {
             return status.lastResponseDeliveredAt == nil
                 ? "Mihomo Listener Ready"
                 : "DNS Responses Observed"
         }
-        if model.dnsProxyRuntimeError != nil { return "Needs Attention" }
         return "Verifying Provider"
     }
 
@@ -374,17 +374,17 @@ struct AppRoutingView: View {
     }
 
     private var dnsDataPlaneSymbol: String {
+        if model.dnsProxyRuntimeError != nil { return "exclamationmark.triangle.fill" }
         if model.dnsProxyAutomaticallyDisabled { return "arrow.uturn.backward.circle.fill" }
         if model.dnsProxyRuntimeStatus?.isOperational == true { return "checkmark.shield.fill" }
-        if model.dnsProxyRuntimeError != nil { return "exclamationmark.triangle.fill" }
         guard model.networkCapturePreferences.dnsEnabled else { return "network" }
         return model.networkCapturePreferences.enabled ? "arrow.clockwise" : "link.circle"
     }
 
     private var dnsDataPlaneColor: Color {
+        if model.dnsProxyRuntimeError != nil { return .red }
         if model.dnsProxyAutomaticallyDisabled { return .orange }
         if model.dnsProxyRuntimeStatus?.isOperational == true { return .green }
-        if model.dnsProxyRuntimeError != nil { return .red }
         return model.networkCapturePreferences.dnsEnabled
             && model.networkCapturePreferences.enabled ? .orange : .secondary
     }
@@ -439,7 +439,7 @@ struct AppRoutingView: View {
             ) { EmptyView() }
         case let .failed(message):
             statusNotice(
-                title: "App Routing couldn’t start",
+                title: "App Routing Needs Attention",
                 message: message,
                 symbol: "exclamationmark.triangle.fill",
                 color: .red
@@ -471,6 +471,15 @@ struct AppRoutingView: View {
                     message: "App Routing is off, so the rules and advanced DNS preference were saved for the next activation. Completed in \(formattedDuration(receipt.duration)).",
                     symbol: "checkmark.circle.fill",
                     color: .green
+                ) { EmptyView() }
+            case let .requiresReboot(dnsEnabled):
+                statusNotice(
+                    title: "Restart required to finish App Routing",
+                    message: dnsEnabled
+                        ? "macOS saved App Routing and DNS Routing, but the updated Network Extension will not run until this Mac restarts."
+                        : "macOS saved App Routing, but the updated Network Extension will not run until this Mac restarts.",
+                    symbol: "restart.circle.fill",
+                    color: .orange
                 ) { EmptyView() }
             case let .appliedAndVerified(enabled, dnsEnabled, systemProxyWasDisabled):
                 statusNotice(
@@ -519,7 +528,7 @@ struct AppRoutingView: View {
                     : "DNS Routing is excluded in Advanced settings",
         ]
         if systemProxyWasDisabled {
-            facts.append("the previously enabled System Proxy was restored to its saved macOS configuration")
+            facts.append("the previously enabled System Proxy was turned off to avoid double interception")
         }
         facts.append("completed in \(formattedDuration(duration))")
         return facts.joined(separator: "; ") + "."

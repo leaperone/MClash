@@ -11,6 +11,18 @@ protocol DNSProxyManaging: Sendable {
     func disable() async throws
 }
 
+/// DNS status is relayed by the already-running transparent provider. Both
+/// providers live in the same system-extension process, while this protocol
+/// keeps the host-side manager independently testable.
+protocol DNSProxyRuntimeChannel: Sendable {
+    func prepareDNSActivation(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws
+    func dnsRuntimeReport(
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> DNSProxyRuntimeReport
+}
+
 /// A value snapshot keeps the persistence transaction testable without making
 /// `AppleDNSProxyManager` depend directly on NetworkExtension's process-wide
 /// singleton. All values placed in `providerConfiguration` are property-list
@@ -84,30 +96,18 @@ actor AppleDNSProxyManager: DNSProxyManaging {
 
     private let providerBundleIdentifier: String
     private let preferences: any DNSProxyPreferenceManaging
-    private let statusFile: DNSProxyStatusFile?
-    private let statusFileInitializationError: Error?
+    private let runtimeChannel: any DNSProxyRuntimeChannel
     private let operationalStatusTimeout: Duration
     private let operationalStatusPollInterval: Duration
 
     init(
         providerBundleIdentifier: String = MClashNetworkExtensionIdentifiers.systemExtension,
         manager: NEDNSProxyManager = .shared(),
-        statusFile: DNSProxyStatusFile? = nil
+        runtimeChannel: any DNSProxyRuntimeChannel
     ) {
         self.providerBundleIdentifier = providerBundleIdentifier
         preferences = AppleDNSProxyPreferences(manager: manager)
-        if let statusFile {
-            self.statusFile = statusFile
-            statusFileInitializationError = nil
-        } else {
-            do {
-                self.statusFile = try DNSProxyStatusFile()
-                statusFileInitializationError = nil
-            } catch {
-                self.statusFile = nil
-                statusFileInitializationError = error
-            }
-        }
+        self.runtimeChannel = runtimeChannel
         operationalStatusTimeout = .seconds(12)
         operationalStatusPollInterval = .milliseconds(200)
     }
@@ -115,36 +115,51 @@ actor AppleDNSProxyManager: DNSProxyManaging {
     init(
         providerBundleIdentifier: String = MClashNetworkExtensionIdentifiers.systemExtension,
         preferences: any DNSProxyPreferenceManaging,
-        statusFile: DNSProxyStatusFile?,
+        runtimeChannel: any DNSProxyRuntimeChannel,
         operationalStatusTimeout: Duration = .seconds(12),
         operationalStatusPollInterval: Duration = .milliseconds(200)
     ) {
         self.providerBundleIdentifier = providerBundleIdentifier
         self.preferences = preferences
-        self.statusFile = statusFile
-        statusFileInitializationError = nil
+        self.runtimeChannel = runtimeChannel
         self.operationalStatusTimeout = operationalStatusTimeout
         self.operationalStatusPollInterval = operationalStatusPollInterval
     }
 
     func configureAndEnable(_ configuration: NetworkExtensionRuntimeConfiguration) async throws {
-        _ = try await load(operation: .configureDNSProxy)
+        let current = try await load(operation: .configureDNSProxy)
 
-        guard let statusFile else {
+        guard configuration.encodedDNSProxyBootstrap != nil else {
             throw NetworkExtensionControlFailure(
                 operation: .configureDNSProxy,
-                message: unavailableStatusChannelMessage
+                message: "The DNS proxy configuration is missing its validated private Mihomo bootstrap payload"
             )
         }
-        // Remove the previous activation's heartbeat before enabling. Removing
-        // it after save can race with the newly launched provider and erase the
-        // only proof that NetworkExtension actually started it.
+
+        // `NEDNSProxyManager` does not guarantee that saving one enabled
+        // configuration over another restarts a provider which previously
+        // failed during `startProxy`. Force a verified owned off→on edge so
+        // every App Routing activation gets a fresh Provider start attempt.
+        if current.providerBundleIdentifier == providerBundleIdentifier,
+           current.isEnabled {
+            var disabled = current
+            disabled.isEnabled = false
+            try await save(disabled, operation: .configureDNSProxy)
+            let disabledReadback = try await load(operation: .configureDNSProxy)
+            guard disabledReadback.providerBundleIdentifier == providerBundleIdentifier,
+                  !disabledReadback.isEnabled else {
+                throw NetworkExtensionControlFailure(
+                    operation: .configureDNSProxy,
+                    message: "The previous MClash DNS proxy instance could not be stopped before restart"
+                )
+            }
+        }
         do {
-            try statusFile.remove()
+            try await runtimeChannel.prepareDNSActivation(configuration)
         } catch {
             throw NetworkExtensionControlFailure(
                 operation: .configureDNSProxy,
-                message: "Could not clear the previous DNS Provider heartbeat: "
+                message: "Could not prepare the DNS Provider runtime channel: "
                     + error.localizedDescription
             )
         }
@@ -168,8 +183,7 @@ actor AppleDNSProxyManager: DNSProxyManaging {
         )
 
         try await waitForOperationalStatus(
-            configuration: configuration,
-            statusFile: statusFile
+            configuration: configuration
         )
     }
 
@@ -180,9 +194,8 @@ actor AppleDNSProxyManager: DNSProxyManaging {
     func runtimeStatus(
         for configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> DNSProxyRuntimeStatus {
-        // A heartbeat file may outlive a disabled or replaced preference. The
-        // persisted NEDNSProxyManager state is therefore part of every health
-        // read, not just the initial enable transaction.
+        // A process-local status can outlive a disabled or replaced preference.
+        // The persisted NEDNSProxyManager state remains part of every read.
         let persisted = try await load(operation: .inspectDNSProxy)
         try validateEnabledPreferences(
             persisted,
@@ -190,18 +203,29 @@ actor AppleDNSProxyManager: DNSProxyManaging {
             operation: .inspectDNSProxy
         )
 
-        guard let statusFile else {
-            throw NetworkExtensionControlFailure(
-                operation: .inspectDNSProxy,
-                message: unavailableStatusChannelMessage
-            )
-        }
         do {
-            return try statusFile.readValidated(
+            let report = try await runtimeChannel.dnsRuntimeReport(for: configuration)
+            if let startupFailure = report.startupFailure {
+                throw NetworkExtensionControlFailure(
+                    operation: .inspectDNSProxy,
+                    message: Self.startupFailureMessage(startupFailure.reason)
+                )
+            }
+            guard let status = report.status else {
+                throw NetworkExtensionControlFailure(
+                    operation: .inspectDNSProxy,
+                    message: "DNS Provider runtime status has not been published yet"
+                )
+            }
+            try status.validate(
                 expectedRevision: configuration.revision,
                 activationIdentifier: configuration.activationIdentifier
             )
+            return status
         } catch {
+            if let failure = error as? NetworkExtensionControlFailure {
+                throw failure
+            }
             throw NetworkExtensionControlFailure(
                 operation: .inspectDNSProxy,
                 message: "The persisted DNS proxy is enabled, but its runtime heartbeat is invalid: "
@@ -258,29 +282,60 @@ actor AppleDNSProxyManager: DNSProxyManaging {
         guard Self.uint64(persisted.providerConfiguration?["revision"])
                 == configuration.revision,
               Self.uuid(persisted.providerConfiguration?["activationIdentifier"])
-                == configuration.activationIdentifier
+                == configuration.activationIdentifier,
+              let persistedBootstrapData = Self.data(
+                  persisted.providerConfiguration?["dnsProxyBootstrap"]
+              ),
+              let requestedBootstrapData = configuration.encodedDNSProxyBootstrap,
+              let persistedBootstrap = try? DNSProxyBootstrapConfiguration.decode(
+                  persistedBootstrapData
+              ),
+              let requestedBootstrap = try? DNSProxyBootstrapConfiguration.decode(
+                  requestedBootstrapData
+              ),
+              persistedBootstrap == requestedBootstrap
         else {
             throw NetworkExtensionControlFailure(
                 operation: operation,
-                message: "The saved DNS proxy revision or activation identifier does not match the requested activation"
+                message: "The saved DNS proxy bootstrap does not match the requested revision, activation, or private Mihomo relay"
             )
         }
     }
 
     private func waitForOperationalStatus(
-        configuration: NetworkExtensionRuntimeConfiguration,
-        statusFile: DNSProxyStatusFile
+        configuration: NetworkExtensionRuntimeConfiguration
     ) async throws {
         let deadline = ContinuousClock.now + operationalStatusTimeout
-        var lastError: Error = DNSProxyStatusFileError.documentMissing
+        var lastError: Error = NetworkExtensionControlFailure(
+            operation: .configureDNSProxy,
+            message: "DNS Provider runtime status has not been published yet"
+        )
         while ContinuousClock.now < deadline {
             let status: DNSProxyRuntimeStatus
             do {
-                status = try statusFile.readValidated(
+                let report = try await runtimeChannel.dnsRuntimeReport(for: configuration)
+                if let startupFailure = report.startupFailure {
+                    throw NetworkExtensionControlFailure(
+                        operation: .configureDNSProxy,
+                        message: Self.startupFailureMessage(startupFailure.reason)
+                    )
+                }
+                guard let reportedStatus = report.status else {
+                    throw NetworkExtensionControlFailure(
+                        operation: .configureDNSProxy,
+                        message: "DNS Provider runtime status has not been published yet"
+                    )
+                }
+                try reportedStatus.validate(
                     expectedRevision: configuration.revision,
                     activationIdentifier: configuration.activationIdentifier
                 )
+                status = reportedStatus
             } catch {
+                if let failure = error as? NetworkExtensionControlFailure,
+                   failure.message.hasPrefix("DNS Provider rejected") {
+                    throw failure
+                }
                 lastError = error
                 try await Task.sleep(for: operationalStatusPollInterval)
                 continue
@@ -293,6 +348,12 @@ actor AppleDNSProxyManager: DNSProxyManaging {
                         + "\(status.failureCategory?.rawValue ?? "unknown") during startup"
                 )
             }
+            if status.phase == .stopped {
+                throw NetworkExtensionControlFailure(
+                    operation: .configureDNSProxy,
+                    message: "DNS Provider stopped before startup completed"
+                )
+            }
             lastError = NetworkExtensionControlFailure(
                 operation: .configureDNSProxy,
                 message: "DNS Provider heartbeat is present but its Mihomo backend is not ready"
@@ -301,9 +362,25 @@ actor AppleDNSProxyManager: DNSProxyManaging {
         }
         throw NetworkExtensionControlFailure(
             operation: .configureDNSProxy,
-            message: "DNS Provider did not publish a matching operational heartbeat within "
+            message: "DNS Provider did not become operational within "
                 + "\(operationalStatusTimeout): \(lastError.localizedDescription)"
         )
+    }
+
+    private static func startupFailureMessage(
+        _ reason: DNSProxyStartupFailureReason
+    ) -> String {
+        let detail = switch reason {
+        case .missingProviderConfiguration:
+            "macOS did not deliver the saved provider configuration"
+        case .missingBootstrapPayload:
+            "the saved configuration omitted the versioned bootstrap payload"
+        case .invalidBootstrapPayload:
+            "the versioned bootstrap payload was invalid or unsupported"
+        case .invalidPrivateRelay:
+            "the private Mihomo SOCKS5 relay was invalid"
+        }
+        return "DNS Provider rejected startup because \(detail)."
     }
 
     private static func uint64(_ value: Any?) -> UInt64? {
@@ -320,6 +397,14 @@ actor AppleDNSProxyManager: DNSProxyManaging {
         switch value {
         case let value as UUID: value
         case let value as String: UUID(uuidString: value)
+        default: nil
+        }
+    }
+
+    private static func data(_ value: Any?) -> Data? {
+        switch value {
+        case let value as Data: value
+        case let value as NSData: value as Data
         default: nil
         }
     }
@@ -365,9 +450,4 @@ actor AppleDNSProxyManager: DNSProxyManaging {
         )
     }
 
-    private var unavailableStatusChannelMessage: String {
-        let prefix = "The DNS Provider App Group runtime channel is unavailable"
-        guard let statusFileInitializationError else { return prefix }
-        return prefix + ": " + statusFileInitializationError.localizedDescription
-    }
 }

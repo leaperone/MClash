@@ -14,6 +14,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     let captureEnabled: Bool
     let encodedCaptureSnapshot: Data?
     let encodedMihomoRouteProxyCatalog: Data?
+    let encodedDNSProxyBootstrap: Data?
     let mihomoListener: NetworkExtensionMihomoListenerConfiguration?
 
     init(
@@ -29,6 +30,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         captureEnabled = true
         encodedCaptureSnapshot = nil
         encodedMihomoRouteProxyCatalog = nil
+        encodedDNSProxyBootstrap = nil
         mihomoListener = nil
     }
 
@@ -59,7 +61,17 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         failOpen = preferences.failOpen
         captureEnabled = preferences.enabled
         self.encodedCaptureSnapshot = encodedSnapshot
-        encodedMihomoRouteProxyCatalog = try mihomoListener.encodedRouteProxyCatalog()
+        let routeProxyCatalog = try mihomoListener.encodedRouteProxyCatalog()
+        encodedMihomoRouteProxyCatalog = routeProxyCatalog
+        let endpoints = try MihomoRouteProxyCatalog.decode(routeProxyCatalog)
+        guard let profileRulesProxy = endpoints.first(where: { $0.route == .profileRules }) else {
+            throw NetworkExtensionRuntimeConfigurationError.missingProfileRulesProxy
+        }
+        encodedDNSProxyBootstrap = try DNSProxyBootstrapConfiguration(
+            revision: revision,
+            activationIdentifier: activationIdentifier,
+            profileRulesProxy: profileRulesProxy
+        ).encoded()
         self.mihomoListener = mihomoListener
     }
 
@@ -76,6 +88,9 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         if let encodedMihomoRouteProxyCatalog {
             configuration["mihomoRouteProxyCatalog"] = encodedMihomoRouteProxyCatalog as NSData
         }
+        if let encodedDNSProxyBootstrap {
+            configuration["dnsProxyBootstrap"] = encodedDNSProxyBootstrap as NSData
+        }
         if let mihomoListener {
             configuration["mihomoSOCKSHost"] = mihomoListener.ipv4Endpoint.host as NSString
             configuration["mihomoSOCKSPort"] = NSNumber(value: mihomoListener.port)
@@ -91,6 +106,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
 enum NetworkExtensionRuntimeConfigurationError: Error, Equatable, LocalizedError, Sendable {
     case invalidRevision(UInt64)
     case snapshotTooLarge(actual: Int, maximum: Int)
+    case missingProfileRulesProxy
 
     var errorDescription: String? {
         switch self {
@@ -98,6 +114,8 @@ enum NetworkExtensionRuntimeConfigurationError: Error, Equatable, LocalizedError
             "Network capture revision must be greater than zero; received \(revision)."
         case let .snapshotTooLarge(actual, maximum):
             "Encoded network capture rules are \(actual) bytes; the maximum is \(maximum)."
+        case .missingProfileRulesProxy:
+            "The private Mihomo listener catalog is missing the profile-rules route required by DNS Routing."
         }
     }
 }

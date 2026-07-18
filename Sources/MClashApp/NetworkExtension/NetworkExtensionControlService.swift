@@ -51,10 +51,11 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     }
 
     static func live() -> NetworkExtensionControlService {
-        NetworkExtensionControlService(
+        let transparentProxy = AppleTransparentProxyManager()
+        return NetworkExtensionControlService(
             systemExtension: AppleSystemExtensionController(),
-            transparentProxy: AppleTransparentProxyManager(),
-            dnsProxy: AppleDNSProxyManager()
+            transparentProxy: transparentProxy,
+            dnsProxy: AppleDNSProxyManager(runtimeChannel: transparentProxy)
         )
     }
 
@@ -149,6 +150,12 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                 networkExtensionControlLogger.notice(
                     "DNS Proxy preferences and Provider heartbeat verified revision=\(configuration.revision, privacy: .public)"
                 )
+            } else {
+                // Advanced DNS opt-out is explicit runtime state, not merely
+                // an instruction to skip setup. Clear any owned configuration
+                // left enabled by an older version or interrupted activation.
+                operation = .disableDNSProxy
+                try await dnsProxy.disable()
             }
 
             activeConfiguration = configuration

@@ -365,7 +365,7 @@ extension AppModel {
         }()
         let activeCaptureCount = (systemProxyIsOn ? 1 : 0) + (appRoutingIsOn ? 1 : 0)
         let activeRuleCount = networkCapturePreferences.snapshot.rules.filter(\.enabled).count
-        let latestRouteAt = latestNonDirectRouteAt
+        let latestRouteAt = flowLedger.latestNonDirectRouteAt
 
         let captureSummary: String
         switch (systemProxyIsOn, appRoutingIsOn) {
@@ -447,31 +447,6 @@ extension AppModel {
         )
     }
 
-    private var latestNonDirectRouteAt: Date? {
-        let active = connections?.connections ?? []
-        let closed = recentlyClosedConnections.map(\.connection)
-        return (active + closed).compactMap { connection -> Date? in
-            let route = RoutingExplanation(connection)
-            guard let terminal = route.chains.last,
-                  !Self.isNonProxyTerminal(terminal) else {
-                return nil
-            }
-            return Self.parseConnectionTimestamp(connection.start)
-        }.max()
-    }
-
-    private static func isNonProxyTerminal(_ value: String) -> Bool {
-        switch value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
-        case "DIRECT", "REJECT", "REJECT-DROP", "PASS": true
-        default: false
-        }
-    }
-
-    private static func parseConnectionTimestamp(_ value: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
-    }
 }
 
 private extension AppModel.StorageInitializationFailure.Component {

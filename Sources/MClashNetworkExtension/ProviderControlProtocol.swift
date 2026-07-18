@@ -4,10 +4,14 @@ import MClashNetworkShared
 /// Versioned messages exchanged between the host app and the transparent
 /// provider through `NETunnelProviderSession.sendProviderMessage`.
 ///
-/// The DNS provider cannot receive provider messages. Its initial revision is
-/// supplied through `NEDNSProxyProviderProtocol.providerConfiguration` instead.
+/// The DNS provider cannot receive provider messages directly. The host stages
+/// its bootstrap and reads its runtime report through the authenticated
+/// transparent-provider channel, with `providerConfiguration` retained as a
+/// cold-process fallback.
 enum ProviderControlCommand: String, Codable, Sendable {
     case status
+    case prepareDNS
+    case dnsStatus
     case applyConfiguration
     case quiesce
     case activity
@@ -15,11 +19,13 @@ enum ProviderControlCommand: String, Codable, Sendable {
 }
 
 struct ProviderControlRequest: Codable, Sendable {
-    static let currentProtocolVersion = 2
+    static let currentProtocolVersion = 3
 
     let protocolVersion: Int
     let command: ProviderControlCommand
     let revision: UInt64?
+    let activationIdentifier: UUID?
+    let dnsProxyBootstrap: Data?
     let captureEnabled: Bool?
     let failOpen: Bool?
     let captureConfigurationSnapshot: Data?
@@ -42,6 +48,7 @@ struct ProviderControlResponse: Codable, Sendable {
     let failOpen: Bool
     let message: String?
     let activityBatch: AppRoutingActivityBatch?
+    let dnsRuntimeReport: DNSProxyRuntimeReport?
 }
 
 enum ProviderConfigurationKey {
@@ -49,6 +56,7 @@ enum ProviderConfigurationKey {
     static let captureEnabled = "captureEnabled"
     static let failOpen = "failOpen"
     static let activationIdentifier = "activationIdentifier"
+    static let dnsProxyBootstrap = "dnsProxyBootstrap"
     /// JSON-encoded `CaptureConfigurationSnapshot` stored as `Data`/`NSData`.
     static let captureConfigurationSnapshot = "captureConfigurationSnapshot"
     /// JSON-encoded `[MihomoRouteProxyEndpoint]` stored as `Data`/`NSData`.

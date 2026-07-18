@@ -12,6 +12,12 @@ struct FlowLedger: Sendable {
     private static let defaultAssociationWindow: TimeInterval = 15
 
     private(set) var entries: [FlowLedgerEntry]
+    /// Cached route evidence used by persistent SwiftUI surfaces.
+    ///
+    /// Computing this while the ledger is already being assembled keeps route
+    /// parsing off the main actor and prevents every view refresh from scanning
+    /// all active and recently closed connections again.
+    private(set) var latestNonDirectRouteAt: Date?
 
     init(
         activeConnections: [MihomoConnection],
@@ -43,7 +49,18 @@ struct FlowLedger: Sendable {
         mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
         associationWindow: TimeInterval = defaultAssociationWindow
     ) {
+        entries = []
+        latestNonDirectRouteAt = nil
+
+        guard !Task<Never, Never>.isCancelled else { return }
         let deduplicatedConnections = Self.deduplicated(mihomoConnections)
+        let connectionStarts = Dictionary(
+            uniqueKeysWithValues: deduplicatedConnections.compactMap { record in
+                RuntimeTimestampParser.date(from: record.connection.start).map {
+                    (record.connection.id, $0)
+                }
+            }
+        )
         var claimedConnectionIDs: Set<String> = []
         var builtEntries: [FlowLedgerEntry] = []
         builtEntries.reserveCapacity(
@@ -62,9 +79,11 @@ struct FlowLedger: Sendable {
         }
 
         for activity in orderedActivities {
+            guard !Task<Never, Never>.isCancelled else { return }
             let match = Self.connectionMatch(
                 for: activity,
                 among: deduplicatedConnections,
+                connectionStarts: connectionStarts,
                 excluding: claimedConnectionIDs,
                 associationWindow: max(0, associationWindow)
             )
@@ -76,15 +95,18 @@ struct FlowLedger: Sendable {
 
         for record in deduplicatedConnections
         where !claimedConnectionIDs.contains(record.connection.id) {
+            guard !Task<Never, Never>.isCancelled else { return }
             builtEntries.append(
                 Self.entry(
                     record: record,
+                    startedAt: connectionStarts[record.connection.id],
                     captureOrigin: mihomoCaptureOrigins[record.connection.id]
                 )
             )
         }
 
         entries = builtEntries.sorted(by: Self.entriesAreMoreRecent)
+        latestNonDirectRouteAt = Self.latestNonDirectRouteDate(in: builtEntries)
     }
 
     func recentEntries(limit: Int, since cutoff: Date? = nil) -> [FlowLedgerEntry] {
@@ -169,17 +191,19 @@ struct FlowLedger: Sendable {
     private static func connectionMatch(
         for activity: AppRoutingActivity,
         among records: [FlowLedgerMihomoConnectionRecord],
+        connectionStarts: [String: Date],
         excluding claimedConnectionIDs: Set<String>,
         associationWindow: TimeInterval
     ) -> ConnectionMatch? {
         guard case .mihomo = activity.effectiveAction else { return nil }
 
         let candidates = records.compactMap { record -> (record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval)? in
-            guard !claimedConnectionIDs.contains(record.connection.id),
+            guard !Task<Never, Never>.isCancelled,
+                  !claimedConnectionIDs.contains(record.connection.id),
                   isAppRoutingInbound(record.connection.metadata.inboundName),
                   destinationMatches(activity, connection: record.connection),
                   transportMatches(activity, connection: record.connection),
-                  let connectionStart = connectionStart(record.connection)
+                  let connectionStart = connectionStarts[record.connection.id]
             else { return nil }
             let delta = abs(connectionStart.timeIntervalSince(activity.startedAt))
             guard delta <= associationWindow else { return nil }
@@ -288,6 +312,7 @@ struct FlowLedger: Sendable {
 
     private static func entry(
         record: FlowLedgerMihomoConnectionRecord,
+        startedAt: Date?,
         captureOrigin explicitOrigin: FlowLedgerCaptureOrigin?
     ) -> FlowLedgerEntry {
         let connection = record.connection
@@ -301,7 +326,7 @@ struct FlowLedger: Sendable {
             association: .none,
             state: record.state.isActive ? .active : .completed,
             outcome: .viaMihomo,
-            startedAt: connectionStart(connection),
+            startedAt: startedAt,
             endedAt: record.state.closedAt,
             upload: .exact(normalizedBytes(connection.upload)),
             download: .exact(normalizedBytes(connection.download))
@@ -452,13 +477,23 @@ struct FlowLedger: Sendable {
         }
     }
 
-    private static func connectionStart(_ connection: MihomoConnection) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: connection.start) { return date }
-        let standard = ISO8601DateFormatter()
-        standard.formatOptions = [.withInternetDateTime]
-        return standard.date(from: connection.start)
+    private static func latestNonDirectRouteDate(
+        in entries: [FlowLedgerEntry]
+    ) -> Date? {
+        entries.lazy.compactMap { entry -> Date? in
+            guard let terminal = entry.mihomoRoute?.chain.last,
+                  !isNonProxyTerminal(terminal) else {
+                return nil
+            }
+            return entry.startedAt
+        }.max()
+    }
+
+    private static func isNonProxyTerminal(_ value: String) -> Bool {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+        case "DIRECT", "REJECT", "REJECT-DROP", "PASS": true
+        default: false
+        }
     }
 
     private static func normalizedHost(_ rawValue: String?) -> String? {

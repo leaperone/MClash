@@ -84,6 +84,58 @@ struct NetworkExtensionControlTests {
         #expect(state.phase == .inactive)
     }
 
+    @Test("Advanced DNS opt-out actively disables stale MClash DNS preferences")
+    func dnsOptOutDisablesPersistedManager() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+
+        let result = try await service.enable(
+            NetworkExtensionRuntimeConfiguration(revision: 8, dnsEnabled: false)
+        )
+
+        #expect(result == .running)
+        #expect(await recorder.snapshot() == [
+            "system.activate",
+            "transparent.configure",
+            "transparent.reload",
+            "transparent.start",
+            "transparent.status",
+            "dns.disable",
+        ])
+    }
+
+    @Test("DNS startup failure rolls back DNS before transparent capture")
+    func dnsStartupFailureRollsBackBothProviders() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(
+                recorder: recorder,
+                configureError: NSError(
+                    domain: "DNSProvider",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "bootstrap rejected"]
+                )
+            )
+        )
+
+        await #expect(throws: NetworkExtensionControlFailure.self) {
+            try await service.enable(
+                NetworkExtensionRuntimeConfiguration(revision: 9, dnsEnabled: true)
+            )
+        }
+
+        #expect(Array((await recorder.snapshot()).suffix(3)) == [
+            "dns.configure", "dns.disable", "transparent.stop",
+        ])
+        #expect(await service.currentState().phase == .failed)
+    }
+
     @Test("A reboot result prevents proxy preferences from being configured")
     func rebootStopsEnableSequence() async throws {
         let recorder = NetworkExtensionOperationRecorder()
@@ -419,11 +471,21 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
 
 private struct MockDNSProxyManager: DNSProxyManaging {
     let recorder: NetworkExtensionOperationRecorder
+    var configureError: NSError?
+
+    init(
+        recorder: NetworkExtensionOperationRecorder,
+        configureError: NSError? = nil
+    ) {
+        self.recorder = recorder
+        self.configureError = configureError
+    }
 
     func configureAndEnable(
         _ configuration: NetworkExtensionRuntimeConfiguration
     ) async throws {
         await recorder.append("dns.configure")
+        if let configureError { throw configureError }
     }
 
     func reload() async throws {

@@ -1,34 +1,5 @@
 import Foundation
 
-/// Shared container locations used by the host app and Network Extension.
-///
-/// DNS runtime status deliberately lives outside the user-owned profile tree:
-/// a system extension cannot rely on the host app's Application Support
-/// sandbox, while both signed components are entitled for this App Group.
-public enum MClashNetworkExtensionSharedContainer {
-    public static let identifier = "5UAHRS482C.one.leaper.mclash"
-    public static let dnsProxyStatusFileName = "dns-proxy-status.json"
-
-    public static func dnsProxyStatusURL(
-        appGroupIdentifier: String = identifier,
-        fileManager: FileManager = .default
-    ) throws -> URL {
-        guard let containerURL = fileManager.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
-            throw DNSProxyStatusFileError.appGroupContainerUnavailable(
-                identifier: appGroupIdentifier
-            )
-        }
-        return containerURL
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("MClash", isDirectory: true)
-            .appendingPathComponent("NetworkExtension", isDirectory: true)
-            .appendingPathComponent(dnsProxyStatusFileName, isDirectory: false)
-    }
-}
-
 public enum DNSProxyRuntimePhase: String, Codable, CaseIterable, Sendable {
     case starting
     case running
@@ -50,6 +21,47 @@ public enum DNSProxyFailureCategory: String, Codable, CaseIterable, Sendable {
     case statusPersistenceFailed
     case cancelled
     case unknown
+}
+
+/// Privacy-safe reasons that can be published even when the DNS provider
+/// cannot decode enough bootstrap state to construct a runtime status value.
+public enum DNSProxyStartupFailureReason: String, Codable, CaseIterable, Sendable {
+    case missingProviderConfiguration
+    case missingBootstrapPayload
+    case invalidBootstrapPayload
+    case invalidPrivateRelay
+}
+
+public struct DNSProxyStartupFailure: Codable, Equatable, Sendable {
+    public let reason: DNSProxyStartupFailureReason
+    public let observedAt: Date
+
+    public init(reason: DNSProxyStartupFailureReason, observedAt: Date = Date()) {
+        self.reason = reason
+        self.observedAt = observedAt
+    }
+}
+
+/// Snapshot returned through the already-authenticated transparent-provider
+/// message channel. The expectation is installed before NEDNSProxyManager is
+/// enabled, so even a pre-bootstrap failure is tied to one activation.
+public struct DNSProxyRuntimeReport: Codable, Equatable, Sendable {
+    public let expectedRevision: UInt64
+    public let expectedActivationIdentifier: UUID
+    public let status: DNSProxyRuntimeStatus?
+    public let startupFailure: DNSProxyStartupFailure?
+
+    public init(
+        expectedRevision: UInt64,
+        expectedActivationIdentifier: UUID,
+        status: DNSProxyRuntimeStatus? = nil,
+        startupFailure: DNSProxyStartupFailure? = nil
+    ) {
+        self.expectedRevision = expectedRevision
+        self.expectedActivationIdentifier = expectedActivationIdentifier
+        self.status = status
+        self.startupFailure = startupFailure
+    }
 }
 
 /// Bounded operational truth published by the DNS provider.
@@ -309,167 +321,6 @@ extension DNSProxyRuntimeStatusValidationError: LocalizedError {
             "DNS proxy heartbeat maximum age must be a finite, nonnegative interval."
         case let .staleHeartbeat(updatedAt, evaluatedAt, maximumAge):
             "DNS proxy heartbeat from \(updatedAt) is older than \(maximumAge) seconds at \(evaluatedAt)."
-        }
-    }
-}
-
-/// Synchronous, lock-protected storage usable from Network Extension callback
-/// queues as well as the host. `Data.write(.atomic)` publishes each complete
-/// JSON document with a rename so readers never observe a partial heartbeat.
-public final class DNSProxyStatusFile: @unchecked Sendable {
-    public static let maximumDocumentSize = 64 * 1_024
-
-    public let statusURL: URL
-
-    private let fileManager: FileManager
-    private let lock = NSLock()
-    private let decoder = JSONDecoder()
-
-    public convenience init(
-        appGroupIdentifier: String = MClashNetworkExtensionSharedContainer.identifier,
-        fileManager: FileManager = .default
-    ) throws {
-        try self.init(
-            statusURL: MClashNetworkExtensionSharedContainer.dnsProxyStatusURL(
-                appGroupIdentifier: appGroupIdentifier,
-                fileManager: fileManager
-            ),
-            fileManager: fileManager
-        )
-    }
-
-    /// The direct URL initializer exists for deterministic tests and for tools
-    /// that have already resolved the entitled App Group container.
-    public init(
-        statusURL: URL,
-        fileManager: FileManager = .default
-    ) {
-        self.statusURL = statusURL.standardizedFileURL
-        self.fileManager = fileManager
-    }
-
-    public func write(_ status: DNSProxyRuntimeStatus) throws {
-        try status.validate()
-        try withLock {
-            // JSONEncoder is not documented as safe for concurrent use. Keep
-            // one encoder per atomic publication instead of sharing it across
-            // Network Extension callback queues.
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            let data = try encoder.encode(status)
-            guard data.count <= Self.maximumDocumentSize else {
-                throw DNSProxyStatusFileError.documentTooLarge(
-                    actual: data.count,
-                    maximum: Self.maximumDocumentSize
-                )
-            }
-
-            let directory = statusURL.deletingLastPathComponent()
-            try fileManager.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-            try fileManager.setAttributes(
-                [.posixPermissions: 0o700],
-                ofItemAtPath: directory.path
-            )
-            try data.write(to: statusURL, options: [.atomic])
-            try fileManager.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: statusURL.path
-            )
-        }
-    }
-
-    public func read() throws -> DNSProxyRuntimeStatus {
-        try withLock {
-            guard fileManager.fileExists(atPath: statusURL.path) else {
-                throw DNSProxyStatusFileError.documentMissing
-            }
-            if let fileSize = try fileManager.attributesOfItem(
-                atPath: statusURL.path
-            )[.size] as? NSNumber,
-               fileSize.uint64Value > UInt64(Self.maximumDocumentSize) {
-                throw DNSProxyStatusFileError.documentTooLarge(
-                    actual: Int(clamping: fileSize.uint64Value),
-                    maximum: Self.maximumDocumentSize
-                )
-            }
-
-            let handle = try FileHandle(forReadingFrom: statusURL)
-            defer { try? handle.close() }
-            let data = try handle.read(upToCount: Self.maximumDocumentSize + 1) ?? Data()
-            guard data.count <= Self.maximumDocumentSize else {
-                throw DNSProxyStatusFileError.documentTooLarge(
-                    actual: data.count,
-                    maximum: Self.maximumDocumentSize
-                )
-            }
-            let probe = try decoder.decode(SchemaVersionProbe.self, from: data)
-            guard probe.schemaVersion == DNSProxyRuntimeStatus.currentSchemaVersion else {
-                throw DNSProxyRuntimeStatusValidationError.unsupportedSchemaVersion(
-                    probe.schemaVersion
-                )
-            }
-            let status = try decoder.decode(DNSProxyRuntimeStatus.self, from: data)
-            try status.validate()
-            return status
-        }
-    }
-
-    public func readValidated(
-        expectedRevision: UInt64,
-        activationIdentifier: UUID,
-        at date: Date = Date(),
-        maximumAge: TimeInterval = DNSProxyRuntimeStatus.defaultMaximumHeartbeatAge
-    ) throws -> DNSProxyRuntimeStatus {
-        let status = try read()
-        try status.validate(
-            expectedRevision: expectedRevision,
-            activationIdentifier: activationIdentifier,
-            at: date,
-            maximumAge: maximumAge
-        )
-        return status
-    }
-
-    /// Idempotent removal is useful before a new activation. Correctness does
-    /// not depend on deletion because the activation UUID also rejects stale
-    /// documents left by a crashed provider.
-    public func remove() throws {
-        try withLock {
-            guard fileManager.fileExists(atPath: statusURL.path) else { return }
-            try fileManager.removeItem(at: statusURL)
-        }
-    }
-
-    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body()
-    }
-
-    private struct SchemaVersionProbe: Decodable {
-        let schemaVersion: Int
-    }
-}
-
-public enum DNSProxyStatusFileError: Error, Equatable, Sendable {
-    case appGroupContainerUnavailable(identifier: String)
-    case documentMissing
-    case documentTooLarge(actual: Int, maximum: Int)
-}
-
-extension DNSProxyStatusFileError: LocalizedError {
-    public var errorDescription: String? {
-        switch self {
-        case let .appGroupContainerUnavailable(identifier):
-            "The shared App Group container \(identifier) is unavailable."
-        case .documentMissing:
-            "DNS proxy runtime status has not been published yet."
-        case let .documentTooLarge(actual, maximum):
-            "DNS proxy runtime status is \(actual) bytes; the maximum is \(maximum)."
         }
     }
 }

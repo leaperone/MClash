@@ -66,25 +66,28 @@ private struct OverviewOperationalSummary: View {
     @Bindable var model: AppModel
 
     var body: some View {
+        let snapshot = model.operationalSnapshot
+        let issues = model.operationalIssues
+
         HStack(alignment: .top, spacing: 16) {
-            Image(systemName: symbol)
+            Image(systemName: symbol(for: snapshot.level))
                 .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(color)
+                .foregroundStyle(color(for: snapshot.level))
                 .frame(width: 44, height: 44)
-                .background(color.opacity(0.11), in: Circle())
+                .background(color(for: snapshot.level).opacity(0.11), in: Circle())
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 7) {
-                Text(model.operationalSnapshot.title)
+                Text(snapshot.title)
                     .font(.title2.weight(.semibold))
-                Text(model.operationalSnapshot.detail)
+                Text(snapshot.detail)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
                     statusPill(
-                        model.operationalSnapshot.captureSummary,
+                        snapshot.captureSummary,
                         symbol: "arrow.triangle.branch"
                     )
                     if model.isConnected {
@@ -101,8 +104,8 @@ private struct OverviewOperationalSummary: View {
 
             Spacer(minLength: 20)
 
-            if !model.operationalIssues.isEmpty {
-                Button("Review \(model.operationalIssues.count) \(model.operationalIssues.count == 1 ? "Issue" : "Issues")") {
+            if !issues.isEmpty {
+                Button("Review \(issues.count) \(issues.count == 1 ? "Issue" : "Issues")") {
                     model.selection = .attention
                 }
                 .buttonStyle(.borderedProminent)
@@ -119,7 +122,7 @@ private struct OverviewOperationalSummary: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(color.opacity(0.18), lineWidth: 1)
+                .stroke(color(for: snapshot.level).opacity(0.18), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
     }
@@ -142,8 +145,8 @@ private struct OverviewOperationalSummary: View {
         }
     }
 
-    private var color: Color {
-        switch model.operationalSnapshot.level {
+    private func color(for level: OperationalSnapshot.Level) -> Color {
+        switch level {
         case .active: .green
         case .transitioning: .accentColor
         case .attention: .orange
@@ -152,8 +155,8 @@ private struct OverviewOperationalSummary: View {
         }
     }
 
-    private var symbol: String {
-        switch model.operationalSnapshot.level {
+    private func symbol(for level: OperationalSnapshot.Level) -> String {
+        switch level {
         case .active: "checkmark.shield.fill"
         case .transitioning: "arrow.triangle.2.circlepath"
         case .attention: "exclamationmark.triangle.fill"

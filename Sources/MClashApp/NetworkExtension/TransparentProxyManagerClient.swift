@@ -40,7 +40,7 @@ private final class AppleTransparentProxyProviderMessageSession:
     }
 }
 
-actor AppleTransparentProxyManager: TransparentProxyManaging {
+actor AppleTransparentProxyManager: TransparentProxyManaging, DNSProxyRuntimeChannel {
     private struct LoadedManagers: @unchecked Sendable {
         let values: [NETransparentProxyManager]
     }
@@ -138,6 +138,22 @@ actor AppleTransparentProxyManager: TransparentProxyManaging {
         // persisted by NetworkExtension is.
         try await reload()
         return try await providerMessageClient().status()
+    }
+
+    func prepareDNSActivation(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws {
+        try await reload()
+        try await providerMessageClient().prepareDNSActivation(configuration)
+    }
+
+    func dnsRuntimeReport(
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> DNSProxyRuntimeReport {
+        if manager == nil {
+            try await reload()
+        }
+        return try await providerMessageClient().dnsRuntimeReport(for: configuration)
     }
 
     func quiesceProvider(revision: UInt64) async throws -> TransparentProxyProviderStatus {

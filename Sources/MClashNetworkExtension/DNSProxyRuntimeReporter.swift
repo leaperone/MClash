@@ -1,8 +1,8 @@
 import Foundation
 import MClashNetworkShared
 
-/// Aggregates DNS relay lifecycle and delivery-boundary bytes into the bounded
-/// App Group heartbeat consumed by the host app.
+/// Aggregates DNS relay lifecycle and delivery-boundary bytes into a bounded
+/// snapshot published through the process-local provider registry.
 final class DNSProxyRuntimeReporter: @unchecked Sendable {
     private struct FlowState {
         let transportProtocol: TransportProtocol
@@ -12,35 +12,25 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private let file: DNSProxyStatusFile
+    private let registry: DNSProxyRuntimeRegistry
     private let heartbeatQueue = DispatchQueue(
         label: "one.leaper.mclash.dns-runtime-heartbeat"
     )
     private var heartbeat: DispatchSourceTimer?
     private var status: DNSProxyRuntimeStatus
     private var flows: [UUID: FlowState] = [:]
+    private var terminalFlowIdentifiers: Set<UUID> = []
+    private var terminalFlowOrder: [UUID] = []
     private var stopped = false
 
-    convenience init(
-        revision: UInt64,
-        activationIdentifier: UUID,
-        now: Date = Date()
-    ) throws {
-        try self.init(
-            revision: revision,
-            activationIdentifier: activationIdentifier,
-            file: try DNSProxyStatusFile(),
-            now: now
-        )
-    }
+    private static let maximumTerminalFlowIdentifiers = 4_096
 
     init(
         revision: UInt64,
         activationIdentifier: UUID,
-        file: DNSProxyStatusFile,
         now: Date = Date()
     ) throws {
-        self.file = file
+        registry = .shared
         status = DNSProxyRuntimeStatus(
             revision: revision,
             activationIdentifier: activationIdentifier,
@@ -48,26 +38,26 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
             backendReady: false,
             startedAt: now
         )
-        try file.write(status)
+        try registry.publish(status)
     }
 
     func startHeartbeat() {
         lock.lock()
-        guard heartbeat == nil else {
+        guard heartbeat == nil, !stopped else {
             lock.unlock()
             return
         }
         let timer = DispatchSource.makeTimerSource(queue: heartbeatQueue)
-        heartbeat = timer
-        lock.unlock()
         timer.schedule(deadline: .now() + .seconds(2), repeating: .seconds(2))
         timer.setEventHandler { [weak self] in self?.recordHeartbeat() }
         timer.resume()
+        heartbeat = timer
+        lock.unlock()
     }
 
     func markRunning() throws {
         try mutateAndPublish { value, now in
-            self.stopped = false
+            guard !self.stopped else { return }
             value.phase = .running
             value.backendReady = true
             value.lastBackendAssociationAt = now
@@ -78,7 +68,8 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
     func beginFlow(_ identifier: UUID, transportProtocol: TransportProtocol) {
         publishBestEffort { value, now in
             guard !self.stopped else { return }
-            guard self.flows[identifier] == nil else { return }
+            guard self.flows[identifier] == nil,
+                  !self.terminalFlowIdentifiers.contains(identifier) else { return }
             self.flows[identifier] = FlowState(transportProtocol: transportProtocol)
             value.totalFlows = Self.increment(value.totalFlows)
             switch transportProtocol {
@@ -96,6 +87,7 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
     ) {
         publishBestEffort { value, now in
             guard !self.stopped else { return }
+            guard !self.terminalFlowIdentifiers.contains(flowIdentifier) else { return }
             if self.flows[flowIdentifier] == nil {
                 self.flows[flowIdentifier] = FlowState(
                     transportProtocol: transportProtocol
@@ -126,13 +118,15 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
             flow.uploadBytes = max(flow.uploadBytes, snapshot.uploadBytes)
             flow.downloadBytes = max(flow.downloadBytes, snapshot.downloadBytes)
 
+            let becameTerminal: Bool
             switch snapshot.state {
             case .ready, .relaying:
-                break
+                becameTerminal = false
             case .completed:
                 flow.terminal = true
                 Self.decrementActive(&value, transportProtocol: flow.transportProtocol)
                 value.completedFlows = Self.increment(value.completedFlows)
+                becameTerminal = true
             case .failed:
                 flow.terminal = true
                 Self.decrementActive(&value, transportProtocol: flow.transportProtocol)
@@ -141,22 +135,45 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
                 value.failureCategory = transportProtocol == .tcp
                     ? .tcpRelayFailed
                     : .udpRelayFailed
+                becameTerminal = true
             case .notApplicable, .pending, .connecting:
-                break
+                becameTerminal = false
             }
-            self.flows[flowIdentifier] = flow
+            if becameTerminal {
+                self.flows.removeValue(forKey: flowIdentifier)
+                self.rememberTerminalFlow(flowIdentifier)
+            } else {
+                self.flows[flowIdentifier] = flow
+            }
             value.updatedAt = now
         }
     }
 
     func markStartupFailed(_ category: DNSProxyFailureCategory) {
-        publishBestEffort { value, now in
-            value.phase = .failed
-            value.backendReady = false
-            value.lastFailureAt = now
-            value.failureCategory = category
-            value.updatedAt = now
+        lock.lock()
+        guard !stopped else {
+            lock.unlock()
+            return
         }
+        stopped = true
+        let timer = heartbeat
+        heartbeat = nil
+        let now = Date()
+        status.phase = .failed
+        status.backendReady = false
+        status.activeTCPFlows = 0
+        status.activeUDPFlows = 0
+        status.lastFailureAt = now
+        status.failureCategory = category
+        status.updatedAt = now
+        flows.removeAll(keepingCapacity: false)
+        terminalFlowIdentifiers.removeAll(keepingCapacity: false)
+        terminalFlowOrder.removeAll(keepingCapacity: false)
+        let failedStatus = status
+        lock.unlock()
+        timer?.setEventHandler {}
+        timer?.cancel()
+        try? registry.publish(failedStatus)
     }
 
     func markBackendUnavailable(_ category: DNSProxyFailureCategory) {
@@ -204,11 +221,25 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
             }
             value.updatedAt = now
             self.flows.removeAll(keepingCapacity: false)
+            self.terminalFlowIdentifiers.removeAll(keepingCapacity: false)
+            self.terminalFlowOrder.removeAll(keepingCapacity: false)
         }
     }
 
     private func recordHeartbeat() {
-        publishBestEffort { value, now in value.updatedAt = now }
+        publishBestEffort { value, now in
+            guard !self.stopped else { return }
+            value.updatedAt = now
+        }
+    }
+
+    private func rememberTerminalFlow(_ identifier: UUID) {
+        guard terminalFlowIdentifiers.insert(identifier).inserted else { return }
+        terminalFlowOrder.append(identifier)
+        if terminalFlowOrder.count > Self.maximumTerminalFlowIdentifiers {
+            let expired = terminalFlowOrder.removeFirst()
+            terminalFlowIdentifiers.remove(expired)
+        }
     }
 
     private func publishBestEffort(
@@ -223,7 +254,7 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         mutation(&status, Date())
-        try file.write(status)
+        try registry.publish(status)
     }
 
     private static func decrementActive(

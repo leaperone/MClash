@@ -252,21 +252,23 @@ private struct SidebarOperationalStatus: View {
     @Bindable var model: AppModel
 
     var body: some View {
+        let snapshot = model.operationalSnapshot
+
         Button {
             model.selection = model.operationalIssues.isEmpty ? .overview : .attention
         } label: {
             HStack(alignment: .top, spacing: 9) {
                 Circle()
-                    .fill(statusColor)
+                    .fill(statusColor(for: snapshot.level))
                     .frame(width: 9, height: 9)
                     .padding(.top, 4)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.operationalSnapshot.title)
+                    Text(snapshot.title)
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
-                    Text(model.operationalSnapshot.captureSummary)
+                    Text(snapshot.captureSummary)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -282,14 +284,14 @@ private struct SidebarOperationalStatus: View {
         .padding(.vertical, 10)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
-        .help(model.operationalSnapshot.detail)
+        .help(snapshot.detail)
         .accessibilityLabel(
-            "\(model.operationalSnapshot.title), \(model.operationalSnapshot.captureSummary)"
+            "\(snapshot.title), \(snapshot.captureSummary)"
         )
     }
 
-    private var statusColor: Color {
-        switch model.operationalSnapshot.level {
+    private func statusColor(for level: OperationalSnapshot.Level) -> Color {
+        switch level {
         case .active: .green
         case .transitioning: .accentColor
         case .attention: .orange

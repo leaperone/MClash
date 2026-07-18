@@ -78,9 +78,7 @@ func copyToPasteboard(_ value: String) -> Bool {
 }
 
 func parsedRuntimeTimestamp(_ value: String) -> Date? {
-    let fractional = ISO8601DateFormatter()
-    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let parsed = fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    let parsed = RuntimeTimestampParser.date(from: value)
 
     // mihomo uses the zero-value Go timestamp for providers that have never updated.
     // Treat it as missing rather than presenting "2,025 years ago" to the user.

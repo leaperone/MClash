@@ -154,6 +154,45 @@ struct TransparentProxyProviderMessageClientTests {
         #expect(request.mihomoSOCKSPassword == nil)
     }
 
+    @Test("DNS activation and runtime status use the transparent provider channel")
+    func dnsRuntimeChannel() async throws {
+        let configuration = try runtimeConfiguration(revision: 12)
+        let now = Date()
+        let report = DNSProxyRuntimeReport(
+            expectedRevision: configuration.revision,
+            expectedActivationIdentifier: configuration.activationIdentifier,
+            status: DNSProxyRuntimeStatus(
+                revision: configuration.revision,
+                activationIdentifier: configuration.activationIdentifier,
+                phase: .running,
+                backendReady: true,
+                startedAt: now,
+                updatedAt: now,
+                lastBackendAssociationAt: now
+            )
+        )
+        let session = ScriptedProviderMessageSession(responses: [
+            response(revision: 12, captureEnabled: true, failOpen: false),
+            response(
+                revision: 12,
+                captureEnabled: true,
+                failOpen: false,
+                dnsRuntimeReport: report
+            ),
+        ])
+        let client = TransparentProxyProviderMessageClient(session: session)
+
+        try await client.prepareDNSActivation(configuration)
+        #expect(try await client.dnsRuntimeReport(for: configuration) == report)
+
+        let requests = try session.decodedRequests()
+        #expect(requests.map(\.command) == [.prepareDNS, .dnsStatus])
+        #expect(requests[0].revision == configuration.revision)
+        #expect(requests[0].activationIdentifier == configuration.activationIdentifier)
+        #expect(requests[0].dnsProxyBootstrap == configuration.encodedDNSProxyBootstrap)
+        #expect(requests[1].activationIdentifier == nil)
+    }
+
     private func runtimeConfiguration(
         revision: UInt64
     ) throws -> NetworkExtensionRuntimeConfiguration {
@@ -192,7 +231,8 @@ struct TransparentProxyProviderMessageClientTests {
         captureEnabled: Bool,
         failOpen: Bool,
         message: String? = nil,
-        activityBatch: AppRoutingActivityBatch? = nil
+        activityBatch: AppRoutingActivityBatch? = nil,
+        dnsRuntimeReport: DNSProxyRuntimeReport? = nil
     ) -> Data {
         var object: [String: Any?] = [
             "protocolVersion": protocolVersion,
@@ -207,6 +247,11 @@ struct TransparentProxyProviderMessageClientTests {
         if let activityBatch {
             object["activityBatch"] = try! JSONSerialization.jsonObject(
                 with: JSONEncoder().encode(activityBatch)
+            )
+        }
+        if let dnsRuntimeReport {
+            object["dnsRuntimeReport"] = try! JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(dnsRuntimeReport)
             )
         }
         return try! JSONSerialization.data(

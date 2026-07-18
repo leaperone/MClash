@@ -28,7 +28,6 @@ team_identifier_prefix="${MCLASH_TEAM_IDENTIFIER_PREFIX:-${APPLE_TEAM_ID:-}}"
 if [[ -n "${team_identifier_prefix}" && "${team_identifier_prefix}" != *. ]]; then
   team_identifier_prefix="${team_identifier_prefix}."
 fi
-developer_id_app_group="${team_identifier_prefix}one.leaper.mclash"
 team_identifier="${APPLE_TEAM_ID:-${team_identifier_prefix%.}}"
 host_application_identifier="${team_identifier_prefix}${host_bundle_id}"
 extension_application_identifier="${team_identifier_prefix}${network_extension_bundle_id}"
@@ -302,15 +301,14 @@ else
     "${host_devid_entitlements}" \
     "${network_extension_devid_entitlements}"
   do
-    if ! plist_array_contains \
-      "${entitlement_file}" \
-      "com.apple.security.application-groups" \
-      "${developer_id_app_group}"; then
-      print -u2 "${entitlement_file:t} must include App Group ${developer_id_app_group}."
+    if /usr/libexec/PlistBuddy \
+      -c 'Print :com.apple.security.application-groups' \
+      "${entitlement_file}" >/dev/null 2>&1; then
+      print -u2 "${entitlement_file:t} must not claim an App Group that is absent from the Developer ID profiles."
       exit 1
     fi
   done
-  expected_mach_service="${developer_id_app_group}.network-extension"
+  expected_mach_service="${extension_application_identifier}"
   actual_mach_service="$(/usr/libexec/PlistBuddy -c 'Print :NetworkExtension:NEMachServiceName' "${extension_info}")"
   if [[ "${actual_mach_service}" != "${expected_mach_service}" ]]; then
     print -u2 "Network Extension Mach service ${actual_mach_service} must equal ${expected_mach_service}."
@@ -359,11 +357,10 @@ if [[ "${code_sign_identity}" != "-" ]]; then
     "${signed_extension_entitlements}"
   do
     plutil -lint "${signed_entitlements}" >/dev/null
-    if ! plist_array_contains \
-      "${signed_entitlements}" \
-      "com.apple.security.application-groups" \
-      "${developer_id_app_group}"; then
-      print -u2 "Signed code is missing App Group ${developer_id_app_group}: ${signed_entitlements:t}"
+    if /usr/libexec/PlistBuddy \
+      -c 'Print :com.apple.security.application-groups' \
+      "${signed_entitlements}" >/dev/null 2>&1; then
+      print -u2 "Signed code unexpectedly claims an unprofiled App Group: ${signed_entitlements:t}"
       exit 1
     fi
   done

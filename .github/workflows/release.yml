@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.1.8"
+        default: "1.1.9"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -381,13 +381,11 @@ jobs:
             print -u2 "Host and Network Extension profiles use different application identifier prefixes."
             exit 1
           fi
-          developer_id_app_group="${host_application_prefix}.one.leaper.mclash"
           for entitlement_file in "${host_entitlements}" "${extension_entitlements}"; do
-            if ! plist_array_contains \
-              "${entitlement_file}" \
-              "com.apple.security.application-groups" \
-              "${developer_id_app_group}"; then
-              print -u2 "${entitlement_file:t} is missing App Group ${developer_id_app_group}."
+            if /usr/libexec/PlistBuddy \
+              -c 'Print :com.apple.security.application-groups' \
+              "${entitlement_file}" >/dev/null 2>&1; then
+              print -u2 "${entitlement_file:t} claims an App Group not authorized by the current Developer ID profiles."
               exit 1
             fi
           done

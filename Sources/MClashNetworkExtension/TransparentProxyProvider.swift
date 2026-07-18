@@ -32,6 +32,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
 
         runtime.start(configuration: configuration)
         flowDecisionCoordinator.load(configuration: configuration)
+        Self.prepareDNSRegistry(from: configuration)
         let runtime = runtime
         let flowDecisionCoordinator = flowDecisionCoordinator
         let completion = ProxyStartCompletion(completionHandler)
@@ -246,6 +247,33 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             switch request.command {
             case .status:
                 response = runtime.apply(request)
+            case .prepareDNS:
+                let snapshot = runtime.apply(request)
+                guard snapshot.accepted,
+                      snapshot.running,
+                      let revision = request.revision,
+                      revision == snapshot.revision,
+                      let activationIdentifier = request.activationIdentifier,
+                      let payload = request.dnsProxyBootstrap,
+                      let bootstrap = try? DNSProxyBootstrapConfiguration.decode(payload),
+                      bootstrap.revision == revision,
+                      bootstrap.activationIdentifier == activationIdentifier,
+                      DNSProxyRuntimeRegistry.shared.prepare(bootstrap)
+                else {
+                    response = Self.response(
+                        from: snapshot,
+                        accepted: false,
+                        message: "DNS activation preparation requires the active revision and an activation identifier"
+                    )
+                    break
+                }
+                response = snapshot
+            case .dnsStatus:
+                let snapshot = runtime.apply(request)
+                response = Self.response(
+                    from: snapshot,
+                    dnsRuntimeReport: DNSProxyRuntimeRegistry.shared.snapshot()
+                )
             case .activity:
                 let snapshot = runtime.apply(request)
                 let batch = activities.batch(
@@ -261,7 +289,8 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                     captureEnabled: snapshot.captureEnabled,
                     failOpen: snapshot.failOpen,
                     message: snapshot.message,
-                    activityBatch: batch
+                    activityBatch: batch,
+                    dnsRuntimeReport: nil
                 )
             case .clearActivity:
                 activities.removeHistory()
@@ -284,7 +313,8 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                         captureEnabled: false,
                         failOpen: true,
                         message: snapshot.message,
-                        activityBatch: nil
+                        activityBatch: nil,
+                        dnsRuntimeReport: nil
                     )
                     completionHandler?(ProviderControlCodec.encode(response))
                     return
@@ -292,6 +322,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 response = runtime.apply(request)
                 if response.accepted {
                     flowDecisionCoordinator.load(configuration: configuration)
+                    Self.prepareDNSRegistry(from: configuration)
                 }
             }
         } catch {
@@ -305,10 +336,31 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 captureEnabled: snapshot.captureEnabled,
                 failOpen: snapshot.failOpen,
                 message: snapshot.message,
-                activityBatch: nil
+                activityBatch: nil,
+                dnsRuntimeReport: nil
             )
         }
         completionHandler?(ProviderControlCodec.encode(response))
+    }
+
+    private static func response(
+        from snapshot: ProviderControlResponse,
+        accepted: Bool? = nil,
+        message: String? = nil,
+        dnsRuntimeReport: DNSProxyRuntimeReport? = nil
+    ) -> ProviderControlResponse {
+        ProviderControlResponse(
+            protocolVersion: snapshot.protocolVersion,
+            accepted: accepted ?? snapshot.accepted,
+            provider: snapshot.provider,
+            revision: snapshot.revision,
+            running: snapshot.running,
+            captureEnabled: snapshot.captureEnabled,
+            failOpen: snapshot.failOpen,
+            message: message ?? snapshot.message,
+            activityBatch: nil,
+            dnsRuntimeReport: dnsRuntimeReport
+        )
     }
 
     private func providerConfiguration(
@@ -317,6 +369,13 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         var configuration: [String: Any] = [:]
         if let revision = request.revision {
             configuration[ProviderConfigurationKey.revision] = revision
+        }
+        if let activationIdentifier = request.activationIdentifier {
+            configuration[ProviderConfigurationKey.activationIdentifier] =
+                activationIdentifier.uuidString
+        }
+        if let dnsProxyBootstrap = request.dnsProxyBootstrap {
+            configuration[ProviderConfigurationKey.dnsProxyBootstrap] = dnsProxyBootstrap
         }
         if let captureEnabled = request.captureEnabled {
             configuration[ProviderConfigurationKey.captureEnabled] = captureEnabled
@@ -343,6 +402,26 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             configuration[ProviderConfigurationKey.mihomoSOCKSPassword] = password
         }
         return configuration
+    }
+
+    private static func prepareDNSRegistry(from configuration: [String: Any]?) {
+        guard let configuration,
+              let payload = data(
+                  configuration[ProviderConfigurationKey.dnsProxyBootstrap]
+              ),
+              let bootstrap = try? DNSProxyBootstrapConfiguration.decode(payload)
+        else {
+            return
+        }
+        _ = DNSProxyRuntimeRegistry.shared.prepare(bootstrap)
+    }
+
+    private static func data(_ value: Any?) -> Data? {
+        switch value {
+        case let value as Data: value
+        case let value as NSData: value as Data
+        default: nil
+        }
     }
 
     private func markRelayConnecting(_ flowIdentifier: UUID) {

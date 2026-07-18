@@ -13,9 +13,5 @@
 	</array>
 	<key>com.apple.developer.system-extension.install</key>
 	<true/>
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>5UAHRS482C.one.leaper.mclash</string>
-	</array>
 </dict>
 </plist>

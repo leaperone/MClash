@@ -3,6 +3,8 @@ import MClashNetworkShared
 
 enum TransparentProxyProviderControlCommand: String, Codable, Sendable {
     case status
+    case prepareDNS
+    case dnsStatus
     case quiesce
     case applyConfiguration
     case activity
@@ -10,11 +12,13 @@ enum TransparentProxyProviderControlCommand: String, Codable, Sendable {
 }
 
 struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
-    static let currentProtocolVersion = 2
+    static let currentProtocolVersion = 3
 
     let protocolVersion: Int
     let command: TransparentProxyProviderControlCommand
     let revision: UInt64?
+    let activationIdentifier: UUID?
+    let dnsProxyBootstrap: Data?
     let captureEnabled: Bool?
     let failOpen: Bool?
     let captureConfigurationSnapshot: Data?
@@ -29,6 +33,8 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
     init(
         command: TransparentProxyProviderControlCommand,
         revision: UInt64? = nil,
+        activationIdentifier: UUID? = nil,
+        dnsProxyBootstrap: Data? = nil,
         captureEnabled: Bool? = nil,
         failOpen: Bool? = nil,
         captureConfigurationSnapshot: Data? = nil,
@@ -43,6 +49,8 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
         protocolVersion = Self.currentProtocolVersion
         self.command = command
         self.revision = revision
+        self.activationIdentifier = activationIdentifier
+        self.dnsProxyBootstrap = dnsProxyBootstrap
         self.captureEnabled = captureEnabled
         self.failOpen = failOpen
         self.captureConfigurationSnapshot = captureConfigurationSnapshot
@@ -94,6 +102,7 @@ private struct TransparentProxyProviderControlResponse: Decodable, Sendable {
     let failOpen: Bool
     let message: String?
     let activityBatch: AppRoutingActivityBatch?
+    let dnsRuntimeReport: DNSProxyRuntimeReport?
 
     var status: TransparentProxyProviderStatus {
         TransparentProxyProviderStatus(
@@ -113,12 +122,14 @@ enum TransparentProxyProviderMessageError: Error, Equatable, Sendable, Localized
     case timedOut
     case missingResponse
     case missingActivityBatch
+    case missingDNSRuntimeReport
     case invalidResponse(String)
     case unsupportedProtocolVersion(expected: Int, actual: Int)
     case unexpectedProvider(String)
     case rejected(command: TransparentProxyProviderControlCommand, message: String?)
     case revisionDidNotAdvance(current: UInt64, proposed: UInt64)
     case revisionMismatch(expected: UInt64, actual: UInt64)
+    case dnsActivationMismatch
     case stateMismatch(
         expectedCaptureEnabled: Bool,
         actualCaptureEnabled: Bool,
@@ -136,6 +147,8 @@ enum TransparentProxyProviderMessageError: Error, Equatable, Sendable, Localized
             "The transparent proxy provider returned no response data."
         case .missingActivityBatch:
             "The transparent proxy provider returned no App Routing activity batch."
+        case .missingDNSRuntimeReport:
+            "The transparent proxy provider has not published a DNS runtime report."
         case let .invalidResponse(message):
             "The transparent proxy provider returned an invalid response: \(message)"
         case let .unsupportedProtocolVersion(expected, actual):
@@ -148,6 +161,8 @@ enum TransparentProxyProviderMessageError: Error, Equatable, Sendable, Localized
             "Provider configuration revision must advance beyond \(current); received \(proposed)."
         case let .revisionMismatch(expected, actual):
             "Provider revision mismatch (expected \(expected), received \(actual))."
+        case .dnsActivationMismatch:
+            "The DNS runtime report belongs to a different activation."
         case let .stateMismatch(expectedCapture, actualCapture, expectedFailOpen, actualFailOpen):
             "Provider state mismatch (capture \(actualCapture)/\(expectedCapture), fail-open \(actualFailOpen)/\(expectedFailOpen))."
         }
@@ -182,6 +197,37 @@ struct TransparentProxyProviderMessageClient: Sendable {
         )
     }
 
+    func prepareDNSActivation(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws {
+        _ = try await send(
+            TransparentProxyProviderControlRequest(
+                command: .prepareDNS,
+                revision: configuration.revision,
+                activationIdentifier: configuration.activationIdentifier,
+                dnsProxyBootstrap: configuration.encodedDNSProxyBootstrap
+            ),
+            expectedRevision: configuration.revision
+        )
+    }
+
+    func dnsRuntimeReport(
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> DNSProxyRuntimeReport {
+        let response = try await validatedResponse(for: TransparentProxyProviderControlRequest(
+            command: .dnsStatus
+        ))
+        guard let report = response.dnsRuntimeReport else {
+            throw TransparentProxyProviderMessageError.missingDNSRuntimeReport
+        }
+        guard report.expectedRevision == configuration.revision,
+              report.expectedActivationIdentifier == configuration.activationIdentifier
+        else {
+            throw TransparentProxyProviderMessageError.dnsActivationMismatch
+        }
+        return report
+    }
+
     func quiesce(revision: UInt64) async throws -> TransparentProxyProviderStatus {
         try await send(
             TransparentProxyProviderControlRequest(
@@ -204,6 +250,8 @@ struct TransparentProxyProviderMessageClient: Sendable {
             TransparentProxyProviderControlRequest(
                 command: .applyConfiguration,
                 revision: configuration.revision,
+                activationIdentifier: configuration.activationIdentifier,
+                dnsProxyBootstrap: configuration.encodedDNSProxyBootstrap,
                 captureEnabled: configuration.captureEnabled,
                 failOpen: configuration.failOpen,
                 captureConfigurationSnapshot: configuration.encodedCaptureSnapshot,

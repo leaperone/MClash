@@ -192,6 +192,7 @@ final class AppModel {
     struct NetworkCaptureChangeReceipt: Equatable, Sendable {
         enum Outcome: Equatable, Sendable {
             case savedForNextActivation
+            case requiresReboot(dnsEnabled: Bool)
             case appliedAndVerified(
                 enabled: Bool,
                 dnsEnabled: Bool,
@@ -2277,19 +2278,28 @@ final class AppModel {
             }
             if enabled {
                 switch networkCaptureState {
-                case .on:
+                case let .on(revision) where revision == candidate.snapshot.revision:
                     appendSupervisorLog("Per-application network capture is enabled.")
                 case .requiresReboot:
                     appendSupervisorLog(
                         "App Routing is configured and will finish enabling after a Mac restart."
                     )
-                case let .failed(message):
-                    appendSupervisorLog(
-                        "App Routing settings were saved, but activation failed: \(message)"
+                    networkCaptureRollbackFailure = nil
+                    networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                        completedAt: Date(),
+                        duration: Date().timeIntervalSince(transactionStartedAt),
+                        outcome: .requiresReboot(dnsEnabled: candidate.dnsEnabled)
                     )
-                case .waitingForConnection, .enabling, .awaitingUserApproval,
+                    return
+                case let .failed(message):
+                    throw AppModelError.profileActivationFailed(
+                        "App Routing activation failed verification: \(message)"
+                    )
+                case .on, .waitingForConnection, .enabling, .awaitingUserApproval,
                      .off, .disabling:
-                    break
+                    throw AppModelError.profileActivationFailed(
+                        "App Routing did not reach a verified running state."
+                    )
                 }
             } else {
                 appendSupervisorLog("Per-application network capture is disabled.")
@@ -2471,6 +2481,9 @@ final class AppModel {
             return
         }
         networkCaptureState = .enabling
+        dnsProxyRuntimeStatus = nil
+        dnsProxyRuntimeError = nil
+        dnsProxyAutomaticallyDisabled = false
         do {
             try await localPortProbe.waitUntilListening(ports: [Int(listener.port)])
             let configuration = try NetworkExtensionRuntimeConfiguration(
@@ -2511,6 +2524,11 @@ final class AppModel {
 
     private func reportNetworkCaptureFailure(_ message: String) {
         networkCaptureState = .failed(message)
+        dnsProxyRuntimeStatus = nil
+        if networkCapturePreferences.dnsEnabled {
+            dnsProxyRuntimeError = message
+            dnsProxyAutomaticallyDisabled = true
+        }
         errorMessage = "App Routing couldn’t start: \(message)"
         appendSupervisorLog("Network Extension activation failed: \(message)")
     }
@@ -4059,6 +4077,7 @@ final class AppModel {
             dnsProxyLastVerifiedAt = Date()
         } catch {
             let runtimeFailure = error
+            dnsProxyRuntimeStatus = nil
             dnsProxyRuntimeFailureCount += 1
             dnsProxyRuntimeError = runtimeFailure.localizedDescription
             guard dnsProxyRuntimeFailureCount >= 2 else { return }
@@ -4187,14 +4206,22 @@ final class AppModel {
 
         flowLedgerTask?.cancel()
         flowLedgerTask = Task { @MainActor [weak self] in
-            let ledger = await Task.detached(priority: .utility) {
-                FlowLedger(
+            let worker = Task.detached(priority: .utility) { () -> FlowLedger? in
+                guard !Task<Never, Never>.isCancelled else { return nil }
+                let ledger = FlowLedger(
                     activeConnections: activeConnections,
                     recentlyClosedConnections: closedConnections,
                     appRoutingActivities: activities
                 )
-            }.value
+                return Task<Never, Never>.isCancelled ? nil : ledger
+            }
+            let ledger = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
             guard !Task.isCancelled,
+                  let ledger,
                   let self,
                   self.flowLedgerRevision == revision else { return }
             self.flowLedger = ledger

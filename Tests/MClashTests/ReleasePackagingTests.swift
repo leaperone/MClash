@@ -3,11 +3,10 @@ import Testing
 
 @Suite("Release packaging")
 struct ReleasePackagingTests {
-    private let appGroup = "5UAHRS482C.one.leaper.mclash"
     private let teamIdentifier = "5UAHRS482C"
 
-    @Test("Host and Network Extension share the Mach service App Group")
-    func machServiceUsesSharedAppGroup() throws {
+    @Test("Mach service uses the profiled Network Extension application identity")
+    func machServiceUsesExtensionIdentity() throws {
         let hostEntitlements = try plist(
             at: repositoryRoot.appendingPathComponent(
                 "Support/Signing/MClash-DeveloperID.entitlements"
@@ -22,12 +21,8 @@ struct ReleasePackagingTests {
             at: repositoryRoot.appendingPathComponent("Support/NetworkExtension/Info.plist")
         )
 
-        for entitlements in [hostEntitlements, extensionEntitlements] {
-            let groups = try #require(
-                entitlements["com.apple.security.application-groups"] as? [String]
-            )
-            #expect(groups.contains(appGroup))
-        }
+        #expect(hostEntitlements["com.apple.security.application-groups"] == nil)
+        #expect(extensionEntitlements["com.apple.security.application-groups"] == nil)
 
         let networkExtension = try #require(
             extensionInfo["NetworkExtension"] as? [String: Any]

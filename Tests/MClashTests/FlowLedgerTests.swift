@@ -249,6 +249,56 @@ struct FlowLedgerTests {
         )
     }
 
+    @Test("Latest route evidence is cached and ignores non-proxy terminals")
+    func latestNonDirectRouteEvidence() throws {
+        let olderProxy = try connection(
+            id: "older-proxy",
+            start: baseDate.addingTimeInterval(-20),
+            chains: ["Node A", "Proxy Group"]
+        )
+        let newerDirect = try connection(
+            id: "newer-direct",
+            start: baseDate.addingTimeInterval(-10),
+            chains: ["DIRECT"]
+        )
+        let newestProxy = try connection(
+            id: "newest-proxy",
+            start: baseDate,
+            chains: ["Node B", "Proxy Group"]
+        )
+
+        let ledger = FlowLedger(
+            activeConnections: [olderProxy, newerDirect, newestProxy]
+        )
+
+        #expect(ledger.latestNonDirectRouteAt == baseDate)
+    }
+
+    @Test("Only direct and rejected route evidence remains empty")
+    func nonProxyRouteEvidenceRemainsEmpty() throws {
+        let direct = try connection(id: "direct", chains: ["DIRECT"])
+        let rejected = try connection(id: "rejected", chains: ["REJECT"])
+        let rejectedDrop = try connection(id: "rejected-drop", chains: ["REJECT-DROP"])
+        let pass = try connection(id: "pass", chains: ["PASS"])
+
+        let ledger = FlowLedger(
+            activeConnections: [direct, rejected, rejectedDrop, pass]
+        )
+
+        #expect(ledger.latestNonDirectRouteAt == nil)
+    }
+
+    @Test("Runtime timestamps accept fractional and standard ISO 8601 values")
+    func runtimeTimestampParsing() {
+        #expect(
+            RuntimeTimestampParser.date(from: "2026-07-18T02:03:04.123Z") != nil
+        )
+        #expect(
+            RuntimeTimestampParser.date(from: "2026-07-18T02:03:04Z") != nil
+        )
+        #expect(RuntimeTimestampParser.date(from: "not-a-timestamp") == nil)
+    }
+
     private func entry(_ id: UUID, in ledger: FlowLedger) -> FlowLedgerEntry {
         guard let entry = ledger.entries.first(where: { $0.id == .appRouting(id) }) else {
             Issue.record("Missing App Routing ledger entry \(id)")
