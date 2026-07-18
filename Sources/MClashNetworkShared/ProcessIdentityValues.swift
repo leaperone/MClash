@@ -167,17 +167,20 @@ public enum ProcessIdentityResolution: Codable, Hashable, Sendable {
         return identity
     }
 
-    /// This deliberately makes the safe provider behavior explicit at the API boundary.
+    /// Legacy signal retained for source compatibility. Flow disposition must
+    /// now be decided by `FlowContextBuilder`, which can evaluate bounded
+    /// kernel metadata even when this value is `true`.
     public var shouldFailOpen: Bool {
         if case .unavailable = self { return true }
         return false
     }
 }
 
-/// Identifies MClash-owned, signed processes whose traffic must never be sent
-/// back through the transparent proxy. Exact signing identifiers and the
-/// Developer ID team are both required so an unrelated process with a matching
-/// executable name or path cannot claim the built-in bypass.
+/// Identifies MClash-owned processes whose traffic must never be sent back
+/// through the transparent proxy. A resolved identity requires both the exact
+/// signing identifier and Developer ID team. The kernel-published
+/// `NEFlowMetaData.sourceAppSigningIdentifier` can also be used when process
+/// inspection is unavailable because it is not supplied by the application.
 public struct TrustedMClashComponentPolicy: Sendable {
     public static let teamIdentifier = "5UAHRS482C"
 
@@ -197,5 +200,11 @@ public struct TrustedMClashComponentPolicy: Sendable {
         }
         return signing.teamIdentifier == Self.teamIdentifier
             && Self.signingIdentifiers.contains(signing.signingIdentifier)
+    }
+
+    public func contains(metadataSigningIdentifier value: String) -> Bool {
+        Self.signingIdentifiers.contains(
+            value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        )
     }
 }

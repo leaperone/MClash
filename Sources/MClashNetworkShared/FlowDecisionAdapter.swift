@@ -66,20 +66,38 @@ extension FlowContextConversionFailure: CustomStringConvertible {
     }
 }
 
-/// Context conversion never returns a partially trusted source. A provider can
-/// map `.failOpen` directly to `false` from a transparent-proxy flow callback.
+/// A fully resolved source can be used by every source matcher. When process
+/// inspection is unavailable, the kernel-supplied NetworkExtension metadata is
+/// retained so destination-only rules and application-identifier patterns can
+/// still be evaluated. Strict source matchers remain unavailable in that case.
 public enum FlowContextResolution: Codable, Hashable, Sendable {
     case resolved(context: FlowContext, processIdentity: ResolvedProcessIdentity)
+    case kernelMetadataOnly(context: FlowContext, sourceFailure: FlowContextConversionFailure)
     case failOpen(FlowContextConversionFailure)
 
     public var context: FlowContext? {
-        guard case let .resolved(context, _) = self else { return nil }
-        return context
+        switch self {
+        case let .resolved(context, _), let .kernelMetadataOnly(context, _):
+            context
+        case .failOpen:
+            nil
+        }
     }
 
     public var processIdentity: ResolvedProcessIdentity? {
         guard case let .resolved(_, identity) = self else { return nil }
         return identity
+    }
+
+    fileprivate var sourceEvaluationMode: CaptureRuleEngine.SourceEvaluationMode {
+        switch self {
+        case .resolved:
+            .verified
+        case .kernelMetadataOnly:
+            .kernelMetadataOnly
+        case .failOpen:
+            .unavailable
+        }
     }
 }
 
@@ -94,8 +112,26 @@ public struct FlowContextBuilder: Sendable {
         transportProtocol: TransportProtocol,
         isTrustedMClashComponent: Bool = false
     ) -> FlowContextResolution {
+        let destination: FlowDestination
+        do {
+            destination = try makeDestination(
+                endpoint: endpoint,
+                remoteHostname: remoteHostname
+            )
+        } catch let failure as FlowContextConversionFailure {
+            return .failOpen(failure)
+        } catch {
+            return .failOpen(.unsupportedRemoteEndpoint)
+        }
+
         guard let auditTokenData = metadata.sourceAppAuditToken else {
-            return .failOpen(.missingSourceAppAuditToken)
+            return kernelMetadataResolution(
+                metadata: metadata,
+                destination: destination,
+                transportProtocol: transportProtocol,
+                failure: .missingSourceAppAuditToken,
+                isTrustedMClashComponent: isTrustedMClashComponent
+            )
         }
 
         let identity: ResolvedProcessIdentity
@@ -103,11 +139,23 @@ public struct FlowContextBuilder: Sendable {
         case let .resolved(value):
             identity = value
         case let .unavailable(failure):
-            return .failOpen(.identityUnavailable(failure))
+            return kernelMetadataResolution(
+                metadata: metadata,
+                destination: destination,
+                transportProtocol: transportProtocol,
+                failure: .identityUnavailable(failure),
+                isTrustedMClashComponent: isTrustedMClashComponent
+            )
         }
 
         guard identity.auditToken.data == auditTokenData else {
-            return .failOpen(.identityAuditTokenMismatch)
+            return kernelMetadataResolution(
+                metadata: metadata,
+                destination: destination,
+                transportProtocol: transportProtocol,
+                failure: .identityAuditTokenMismatch,
+                isTrustedMClashComponent: isTrustedMClashComponent
+            )
         }
 
         let metadataSigningIdentifier = metadata.sourceAppSigningIdentifier
@@ -121,22 +169,16 @@ public struct FlowContextBuilder: Sendable {
         }
         if !metadataSigningIdentifier.isEmpty,
            metadataSigningIdentifier != resolvedSigningIdentifier {
-            return .failOpen(.signingIdentifierMismatch(
-                metadata: metadataSigningIdentifier,
-                resolved: resolvedSigningIdentifier
-            ))
-        }
-
-        let destination: FlowDestination
-        do {
-            destination = try makeDestination(
-                endpoint: endpoint,
-                remoteHostname: remoteHostname
+            return kernelMetadataResolution(
+                metadata: metadata,
+                destination: destination,
+                transportProtocol: transportProtocol,
+                failure: .signingIdentifierMismatch(
+                    metadata: metadataSigningIdentifier,
+                    resolved: resolvedSigningIdentifier
+                ),
+                isTrustedMClashComponent: isTrustedMClashComponent
             )
-        } catch let failure as FlowContextConversionFailure {
-            return .failOpen(failure)
-        } catch {
-            return .failOpen(.unsupportedRemoteEndpoint)
         }
 
         let signingIdentity: SignedCodeIdentity?
@@ -169,6 +211,39 @@ public struct FlowContextBuilder: Sendable {
                 transportProtocol: transportProtocol
             ),
             processIdentity: identity
+        )
+    }
+
+    private func kernelMetadataResolution(
+        metadata: FlowApplicationMetadata,
+        destination: FlowDestination,
+        transportProtocol: TransportProtocol,
+        failure: FlowContextConversionFailure,
+        isTrustedMClashComponent: Bool
+    ) -> FlowContextResolution {
+        let signingIdentifier = metadata.sourceAppSigningIdentifier
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = FlowSource(
+            // PID, UID, paths, and requirements must not be inferred when
+            // process inspection failed. Only fields supplied by NEFlowMetaData
+            // are retained; an exact product-owned signing identifier may mark
+            // MClash itself trusted solely to prevent a capture loop.
+            processIdentifier: 0,
+            auditToken: metadata.sourceAppAuditToken ?? Data(),
+            sourceAppUniqueIdentifier: metadata.sourceAppUniqueIdentifier.isEmpty
+                ? nil
+                : metadata.sourceAppUniqueIdentifier,
+            userID: 0,
+            signingIdentifier: signingIdentifier.isEmpty ? nil : signingIdentifier,
+            isTrustedMClashComponent: isTrustedMClashComponent
+        )
+        return .kernelMetadataOnly(
+            context: FlowContext(
+                source: source,
+                destination: destination,
+                transportProtocol: transportProtocol
+            ),
+            sourceFailure: failure
         )
     }
 
@@ -360,9 +435,9 @@ public struct FlowTrafficDecisionAdapter: Sendable {
                 ruleEvidence: CaptureRuleDecisionEvidence(outcome: .configurationUnavailable)
             )
         }
-        guard case let .resolved(flowContext, _) = context else {
+        guard let flowContext = context.context else {
             guard case let .failOpen(failure) = context else {
-                preconditionFailure("FlowContextResolution gained an unhandled case")
+                preconditionFailure("A context-bearing resolution unexpectedly contained no context")
             }
             return FlowTrafficDecision(
                 disposition: .failOpen,
@@ -378,7 +453,10 @@ public struct FlowTrafficDecisionAdapter: Sendable {
         // this snapshot. Keep a defensive fallback for future enum evolution.
         let ruleEngine = preparedConfiguration.ruleEngine
             ?? CaptureRuleEngine(snapshot: snapshot)
-        let ruleDecision = ruleEngine.evaluate(flowContext)
+        let ruleDecision = ruleEngine.evaluate(
+            flowContext,
+            sourceEvaluationMode: context.sourceEvaluationMode
+        )
         switch ruleDecision.action {
         case .direct:
             return FlowTrafficDecision(

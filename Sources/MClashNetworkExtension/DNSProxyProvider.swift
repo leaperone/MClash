@@ -491,6 +491,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         return UDPFlowInterceptionPlan(
             decision: decision,
             initialDestination: destination,
+            mihomoDestination: destination,
             proxy: proxy,
             unavailableFallback: .reject,
             activity: activity,

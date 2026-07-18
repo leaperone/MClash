@@ -346,10 +346,13 @@ final class UDPFlowSession: @unchecked Sendable {
                 }
                 return
             }
+            guard let mihomoDestination = record.plan.mihomoDestination else {
+                throw UDPFlowSessionError.unsupportedDestination
+            }
             let conversation = MihomoUDPConversation(
                 queue: queue,
                 activityIdentifier: activity.flowIdentifier,
-                endpoint: record.key.destination,
+                endpoint: mihomoDestination,
                 proxy: proxy,
                 observer: observerFactory(activity.flowIdentifier),
                 ready: conversationReady,
@@ -397,10 +400,17 @@ final class UDPFlowSession: @unchecked Sendable {
         { [weak self] identifier, datagram in
             guard let self else { return }
             self.queue.async {
+                guard let record = self.record(forConversation: identifier) else { return }
                 self.enqueueResponse(
                     PendingResponse(
                         conversationIdentifier: identifier,
-                        datagram: datagram
+                        // A hostname may be used upstream so Mihomo can apply
+                        // domain rules, but the app must still observe replies
+                        // from the exact endpoint it originally addressed.
+                        datagram: UDPFlowDatagram(
+                            payload: datagram.payload,
+                            endpoint: record.key.destination
+                        )
                     )
                 )
             }

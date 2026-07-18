@@ -59,6 +59,11 @@ let package = Package(
             name: "MClashNetworkSharedTests",
             dependencies: ["MClashNetworkShared"],
             path: "Tests/MClashNetworkSharedTests"
+        ),
+        .testTarget(
+            name: "MClashNetworkExtensionTests",
+            dependencies: ["MClashNetworkExtension", "MClashNetworkShared"],
+            path: "Tests/MClashNetworkExtensionTests"
         )
     ]
 )

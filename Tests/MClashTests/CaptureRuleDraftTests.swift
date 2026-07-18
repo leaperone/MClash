@@ -190,8 +190,146 @@ struct CaptureRuleDraftTests {
         #expect(draft.executablePath == second.executablePath)
 
         draft.selectApplication(id: nil, from: [first, second])
+        #expect(draft.selectedApplication == second)
+        draft.removeApplication(id: second.id)
         #expect(draft.selectedApplication == nil)
         #expect(draft.executablePath == second.executablePath)
+    }
+
+    @Test("Multiple applications and running processes compose as source alternatives")
+    func composesMultipleSourceAlternatives() throws {
+        let first = makeCandidate(id: "/Applications/First.app", name: "First")
+        let second = makeCandidate(
+            id: "/Applications/Second.app",
+            name: "Second",
+            bundleIdentifier: "com.example.second"
+        )
+        let firstProcess = try makeProcessCandidate(
+            processIdentifier: 42,
+            executablePath: "/Applications/First.app/Contents/MacOS/First"
+        )
+        let secondProcess = try makeProcessCandidate(
+            processIdentifier: 84,
+            executablePath: "/Applications/Second.app/Contents/MacOS/Second"
+        )
+        var draft = CaptureRuleDraft(identifier: "source-group")
+
+        draft.selectApplication(id: first.id, from: [first, second])
+        draft.selectApplication(id: second.id, from: [first, second])
+        draft.selectProcess(id: firstProcess.id, from: [firstProcess, secondProcess])
+        draft.selectProcess(id: secondProcess.id, from: [firstProcess, secondProcess])
+        let rule = try draft.makeRule()
+
+        #expect(draft.selectedApplications == [first, second])
+        #expect(draft.selectedProcesses == [firstProcess, secondProcess])
+        #expect(rule.sources.contains(.application(first.matcher)))
+        #expect(rule.sources.contains(.application(second.matcher)))
+        #expect(rule.sources.contains(.processInstance(firstProcess.matcher)))
+        #expect(rule.sources.contains(.processInstance(secondProcess.matcher)))
+
+        let rebuilt = try CaptureRuleDraft(
+            rule: rule,
+            applicationCandidates: [first, second],
+            processCandidates: [firstProcess, secondProcess]
+        )
+        #expect(rebuilt.selectedApplications == [first, second])
+        #expect(rebuilt.selectedProcesses == [firstProcess, secondProcess])
+        #expect(try rebuilt.makeRule() == rule)
+    }
+
+    @Test("Identifier paste splits, normalizes, deduplicates, and removes individual items")
+    func managesApplicationIdentifierItems() throws {
+        var draft = CaptureRuleDraft(
+            identifier: "identifiers",
+            applicationIdentifierInput: "chatgpt; codex.app, CODEX\ncom.openai.codex; codex"
+        )
+
+        try draft.commitApplicationIdentifierInput()
+
+        #expect(draft.applicationIdentifierPatterns == [
+            "chatgpt", "codex.app", "codex", "com.openai.codex",
+        ])
+        #expect(draft.applicationIdentifierInput.isEmpty)
+        draft.removeApplicationIdentifier("codex.app")
+        #expect(draft.applicationIdentifierPatterns == [
+            "chatgpt", "codex", "com.openai.codex",
+        ])
+        #expect(try draft.makeRule().sources.count == 3)
+    }
+
+    @Test("Selecting an application covers TCP, UDP, and exact app helper identifiers")
+    func selectedApplicationCoversAllTransportsAndHelpers() throws {
+        let candidate = ApplicationCaptureCandidate(
+            id: "/Applications/Codex.app",
+            displayName: "Codex",
+            bundleIdentifier: "com.openai.codex",
+            executablePath: "/Applications/Codex.app/Contents/MacOS/ChatGPT",
+            runningProcessIdentifiers: [42],
+            matcher: ApplicationSourceMatcher(
+                designatedRequirement: "identifier com.openai.codex and anchor apple generic",
+                signingIdentifier: "com.openai.codex",
+                teamIdentifier: "2DC432GLL2",
+                bundleIdentifier: "com.openai.codex"
+            ),
+            fallbackIdentifierPatterns: [
+                "com.openai.codex",
+                "codex",
+                "codex-code-mode-host",
+                "codex",
+            ]
+        )
+        var draft = CaptureRuleDraft(
+            identifier: "Codex",
+            matchesTCP: true,
+            matchesUDP: false
+        )
+
+        draft.selectApplication(id: candidate.id, from: [candidate])
+        let rule = try draft.makeRule()
+
+        #expect(draft.matchesTCP)
+        #expect(draft.matchesUDP)
+        #expect(rule.protocols == [.tcp, .udp])
+        #expect(rule.sources.contains(.application(candidate.matcher)))
+        let patterns = rule.sources.compactMap { source -> String? in
+            if case let .applicationIdentifierPattern(matcher) = source {
+                return matcher.pattern
+            }
+            return nil
+        }
+        #expect(patterns == ["com.openai.codex", "codex", "codex-code-mode-host"])
+        #expect(patterns.allSatisfy { !$0.contains("*") && !$0.contains("?") })
+    }
+
+    @Test("Managed application fallback identifiers round-trip without appearing as advanced input")
+    func managedApplicationFallbackIdentifiersRoundTrip() throws {
+        let candidate = ApplicationCaptureCandidate(
+            id: "/Applications/Codex.app",
+            displayName: "Codex",
+            bundleIdentifier: "com.openai.codex",
+            executablePath: "/Applications/Codex.app/Contents/MacOS/ChatGPT",
+            runningProcessIdentifiers: [],
+            matcher: ApplicationSourceMatcher(
+                designatedRequirement: "identifier com.openai.codex and anchor apple generic",
+                signingIdentifier: "com.openai.codex",
+                teamIdentifier: "2DC432GLL2",
+                bundleIdentifier: "com.openai.codex"
+            ),
+            fallbackIdentifierPatterns: ["com.openai.codex", "codex"]
+        )
+        let original = try CaptureRuleDraft(
+            identifier: "Codex",
+            selectedApplication: candidate
+        ).makeRule()
+
+        let rebuiltDraft = try CaptureRuleDraft(
+            rule: original,
+            applicationCandidates: [candidate]
+        )
+
+        #expect(rebuiltDraft.selectedApplication == candidate)
+        #expect(rebuiltDraft.applicationIdentifierPattern.isEmpty)
+        #expect(try rebuiltDraft.makeRule() == original)
     }
 
     @Test("A running process selection round-trips as one execution")
@@ -383,34 +521,39 @@ struct CaptureRuleDraftTests {
     private func makeCandidate(
         id: String = "/Applications/Browser.app",
         name: String = "Browser",
-        executablePath: String = "/Applications/Browser.app/Contents/MacOS/Browser"
+        executablePath: String = "/Applications/Browser.app/Contents/MacOS/Browser",
+        bundleIdentifier: String = "com.example.browser"
     ) -> ApplicationCaptureCandidate {
         ApplicationCaptureCandidate(
             id: id,
             displayName: name,
-            bundleIdentifier: "com.example.browser",
+            bundleIdentifier: bundleIdentifier,
             executablePath: executablePath,
             runningProcessIdentifiers: [42, 84],
             matcher: ApplicationSourceMatcher(
-                designatedRequirement: "identifier com.example.browser and anchor apple generic",
-                signingIdentifier: "com.example.browser",
+                designatedRequirement: "identifier \(bundleIdentifier) and anchor apple generic",
+                signingIdentifier: bundleIdentifier,
                 teamIdentifier: "TEAMID",
-                bundleIdentifier: "com.example.browser"
-            )
+                bundleIdentifier: bundleIdentifier
+            ),
+            fallbackIdentifierPatterns: []
         )
     }
 
-    private func makeProcessCandidate() throws -> RunningProcessCaptureCandidate {
+    private func makeProcessCandidate(
+        processIdentifier: Int32 = 42,
+        executablePath: String = "/Applications/Browser.app/Contents/MacOS/Browser"
+    ) throws -> RunningProcessCaptureCandidate {
         let startTime = try ProcessStartTime(seconds: 1_700_000_000, microseconds: 123)
         let matcher = ProcessInstanceSourceMatcher(
-            processIdentifier: 42,
+            processIdentifier: processIdentifier,
             startTime: startTime,
-            canonicalExecutablePath: "/Applications/Browser.app/Contents/MacOS/Browser"
+            canonicalExecutablePath: executablePath
         )
         return RunningProcessCaptureCandidate(
-            id: "42:\(startTime.seconds):\(startTime.microseconds)",
-            displayName: "Browser · PID 42",
-            processIdentifier: 42,
+            id: "\(processIdentifier):\(startTime.seconds):\(startTime.microseconds)",
+            displayName: "Browser · PID \(processIdentifier)",
+            processIdentifier: processIdentifier,
             executablePath: matcher.canonicalExecutablePath ?? "",
             matcher: matcher
         )

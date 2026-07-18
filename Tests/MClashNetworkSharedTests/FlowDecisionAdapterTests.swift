@@ -60,7 +60,7 @@ struct FlowDecisionAdapterTests {
     }
 
     @Test
-    func incompleteOrInconsistentIdentityFailsOpen() throws {
+    func incompleteOrInconsistentIdentityRetainsOnlyKernelMetadata() throws {
         let identity = try signedIdentity()
         let missingToken = FlowContextBuilder().resolve(
             endpoint: FlowRemoteEndpoint(host: "example.com", port: 443),
@@ -72,7 +72,15 @@ struct FlowDecisionAdapterTests {
             identityResolution: .resolved(identity),
             transportProtocol: .tcp
         )
-        #expect(missingToken == .failOpen(.missingSourceAppAuditToken))
+        guard case let .kernelMetadataOnly(context, failure) = missingToken else {
+            Issue.record("Missing audit token should retain bounded NE metadata")
+            return
+        }
+        #expect(failure == .missingSourceAppAuditToken)
+        #expect(context.source.signingIdentifier == "com.example.browser")
+        #expect(context.source.designatedRequirement == nil)
+        #expect(context.source.executablePath == nil)
+        #expect(context.destination.hostname == "example.com")
 
         let mismatchedSigningIdentifier = FlowContextBuilder().resolve(
             endpoint: FlowRemoteEndpoint(host: "example.com", port: 443),
@@ -84,10 +92,32 @@ struct FlowDecisionAdapterTests {
             identityResolution: .resolved(identity),
             transportProtocol: .tcp
         )
-        #expect(mismatchedSigningIdentifier == .failOpen(.signingIdentifierMismatch(
+        guard case let .kernelMetadataOnly(mismatchContext, mismatchFailure) = mismatchedSigningIdentifier else {
+            Issue.record("Signing identity disagreement must not discard the destination context")
+            return
+        }
+        #expect(mismatchFailure == .signingIdentifierMismatch(
             metadata: "com.attacker.fake",
             resolved: "com.example.browser"
-        )))
+        ))
+        #expect(mismatchContext.source.signingIdentifier == "com.attacker.fake")
+        #expect(mismatchContext.source.designatedRequirement == nil)
+
+        let mismatchedAuditToken = FlowContextBuilder().resolve(
+            endpoint: FlowRemoteEndpoint(host: "example.com", port: 443),
+            metadata: metadata(),
+            identityResolution: .resolved(try signedIdentity(
+                auditTokenData: Data(repeating: 0xFF, count: SourceAppAuditToken.byteCount)
+            )),
+            transportProtocol: .tcp
+        )
+        guard case let .kernelMetadataOnly(auditContext, auditFailure) = mismatchedAuditToken else {
+            Issue.record("Audit-token disagreement must not discard the destination context")
+            return
+        }
+        #expect(auditFailure == .identityAuditTokenMismatch)
+        #expect(auditContext.source.auditToken == auditTokenData)
+        #expect(auditContext.source.processIdentifier == 0)
 
         let invalidPort = FlowContextBuilder().resolve(
             endpoint: FlowRemoteEndpoint(host: "example.com", port: "0"),
@@ -96,6 +126,153 @@ struct FlowDecisionAdapterTests {
             transportProtocol: .tcp
         )
         #expect(invalidPort == .failOpen(.invalidRemotePort("0")))
+    }
+
+    @Test("Identity EPERM still evaluates identifier and destination-only rules without trusting strict source fields")
+    func unavailableIdentityUsesBoundedRuleEvaluation() throws {
+        let failure = ProcessIdentityResolutionFailure.executablePathPermissionDenied(errno: 1)
+        let context = FlowContextBuilder().resolve(
+            endpoint: FlowRemoteEndpoint(host: "162.125.6.1", port: 443),
+            remoteHostname: "chatgpt.com",
+            metadata: FlowApplicationMetadata(
+                sourceAppAuditToken: auditTokenData,
+                sourceAppUniqueIdentifier: Data([0xCA, 0xFE]),
+                sourceAppSigningIdentifier: "codex"
+            ),
+            identityResolution: .unavailable(failure),
+            transportProtocol: .tcp
+        )
+
+        guard case let .kernelMetadataOnly(metadataContext, sourceFailure) = context else {
+            Issue.record("An identity lookup failure should retain the usable flow context")
+            return
+        }
+        #expect(sourceFailure == .identityUnavailable(failure))
+        #expect(metadataContext.source.signingIdentifier == "codex")
+        #expect(metadataContext.source.processIdentifier == 0)
+        #expect(metadataContext.source.userID == 0)
+        #expect(metadataContext.source.executablePath == nil)
+        #expect(metadataContext.source.designatedRequirement == nil)
+
+        let strictRule = try CaptureRule(
+            id: "strict-source-must-not-match",
+            priority: 1,
+            sources: [.executable(ExecutableSourceMatcher(
+                canonicalPath: "/Applications/Codex.app/Contents/Resources/codex"
+            ))],
+            destinations: [.host(try HostMatcher(kind: .exact, value: "chatgpt.com"))],
+            action: .reject
+        )
+        let identifierRule = try CaptureRule(
+            id: "kernel-app-identifier",
+            priority: 2,
+            sources: [.applicationIdentifierPattern(
+                try ApplicationIdentifierPatternMatcher(pattern: "codex")
+            )],
+            destinations: [.host(try HostMatcher(kind: .exact, value: "chatgpt.com"))],
+            protocols: [.tcp],
+            portRanges: [try PortRange(lowerBound: 443, upperBound: 443)],
+            action: .mihomo(.profileRules)
+        )
+        let configuration = CaptureConfigurationLoadResult.loaded(
+            try CaptureConfigurationSnapshot(revision: 1, rules: [strictRule, identifierRule])
+        )
+        let decision = FlowTrafficDecisionAdapter().decide(
+            configuration: configuration,
+            context: context,
+            captureEnabled: true,
+            mihomoAvailable: true
+        )
+
+        #expect(decision.disposition == .mihomo(.profileRules))
+        #expect(decision.reason == .rule(.matchedRule("kernel-app-identifier")))
+        #expect(decision.ruleEvidence?.source == .applicationIdentifierPattern(
+            RuleApplicationPatternEvidence(pattern: "codex", matchedField: .signingIdentifier)
+        ))
+    }
+
+    @Test("Unavailable source identity skips constrained rules and continues to a destination-only rule")
+    func unavailableIdentityDoesNotInvalidateDestinationOnlyRules() throws {
+        let context = FlowContextBuilder().resolve(
+            endpoint: FlowRemoteEndpoint(host: "203.0.113.40", port: 443),
+            remoteHostname: "chatgpt.com",
+            metadata: metadata(),
+            identityResolution: .unavailable(.codeObjectLookupFailed(status: -1)),
+            transportProtocol: .tcp
+        )
+        let unavailableSourceRule = try CaptureRule(
+            id: "requires-verified-source",
+            priority: 1,
+            sources: [.executable(ExecutableSourceMatcher(
+                canonicalPath: "/Applications/Browser.app/Contents/MacOS/Browser"
+            ))],
+            action: .reject
+        )
+        let destinationRule = try CaptureRule(
+            id: "domain-only",
+            priority: 2,
+            destinations: [.host(try HostMatcher(kind: .suffix, value: "chatgpt.com"))],
+            protocols: [.tcp],
+            portRanges: [try PortRange(lowerBound: 443, upperBound: 443)],
+            action: .mihomo(.profileRules)
+        )
+        let decision = FlowTrafficDecisionAdapter().decide(
+            configuration: .loaded(try CaptureConfigurationSnapshot(
+                revision: 1,
+                rules: [unavailableSourceRule, destinationRule]
+            )),
+            context: context,
+            captureEnabled: true,
+            mihomoAvailable: true
+        )
+
+        #expect(decision.disposition == .mihomo(.profileRules))
+        #expect(decision.reason == .rule(.matchedRule("domain-only")))
+        #expect(decision.ruleEvidence?.source == .unconstrained)
+        #expect(decision.ruleEvidence?.destination == .host(
+            RuleHostDestinationEvidence(kind: .suffix, value: "chatgpt.com")
+        ))
+    }
+
+    @Test("An existing exact application rule can fall back to its configured signing identifier")
+    func unavailableIdentityMatchesConfiguredApplicationIdentifier() throws {
+        let context = FlowContextBuilder().resolve(
+            endpoint: FlowRemoteEndpoint(host: "162.125.6.1", port: 443),
+            remoteHostname: "chatgpt.com",
+            metadata: FlowApplicationMetadata(
+                sourceAppAuditToken: auditTokenData,
+                sourceAppUniqueIdentifier: Data([0xCA, 0xFE]),
+                sourceAppSigningIdentifier: "codex"
+            ),
+            identityResolution: .unavailable(.codeObjectLookupFailed(status: -1)),
+            transportProtocol: .tcp
+        )
+        let applicationRule = try CaptureRule(
+            id: "existing-codex-application",
+            priority: 1,
+            sources: [.application(ApplicationSourceMatcher(
+                designatedRequirement: "stored requirement unavailable at runtime",
+                signingIdentifier: "codex"
+            ))],
+            destinations: [.host(try HostMatcher(kind: .suffix, value: "chatgpt.com"))],
+            action: .mihomo(.profileRules)
+        )
+
+        let decision = FlowTrafficDecisionAdapter().decide(
+            configuration: .loaded(try CaptureConfigurationSnapshot(
+                revision: 1,
+                rules: [applicationRule]
+            )),
+            context: context,
+            captureEnabled: true,
+            mihomoAvailable: true
+        )
+
+        #expect(decision.disposition == .mihomo(.profileRules))
+        #expect(decision.reason == .rule(.matchedRule("existing-codex-application")))
+        #expect(decision.ruleEvidence?.source == .applicationIdentifierPattern(
+            RuleApplicationPatternEvidence(pattern: "codex", matchedField: .signingIdentifier)
+        ))
     }
 
     @Test
@@ -268,9 +445,9 @@ struct FlowDecisionAdapterTests {
         )
     }
 
-    private func signedIdentity() throws -> ResolvedProcessIdentity {
+    private func signedIdentity(auditTokenData: Data? = nil) throws -> ResolvedProcessIdentity {
         ResolvedProcessIdentity(
-            auditToken: try SourceAppAuditToken(auditTokenData),
+            auditToken: try SourceAppAuditToken(auditTokenData ?? self.auditTokenData),
             processIdentifier: 321,
             processVersion: 4,
             effectiveUserID: 501,

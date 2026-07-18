@@ -340,6 +340,12 @@ public struct BuiltInBypassPolicy: Sendable {
 }
 
 public struct CaptureRuleEngine: Sendable {
+    enum SourceEvaluationMode: Sendable {
+        case verified
+        case kernelMetadataOnly
+        case unavailable
+    }
+
     private struct IndexedDestination: Sendable {
         let insertionIndex: Int
         let matcher: DestinationMatcher
@@ -477,6 +483,13 @@ public struct CaptureRuleEngine: Sendable {
     }
 
     public func evaluate(_ context: FlowContext) -> RuleDecision {
+        evaluate(context, sourceEvaluationMode: .verified)
+    }
+
+    func evaluate(
+        _ context: FlowContext,
+        sourceEvaluationMode: SourceEvaluationMode
+    ) -> RuleDecision {
         if let reason = builtInBypass.reason(for: context) {
             return RuleDecision(
                 action: .direct,
@@ -494,7 +507,8 @@ public struct CaptureRuleEngine: Sendable {
             if let evidence = Self.matchEvidence(
                 for: rule,
                 compiledDestinations: orderedRule.destinations,
-                context: context
+                context: context,
+                sourceEvaluationMode: sourceEvaluationMode
             ) {
                 return RuleDecision(
                     action: rule.action,
@@ -515,13 +529,18 @@ public struct CaptureRuleEngine: Sendable {
     private static func matchEvidence(
         for rule: CaptureRule,
         compiledDestinations: CompiledDestinations,
-        context: FlowContext
+        context: FlowContext,
+        sourceEvaluationMode: SourceEvaluationMode
     ) -> CaptureRuleDecisionEvidence? {
         let sourceEvidence: RuleSourceMatchEvidence
         if rule.sources.isEmpty {
             sourceEvidence = .unconstrained
         } else if let evidence = rule.sources.lazy.compactMap({ matcher in
-            matchEvidence(for: matcher, source: context.source)
+            matchEvidence(
+                for: matcher,
+                source: context.source,
+                sourceEvaluationMode: sourceEvaluationMode
+            )
         }).first {
             sourceEvidence = evidence
         } else {
@@ -564,10 +583,53 @@ public struct CaptureRuleEngine: Sendable {
 
     private static func matchEvidence(
         for matcher: SourceMatcher,
-        source: FlowSource
+        source: FlowSource,
+        sourceEvaluationMode: SourceEvaluationMode
     ) -> RuleSourceMatchEvidence? {
+        switch sourceEvaluationMode {
+        case .verified:
+            break
+        case .kernelMetadataOnly:
+            // NEFlowMetaData's signing identifier remains usable even when
+            // process inspection fails. This lets existing app selections and
+            // identifier-pattern rules keep working without requiring a full
+            // identity. Paths, PIDs and UIDs cannot be inferred from it.
+            switch matcher {
+            case .application, .applicationIdentifierPattern:
+                break
+            case .executable, .processInstance, .userID:
+                return nil
+            }
+        case .unavailable:
+            return nil
+        }
+
         switch matcher {
         case let .application(application):
+            if sourceEvaluationMode == .kernelMetadataOnly {
+                guard let publishedIdentifier = source.signingIdentifier?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased(),
+                    !publishedIdentifier.isEmpty
+                else { return nil }
+                let configuredIdentifiers = [
+                    application.signingIdentifier,
+                    application.bundleIdentifier,
+                ].compactMap { value -> String? in
+                    guard let value else { return nil }
+                    let normalized = value
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    return normalized.isEmpty ? nil : normalized
+                }
+                guard let matchedIdentifier = configuredIdentifiers.first(where: {
+                    $0 == publishedIdentifier
+                }) else { return nil }
+                return .applicationIdentifierPattern(RuleApplicationPatternEvidence(
+                    pattern: matchedIdentifier,
+                    matchedField: .signingIdentifier
+                ))
+            }
             guard source.designatedRequirement == application.designatedRequirement else { return nil }
             if let expected = application.signingIdentifier, source.signingIdentifier != expected { return nil }
             if let expected = application.teamIdentifier, source.teamIdentifier != expected { return nil }

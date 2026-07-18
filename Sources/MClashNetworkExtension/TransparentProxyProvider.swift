@@ -1,7 +1,13 @@
 import Foundation
 import MClashNetworkShared
+import OSLog
 @preconcurrency import Network
 @preconcurrency import NetworkExtension
+
+private let appRoutingFlowLogger = Logger(
+    subsystem: "one.leaper.mclash.network-extension",
+    category: "AppRouting.Flow"
+)
 
 /// Transparent application proxy entry point. The framework first sends all
 /// outbound TCP/UDP flows (except loopback) to this provider. The local rule
@@ -59,7 +65,9 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         let decision: FlowTrafficDecision
         if let tcpFlow = flow as? NEAppProxyTCPFlow {
             let plan = flowDecisionCoordinator.planTCPFlow(tcpFlow)
-            activities.upsert(plan.activity)
+            let activity = Self.annotatedActivity(plan.activity)
+            activities.upsert(activity)
+            Self.logDecision(activity)
             decision = plan.decision
             switch decision.disposition {
             case .direct:
@@ -95,7 +103,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 return true
             case .mihomo:
                 guard let proxy = plan.proxy,
-                      let destination = plan.destination
+                      let destination = plan.mihomoDestination
                 else {
                     return handleUnavailableMihomoTCPRoute(
                         tcpFlow,
@@ -107,6 +115,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                     flow: tcpFlow,
                     proxy: proxy,
                     destination: destination,
+                    directFallbackDestination: plan.destination,
                     unavailableFallback: plan.unavailableFallback,
                     activityObserver: relayObserver(for: plan.activity.flowIdentifier)
                 )
@@ -141,7 +150,9 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         plan: UDPFlowInterceptionPlan,
         parentFlowIdentifier: UUID
     ) -> Bool {
-        activities.upsert(plan.activity)
+        let activity = Self.annotatedActivity(plan.activity)
+        activities.upsert(activity)
+        Self.logDecision(activity)
         switch plan.decision.disposition {
         case .direct:
             if Self.isBuiltInBypass(plan.decision) {
@@ -174,7 +185,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 coordinator.currentRevision()
             },
             activitySink: { activity in
-                activities.upsert(activity)
+                activities.upsert(Self.annotatedActivity(activity))
             },
             observerFactory: { identifier in
                 Self.relayObserver(
@@ -188,6 +199,96 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             return true
         }
         return true
+    }
+
+    /// Adds a durable, user-visible explanation when the provider had to use
+    /// NetworkExtension's flow metadata instead of resolved process details.
+    /// No audit token, full path, destination, or other sensitive material is
+    /// copied into the note.
+    private static func annotatedActivity(
+        _ original: AppRoutingActivity
+    ) -> AppRoutingActivity {
+        var activity = original
+        guard activity.relayNote == nil else { return activity }
+        let usedKernelFlowMetadata = activity.source.processIdentifier <= 0
+        let usedDefaultDirect: Bool
+        if case let .rule(cause) = activity.cause,
+           case .defaultDirect = cause {
+            usedDefaultDirect = true
+        } else {
+            usedDefaultDirect = false
+        }
+
+        if usedKernelFlowMetadata && usedDefaultDirect {
+            activity.relayNote = "Process details were unavailable, so rules were evaluated using macOS flow metadata and destination information. No rule matched and the default Direct route was used."
+        } else if usedKernelFlowMetadata {
+            activity.relayNote = "Process details were unavailable; the rule was evaluated using macOS flow metadata and destination information."
+        } else if usedDefaultDirect {
+            activity.relayNote = "No enabled App Routing rule matched, so the default Direct route was used."
+        }
+        return activity
+    }
+
+    /// Emits one structured decision record per flow. Potentially identifying
+    /// values are hashed by Unified Logging; audit tokens, full executable
+    /// paths, payloads, and proxy credentials are never logged.
+    private static func logDecision(_ activity: AppRoutingActivity) {
+        let sourceMode = activity.source.processIdentifier > 0
+            ? "resolved-process"
+            : "kernel-flow-metadata"
+        let processName = activity.source.executablePath.map {
+            URL(fileURLWithPath: $0).lastPathComponent
+        } ?? activity.source.signingIdentifier ?? activity.source.bundleIdentifier ?? "unknown"
+        let destination = activity.destination.hostname
+            ?? activity.destination.ipAddress
+            ?? "unknown"
+        let disposition = diagnosticDisposition(activity.effectiveAction)
+        let reason = diagnosticReason(activity.cause)
+        let rule = activity.matchedRuleIdentifier ?? "none"
+        let flow = String(activity.flowIdentifier.uuidString.prefix(8))
+        let transport = activity.transportProtocol.rawValue
+
+        if case .failOpen = activity.effectiveAction {
+            appRoutingFlowLogger.error(
+                "decision flow=\(flow, privacy: .public) protocol=\(transport, privacy: .public) source=\(sourceMode, privacy: .public) disposition=\(disposition, privacy: .public) reason=\(reason, privacy: .public) pid=\(activity.source.processIdentifier, privacy: .public) process=\(processName, privacy: .private(mask: .hash)) destination=\(destination, privacy: .private(mask: .hash)) port=\(activity.destination.port, privacy: .public) rule=\(rule, privacy: .private(mask: .hash))"
+            )
+        } else {
+            appRoutingFlowLogger.debug(
+                "decision flow=\(flow, privacy: .public) protocol=\(transport, privacy: .public) source=\(sourceMode, privacy: .public) disposition=\(disposition, privacy: .public) reason=\(reason, privacy: .public) pid=\(activity.source.processIdentifier, privacy: .public) process=\(processName, privacy: .private(mask: .hash)) destination=\(destination, privacy: .private(mask: .hash)) port=\(activity.destination.port, privacy: .public) rule=\(rule, privacy: .private(mask: .hash))"
+            )
+        }
+    }
+
+    private static func diagnosticDisposition(_ disposition: FlowTrafficDisposition) -> String {
+        switch disposition {
+        case .direct: "direct"
+        case .reject: "reject"
+        case .mihomo: "mihomo"
+        case .failOpen: "fail-open"
+        }
+    }
+
+    private static func diagnosticReason(_ reason: FlowTrafficDecisionReason) -> String {
+        switch reason {
+        case .captureDisabled:
+            "capture-disabled"
+        case .configurationUnavailable:
+            "configuration-unavailable"
+        case .contextUnavailable:
+            "context-unavailable"
+        case let .rule(cause):
+            diagnosticRuleCause(cause)
+        case .mihomoUnavailable:
+            "mihomo-route-unavailable"
+        }
+    }
+
+    private static func diagnosticRuleCause(_ cause: RuleDecisionCause) -> String {
+        switch cause {
+        case .matchedRule: "matched-rule"
+        case let .builtInBypass(reason): "built-in-\(reason.rawValue)"
+        case .defaultDirect: "default-direct"
+        }
     }
 
     private func observeWithoutIntercepting(_ decision: FlowTrafficDecision) -> Bool {

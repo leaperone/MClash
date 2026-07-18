@@ -105,18 +105,51 @@ struct ProviderSOCKSConfiguration: Equatable, Sendable {
     }
 
     static func destination(for endpoint: FlowRemoteEndpoint) throws -> SOCKS5Endpoint {
-        var host = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let port = UInt16(endpoint.port), port > 0 else {
+            throw FlowContextConversionFailure.invalidRemotePort(endpoint.port)
+        }
+        return SOCKS5Endpoint(
+            address: try socksAddress(for: endpoint.host),
+            port: port
+        )
+    }
+
+    /// Builds the two destinations needed by one interception plan. Direct
+    /// relay and fail-open recovery retain the endpoint supplied by macOS,
+    /// while Mihomo receives the hostname that was validated during rule
+    /// evaluation whenever SOCKS5 can represent it safely.
+    static func destinations(
+        for endpoint: FlowRemoteEndpoint,
+        preferredHostname: String?
+    ) throws -> ProviderSOCKSDestinations {
+        let original = try destination(for: endpoint)
+        guard let preferredHostname,
+              let preferredAddress = try? socksAddress(for: preferredHostname)
+        else {
+            return ProviderSOCKSDestinations(
+                original: original,
+                mihomo: original
+            )
+        }
+        return ProviderSOCKSDestinations(
+            original: original,
+            mihomo: SOCKS5Endpoint(
+                address: preferredAddress,
+                port: original.port
+            )
+        )
+    }
+
+    private static func socksAddress(for value: String) throws -> SOCKS5Address {
+        var host = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if host.hasPrefix("["), host.hasSuffix("]") {
             host.removeFirst()
             host.removeLast()
         }
-        guard let port = UInt16(endpoint.port), port > 0 else {
-            throw FlowContextConversionFailure.invalidRemotePort(endpoint.port)
-        }
         if let address = try? IPAddress(host) {
-            return SOCKS5Endpoint(address: SOCKS5Address(ipAddress: address), port: port)
+            return SOCKS5Address(ipAddress: address)
         }
-        return SOCKS5Endpoint(address: try SOCKS5Address(domain: host), port: port)
+        return try SOCKS5Address(domain: host)
     }
 
     private static func uint16(_ value: Any?) -> UInt16? {
@@ -133,4 +166,9 @@ struct ProviderSOCKSConfiguration: Equatable, Sendable {
             nil
         }
     }
+}
+
+struct ProviderSOCKSDestinations: Equatable, Sendable {
+    let original: SOCKS5Endpoint
+    let mihomo: SOCKS5Endpoint
 }

@@ -18,6 +18,8 @@ struct CaptureRuleEditorSheet: View {
     @State private var showsAdvancedOptions: Bool
     @State private var domainDestinationPage = 0
     @State private var networkDestinationPage = 0
+    @State private var applicationToAddID: String?
+    @State private var processToAddID: String?
 
     private static let destinationPageSize = 50
 
@@ -49,7 +51,7 @@ struct CaptureRuleEditorSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("App Routing Rule")
                     .font(.title2.weight(.semibold))
-                Text("Choose an application, destinations, or both, then decide how matching traffic should be routed.")
+                Text("Add applications, processes, or destinations, then choose how matching traffic should be routed.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -60,7 +62,7 @@ struct CaptureRuleEditorSheet: View {
 
             Form {
                 ruleSection
-                applicationSection
+                sourcesSection
                 destinationSection
                 actionSection
                 advancedSection
@@ -109,11 +111,11 @@ struct CaptureRuleEditorSheet: View {
         }
         .frame(
             minWidth: 620,
-            idealWidth: 700,
-            maxWidth: 760,
-            minHeight: 500,
-            idealHeight: 560,
-            maxHeight: 580
+            idealWidth: 760,
+            maxWidth: 860,
+            minHeight: 560,
+            idealHeight: 680,
+            maxHeight: 760
         )
         .onChange(of: draft) { _, _ in
             submissionError = nil
@@ -124,7 +126,7 @@ struct CaptureRuleEditorSheet: View {
         .fileImporter(
             isPresented: $showingApplicationImporter,
             allowedContentTypes: [.applicationBundle],
-            allowsMultipleSelection: false,
+            allowsMultipleSelection: true,
             onCompletion: importApplication
         )
     }
@@ -138,30 +140,131 @@ struct CaptureRuleEditorSheet: View {
         }
     }
 
-    private var applicationSection: some View {
-        Section("Application (Optional)") {
-            Picker("Application", selection: selectedApplicationID) {
-                Text("All applications").tag(nil as String?)
-                ForEach(displayedApplicationCandidates) { candidate in
-                    Label {
-                        Text(applicationLabel(candidate))
-                    } icon: {
-                        Image(nsImage: applicationIcon(candidate))
+    private var sourcesSection: some View {
+        Section("Sources (Optional · Any May Match)") {
+            Text("Add applications, running processes, or identifiers. Items in this section use OR matching; destinations below are combined with the source group using AND.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Application & Process Identifiers", systemImage: "textformat.abc")
+                    .font(.body.weight(.medium))
+
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    TextField(
+                        "chatgpt; codex.app; codex; com.openai.codex",
+                        text: $draft.applicationIdentifierInput,
+                        axis: .vertical
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.body.monospaced())
+                    .lineLimit(1 ... 3)
+                    .onSubmit(addApplicationIdentifiers)
+                    .accessibilityLabel("Application and process identifiers")
+
+                    Button("Add", action: addApplicationIdentifiers)
+                        .disabled(draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                Text("Paste several executable names, signing IDs, bundle IDs, or wildcard patterns separated by semicolons, commas, or new lines.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(draft.applicationIdentifierPatterns, id: \.self) { pattern in
+                    HStack(spacing: 8) {
+                        Text(pattern)
+                            .font(.callout.monospaced())
+                            .textSelection(.enabled)
+                        Spacer()
+                        removeSourceButton(
+                            label: "Remove identifier \(pattern)",
+                            help: "Remove application or process identifier"
+                        ) {
+                            draft.removeApplicationIdentifier(pattern)
+                        }
                     }
-                    .tag(candidate.id as String?)
                 }
             }
 
-            Button {
-                showingApplicationImporter = true
-            } label: {
-                Label("Choose Other Application…", systemImage: "folder")
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Choose Applications", systemImage: "app.badge")
+                    .font(.body.weight(.medium))
+
+                HStack(spacing: 8) {
+                    Picker("Application to add", selection: $applicationToAddID) {
+                        Text("Choose a running application").tag(nil as String?)
+                        ForEach(availableApplicationCandidates) { candidate in
+                            Label {
+                                Text(applicationLabel(candidate))
+                            } icon: {
+                                Image(nsImage: applicationIcon(candidate))
+                            }
+                            .tag(candidate.id as String?)
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityLabel("Application to add")
+
+                    Button("Add") { addSelectedApplication() }
+                        .disabled(applicationToAddID == nil)
+
+                    Button {
+                        showingApplicationImporter = true
+                    } label: {
+                        Label("Choose App…", systemImage: "folder")
+                    }
+                }
+
+                ForEach(draft.selectedApplications) { application in
+                    selectedApplicationSummary(application)
+                }
             }
 
-            if let application = draft.selectedApplication {
-                selectedApplicationSummary(application)
-            } else {
-                Text("This rule applies to every application except MClash's built-in safety bypasses. Select an app only when the rule should be app-specific.")
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Choose Running Processes", systemImage: "terminal")
+                    .font(.body.weight(.medium))
+
+                HStack(spacing: 8) {
+                    Picker("Running process to add", selection: $processToAddID) {
+                        Text("Choose a running process").tag(nil as String?)
+                        ForEach(availableProcessCandidates) { candidate in
+                            Text(candidate.displayName).tag(candidate.id as String?)
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityLabel("Running process to add")
+
+                    Button("Add") { addSelectedProcess() }
+                        .disabled(processToAddID == nil)
+                }
+
+                ForEach(draft.selectedProcesses) { process in
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(process.displayName)
+                                .font(.callout.weight(.medium))
+                            Text("PID \(process.processIdentifier) · \(process.executablePath)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .textSelection(.enabled)
+                        }
+                        Spacer()
+                        removeSourceButton(
+                            label: "Remove process \(process.displayName)",
+                            help: "Remove running process"
+                        ) {
+                            draft.removeProcess(id: process.id)
+                        }
+                    }
+                }
+            }
+
+            if draft.selectedApplications.isEmpty,
+               draft.selectedProcesses.isEmpty,
+               draft.applicationIdentifierPatterns.isEmpty,
+               draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("No source restriction — this rule applies to all applications and processes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -287,36 +390,6 @@ struct CaptureRuleEditorSheet: View {
         Section {
             DisclosureGroup("Advanced Matching", isExpanded: $showsAdvancedOptions) {
                 VStack(alignment: .leading, spacing: 14) {
-                    Picker("Exact running process", selection: selectedProcessID) {
-                        Text("Any process in the application").tag(nil as String?)
-                        ForEach(displayedProcessCandidates) { candidate in
-                            Text(candidate.displayName).tag(candidate.id as String?)
-                        }
-                    }
-
-                    if let process = draft.selectedProcess {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Label("Only this running instance", systemImage: "clock.badge.exclamationmark")
-                            Text("PID \(process.processIdentifier) · \(process.executablePath)")
-                                .textSelection(.enabled)
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-
-                    Divider()
-
-                    TextField(
-                        "Application name or bundle ID patterns (optional)",
-                        text: $draft.applicationIdentifierPattern
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .font(.body.monospaced())
-
-                    Text("Separate multiple patterns with semicolons. Use * for any number of characters and ? for one character. Choosing an exact signed .app is safer when possible.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
                     TextField("Executable path (optional)", text: $draft.executablePath)
                         .textFieldStyle(.roundedBorder)
                         .font(.body.monospaced())
@@ -353,7 +426,7 @@ struct CaptureRuleEditorSheet: View {
                 .padding(.top, 8)
             }
 
-            Text("Use advanced matching for one running process, an app identifier pattern, executable path, user, protocol, port range, or fallback behavior.")
+            Text("Use advanced matching for an executable path, user, protocol, port range, or fallback behavior.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -395,7 +468,28 @@ struct CaptureRuleEditorSheet: View {
                     .padding(.vertical, 3)
                     .background(.green.opacity(0.12), in: Capsule())
             }
+
+            removeSourceButton(
+                label: "Remove application \(application.displayName)",
+                help: "Remove application"
+            ) {
+                draft.removeApplication(id: application.id)
+            }
         }
+    }
+
+    private func removeSourceButton(
+        label: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
+        .accessibilityLabel(label)
     }
 
     private func destinationRow(_ destination: DestinationMatcher) -> some View {
@@ -519,41 +613,14 @@ struct CaptureRuleEditorSheet: View {
         )
     }
 
-    private var selectedApplicationID: Binding<String?> {
-        Binding(
-            get: { draft.selectedApplicationID },
-            set: { id in
-                draft.selectApplication(id: id, from: displayedApplicationCandidates)
-                if let application = draft.selectedApplication {
-                    suggestRuleName(for: application)
-                }
-            }
-        )
+    private var availableApplicationCandidates: [ApplicationCaptureCandidate] {
+        let selectedIDs = Set(draft.selectedApplications.map(\.id))
+        return applicationCandidates.filter { !selectedIDs.contains($0.id) }
     }
 
-    private var selectedProcessID: Binding<String?> {
-        Binding(
-            get: { draft.selectedProcessID },
-            set: { id in
-                draft.selectProcess(id: id, from: displayedProcessCandidates)
-            }
-        )
-    }
-
-    private var displayedApplicationCandidates: [ApplicationCaptureCandidate] {
-        guard let selected = draft.selectedApplication,
-              !applicationCandidates.contains(where: { $0.id == selected.id }) else {
-            return applicationCandidates
-        }
-        return [selected] + applicationCandidates
-    }
-
-    private var displayedProcessCandidates: [RunningProcessCaptureCandidate] {
-        guard let selected = draft.selectedProcess,
-              !processCandidates.contains(where: { $0.id == selected.id }) else {
-            return processCandidates
-        }
-        return [selected] + processCandidates
+    private var availableProcessCandidates: [RunningProcessCaptureCandidate] {
+        let selectedIDs = Set(draft.selectedProcesses.map(\.id))
+        return processCandidates.filter { !selectedIDs.contains($0.id) }
     }
 
     private var normalizedRuleName: String {
@@ -593,17 +660,24 @@ struct CaptureRuleEditorSheet: View {
 
     private var rulePreview: String {
         let source: String
-        if let process = draft.selectedProcess {
-            source = "\(process.displayName) (this run only)"
-        } else if let application = draft.selectedApplication {
-            source = application.displayName
-        } else if !draft.applicationIdentifierPattern
-            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            source = draft.applicationIdentifierPattern
-        } else if !draft.executablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            source = URL(fileURLWithPath: draft.executablePath).lastPathComponent
-        } else {
+        var sourceNames = draft.selectedApplications.map(\.displayName)
+            + draft.selectedProcesses.map { "\($0.displayName) (this run)" }
+            + draft.applicationIdentifierPatterns
+        let executableName = draft.executablePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !executableName.isEmpty {
+            sourceNames.append(URL(fileURLWithPath: executableName).lastPathComponent)
+        }
+        let hasPendingSource = !draft.applicationIdentifierInput
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if sourceNames.isEmpty, !hasPendingSource {
             source = "All applications"
+        } else {
+            var parts = Array(sourceNames.prefix(3))
+            if sourceNames.count > parts.count {
+                parts.append("+\(sourceNames.count - parts.count) more")
+            }
+            if hasPendingSource { parts.append("+ pending") }
+            source = parts.joined(separator: ", ")
         }
 
         // Keep the preview proportional to what is visible. Imported profiles
@@ -657,16 +731,48 @@ struct CaptureRuleEditorSheet: View {
 
     private func importApplication(_ result: Result<[URL], Error>) {
         do {
-            guard let url = try result.get().first else { return }
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer {
+            let urls = try result.get()
+            guard !urls.isEmpty else { return }
+            var failures: [String] = []
+            for url in urls {
+                let accessed = url.startAccessingSecurityScopedResource()
+                do {
+                    let candidate = try ApplicationCaptureCandidateProvider().candidate(bundleURL: url)
+                    draft.selectApplication(candidate)
+                    suggestRuleName(for: candidate)
+                } catch {
+                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                }
                 if accessed { url.stopAccessingSecurityScopedResource() }
             }
-            let candidate = try ApplicationCaptureCandidateProvider().candidate(bundleURL: url)
-            draft.selectedApplication = candidate
-            draft.selectedProcess = nil
+            submissionError = failures.isEmpty
+                ? nil
+                : "Some applications could not be added: \(failures.joined(separator: "; "))"
+        } catch {
+            submissionError = error.localizedDescription
+        }
+    }
+
+    private func addSelectedApplication() {
+        guard let id = applicationToAddID,
+              let candidate = availableApplicationCandidates.first(where: { $0.id == id }) else {
+            return
+        }
+        draft.selectApplication(candidate)
+        applicationToAddID = nil
+        suggestRuleName(for: candidate)
+    }
+
+    private func addSelectedProcess() {
+        guard let id = processToAddID else { return }
+        draft.selectProcess(id: id, from: availableProcessCandidates)
+        processToAddID = nil
+    }
+
+    private func addApplicationIdentifiers() {
+        do {
+            try draft.commitApplicationIdentifierInput()
             submissionError = nil
-            suggestRuleName(for: candidate)
         } catch {
             submissionError = error.localizedDescription
         }
@@ -721,10 +827,7 @@ struct CaptureRuleEditorSheet: View {
     }
 
     private static func usesAdvancedOptions(_ draft: CaptureRuleDraft) -> Bool {
-        draft.selectedProcess != nil
-            || !draft.applicationIdentifierPattern
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !draft.executablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.executablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !draft.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !draft.matchesTCP
             || !draft.matchesUDP

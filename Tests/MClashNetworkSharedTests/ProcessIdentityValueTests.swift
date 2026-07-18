@@ -129,6 +129,16 @@ struct ProcessIdentityValueTests {
         #expect(!policy.contains(.unavailable(.processNoLongerExists)))
     }
 
+    @Test
+    func trustedMClashPolicyAcceptsOnlyExactKernelMetadataIdentifiers() {
+        let policy = TrustedMClashComponentPolicy()
+
+        #expect(policy.contains(metadataSigningIdentifier: "one.leaper.mclash"))
+        #expect(policy.contains(metadataSigningIdentifier: "  MClash-Mihomo  "))
+        #expect(!policy.contains(metadataSigningIdentifier: "mclash"))
+        #expect(!policy.contains(metadataSigningIdentifier: "one.leaper.mclash.fake"))
+    }
+
     private func resolution(
         signingIdentifier: String,
         teamIdentifier: String?

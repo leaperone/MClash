@@ -538,9 +538,11 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
         flow: NEAppProxyTCPFlow,
         proxy: ProviderSOCKSConfiguration,
         destination: SOCKS5Endpoint,
+        directFallbackDestination: SOCKS5Endpoint? = nil,
         unavailableFallback: UnavailableFallback,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
     ) {
+        let fallbackDestination = directFallbackDestination ?? destination
         let relayGeneration = currentGeneration()
         let relay = TCPFlowRelay(
             flow: flow,
@@ -554,7 +556,7 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
                 exit: exit,
                 generation: relayGeneration,
                 flow: flow,
-                destination: destination,
+                destination: fallbackDestination,
                 activityObserver: activityObserver
             )
         }

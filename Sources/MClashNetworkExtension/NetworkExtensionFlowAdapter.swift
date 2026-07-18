@@ -73,6 +73,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                 return TCPFlowInterceptionPlan(
                     decision: failOpen(.unsupportedRemoteEndpoint),
                     destination: nil,
+                    mihomoDestination: nil,
                     proxy: nil,
                     unavailableFallback: .direct,
                     activity: fallbackActivity(
@@ -89,6 +90,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                 return TCPFlowInterceptionPlan(
                     decision: failOpen(.unsupportedRemoteEndpoint),
                     destination: nil,
+                    mihomoDestination: nil,
                     proxy: nil,
                     unavailableFallback: .direct,
                     activity: fallbackActivity(
@@ -108,10 +110,14 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             transportProtocol: .tcp,
             state: currentState
         )
-        let destination = try? ProviderSOCKSConfiguration.destination(for: endpoint)
+        let destinations = try? ProviderSOCKSConfiguration.destinations(
+            for: endpoint,
+            preferredHostname: outcome.destinationHostname
+        )
         return TCPFlowInterceptionPlan(
             decision: outcome.decision,
-            destination: destination,
+            destination: destinations?.original,
+            mihomoDestination: destinations?.mihomo,
             proxy: proxy(for: outcome.decision, state: currentState),
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
@@ -135,6 +141,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             return UDPFlowInterceptionPlan(
                 decision: failOpen(.unsupportedRemoteEndpoint),
                 initialDestination: nil,
+                mihomoDestination: nil,
                 proxy: nil,
                 unavailableFallback: .direct,
                 activity: fallbackActivity(
@@ -172,6 +179,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             return UDPFlowInterceptionPlan(
                 decision: failOpen(.unsupportedRemoteEndpoint),
                 initialDestination: nil,
+                mihomoDestination: nil,
                 proxy: nil,
                 unavailableFallback: .direct,
                 activity: fallbackActivity(
@@ -259,13 +267,17 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         } else {
             identityResolution = .unavailable(.invalidAuditTokenLength(expected: 32, actual: 0))
         }
+        let isTrustedMClashComponent = trustedComponentPolicy.contains(identityResolution)
+            || trustedComponentPolicy.contains(
+                metadataSigningIdentifier: applicationMetadata.sourceAppSigningIdentifier
+            )
         let context = contextBuilder.resolve(
             endpoint: endpoint,
             remoteHostname: remoteHostname ?? flow.remoteHostname,
             metadata: applicationMetadata,
             identityResolution: identityResolution,
             transportProtocol: transportProtocol,
-            isTrustedMClashComponent: trustedComponentPolicy.contains(identityResolution)
+            isTrustedMClashComponent: isTrustedMClashComponent
         )
         let decision = decisionAdapter.decide(
             preparedConfiguration: currentState.preparedConfiguration,
@@ -275,6 +287,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         )
         return FlowDecisionOutcome(
             decision: decision,
+            destinationHostname: context.context?.destination.hostname,
             activity: makeActivity(
                 flow: flow,
                 endpoint: endpoint,
@@ -304,10 +317,14 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             remoteHostname: remoteHostname,
             parentFlowIdentifier: parentFlowIdentifier
         )
-        let destination = try? ProviderSOCKSConfiguration.destination(for: endpoint)
+        let destinations = try? ProviderSOCKSConfiguration.destinations(
+            for: endpoint,
+            preferredHostname: outcome.destinationHostname
+        )
         return UDPFlowInterceptionPlan(
             decision: outcome.decision,
-            initialDestination: destination,
+            initialDestination: destinations?.original,
+            mihomoDestination: destinations?.mihomo,
             proxy: proxy(for: outcome.decision, state: currentState),
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
@@ -540,12 +557,16 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
 
 private struct FlowDecisionOutcome: Sendable {
     let decision: FlowTrafficDecision
+    let destinationHostname: String?
     let activity: AppRoutingActivity
 }
 
 struct TCPFlowInterceptionPlan: Sendable {
     let decision: FlowTrafficDecision
+    /// Original macOS endpoint, retained for Direct and unavailable fallback.
     let destination: SOCKS5Endpoint?
+    /// Hostname-preserving SOCKS target used only for Mihomo relay.
+    let mihomoDestination: SOCKS5Endpoint?
     let proxy: ProviderSOCKSConfiguration?
     let unavailableFallback: UnavailableFallback
     let activity: AppRoutingActivity
@@ -553,7 +574,10 @@ struct TCPFlowInterceptionPlan: Sendable {
 
 struct UDPFlowInterceptionPlan: Sendable {
     let decision: FlowTrafficDecision
+    /// Original datagram endpoint, retained as the conversation key and for Direct.
     let initialDestination: SOCKS5Endpoint?
+    /// Hostname-preserving SOCKS target used only for Mihomo relay.
+    let mihomoDestination: SOCKS5Endpoint?
     let proxy: ProviderSOCKSConfiguration?
     let unavailableFallback: UnavailableFallback
     let activity: AppRoutingActivity
@@ -562,6 +586,7 @@ struct UDPFlowInterceptionPlan: Sendable {
     init(
         decision: FlowTrafficDecision,
         initialDestination: SOCKS5Endpoint?,
+        mihomoDestination: SOCKS5Endpoint?,
         proxy: ProviderSOCKSConfiguration?,
         unavailableFallback: UnavailableFallback,
         activity: AppRoutingActivity,
@@ -569,6 +594,7 @@ struct UDPFlowInterceptionPlan: Sendable {
     ) {
         self.decision = decision
         self.initialDestination = initialDestination
+        self.mihomoDestination = mihomoDestination
         self.proxy = proxy
         self.unavailableFallback = unavailableFallback
         self.activity = activity

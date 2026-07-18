@@ -11,6 +11,43 @@ struct ApplicationCaptureCandidate: Identifiable, Equatable, Sendable {
     let executablePath: String
     let runningProcessIdentifiers: [Int32]
     let matcher: ApplicationSourceMatcher
+    /// Exact identifiers that macOS may publish for this application and its
+    /// app-specific helper executables when full process inspection is not
+    /// available. These are deliberately exact values, never wildcards.
+    let fallbackIdentifierPatterns: [String]
+
+    init(
+        id: String,
+        displayName: String,
+        bundleIdentifier: String?,
+        executablePath: String,
+        runningProcessIdentifiers: [Int32],
+        matcher: ApplicationSourceMatcher,
+        fallbackIdentifierPatterns: [String]? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.bundleIdentifier = bundleIdentifier
+        self.executablePath = executablePath
+        self.runningProcessIdentifiers = runningProcessIdentifiers
+        self.matcher = matcher
+        self.fallbackIdentifierPatterns = Self.normalizedFallbackPatterns(
+            fallbackIdentifierPatterns ?? [bundleIdentifier, matcher.signingIdentifier].compactMap { $0 }
+        )
+    }
+
+    private static func normalizedFallbackPatterns(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        return values.compactMap { value in
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty,
+                  (try? ApplicationIdentifierPatternMatcher(pattern: normalized)) != nil,
+                  seen.insert(normalized).inserted else {
+                return nil
+            }
+            return normalized
+        }
+    }
 }
 
 struct RunningProcessCaptureCandidate: Identifiable, Equatable, Sendable {
@@ -140,6 +177,11 @@ struct ApplicationCaptureCandidateProvider: Sendable {
         let identity = try codeIdentity(at: canonicalBundleURL)
         let bundleIdentifier = Bundle(url: canonicalBundleURL)?.bundleIdentifier
             ?? identity.securedBundleIdentifier
+        let fallbackIdentifierPatterns = applicationIdentifierPatterns(
+            bundleURL: canonicalBundleURL,
+            primaryIdentity: identity,
+            bundleIdentifier: bundleIdentifier
+        )
         let matcher = ApplicationSourceMatcher(
             designatedRequirement: identity.designatedRequirement,
             signingIdentifier: identity.signingIdentifier,
@@ -162,8 +204,104 @@ struct ApplicationCaptureCandidateProvider: Sendable {
             bundleIdentifier: bundleIdentifier,
             executablePath: executableURL.resolvingSymlinksInPath().standardizedFileURL.path,
             runningProcessIdentifiers: Array(Set(processIdentifiers.map { Int32($0) })).sorted(),
-            matcher: matcher
+            matcher: matcher,
+            fallbackIdentifierPatterns: fallbackIdentifierPatterns
         )
+    }
+
+    /// Returns exact, app-owned signing identifiers for the main application
+    /// and a bounded set of conventional helper locations. This covers tools
+    /// such as an app-bundled CLI without creating generic `node`/shell rules
+    /// that could capture unrelated applications.
+    private func applicationIdentifierPatterns(
+        bundleURL: URL,
+        primaryIdentity: SignedCodeIdentity,
+        bundleIdentifier: String?
+    ) -> [String] {
+        var values = [bundleIdentifier, primaryIdentity.signingIdentifier].compactMap { $0 }
+        guard let teamIdentifier = primaryIdentity.teamIdentifier, !teamIdentifier.isEmpty else {
+            return values
+        }
+
+        for executableURL in helperExecutableURLs(in: bundleURL) {
+            guard let identity = try? codeIdentity(at: executableURL),
+                  identity.teamIdentifier == teamIdentifier,
+                  Self.isAppSpecificHelperIdentifier(identity.signingIdentifier) else {
+                continue
+            }
+            values.append(identity.signingIdentifier)
+            if let securedBundleIdentifier = identity.securedBundleIdentifier {
+                values.append(securedBundleIdentifier)
+            }
+        }
+        return values
+    }
+
+    private func helperExecutableURLs(in bundleURL: URL) -> [URL] {
+        let contentsURL = bundleURL.appendingPathComponent("Contents", isDirectory: true)
+        let fileManager = FileManager.default
+        var result: [URL] = []
+        var seen: Set<String> = []
+
+        // CLI-style helpers are commonly placed directly in one of these
+        // folders. Keep the scan shallow and bounded so opening the editor does
+        // not walk an application's dependency tree.
+        for directoryName in ["MacOS", "Helpers", "Resources"] {
+            let directory = contentsURL.appendingPathComponent(directoryName, isDirectory: true)
+            let children = (try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            for child in children.prefix(256) {
+                let values = try? child.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                guard values?.isRegularFile == true,
+                      values?.isSymbolicLink != true,
+                      fileManager.isExecutableFile(atPath: child.path),
+                      seen.insert(child.standardizedFileURL.path).inserted else {
+                    continue
+                }
+                result.append(child)
+            }
+        }
+
+        // Also include the main executable of conventional nested code
+        // bundles, while avoiding recursive inspection of their resources.
+        let packageContainers = ["Frameworks", "PlugIns", "XPCServices", "Library/LoginItems"]
+        let packageExtensions: Set<String> = ["app", "appex", "plugin", "xpc"]
+        for relativePath in packageContainers {
+            let container = contentsURL.appendingPathComponent(relativePath, isDirectory: true)
+            guard let enumerator = fileManager.enumerator(
+                at: container,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles],
+                errorHandler: { _, _ in true }
+            ) else { continue }
+            var inspectedPackages = 0
+            while let candidate = enumerator.nextObject() as? URL, inspectedPackages < 128 {
+                guard packageExtensions.contains(candidate.pathExtension.lowercased()) else {
+                    continue
+                }
+                enumerator.skipDescendants()
+                inspectedPackages += 1
+                guard let executable = Bundle(url: candidate)?.executableURL,
+                      seen.insert(executable.standardizedFileURL.path).inserted else {
+                    continue
+                }
+                result.append(executable)
+            }
+        }
+        return result
+    }
+
+    private static func isAppSpecificHelperIdentifier(_ value: String) -> Bool {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let genericIdentifiers: Set<String> = [
+            "bash", "bun", "corepack", "curl", "dash", "deno", "fish", "git", "helper",
+            "node", "npm", "npx", "perl", "php", "python", "python3", "rg", "ruby",
+            "sh", "ssh", "wget", "zsh",
+        ]
+        return !normalized.isEmpty && !genericIdentifiers.contains(normalized)
     }
 
     func runningProcesses(

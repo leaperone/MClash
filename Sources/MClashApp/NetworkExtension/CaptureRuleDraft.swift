@@ -80,9 +80,10 @@ struct CaptureRuleDraft: Equatable, Sendable {
     var identifier: String
     var enabled: Bool
     var priority: Int
-    var selectedApplication: ApplicationCaptureCandidate?
-    var selectedProcess: RunningProcessCaptureCandidate?
-    var applicationIdentifierPattern: String
+    var selectedApplications: [ApplicationCaptureCandidate]
+    var selectedProcesses: [RunningProcessCaptureCandidate]
+    var applicationIdentifierPatterns: [String]
+    var applicationIdentifierInput: String
     var executablePath: String
     var userID: String
     var destinations: [DestinationMatcher]
@@ -100,8 +101,12 @@ struct CaptureRuleDraft: Equatable, Sendable {
         enabled: Bool = true,
         priority: Int = 100,
         selectedApplication: ApplicationCaptureCandidate? = nil,
+        selectedApplications: [ApplicationCaptureCandidate] = [],
         selectedProcess: RunningProcessCaptureCandidate? = nil,
+        selectedProcesses: [RunningProcessCaptureCandidate] = [],
         applicationIdentifierPattern: String = "",
+        applicationIdentifierPatterns: [String] = [],
+        applicationIdentifierInput: String = "",
         executablePath: String = "",
         userID: String = "",
         destinations: [DestinationMatcher] = [],
@@ -117,9 +122,16 @@ struct CaptureRuleDraft: Equatable, Sendable {
         self.identifier = identifier
         self.enabled = enabled
         self.priority = priority
-        self.selectedApplication = selectedApplication
-        self.selectedProcess = selectedProcess
-        self.applicationIdentifierPattern = applicationIdentifierPattern
+        self.selectedApplications = Self.uniqueApplications(
+            [selectedApplication].compactMap { $0 } + selectedApplications
+        )
+        self.selectedProcesses = Self.uniqueProcesses(
+            [selectedProcess].compactMap { $0 } + selectedProcesses
+        )
+        self.applicationIdentifierPatterns = Self.normalizedIdentifierPatterns(
+            applicationIdentifierPatterns + Self.splitPatternEntries(applicationIdentifierPattern)
+        )
+        self.applicationIdentifierInput = applicationIdentifierInput
         self.executablePath = executablePath
         self.userID = userID
         self.destinations = destinations
@@ -168,23 +180,22 @@ struct CaptureRuleDraft: Equatable, Sendable {
             case let .processInstance(matcher): processMatchers.append(matcher)
             }
         }
-        guard applicationMatchers.count <= 1,
-              executableMatchers.count <= 1,
-              processMatchers.count <= 1,
+        guard executableMatchers.count <= 1,
               userIDs.count <= 1 else {
             throw CaptureRuleDraftError.unsupportedExistingRule(
                 "multiple matchers of the same source type"
             )
         }
 
-        if let matcher = applicationMatchers.first {
-            selectedApplication = applicationCandidates.first(where: { $0.matcher == matcher })
+        selectedApplications = applicationMatchers.map { matcher in
+            applicationCandidates.first(where: { $0.matcher == matcher })
                 ?? Self.placeholderCandidate(
                     matcher: matcher,
                     executablePath: executableMatchers.first?.canonicalPath ?? ""
                 )
         }
-        if let matcher = processMatchers.first {
+        selectedApplications = Self.uniqueApplications(selectedApplications)
+        selectedProcesses = try processMatchers.map { matcher in
             guard matcher.auditToken == nil,
                   matcher.startTime != nil,
                   matcher.canonicalExecutablePath != nil else {
@@ -192,12 +203,18 @@ struct CaptureRuleDraft: Equatable, Sendable {
                     "provider-observed audit-token process matcher"
                 )
             }
-            selectedProcess = processCandidates.first(where: { $0.matcher == matcher })
+            return processCandidates.first(where: { $0.matcher == matcher })
                 ?? Self.placeholderProcessCandidate(matcher: matcher)
         }
-        applicationIdentifierPattern = applicationPatternMatchers
+        selectedProcesses = Self.uniqueProcesses(selectedProcesses)
+        let managedApplicationPatterns = Set(
+            selectedApplications.flatMap(\.fallbackIdentifierPatterns)
+        )
+        applicationIdentifierPatterns = Self.normalizedIdentifierPatterns(
+            applicationPatternMatchers
             .map(\.pattern)
-            .joined(separator: "; ")
+            .filter { !managedApplicationPatterns.contains($0) }
+        )
         executablePath = executableMatchers.first?.canonicalPath ?? ""
         userID = userIDs.first.map(String.init) ?? ""
 
@@ -210,12 +227,17 @@ struct CaptureRuleDraft: Equatable, Sendable {
         }.joined(separator: "; ")
     }
 
-    var selectedApplicationID: String? {
-        selectedApplication?.id
-    }
-
-    var selectedProcessID: String? {
-        selectedProcess?.id
+    /// Compatibility accessors for callers that only need the first selected
+    /// source. New UI should use the plural collections.
+    var selectedApplication: ApplicationCaptureCandidate? { selectedApplications.first }
+    var selectedProcess: RunningProcessCaptureCandidate? { selectedProcesses.first }
+    var applicationIdentifierPattern: String {
+        get { applicationIdentifierPatterns.joined(separator: "; ") }
+        set {
+            applicationIdentifierPatterns = Self.normalizedIdentifierPatterns(
+                Self.splitPatternEntries(newValue)
+            )
+        }
     }
 
     mutating func selectApplication(
@@ -223,13 +245,30 @@ struct CaptureRuleDraft: Equatable, Sendable {
         from candidates: [ApplicationCaptureCandidate]
     ) {
         guard let id else {
-            selectedApplication = nil
             return
         }
-        selectedApplication = candidates.first(where: { $0.id == id })
-        if selectedApplication != nil {
-            selectedProcess = nil
+        if let candidate = candidates.first(where: { $0.id == id }) {
+            addApplication(candidate)
+            // A newly selected application should cover both stream traffic
+            // and datagrams/QUIC unless the user explicitly narrows it later.
+            matchesTCP = true
+            matchesUDP = true
         }
+    }
+
+    mutating func selectApplication(_ candidate: ApplicationCaptureCandidate) {
+        addApplication(candidate)
+        matchesTCP = true
+        matchesUDP = true
+    }
+
+    mutating func addApplication(_ candidate: ApplicationCaptureCandidate) {
+        guard !selectedApplications.contains(where: { $0.id == candidate.id }) else { return }
+        selectedApplications.append(candidate)
+    }
+
+    mutating func removeApplication(id: String) {
+        selectedApplications.removeAll { $0.id == id }
     }
 
     mutating func selectProcess(
@@ -237,13 +276,35 @@ struct CaptureRuleDraft: Equatable, Sendable {
         from candidates: [RunningProcessCaptureCandidate]
     ) {
         guard let id else {
-            selectedProcess = nil
             return
         }
-        selectedProcess = candidates.first(where: { $0.id == id })
-        if selectedProcess != nil {
-            selectedApplication = nil
+        if let candidate = candidates.first(where: { $0.id == id }),
+           !selectedProcesses.contains(where: { $0.id == candidate.id }) {
+            selectedProcesses.append(candidate)
         }
+    }
+
+    mutating func removeProcess(id: String) {
+        selectedProcesses.removeAll { $0.id == id }
+    }
+
+    mutating func commitApplicationIdentifierInput() throws {
+        let entries = Self.splitPatternEntries(applicationIdentifierInput)
+        let normalizedEntries = try entries.map { entry in
+            do {
+                return try ApplicationIdentifierPatternMatcher(pattern: entry).pattern
+            } catch {
+                throw CaptureRuleDraftError.invalidApplicationPattern(entry)
+            }
+        }
+        for normalized in normalizedEntries where !applicationIdentifierPatterns.contains(normalized) {
+            applicationIdentifierPatterns.append(normalized)
+        }
+        applicationIdentifierInput = ""
+    }
+
+    mutating func removeApplicationIdentifier(_ pattern: String) {
+        applicationIdentifierPatterns.removeAll { $0 == pattern }
     }
 
     mutating func useSelectedApplicationExecutable() {
@@ -355,14 +416,28 @@ struct CaptureRuleDraft: Equatable, Sendable {
 
     private func sourceMatchers() throws -> [SourceMatcher] {
         var sources: [SourceMatcher] = []
-        if let selectedApplication {
+        for selectedApplication in selectedApplications {
             sources.append(.application(selectedApplication.matcher))
+            for pattern in selectedApplication.fallbackIdentifierPatterns {
+                do {
+                    let source = SourceMatcher.applicationIdentifierPattern(
+                        try ApplicationIdentifierPatternMatcher(pattern: pattern)
+                    )
+                    if !sources.contains(source) { sources.append(source) }
+                } catch {
+                    // Candidates validate and normalize these identifiers when
+                    // they are created. Ignore stale invalid data defensively.
+                    continue
+                }
+            }
         }
-        if let selectedProcess {
+        for selectedProcess in selectedProcesses {
             sources.append(.processInstance(selectedProcess.matcher))
         }
 
-        for applicationPattern in Self.splitPatternEntries(applicationIdentifierPattern) {
+        let applicationPatterns = applicationIdentifierPatterns
+            + Self.splitPatternEntries(applicationIdentifierInput)
+        for applicationPattern in applicationPatterns {
             do {
                 let matcher = try ApplicationIdentifierPatternMatcher(pattern: applicationPattern)
                 let source = SourceMatcher.applicationIdentifierPattern(matcher)
@@ -382,14 +457,13 @@ struct CaptureRuleDraft: Equatable, Sendable {
             let canonicalPath = URL(fileURLWithPath: path)
                 .resolvingSymlinksInPath()
                 .standardizedFileURL.path
-            let selectedCanonicalPath = selectedApplication.map {
-                URL(fileURLWithPath: $0.executablePath)
+            let selectedApplication = selectedApplications.first { candidate in
+                URL(fileURLWithPath: candidate.executablePath)
                     .resolvingSymlinksInPath()
                     .standardizedFileURL.path
+                    == canonicalPath
             }
-            let requirement = selectedCanonicalPath == canonicalPath
-                ? selectedApplication?.matcher.designatedRequirement
-                : nil
+            let requirement = selectedApplication?.matcher.designatedRequirement
             sources.append(.executable(ExecutableSourceMatcher(
                 canonicalPath: canonicalPath,
                 designatedRequirement: requirement
@@ -498,6 +572,32 @@ struct CaptureRuleDraft: Equatable, Sendable {
             .filter { !$0.isEmpty }
     }
 
+    private static func normalizedIdentifierPatterns(_ values: [String]) -> [String] {
+        var result: [String] = []
+        for value in values {
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty, !result.contains(normalized) else {
+                continue
+            }
+            result.append(normalized)
+        }
+        return result
+    }
+
+    private static func uniqueApplications(
+        _ values: [ApplicationCaptureCandidate]
+    ) -> [ApplicationCaptureCandidate] {
+        var seen: Set<String> = []
+        return values.filter { seen.insert($0.id).inserted }
+    }
+
+    private static func uniqueProcesses(
+        _ values: [RunningProcessCaptureCandidate]
+    ) -> [RunningProcessCaptureCandidate] {
+        var seen: Set<String> = []
+        return values.filter { seen.insert($0.id).inserted }
+    }
+
     static func destinationLabel(_ matcher: DestinationMatcher) -> String {
         switch matcher {
         case let .host(host):
@@ -583,7 +683,11 @@ struct CaptureRuleDraft: Equatable, Sendable {
             bundleIdentifier: matcher.bundleIdentifier,
             executablePath: executablePath,
             runningProcessIdentifiers: [],
-            matcher: matcher
+            matcher: matcher,
+            // Without the installed bundle we cannot distinguish app-owned
+            // helpers from unrelated stored patterns, so preserve the rule
+            // exactly and leave every pattern explicit in the editor.
+            fallbackIdentifierPatterns: []
         )
     }
 
