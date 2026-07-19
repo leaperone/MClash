@@ -75,6 +75,49 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         self.mihomoListener = mihomoListener
     }
 
+    /// Produces a rule-update configuration while keeping the already-running
+    /// DNS Provider's independently verified bootstrap identity. Capture rules
+    /// advance to the new revision, but DNS is not restarted for rule-only
+    /// changes and must continue using its original revision and activation.
+    func preservingDNSRuntimeIdentity(
+        from activeDNSConfiguration: NetworkExtensionRuntimeConfiguration
+    ) -> NetworkExtensionRuntimeConfiguration {
+        guard dnsEnabled, activeDNSConfiguration.dnsEnabled else { return self }
+        return NetworkExtensionRuntimeConfiguration(
+            revision: revision,
+            activationIdentifier: activeDNSConfiguration.activationIdentifier,
+            dnsEnabled: dnsEnabled,
+            failOpen: failOpen,
+            captureEnabled: captureEnabled,
+            encodedCaptureSnapshot: encodedCaptureSnapshot,
+            encodedMihomoRouteProxyCatalog: encodedMihomoRouteProxyCatalog,
+            encodedDNSProxyBootstrap: activeDNSConfiguration.encodedDNSProxyBootstrap,
+            mihomoListener: mihomoListener
+        )
+    }
+
+    private init(
+        revision: UInt64,
+        activationIdentifier: UUID,
+        dnsEnabled: Bool,
+        failOpen: Bool,
+        captureEnabled: Bool,
+        encodedCaptureSnapshot: Data?,
+        encodedMihomoRouteProxyCatalog: Data?,
+        encodedDNSProxyBootstrap: Data?,
+        mihomoListener: NetworkExtensionMihomoListenerConfiguration?
+    ) {
+        self.revision = revision
+        self.activationIdentifier = activationIdentifier
+        self.dnsEnabled = dnsEnabled
+        self.failOpen = failOpen
+        self.captureEnabled = captureEnabled
+        self.encodedCaptureSnapshot = encodedCaptureSnapshot
+        self.encodedMihomoRouteProxyCatalog = encodedMihomoRouteProxyCatalog
+        self.encodedDNSProxyBootstrap = encodedDNSProxyBootstrap
+        self.mihomoListener = mihomoListener
+    }
+
     var providerConfiguration: [String: NSObject] {
         var configuration: [String: NSObject] = [
             "revision": NSNumber(value: revision),

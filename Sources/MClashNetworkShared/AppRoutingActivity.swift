@@ -106,6 +106,20 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
     public var lastPayloadAt: Date?
 
     public var id: UUID { flowIdentifier }
+    /// Whether the Network Extension still owns this flow and can continue
+    /// reporting its lifecycle and payload counters.
+    ///
+    /// Ordinary Direct and fail-open decisions are handed back to macOS and
+    /// are therefore terminal observations rather than live managed flows.
+    public var isLiveManagedFlow: Bool {
+        guard endedAt == nil else { return false }
+        switch relayState {
+        case .pending, .connecting, .ready, .relaying:
+            return true
+        case .notApplicable, .completed, .failed:
+            return false
+        }
+    }
     /// Structured, privacy-bounded rule-decision evidence carried by the
     /// provider snapshot. Legacy activity records return nil.
     public var ruleEvidence: CaptureRuleDecisionEvidence? { decision.ruleEvidence }
@@ -279,7 +293,7 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
             active.removeValue(forKey: identifier)
             removeHistory(identifier, markAsDropped: false)
 
-            if Self.isActive(stored) {
+            if stored.isLiveManagedFlow {
                 active[identifier] = stored
             } else {
                 appendHistory(stored)
@@ -342,16 +356,6 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
                 markDropped(newest.sequence)
             }
             removeAllHistory()
-        }
-    }
-
-    private static func isActive(_ activity: AppRoutingActivity) -> Bool {
-        guard activity.endedAt == nil else { return false }
-        switch activity.relayState {
-        case .pending, .connecting, .ready, .relaying:
-            return true
-        case .notApplicable, .completed, .failed:
-            return false
         }
     }
 

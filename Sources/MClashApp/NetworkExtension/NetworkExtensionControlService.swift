@@ -11,6 +11,9 @@ protocol NetworkExtensionControlling: Sendable {
         _ configuration: NetworkExtensionRuntimeConfiguration,
         progress reportProgress: @escaping @Sendable (NetworkExtensionEnableProgress) -> Void
     ) async throws -> NetworkExtensionEnableOutcome
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> NetworkExtensionEnableOutcome
     func disable() async throws
     func uninstall() async throws -> NetworkExtensionUninstallOutcome
     func currentState() async -> NetworkExtensionControlState
@@ -30,6 +33,12 @@ extension NetworkExtensionControlling {
 
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus? { nil }
 
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> NetworkExtensionEnableOutcome {
+        try await enable(configuration)
+    }
+
 }
 
 actor NetworkExtensionControlService: NetworkExtensionControlling {
@@ -37,6 +46,10 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     private let transparentProxy: any TransparentProxyManaging
     private let dnsProxy: any DNSProxyManaging
     private var activeConfiguration: NetworkExtensionRuntimeConfiguration?
+    /// DNS has no provider-message update channel. Rule-only App Routing
+    /// updates therefore leave its already-verified bootstrap running and
+    /// track that identity independently from the transparent provider.
+    private var activeDNSConfiguration: NetworkExtensionRuntimeConfiguration?
 
     private(set) var state: NetworkExtensionControlState = .inactive
 
@@ -147,6 +160,7 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                 try await dnsProxy.configureAndEnable(configuration)
                 try await dnsProxy.reload()
                 try transition(.dnsProxyConfigured)
+                activeDNSConfiguration = configuration
                 networkExtensionControlLogger.notice(
                     "DNS Proxy preferences and Provider heartbeat verified revision=\(configuration.revision, privacy: .public)"
                 )
@@ -156,6 +170,7 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                 // left enabled by an older version or interrupted activation.
                 operation = .disableDNSProxy
                 try await dnsProxy.disable()
+                activeDNSConfiguration = nil
             }
 
             activeConfiguration = configuration
@@ -165,6 +180,7 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
             return .running
         } catch {
             activeConfiguration = nil
+            activeDNSConfiguration = nil
             // Roll back in reverse data-plane order. DNS is always disabled
             // first, before the transparent provider and its local backend can
             // stop, so no resolver traffic is left pointing at a dead relay.
@@ -196,6 +212,74 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
             try? transition(.failed(failure))
             networkExtensionControlLogger.error(
                 "Enable rolled back revision=\(configuration.revision, privacy: .public) operation=\(operation.rawValue, privacy: .public) error=\(failure.localizedDescription, privacy: .public) rollbackFailures=\(rollbackFailures.count, privacy: .public)"
+            )
+            throw failure
+        }
+    }
+
+    /// Applies rule-only changes without stopping the transparent provider or
+    /// Mihomo. Existing relays keep the plan they started with; only new flows
+    /// observe the replacement snapshot.
+    ///
+    /// The saved Network Extension preferences are updated before the live
+    /// provider message so an independently relaunched provider cannot fall
+    /// back to stale rules. DNS keeps its existing bootstrap because App
+    /// Routing matchers do not alter the DNS relay endpoint.
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> NetworkExtensionEnableOutcome {
+        guard state.phase == .running,
+              let previous = activeConfiguration,
+              previous.captureEnabled,
+              configuration.captureEnabled,
+              configuration.revision > previous.revision,
+              configuration.dnsEnabled == previous.dnsEnabled,
+              configuration.mihomoListener == previous.mihomoListener,
+              !configuration.dnsEnabled
+                || activeDNSConfiguration?.mihomoListener
+                    == configuration.mihomoListener
+        else {
+            return try await enable(configuration)
+        }
+
+        networkExtensionControlLogger.notice(
+            "Live update requested previousRevision=\(previous.revision, privacy: .public) revision=\(configuration.revision, privacy: .public)"
+        )
+        let liveConfiguration = activeDNSConfiguration.map {
+            configuration.preservingDNSRuntimeIdentity(from: $0)
+        } ?? configuration
+        do {
+            // Persist first. Apple exposes protocolConfiguration changes to the
+            // current provider session; the explicit provider message below is
+            // still the atomic decision-state commit used by MClash.
+            try await transparentProxy.configure(liveConfiguration)
+            try await transparentProxy.reload()
+            let status = try await transparentProxy.updateProviderConfiguration(
+                liveConfiguration
+            )
+            guard status.matches(liveConfiguration) else {
+                throw NetworkExtensionControlFailure(
+                    operation: .configureTransparentProxy,
+                    message: "The transparent proxy did not verify live revision \(liveConfiguration.revision)."
+                )
+            }
+
+            activeConfiguration = liveConfiguration
+            state.revision = liveConfiguration.revision
+            state.failure = nil
+            networkExtensionControlLogger.notice(
+                "Live update committed revision=\(liveConfiguration.revision, privacy: .public); existing relays and DNS identity preserved"
+            )
+            return .running
+        } catch {
+            let failure = error as? NetworkExtensionControlFailure
+                ?? NetworkExtensionControlFailure(
+                    operation: .configureTransparentProxy,
+                    underlying: error
+                )
+            try? transition(.failed(failure))
+            networkExtensionControlLogger.error(
+                "Live update failed revision=\(configuration.revision, privacy: .public) error=\(failure.localizedDescription, privacy: .public)"
             )
             throw failure
         }
@@ -244,6 +328,7 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
             throw failure
         }
         activeConfiguration = nil
+        activeDNSConfiguration = nil
         networkExtensionControlLogger.notice("Disable committed; DNS and Transparent Proxy are off")
     }
 
@@ -286,8 +371,8 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     }
 
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus? {
-        guard let activeConfiguration, activeConfiguration.dnsEnabled else { return nil }
-        return try await dnsProxy.runtimeStatus(for: activeConfiguration)
+        guard let activeDNSConfiguration else { return nil }
+        return try await dnsProxy.runtimeStatus(for: activeDNSConfiguration)
     }
 
     func appRoutingActivity(
@@ -320,7 +405,10 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
         _ configuration: NetworkExtensionRuntimeConfiguration
     ) async -> Bool {
         guard configuration.dnsEnabled else { return true }
-        guard let status = try? await dnsProxy.runtimeStatus(for: configuration) else {
+        guard let activeDNSConfiguration,
+              let status = try? await dnsProxy.runtimeStatus(
+                  for: activeDNSConfiguration
+              ) else {
             return false
         }
         return status.isOperational

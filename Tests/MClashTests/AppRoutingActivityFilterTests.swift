@@ -42,6 +42,33 @@ struct AppRoutingActivityFilterTests {
         #expect(!AppRoutingActivityFilter.viaMihomo.includes(direct))
     }
 
+    @Test("Live managed flow follows relay lifecycle")
+    func liveManagedFlowLifecycle() {
+        for state in [
+            AppRoutingRelayState.pending,
+            .connecting,
+            .ready,
+            .relaying,
+        ] {
+            #expect(activity(
+                configured: .mihomo(.profileRules),
+                effective: .mihomo(.profileRules),
+                relayState: state
+            ).isLiveManagedFlow)
+        }
+        for state in [
+            AppRoutingRelayState.notApplicable,
+            .completed,
+            .failed,
+        ] {
+            #expect(!activity(
+                configured: .mihomo(.profileRules),
+                effective: .mihomo(.profileRules),
+                relayState: state
+            ).isLiveManagedFlow)
+        }
+    }
+
     private func activity(
         configured: CaptureAction,
         effective: FlowTrafficDisposition,

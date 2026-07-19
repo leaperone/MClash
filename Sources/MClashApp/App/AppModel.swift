@@ -266,6 +266,7 @@ final class AppModel {
     struct NetworkCaptureChangeReceipt: Equatable, Sendable {
         enum Outcome: Equatable, Sendable {
             case savedForNextActivation
+            case rulesUpdatedLive(dnsEnabled: Bool)
             case requiresReboot(dnsEnabled: Bool)
             case appliedAndVerified(
                 enabled: Bool,
@@ -2504,7 +2505,8 @@ final class AppModel {
         do {
             if enabled {
                 networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener(
-                    for: rules
+                    for: rules,
+                    reusing: previous.enabled ? previousListener : nil
                 )
             }
             let candidate = try await store.replaceRules(
@@ -2534,6 +2536,54 @@ final class AppModel {
                 )
                 appendSupervisorLog(
                     "App Routing settings were saved for the next activation; the running core was not restarted."
+                )
+                return
+            }
+
+            // Matcher, priority, and action edits can be committed directly to
+            // the running provider when the existing private Mihomo listeners
+            // already cover every requested route. Existing relays retain the
+            // plan they started with; new flows use the new revision.
+            if previous.enabled,
+               enabled,
+               wasConnected,
+               isConnected,
+               controllerIsReady,
+               candidate.dnsEnabled == previous.dnsEnabled,
+               networkExtensionMihomoListener == previousListener,
+               case let .on(activeRevision) = networkCaptureState,
+               activeRevision == previous.snapshot.revision,
+               let listener = networkExtensionMihomoListener {
+                try await localPortProbe.waitUntilListening(
+                    ports: Set(listener.routeListeners.map { Int($0.port) })
+                )
+                let configuration = try NetworkExtensionRuntimeConfiguration(
+                    preferences: candidate,
+                    mihomoListener: listener
+                )
+                let updateOutcome = try await networkExtensionControl
+                    .updateRuntimeConfiguration(configuration)
+                guard updateOutcome == .running else {
+                    throw AppModelError.profileActivationFailed(
+                        "The live App Routing update did not reach a verified running state."
+                    )
+                }
+                networkCaptureState = .on(revision: configuration.revision)
+                appRoutingProviderStatusFailureCount = 0
+                appRoutingProviderLastVerifiedAt = Date()
+                dnsProxyRuntimeFailureCount = 0
+                dnsProxyAutomaticallyDisabled = false
+                markStreamHealthy(.appRouting)
+                startDNSProxyRuntimeMonitor()
+                launchAppRoutingActivityMonitor()
+                networkCaptureRollbackFailure = nil
+                networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                    completedAt: Date(),
+                    duration: Date().timeIntervalSince(transactionStartedAt),
+                    outcome: .rulesUpdatedLive(dnsEnabled: candidate.dnsEnabled)
+                )
+                appendSupervisorLog(
+                    "App Routing rules were updated live; Mihomo and existing relays stayed connected."
                 )
                 return
             }
@@ -4607,14 +4657,13 @@ final class AppModel {
                 generation: monitorGeneration,
                 expectedRevision: expectedRevision
             ) else { return }
-            guard status.revision == expectedRevision,
-                  status.isOperational else {
+            guard status.isOperational else {
                 throw NSError(
                     domain: "one.leaper.mclash.dns-runtime",
                     code: 1,
                     userInfo: [
                         NSLocalizedDescriptionKey:
-                            "DNS Provider is \(status.phase.rawValue) and backendReady=\(status.backendReady)"
+                            "DNS Provider revision \(status.revision) is \(status.phase.rawValue) and backendReady=\(status.backendReady)"
                     ]
                 )
             }
@@ -4820,12 +4869,7 @@ final class AppModel {
             activities,
             at: sampledAt
         )
-        let activeCount = activities.count {
-            $0.endedAt == nil
-                && $0.relayState != .completed
-                && $0.relayState != .failed
-                && $0.relayState != .notApplicable
-        }
+        let activeCount = activities.count { $0.isLiveManagedFlow }
         return AppRoutingActivityProcessingResult(
             activities: activities,
             activitiesByIdentifier: activitiesByIdentifier,
@@ -4846,10 +4890,7 @@ final class AppModel {
             guard let identifier = activity.matchedRuleIdentifier else { return }
             var value = result[identifier] ?? .zero
             value.matchCount += 1
-            if activity.endedAt == nil,
-               activity.relayState != .completed,
-               activity.relayState != .failed,
-               activity.relayState != .notApplicable {
+            if activity.isLiveManagedFlow {
                 value.activeCount += 1
             }
             if activity.relayState == .failed { value.failureCount += 1 }
@@ -5529,20 +5570,11 @@ final class AppModel {
     }
 
     private func makeNetworkExtensionMihomoListener(
-        for rules: [CaptureRule]
+        for rules: [CaptureRule],
+        reusing existing: NetworkExtensionMihomoListenerConfiguration? = nil
     ) throws
         -> NetworkExtensionMihomoListenerConfiguration
     {
-        var randomBytes = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
-        guard status == errSecSuccess else {
-            throw AppModelError.secureRandomGenerationFailed(status)
-        }
-        let password = Data(randomBytes).base64EncodedString()
-        let authentication = try NetworkExtensionMihomoAuthentication(
-            username: "mclash-network-extension",
-            password: password
-        )
         let requestedRoutes = Set<MihomoRoute>(rules.lazy.filter(\.enabled).compactMap { rule in
             guard case let .mihomo(route) = rule.action,
                   route != .profileRules else { return nil }
@@ -5554,6 +5586,23 @@ final class AppModel {
                 maximum: Self.maximumDedicatedMihomoRoutes
             )
         }
+        if let existing {
+            let availableRoutes = Set(existing.routeListeners.map(\.route))
+            if requestedRoutes.isSubset(of: availableRoutes) {
+                return existing
+            }
+        }
+
+        var randomBytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
+        guard status == errSecSuccess else {
+            throw AppModelError.secureRandomGenerationFailed(status)
+        }
+        let password = Data(randomBytes).base64EncodedString()
+        let authentication = try NetworkExtensionMihomoAuthentication(
+            username: "mclash-network-extension",
+            password: password
+        )
         let sortedRoutes = requestedRoutes.sorted {
             Self.mihomoRouteSortKey($0) < Self.mihomoRouteSortKey($1)
         }

@@ -80,10 +80,10 @@ struct CaptureRuleEditorSheet: View {
                             .accessibilityIdentifier("capture-rule-validation-error")
                     } else if appliesImmediately {
                         Label(
-                            "Saving restarts Mihomo and can close current connections.",
-                            systemImage: "arrow.clockwise.circle"
+                            "Existing connections stay online unless this rule needs a new Mihomo route listener.",
+                            systemImage: "bolt.horizontal.circle"
                         )
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.secondary)
                     } else {
                         Text("Changes are saved for the next App Routing activation.")
                             .foregroundStyle(.secondary)

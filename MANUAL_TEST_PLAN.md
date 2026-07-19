@@ -136,21 +136,28 @@ before testing failure scenarios.
   requirement.
 - App Routing: duplicate, edit, disable, delete, and move rules up/down. Confirm
   the table order is the evaluation order and the first matching rule wins.
+  While an existing App Routing relay and an unrelated Mihomo connection are
+  active, edit only match criteria or priority and confirm both connections stay
+  online. Add a rule that needs a previously unavailable Mihomo group listener
+  and confirm the app uses the verified restart path instead.
 - App Routing: keep Advanced Matching collapsed for the normal application →
   Mihomo path, then expand it and verify exact process, executable path, UID,
   IP, CIDR, domain, TCP/UDP, port range, and unavailable-route fallback inputs.
 - App Routing: turn the feature on while connected, approve the system
   extension if macOS requests it, and confirm the status reaches **App Routing
   On**. If it reports **Restart Required**, restart macOS and repeat the check.
-- App Routing: open **Activity** and create traffic from two applications. Confirm
-  the one-minute summary, Provider verification time, app/PID, destination,
-  matched App rule, Mihomo rule, root-to-leaf node path, relay outcome, and
-  measured byte counts update automatically. Double-click a row and verify the
+- App Routing: open **Activity** and create long-lived traffic from two
+  applications. Confirm each live provider-owned connection occupies one stable
+  row for its lifetime; app/PID, target host/IP/port, route, relay state, current
+  download/upload speed, transferred bytes, and duration update automatically.
+  Close each connection and confirm its row disappears on the next activity
+  refresh instead of remaining as history. Double-click a row and verify the
   complete Application → Capture → App Rule → Mihomo Rule → Proxy Path →
   Destination pipeline.
-- App Routing: exercise a Direct rule and a fail-open path. Confirm payload says
-  **Not measured after handoff**, never `0 B`. Exercise Reject and confirm it
-  says **No payload**. Stop or invalidate the Provider while the Host stays open;
+- App Routing: exercise a normal Direct rule and confirm it does not appear as a
+  live connection because macOS owns it after handoff. Exercise a provider-owned
+  Direct fallback and confirm it remains visible with measured speed. Stop or
+  invalidate the Provider while the Host stays open;
   after bounded retries, green On must become a durable Attention/Failed state
   with the actual disconnect reason and a Retry action.
 

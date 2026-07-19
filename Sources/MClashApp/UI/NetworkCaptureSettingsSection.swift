@@ -7,20 +7,17 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
     static let empty = AppRoutingActivityPresentationSnapshot(
         activities: [],
         flowEntries: [:],
-        filter: .focused,
         searchText: ""
     )
 
     let visibleActivities: [AppRoutingActivity]
     let visibleIdentifiers: Set<UUID>
     let activitiesByIdentifier: [UUID: AppRoutingActivity]
-    let retainedCount: Int
-    let showsOnlyHiddenDirectActivity: Bool
+    let activeCount: Int
 
     init(
         activities: [AppRoutingActivity],
         flowEntries: [UUID: FlowLedgerEntry],
-        filter: AppRoutingActivityFilter,
         searchText: String
     ) {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -29,7 +26,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         visibleActivities.reserveCapacity(activities.count)
         for (index, activity) in activities.enumerated() {
             if index.isMultiple(of: 64), Task.isCancelled { break }
-            guard filter.includes(activity) else { continue }
+            guard activity.isLiveManagedFlow else { continue }
             if query.isEmpty
                 || Self.searchText(for: activity, entry: flowEntries[activity.flowIdentifier])
                     .contains(query) {
@@ -41,11 +38,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         activitiesByIdentifier = Task.isCancelled ? [:] : Dictionary(
             uniqueKeysWithValues: activities.map { ($0.flowIdentifier, $0) }
         )
-        retainedCount = activities.count
-        showsOnlyHiddenDirectActivity = filter == .focused
-            && query.isEmpty
-            && !activities.isEmpty
-            && visibleActivities.isEmpty
+        activeCount = activities.count { $0.isLiveManagedFlow }
     }
 
     private static func searchText(
@@ -190,7 +183,6 @@ struct AppRoutingView: View {
     @State private var workspace: Workspace = .rules
     @State private var activitySearchText = ""
     @State private var debouncedActivitySearchText = ""
-    @State private var activityFilter: AppRoutingActivityFilter = .focused
     @State private var activityPresentation = AppRoutingActivityPresentationSnapshot.empty
     @State private var activityPresentationTask: Task<Void, Never>?
     @State private var activityPresentationGeneration: UInt64 = 0
@@ -282,9 +274,6 @@ struct AppRoutingView: View {
             }
         }
         .onChange(of: model.appRoutingActivityPresentationRevision) { _, _ in
-            scheduleActivityPresentationRefresh()
-        }
-        .onChange(of: activityFilter) { _, _ in
             scheduleActivityPresentationRefresh()
         }
         .onChange(of: debouncedActivitySearchText) { _, _ in
@@ -801,6 +790,15 @@ struct AppRoutingView: View {
                     symbol: "checkmark.circle.fill",
                     color: .green
                 ) { EmptyView() }
+            case let .rulesUpdatedLive(dnsEnabled):
+                statusNotice(
+                    title: "Rules updated without interrupting connections",
+                    message: dnsEnabled
+                        ? "New connections now use the updated rules. Mihomo, existing App Routing relays, and DNS Routing stayed online. Completed in \(formattedDuration(receipt.duration))."
+                        : "New connections now use the updated rules. Mihomo and existing App Routing relays stayed online. Completed in \(formattedDuration(receipt.duration)).",
+                    symbol: "checkmark.circle.fill",
+                    color: .green
+                ) { EmptyView() }
             case let .requiresReboot(dnsEnabled):
                 statusNotice(
                     title: "Restart required to finish App Routing",
@@ -1157,22 +1155,12 @@ struct AppRoutingView: View {
     @ViewBuilder
     private var activityWorkspace: some View {
         let visibleActivities = activityPresentation.visibleActivities
-        if activityPresentation.retainedCount == 0 {
+        if activityPresentation.activeCount == 0 {
             ContentUnavailableView(
-                "No App Routing Activity",
-                systemImage: "waveform.path.ecg",
+                "No Active App Routing Connections",
+                systemImage: "network.slash",
                 description: Text(activityEmptyDescription)
             )
-        } else if activityPresentation.showsOnlyHiddenDirectActivity {
-            ContentUnavailableView {
-                Label("Only Direct Activity", systemImage: "arrow.right")
-            } description: {
-                Text("Normal Direct traffic is hidden by default so proxy routes and problems stay easy to see.")
-            } actions: {
-                Button("Show All Activity") {
-                    activityFilter = .all
-                }
-            }
         } else if visibleActivities.isEmpty {
             ContentUnavailableView.search(text: activitySearchText)
         } else {
@@ -1199,7 +1187,7 @@ struct AppRoutingView: View {
             }
             .width(min: 145, ideal: 200)
 
-            TableColumn("Destination") { activity in
+            TableColumn("Target") { activity in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activityDestination(activity))
                         .lineLimit(1)
@@ -1212,19 +1200,19 @@ struct AppRoutingView: View {
             }
             .width(min: 145, ideal: 210)
 
-            TableColumn("App Rule") { activity in
+            TableColumn("Route") { activity in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(activity.matchedRuleIdentifier ?? activityCause(activity))
+                    Text(activityRoute(activity))
                         .lineLimit(1)
-                    Text("Requested: \(actionSummary(activity.configuredAction))")
+                    Text(activity.matchedRuleIdentifier ?? activityCause(activity))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
-            .width(min: 100, ideal: 145)
+            .width(min: 115, ideal: 165)
 
-            TableColumn("Result") { activity in
+            TableColumn("State") { activity in
                 Label(
                     activityResult(activity),
                     systemImage: activityResultSymbol(activity)
@@ -1235,24 +1223,22 @@ struct AppRoutingView: View {
             }
             .width(min: 100, ideal: 130)
 
-            TableColumn("Mihomo Rule / Path") { activity in
-                Text(mihomoPath(activity))
-                    .lineLimit(1)
-                    .help(mihomoPath(activity))
+            TableColumn("Current Speed") { activity in
+                activitySpeed(activity)
             }
-            .width(min: 145, ideal: 220)
+            .width(min: 104, ideal: 122)
 
-            TableColumn("Traffic") { activity in
+            TableColumn("Transferred") { activity in
                 activityTraffic(activity)
             }
-            .width(min: 88, ideal: 105)
+            .width(min: 92, ideal: 110)
 
-            TableColumn("Started") { activity in
-                Text(activity.startedAt, style: .time)
+            TableColumn("Duration") { activity in
+                Text(activity.startedAt, style: .timer)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            .width(min: 72, ideal: 86)
+            .width(min: 72, ideal: 88)
         }
         .onChange(of: selectedActivityID) { _, identifier in
             if identifier == nil { activityInspectorPresented = false }
@@ -1331,18 +1317,9 @@ struct AppRoutingView: View {
 
     private var activityActionBar: some View {
         HStack(spacing: 10) {
-            Picker("Outcome", selection: $activityFilter) {
-                ForEach(AppRoutingActivityFilter.allCases) { filter in
-                    Text(filter.rawValue).tag(filter)
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(width: 120)
-            .help("Proxy & Issues hides normal Direct traffic while keeping failures and fallback routes visible.")
-
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("Filter app, destination, rule, or path", text: $activitySearchText)
+            TextField("Filter app, target, rule, or route", text: $activitySearchText)
                 .textFieldStyle(.plain)
                 .frame(maxWidth: 360)
 
@@ -1357,7 +1334,7 @@ struct AppRoutingView: View {
             } else {
                 switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
                 case .live:
-                    Text("Live · updates automatically")
+                    Text("Live connections · updates automatically")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 case .connecting:
@@ -1378,11 +1355,6 @@ struct AppRoutingView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
-            Button("Clear") {
-                Task { await model.clearAppRoutingActivity() }
-            }
-            .disabled(activityPresentation.retainedCount == 0)
 
             Button {
                 activityInspectorPresented.toggle()
@@ -1407,10 +1379,10 @@ struct AppRoutingView: View {
         case .rules:
             "· \(orderedRules.count) \(orderedRules.count == 1 ? "rule" : "rules")"
         case .activity:
-            if activityPresentation.visibleActivities.count == activityPresentation.retainedCount {
-                "· \(activityPresentation.visibleActivities.count) flows"
+            if activityPresentation.visibleActivities.count == activityPresentation.activeCount {
+                "· \(activityPresentation.activeCount) active"
             } else {
-                "· \(activityPresentation.visibleActivities.count) shown · \(activityPresentation.retainedCount) retained"
+                "· \(activityPresentation.visibleActivities.count) shown · \(activityPresentation.activeCount) active"
             }
         }
     }
@@ -1420,16 +1392,16 @@ struct AppRoutingView: View {
         case .rules:
             "Rules are evaluated from top to bottom. The first matching rule decides whether traffic uses Mihomo, connects directly, or is rejected."
         case .activity:
-            "Live decisions from the Network Extension show which process matched which App Routing rule, the effective route, relay state, traffic, and the corresponding Mihomo path when available."
+            "Live provider-owned connections stay here until they close, with their target, route, current speed, transferred bytes, and duration."
         }
     }
 
     private var activityEmptyDescription: String {
         switch model.networkCaptureState {
         case .on:
-            "Start using an application covered by a rule. Its next TCP or UDP flow will appear here."
+            "Start using an application routed through Mihomo. Provider-owned TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed."
         default:
-            "Enable App Routing and connect MClash to inspect flow decisions."
+            "Enable App Routing and connect MClash to see live provider-owned connections."
         }
     }
 
@@ -1497,7 +1469,6 @@ struct AppRoutingView: View {
         let generation = activityPresentationGeneration
         let activities = model.appRoutingActivities
         let flowEntries = model.appRoutingFlowEntries
-        let filter = activityFilter
         let searchText = debouncedActivitySearchText
 
         activityPresentationTask = Task { @MainActor in
@@ -1505,7 +1476,6 @@ struct AppRoutingView: View {
                 AppRoutingActivityPresentationSnapshot(
                     activities: activities,
                     flowEntries: flowEntries,
-                    filter: filter,
                     searchText: searchText
                 )
             }
@@ -1562,6 +1532,23 @@ struct AppRoutingView: View {
             case let .matchedRule(identifier): identifier
             case let .builtInBypass(reason): "Built-in: \(reason.rawValue)"
             case .defaultDirect: "Default direct"
+            }
+        }
+    }
+
+    private func activityRoute(_ activity: AppRoutingActivity) -> String {
+        switch activity.effectiveAction {
+        case .direct:
+            return activity.configuredAction == .direct ? "Direct" : "Direct fallback"
+        case .reject:
+            return "Rejected"
+        case .failOpen:
+            return "Fail-open"
+        case let .mihomo(route):
+            return switch route {
+            case .profileRules: "Mihomo Rules"
+            case .global: "Mihomo Global"
+            case let .group(group): group
             }
         }
     }
@@ -1664,6 +1651,22 @@ struct AppRoutingView: View {
     private func routeIsProbable(_ activity: AppRoutingActivity) -> Bool {
         FlowLedgerAssociationPresentation.isProbable(
             model.appRoutingFlowEntries[activity.flowIdentifier]?.association
+        )
+    }
+
+    @ViewBuilder
+    private func activitySpeed(_ activity: AppRoutingActivity) -> some View {
+        let rate = model.appRoutingTrafficRates.byFlow[activity.flowIdentifier]
+            ?? AppRoutingByteRate()
+        VStack(alignment: .trailing, spacing: 2) {
+            Text("↓ \(formattedActivityRate(rate.download))")
+            Text("↑ \(formattedActivityRate(rate.upload))")
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(rate.total > 0 ? Color.primary : Color.secondary)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Download \(formattedActivityRate(rate.download)), upload \(formattedActivityRate(rate.upload))"
         )
     }
 

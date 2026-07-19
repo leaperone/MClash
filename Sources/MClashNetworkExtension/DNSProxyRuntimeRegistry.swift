@@ -35,12 +35,18 @@ final class DNSProxyRuntimeRegistry: @unchecked Sendable {
     private var status: DNSProxyRuntimeStatus?
     private var startupFailure: DNSProxyStartupFailure?
 
-    private init() {}
+    init() {}
 
     @discardableResult
     func prepare(_ value: DNSProxyBootstrapConfiguration) -> Bool {
         guard (try? value.validate()) != nil else { return false }
         lock.lock()
+        if bootstrap == value,
+           expectedRevision == value.revision,
+           expectedActivationIdentifier == value.activationIdentifier {
+            lock.unlock()
+            return true
+        }
         expectedRevision = value.revision
         expectedActivationIdentifier = value.activationIdentifier
         bootstrap = value

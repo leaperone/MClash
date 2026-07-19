@@ -36,7 +36,8 @@ struct AppRoutingTrafficRateSnapshot: Equatable, Sendable {
         direct: AppRoutingByteRate(),
         byRule: [:],
         byApplication: [:],
-        byPath: [:]
+        byPath: [:],
+        byFlow: [:]
     )
 
     let sampledAt: Date?
@@ -46,6 +47,8 @@ struct AppRoutingTrafficRateSnapshot: Equatable, Sendable {
     let byRule: [String: AppRoutingByteRate]
     let byApplication: [String: AppRoutingByteRate]
     let byPath: [AppRoutingTrafficPath: AppRoutingByteRate]
+    /// Current delivered-byte rate for each live provider-owned flow.
+    let byFlow: [UUID: AppRoutingByteRate]
 }
 
 struct AppRoutingTrafficRateTracker: Sendable {
@@ -73,6 +76,7 @@ struct AppRoutingTrafficRateTracker: Sendable {
         var byRuleBytes: [String: AppRoutingByteRate] = [:]
         var byApplicationBytes: [String: AppRoutingByteRate] = [:]
         var byPathBytes: [AppRoutingTrafficPath: AppRoutingByteRate] = [:]
+        var byFlowBytes: [UUID: AppRoutingByteRate] = [:]
 
         for activity in activities where activity.payloadBytesAreMeasured == true {
             let current = Baseline(
@@ -80,6 +84,9 @@ struct AppRoutingTrafficRateTracker: Sendable {
                 download: activity.downloadBytes
             )
             nextBaselines[activity.flowIdentifier] = current
+            if activity.isLiveManagedFlow {
+                byFlowBytes[activity.flowIdentifier] = AppRoutingByteRate()
+            }
             guard let previous = baselines[activity.flowIdentifier], interval > 0 else {
                 continue
             }
@@ -105,6 +112,12 @@ struct AppRoutingTrafficRateTracker: Sendable {
                 .add(upload: upload, download: download)
             byPathBytes[Self.path(activity.effectiveAction), default: AppRoutingByteRate()]
                 .add(upload: upload, download: download)
+            if activity.isLiveManagedFlow {
+                byFlowBytes[activity.flowIdentifier]?.add(
+                    upload: upload,
+                    download: download
+                )
+            }
         }
         baselines = nextBaselines
 
@@ -116,7 +129,8 @@ struct AppRoutingTrafficRateTracker: Sendable {
             direct: Self.rate(directBytes, interval: interval),
             byRule: byRuleBytes.mapValues { Self.rate($0, interval: interval) },
             byApplication: byApplicationBytes.mapValues { Self.rate($0, interval: interval) },
-            byPath: byPathBytes.mapValues { Self.rate($0, interval: interval) }
+            byPath: byPathBytes.mapValues { Self.rate($0, interval: interval) },
+            byFlow: byFlowBytes.mapValues { Self.rate($0, interval: interval) }
         )
     }
 

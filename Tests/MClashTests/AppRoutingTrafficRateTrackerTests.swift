@@ -39,6 +39,46 @@ struct AppRoutingTrafficRateTrackerTests {
         #expect(sample.measured == sample.direct)
         #expect(sample.byRule["Direct app"] == sample.direct)
         #expect(sample.byRule["Handoff"] == nil)
+        #expect(sample.byFlow[direct.flowIdentifier] == sample.direct)
+        #expect(sample.byFlow[handoff.flowIdentifier] == nil)
+    }
+
+    @Test("Per-flow rates stay separate and idle live flows report zero")
+    func derivesPerFlowRates() {
+        var tracker = AppRoutingTrafficRateTracker()
+        let start = Date(timeIntervalSince1970: 3_000)
+        var first = activity(
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            upload: 100,
+            download: 200
+        )
+        var second = activity(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            upload: 400,
+            download: 800
+        )
+        _ = tracker.ingest([first, second], at: start)
+        first.uploadBytes += 300
+        first.downloadBytes += 600
+
+        let sample = tracker.ingest(
+            [first, second],
+            at: start.addingTimeInterval(2)
+        )
+
+        #expect(sample.byFlow[first.flowIdentifier] == AppRoutingByteRate(
+            upload: 150,
+            download: 300
+        ))
+        #expect(sample.byFlow[second.flowIdentifier] == AppRoutingByteRate())
+
+        second.relayState = .completed
+        second.endedAt = start.addingTimeInterval(3)
+        let terminal = tracker.ingest(
+            [first, second],
+            at: start.addingTimeInterval(3)
+        )
+        #expect(terminal.byFlow[second.flowIdentifier] == nil)
     }
 
     @Test("Counter resets establish a new baseline instead of creating false traffic")

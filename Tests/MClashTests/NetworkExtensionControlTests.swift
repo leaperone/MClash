@@ -336,6 +336,80 @@ struct NetworkExtensionControlTests {
         #expect(status.revision == 21)
         #expect(await recorder.snapshot() == ["transparent.status"])
     }
+
+    @Test("Rule-only runtime update preserves providers and DNS identity")
+    func liveRuleUpdateDoesNotRestartProviders() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        let initialActivation = UUID(
+            uuidString: "30303030-3030-3030-3030-303030303030"
+        )!
+        let initial = try runtimeConfiguration(
+            revision: 30,
+            activationIdentifier: initialActivation
+        )
+        let candidate = try runtimeConfiguration(
+            revision: 31,
+            activationIdentifier: UUID(
+                uuidString: "31313131-3131-3131-3131-313131313131"
+            )!
+        )
+        _ = try await service.enable(initial)
+        await recorder.removeAll()
+
+        let result = try await service.updateRuntimeConfiguration(candidate)
+
+        #expect(result == .running)
+        #expect(await recorder.snapshot() == [
+            "transparent.configure",
+            "transparent.reload",
+            "transparent.update",
+        ])
+        #expect(await service.currentState().revision == 31)
+        let appliedConfigurations = await recorder.configurations()
+        #expect(appliedConfigurations.count == 2)
+        for applied in appliedConfigurations {
+            #expect(applied.revision == 31)
+            #expect(applied.activationIdentifier == initialActivation)
+            #expect(applied.encodedCaptureSnapshot == candidate.encodedCaptureSnapshot)
+            #expect(applied.encodedDNSProxyBootstrap == initial.encodedDNSProxyBootstrap)
+            let bootstrapData = try #require(applied.encodedDNSProxyBootstrap)
+            let bootstrap = try DNSProxyBootstrapConfiguration.decode(bootstrapData)
+            #expect(bootstrap.revision == 30)
+            #expect(bootstrap.activationIdentifier == initialActivation)
+        }
+        let dnsStatus = try await service.dnsProviderRuntimeStatus()
+        #expect(dnsStatus?.revision == 30)
+    }
+
+    private func runtimeConfiguration(
+        revision: UInt64,
+        activationIdentifier: UUID
+    ) throws -> NetworkExtensionRuntimeConfiguration {
+        let snapshot = try CaptureConfigurationSnapshot(
+            revision: revision,
+            rules: [try CaptureRule(
+                id: "all",
+                priority: 1,
+                action: .mihomo(.profileRules)
+            )]
+        )
+        let preferences = try NetworkCapturePreferences(
+            enabled: true,
+            dnsEnabled: true,
+            failOpen: true,
+            snapshot: snapshot
+        )
+        return try NetworkExtensionRuntimeConfiguration(
+            preferences: preferences,
+            mihomoListener: NetworkExtensionMihomoListenerConfiguration(port: 17_891),
+            activationIdentifier: activationIdentifier
+        )
+    }
 }
 
 private final class NetworkExtensionProgressRecorder: @unchecked Sendable {
@@ -354,6 +428,7 @@ private final class NetworkExtensionProgressRecorder: @unchecked Sendable {
 private actor NetworkExtensionOperationRecorder {
     private var operations: [String] = []
     private var configuredRevision: UInt64 = 0
+    private var capturedConfigurations: [NetworkExtensionRuntimeConfiguration] = []
     private var providerStatuses: [TransparentProxyProviderStatus] = []
 
     func append(_ operation: String) {
@@ -366,10 +441,19 @@ private actor NetworkExtensionOperationRecorder {
 
     func removeAll() {
         operations.removeAll()
+        capturedConfigurations.removeAll()
     }
 
     func setConfiguredRevision(_ revision: UInt64) {
         configuredRevision = revision
+    }
+
+    func capture(_ configuration: NetworkExtensionRuntimeConfiguration) {
+        capturedConfigurations.append(configuration)
+    }
+
+    func configurations() -> [NetworkExtensionRuntimeConfiguration] {
+        capturedConfigurations
     }
 
     func revision() -> UInt64 {
@@ -421,6 +505,7 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
     func configure(_ configuration: NetworkExtensionRuntimeConfiguration) async throws {
         await recorder.append("transparent.configure")
         await recorder.setConfiguredRevision(configuration.revision)
+        await recorder.capture(configuration)
     }
 
     func reload() async throws {
@@ -471,7 +556,10 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
     func updateProviderConfiguration(
         _ configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> TransparentProxyProviderStatus {
-        try await applyProviderConfiguration(configuration)
+        await recorder.append("transparent.update")
+        await recorder.setConfiguredRevision(configuration.revision)
+        await recorder.capture(configuration)
+        return try await applyProviderConfiguration(configuration)
     }
 
     func appRoutingActivity(

@@ -18,9 +18,7 @@ enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
         case .all:
             return true
         case .active:
-            return activity.endedAt == nil
-                && activity.relayState != .completed
-                && activity.relayState != .failed
+            return activity.isLiveManagedFlow
         case .viaMihomo:
             if case .mihomo = activity.effectiveAction {
                 return activity.relayState != .failed
