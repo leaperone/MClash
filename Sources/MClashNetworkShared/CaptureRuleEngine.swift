@@ -532,6 +532,19 @@ public struct CaptureRuleEngine: Sendable {
         context: FlowContext,
         sourceEvaluationMode: SourceEvaluationMode
     ) -> CaptureRuleDecisionEvidence? {
+        // Protocol matching is bounded and rejects many rules. Run it before
+        // source identity, wildcard, network, and hostname matching so every
+        // new flow pays the expensive work only for viable candidates.
+        // Port ranges stay below those checks because an individual rule may
+        // contain many ranges; moving that unbounded scan forward could regress
+        // source-mismatch-heavy configurations.
+        guard rule.protocols.isEmpty || rule.protocols.contains(context.transportProtocol) else {
+            return nil
+        }
+        let protocolEvidence: RuleProtocolMatchEvidence = rule.protocols.isEmpty
+            ? .unconstrained
+            : .exact(context.transportProtocol)
+
         let sourceEvidence: RuleSourceMatchEvidence
         if rule.sources.isEmpty {
             sourceEvidence = .unconstrained
@@ -555,13 +568,6 @@ public struct CaptureRuleEngine: Sendable {
         } else {
             return nil
         }
-
-        guard rule.protocols.isEmpty || rule.protocols.contains(context.transportProtocol) else {
-            return nil
-        }
-        let protocolEvidence: RuleProtocolMatchEvidence = rule.protocols.isEmpty
-            ? .unconstrained
-            : .exact(context.transportProtocol)
 
         let portEvidence: RulePortMatchEvidence
         if rule.portRanges.isEmpty {

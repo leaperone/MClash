@@ -19,7 +19,7 @@ struct ConnectionsView: View {
                 systemImage: "arrow.left.arrow.right",
                 description: "Live connections are streamed from the local Mihomo controller."
             )
-        } else if model.connections == nil,
+        } else if !presentation.hasSnapshot,
                   let health = model.liveStreamHealth[.connections],
                   health.phase == .stale {
             ContentUnavailableView {
@@ -32,7 +32,7 @@ struct ConnectionsView: View {
                 }
                 .disabled(!model.canPerform(.connection))
             }
-        } else if model.connections == nil {
+        } else if !presentation.hasSnapshot {
             VStack(spacing: 12) {
                 ProgressView()
                 Text("Loading active connections…")
@@ -282,7 +282,7 @@ struct ConnectionsView: View {
     }
 
     private var historicalEntries: [FlowLedgerEntry] {
-        model.flowLedger.entries.filter { !$0.state.isActive }
+        model.flowLedger.completedEntries
     }
 
     private func historyRuleTitle(_ entry: FlowLedgerEntry) -> String {
@@ -332,6 +332,9 @@ struct ConnectionsView: View {
     @State private var debouncedSearchText = ""
     @State private var selectedConnectionID: String?
     @State private var sortOrder: [KeyPathComparator<ConnectionTableRow>] = []
+    @State private var presentation = ConnectionPresentationSnapshot.empty
+    @State private var presentationTask: Task<Void, Never>?
+    @State private var presentationGeneration: UInt64 = 0
     @SceneStorage("mclash.connections.sortField") private var storedSortField = ""
     @SceneStorage("mclash.connections.sortDescending") private var storedSortDescending = false
     @State private var hasRestoredSortOrder = false
@@ -344,17 +347,19 @@ struct ConnectionsView: View {
     @SceneStorage("mclash.traffic.workspace") private var workspace: Workspace = .live
 
     var body: some View {
-        let presentation = ConnectionPresentationSnapshot(
-            snapshot: model.connections,
-            searchText: debouncedSearchText,
-            selectedConnectionID: selectedConnectionID,
-            sortOrder: sortOrder
-        )
+        let presentation = presentation
+        let selectedConnection = selectedConnectionID.flatMap {
+            presentation.connectionsByIdentifier[$0]
+        }
+        let selectedConnectionIsVisible = selectedConnectionID.map {
+            presentation.visibleIdentifiers.contains($0)
+        } ?? true
 
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 trafficHeader(
                     presentation: presentation,
+                    selectedConnection: selectedConnection,
                     compact: geometry.size.width < 800
                 )
                     .frame(height: 48)
@@ -384,7 +389,7 @@ struct ConnectionsView: View {
         .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
         .inspector(isPresented: attachedInspectorBinding) {
-            connectionInspector(presentation.selectedConnection)
+            connectionInspector(selectedConnection)
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 440)
         }
         .task(id: searchText) {
@@ -397,11 +402,21 @@ struct ConnectionsView: View {
         }
         .onAppear {
             restoreSortOrderIfNeeded()
+            if workspace == .live {
+                schedulePresentationRefresh()
+            }
         }
         .onChange(of: sortOrder) { _, order in
             persistSortOrder(order)
+            schedulePresentationRefresh()
         }
-        .onChange(of: presentation.selectedConnectionIsVisible) { _, isVisible in
+        .onChange(of: debouncedSearchText) { _, _ in
+            schedulePresentationRefresh()
+        }
+        .onChange(of: model.connectionPresentationRevision) { _, _ in
+            schedulePresentationRefresh()
+        }
+        .onChange(of: selectedConnectionIsVisible) { _, isVisible in
             guard selectedConnectionID != nil, !isVisible else { return }
             self.selectedConnectionID = nil
             inspectorPresented = false
@@ -412,9 +427,16 @@ struct ConnectionsView: View {
                 inspectorPresented = false
             }
         }
-        .onChange(of: workspace) { _, _ in
+        .onChange(of: workspace) { _, workspace in
             selectedConnectionID = nil
             inspectorPresented = false
+            if workspace == .live {
+                schedulePresentationRefresh()
+            } else {
+                presentationTask?.cancel()
+                presentationTask = nil
+                presentationGeneration &+= 1
+            }
         }
         .confirmationDialog(
             "Close all \(formattedCount(presentation.totalConnectionCount)) active connections?",
@@ -441,10 +463,16 @@ struct ConnectionsView: View {
         .sheet(isPresented: $showingClosedHistory) {
             ClosedConnectionsHistoryView(model: model)
         }
+        .onDisappear {
+            presentationTask?.cancel()
+            presentationTask = nil
+            presentationGeneration &+= 1
+        }
     }
 
     private func trafficHeader(
         presentation: ConnectionPresentationSnapshot,
+        selectedConnection: MihomoConnection?,
         compact: Bool
     ) -> some View {
         HStack(spacing: 12) {
@@ -483,7 +511,7 @@ struct ConnectionsView: View {
 
             Group {
                 if workspace == .live {
-                    inspectorButton(selectedConnection: presentation.selectedConnection)
+                    inspectorButton(selectedConnection: selectedConnection)
                 } else {
                     Color.clear.accessibilityHidden(true)
                 }
@@ -811,12 +839,7 @@ struct ConnectionsView: View {
     }
 
     private var unmeasuredHandoffCount: Int {
-        model.flowLedger.entries.reduce(into: 0) { count, entry in
-            if entry.upload == .notMeasuredAfterHandoff
-                || entry.download == .notMeasuredAfterHandoff {
-                count += 1
-            }
-        }
+        model.flowLedger.unmeasuredHandoffCount
     }
 
     private var appRoutingIsActive: Bool {
@@ -965,6 +988,34 @@ struct ConnectionsView: View {
         storedSortDescending = comparator.order == .reverse
     }
 
+    private func schedulePresentationRefresh() {
+        guard workspace == .live else { return }
+        presentationTask?.cancel()
+        presentationGeneration &+= 1
+        let generation = presentationGeneration
+        let snapshot = model.connections
+        let searchText = debouncedSearchText
+        let sortOrder = sortOrder
+
+        presentationTask = Task { @MainActor in
+            let worker = Task.detached(priority: .userInitiated) {
+                ConnectionPresentationSnapshot(
+                    snapshot: snapshot,
+                    searchText: searchText,
+                    sortOrder: sortOrder
+                )
+            }
+            let next = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled, presentationGeneration == generation else { return }
+            presentation = next
+            presentationTask = nil
+        }
+    }
+
     @ViewBuilder
     private func connectionInspector(_ connection: MihomoConnection?) -> some View {
         if let connection {
@@ -1106,19 +1157,25 @@ private enum ConnectionSortField: String {
     }
 }
 
-private struct ConnectionPresentationSnapshot {
+private struct ConnectionPresentationSnapshot: Sendable {
+    static let empty = ConnectionPresentationSnapshot(
+        snapshot: nil,
+        searchText: "",
+        sortOrder: []
+    )
+
     let rows: [ConnectionTableRow]
-    let selectedConnection: MihomoConnection?
+    let connectionsByIdentifier: [String: MihomoConnection]
+    let visibleIdentifiers: Set<String>
     let totalConnectionCount: Int
     let downloadTotal: Int64?
     let uploadTotal: Int64?
     let isFiltering: Bool
-    let selectedConnectionIDWasNil: Bool
+    let hasSnapshot: Bool
 
     init(
         snapshot: MihomoConnectionSnapshot?,
         searchText: String,
-        selectedConnectionID: String?,
         sortOrder: [KeyPathComparator<ConnectionTableRow>]
     ) {
         let connections = snapshot?.connections ?? []
@@ -1126,40 +1183,37 @@ private struct ConnectionPresentationSnapshot {
         let isFiltering = !query.isEmpty
         var rows: [ConnectionTableRow] = []
         rows.reserveCapacity(connections.count)
-        var selectedConnection: MihomoConnection?
+        var connectionsByIdentifier: [String: MihomoConnection] = [:]
+        connectionsByIdentifier.reserveCapacity(connections.count)
 
-        for connection in connections {
+        for (index, connection) in connections.enumerated() {
+            if index.isMultiple(of: 64), Task.isCancelled { break }
+            connectionsByIdentifier[connection.id] = connection
             let row = ConnectionTableRow(connection)
             guard !isFiltering || connectionMatchesSearch(connection, row: row, query: query) else {
                 continue
             }
             rows.append(row)
-            if connection.id == selectedConnectionID {
-                selectedConnection = connection
-            }
         }
 
-        // AppModel already publishes connections in newest-first order. Only apply another
-        // sort when the user explicitly selects a Table sort descriptor.
-        if !sortOrder.isEmpty {
+        // The controller ingest worker publishes the default newest-first
+        // order. Only pay for a second sort when the user selects a column.
+        if !Task.isCancelled, !sortOrder.isEmpty {
             rows.sort(using: sortOrder)
         }
 
         self.rows = rows
-        self.selectedConnection = selectedConnection
+        self.connectionsByIdentifier = connectionsByIdentifier
+        visibleIdentifiers = Set(rows.map(\.id))
         totalConnectionCount = connections.count
         downloadTotal = snapshot?.downloadTotal
         uploadTotal = snapshot?.uploadTotal
         self.isFiltering = isFiltering
-        selectedConnectionIDWasNil = selectedConnectionID == nil
+        hasSnapshot = snapshot != nil
     }
 
     var hasConnections: Bool {
         totalConnectionCount > 0
-    }
-
-    var selectedConnectionIsVisible: Bool {
-        selectedConnectionIDWasNil || selectedConnection != nil
     }
 
     var connectionCountLabel: String {
@@ -1170,7 +1224,7 @@ private struct ConnectionPresentationSnapshot {
     }
 }
 
-private struct ConnectionTableRow: Identifiable {
+private struct ConnectionTableRow: Identifiable, Sendable {
     let connection: MihomoConnection
     let destination: String
     let process: String

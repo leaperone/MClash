@@ -3,6 +3,156 @@ import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct AppRoutingActivityPresentationSnapshot: Sendable {
+    static let empty = AppRoutingActivityPresentationSnapshot(
+        activities: [],
+        flowEntries: [:],
+        filter: .focused,
+        searchText: ""
+    )
+
+    let visibleActivities: [AppRoutingActivity]
+    let visibleIdentifiers: Set<UUID>
+    let activitiesByIdentifier: [UUID: AppRoutingActivity]
+    let retainedCount: Int
+    let showsOnlyHiddenDirectActivity: Bool
+
+    init(
+        activities: [AppRoutingActivity],
+        flowEntries: [UUID: FlowLedgerEntry],
+        filter: AppRoutingActivityFilter,
+        searchText: String
+    ) {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        var visibleActivities: [AppRoutingActivity] = []
+        visibleActivities.reserveCapacity(activities.count)
+        for (index, activity) in activities.enumerated() {
+            if index.isMultiple(of: 64), Task.isCancelled { break }
+            guard filter.includes(activity) else { continue }
+            if query.isEmpty
+                || Self.searchText(for: activity, entry: flowEntries[activity.flowIdentifier])
+                    .contains(query) {
+                visibleActivities.append(activity)
+            }
+        }
+        self.visibleActivities = visibleActivities
+        visibleIdentifiers = Set(visibleActivities.map(\.flowIdentifier))
+        activitiesByIdentifier = Task.isCancelled ? [:] : Dictionary(
+            uniqueKeysWithValues: activities.map { ($0.flowIdentifier, $0) }
+        )
+        retainedCount = activities.count
+        showsOnlyHiddenDirectActivity = filter == .focused
+            && query.isEmpty
+            && !activities.isEmpty
+            && visibleActivities.isEmpty
+    }
+
+    private static func searchText(
+        for activity: AppRoutingActivity,
+        entry: FlowLedgerEntry?
+    ) -> String {
+        let disposition = switch activity.effectiveAction {
+        case .direct: "direct pass-through"
+        case .reject: "rejected"
+        case .failOpen: "fail-open"
+        case .mihomo: "mihomo proxy"
+        }
+        let route = entry?.mihomoRoute
+        return [
+            activity.source.executablePath,
+            activity.source.bundleIdentifier,
+            activity.source.signingIdentifier,
+            activity.source.teamIdentifier,
+            activity.destination.hostname,
+            activity.destination.ipAddress,
+            String(activity.destination.port),
+            destinationText(activity),
+            activity.matchedRuleIdentifier,
+            causeText(activity),
+            disposition,
+            resultText(activity, entry: entry),
+            activity.relayState.rawValue,
+            activity.relayError,
+            activity.relayNote,
+            route?.rule,
+            route?.rulePayload,
+            route?.chain.joined(separator: " "),
+            pathText(activity, entry: entry),
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n")
+        .lowercased()
+    }
+
+    private static func causeText(_ activity: AppRoutingActivity) -> String {
+        switch activity.cause {
+        case .captureDisabled: "Capture disabled"
+        case .configurationUnavailable: "Configuration unavailable"
+        case .contextUnavailable: "Identity unavailable"
+        case let .rule(cause), let .mihomoUnavailable(cause, _):
+            switch cause {
+            case let .matchedRule(identifier): identifier
+            case let .builtInBypass(reason): "Built-in: \(reason.rawValue)"
+            case .defaultDirect: "Default direct"
+            }
+        }
+    }
+
+    private static func destinationText(_ activity: AppRoutingActivity) -> String {
+        let host = activity.destination.hostname
+            ?? activity.destination.ipAddress
+            ?? "Unknown destination"
+        return activity.destination.port > 0
+            ? "\(host):\(activity.destination.port)"
+            : host
+    }
+
+    private static func resultText(
+        _ activity: AppRoutingActivity,
+        entry: FlowLedgerEntry?
+    ) -> String {
+        if activity.relayState == .failed { return "Relay failed" }
+        return switch activity.effectiveAction {
+        case .direct where activity.payloadBytesAreMeasured == true:
+            "Direct \(activity.relayState.rawValue)"
+        case .direct: "Direct pass-through"
+        case .reject: "Rejected"
+        case .failOpen: "Fail-open"
+        case .mihomo:
+            if FlowLedgerAssociationPresentation.isConfirmed(entry?.association) {
+                "Route confirmed"
+            } else if FlowLedgerAssociationPresentation.isProbable(entry?.association) {
+                "Probable Mihomo match"
+            } else if (activity.downloadDatagrams ?? 0) > 0 {
+                "Response observed"
+            } else {
+                "Sent to Mihomo \(activity.relayState.rawValue)"
+            }
+        }
+    }
+
+    private static func pathText(
+        _ activity: AppRoutingActivity,
+        entry: FlowLedgerEntry?
+    ) -> String {
+        guard case .mihomo = activity.effectiveAction else { return "" }
+        guard let route = entry?.mihomoRoute else {
+            if activity.relayState == .failed { return "Relay failed" }
+            if (activity.downloadDatagrams ?? 0) > 0 {
+                return "Response observed node path not yet matched"
+            }
+            if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
+                return "Sent to Mihomo awaiting connections confirmation"
+            }
+            return "Waiting for Mihomo metadata"
+        }
+        return [route.rule, route.rulePayload, route.chain.joined(separator: " ")]
+            .compactMap { $0 }
+            .joined(separator: " ")
+    }
+}
+
 struct AppRoutingView: View {
     private enum Workspace: String, CaseIterable, Identifiable {
         case rules = "Rules"
@@ -39,7 +189,11 @@ struct AppRoutingView: View {
     @State private var candidateRefreshRequest = 0
     @State private var workspace: Workspace = .rules
     @State private var activitySearchText = ""
+    @State private var debouncedActivitySearchText = ""
     @State private var activityFilter: AppRoutingActivityFilter = .focused
+    @State private var activityPresentation = AppRoutingActivityPresentationSnapshot.empty
+    @State private var activityPresentationTask: Task<Void, Never>?
+    @State private var activityPresentationGeneration: UInt64 = 0
     @State private var selectedActivityID: UUID?
     @State private var activityInspectorPresented = false
     @State private var activityInspectorPresentation: InspectorPresentation = .popover
@@ -96,17 +250,45 @@ struct AppRoutingView: View {
         .task(id: candidateRefreshRequest) {
             await refreshApplications(request: candidateRefreshRequest)
         }
+        .task(id: activitySearchText) {
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+                debouncedActivitySearchText = activitySearchText
+            } catch {
+                return
+            }
+        }
         .onAppear {
             model.setAppRoutingActivityViewVisible(workspace == .activity)
+            if workspace == .activity {
+                scheduleActivityPresentationRefresh()
+            }
         }
         .onDisappear {
             model.setAppRoutingActivityViewVisible(false)
+            activityPresentationTask?.cancel()
+            activityPresentationTask = nil
+            activityPresentationGeneration &+= 1
         }
         .onChange(of: workspace) { _, workspace in
             model.setAppRoutingActivityViewVisible(workspace == .activity)
             if workspace != .activity {
                 activityInspectorPresented = false
+                activityPresentationTask?.cancel()
+                activityPresentationTask = nil
+                activityPresentationGeneration &+= 1
+            } else {
+                scheduleActivityPresentationRefresh()
             }
+        }
+        .onChange(of: model.appRoutingActivityPresentationRevision) { _, _ in
+            scheduleActivityPresentationRefresh()
+        }
+        .onChange(of: activityFilter) { _, _ in
+            scheduleActivityPresentationRefresh()
+        }
+        .onChange(of: debouncedActivitySearchText) { _, _ in
+            scheduleActivityPresentationRefresh()
         }
         .sheet(isPresented: $showingEditor) {
             CaptureRuleEditorSheet(
@@ -261,9 +443,7 @@ struct AppRoutingView: View {
             return "Traffic capture is starting; waiting for Provider verification."
         }
         if workspace == .activity {
-            let active = model.appRoutingActivities.count(where: {
-                $0.endedAt == nil && $0.relayState != .failed
-            })
+            let active = model.appRoutingActiveCount
             return "\(formattedCount(active)) active · ↓ \(formattedActivityRate(model.appRoutingTrafficRates.measured.download)) · ↑ \(formattedActivityRate(model.appRoutingTrafficRates.measured.upload))"
         }
         return model.networkCapturePreferences.dnsEnabled
@@ -451,9 +631,7 @@ struct AppRoutingView: View {
     }
 
     private var applicationDataPlaneDetail: String {
-        let active = model.appRoutingActivities.filter {
-            $0.endedAt == nil && $0.relayState != .failed
-        }.count
+        let active = model.appRoutingActiveCount
         let measured = model.appRoutingTrafficRates.measured
         let direct = model.appRoutingTrafficRates.direct
         let rates = model.liveStreamHealth[.appRouting]?.hasCurrentData == true
@@ -978,14 +1156,14 @@ struct AppRoutingView: View {
 
     @ViewBuilder
     private var activityWorkspace: some View {
-        let visibleActivities = filteredActivities
-        if model.appRoutingActivities.isEmpty {
+        let visibleActivities = activityPresentation.visibleActivities
+        if activityPresentation.retainedCount == 0 {
             ContentUnavailableView(
                 "No App Routing Activity",
                 systemImage: "waveform.path.ecg",
                 description: Text(activityEmptyDescription)
             )
-        } else if showsOnlyHiddenDirectActivity(visibleActivities) {
+        } else if activityPresentation.showsOnlyHiddenDirectActivity {
             ContentUnavailableView {
                 Label("Only Direct Activity", systemImage: "arrow.right")
             } description: {
@@ -1204,7 +1382,7 @@ struct AppRoutingView: View {
             Button("Clear") {
                 Task { await model.clearAppRoutingActivity() }
             }
-            .disabled(model.appRoutingActivities.isEmpty)
+            .disabled(activityPresentation.retainedCount == 0)
 
             Button {
                 activityInspectorPresented.toggle()
@@ -1222,12 +1400,6 @@ struct AppRoutingView: View {
         .controlSize(.small)
         .padding(.horizontal, MClashLayout.pagePadding)
         .padding(.vertical, 12)
-        .onChange(of: activityFilter) { _, _ in
-            discardHiddenActivitySelection()
-        }
-        .onChange(of: activitySearchText) { _, _ in
-            discardHiddenActivitySelection()
-        }
     }
 
     private var headerCount: String {
@@ -1235,10 +1407,10 @@ struct AppRoutingView: View {
         case .rules:
             "· \(orderedRules.count) \(orderedRules.count == 1 ? "rule" : "rules")"
         case .activity:
-            if filteredActivities.count == model.appRoutingActivities.count {
-                "· \(filteredActivities.count) flows"
+            if activityPresentation.visibleActivities.count == activityPresentation.retainedCount {
+                "· \(activityPresentation.visibleActivities.count) flows"
             } else {
-                "· \(filteredActivities.count) shown · \(model.appRoutingActivities.count) retained"
+                "· \(activityPresentation.visibleActivities.count) shown · \(activityPresentation.retainedCount) retained"
             }
         }
     }
@@ -1261,35 +1433,9 @@ struct AppRoutingView: View {
         }
     }
 
-    private var filteredActivities: [AppRoutingActivity] {
-        let query = activitySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return model.appRoutingActivities.filter { activity in
-            guard activityMatchesFilter(activity) else { return false }
-            guard !query.isEmpty else { return true }
-            let fields = [
-                activityApplicationName(activity),
-                activity.source.executablePath,
-                activityDestination(activity),
-                activity.matchedRuleIdentifier,
-                activityCause(activity),
-                activityResult(activity),
-                mihomoPath(activity),
-            ].compactMap { $0?.lowercased() }
-            return fields.contains { $0.contains(query) }
-        }
-    }
-
-    private func showsOnlyHiddenDirectActivity(_ visibleActivities: [AppRoutingActivity]) -> Bool {
-        activityFilter == .focused
-            && activitySearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !model.appRoutingActivities.isEmpty
-            && visibleActivities.isEmpty
-    }
-
     private var selectedActivity: AppRoutingActivity? {
         guard let selectedActivityID else { return nil }
-        return model.appRoutingActivities.first { $0.flowIdentifier == selectedActivityID }
+        return activityPresentation.activitiesByIdentifier[selectedActivityID]
     }
 
     @ViewBuilder
@@ -1344,17 +1490,40 @@ struct AppRoutingView: View {
         }
     }
 
-    private func activityMatchesFilter(_ activity: AppRoutingActivity) -> Bool {
-        activityFilter.includes(activity)
-    }
+    private func scheduleActivityPresentationRefresh() {
+        guard workspace == .activity else { return }
+        activityPresentationTask?.cancel()
+        activityPresentationGeneration &+= 1
+        let generation = activityPresentationGeneration
+        let activities = model.appRoutingActivities
+        let flowEntries = model.appRoutingFlowEntries
+        let filter = activityFilter
+        let searchText = debouncedActivitySearchText
 
-    private func discardHiddenActivitySelection() {
-        guard let selectedActivityID,
-              !filteredActivities.contains(where: { $0.flowIdentifier == selectedActivityID }) else {
-            return
+        activityPresentationTask = Task { @MainActor in
+            let worker = Task.detached(priority: .userInitiated) {
+                AppRoutingActivityPresentationSnapshot(
+                    activities: activities,
+                    flowEntries: flowEntries,
+                    filter: filter,
+                    searchText: searchText
+                )
+            }
+            let next = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled,
+                  activityPresentationGeneration == generation else { return }
+            activityPresentation = next
+            activityPresentationTask = nil
+            if let selectedActivityID,
+               !next.visibleIdentifiers.contains(selectedActivityID) {
+                self.selectedActivityID = nil
+                activityInspectorPresented = false
+            }
         }
-        self.selectedActivityID = nil
-        activityInspectorPresented = false
     }
 
     private func activityApplicationName(_ activity: AppRoutingActivity) -> String {

@@ -25,6 +25,7 @@ struct FlowLedger: Sendable {
     private(set) var routeAggregates: [FlowLedgerRouteAggregate]
     private(set) var outcomeAggregates: [FlowLedgerOutcomeAggregate]
     private(set) var completedEntries: [FlowLedgerEntry]
+    private(set) var unmeasuredHandoffCount: Int
 
     init(
         activeConnections: [MihomoConnection],
@@ -62,6 +63,7 @@ struct FlowLedger: Sendable {
         routeAggregates = []
         outcomeAggregates = []
         completedEntries = []
+        unmeasuredHandoffCount = 0
 
         guard !Task<Never, Never>.isCancelled else { return }
         let deduplicatedConnections = Self.deduplicated(mihomoConnections)
@@ -125,6 +127,10 @@ struct FlowLedger: Sendable {
         routeAggregates = Self.makeRouteAggregates(from: builtEntries)
         outcomeAggregates = Self.makeOutcomeAggregates(from: builtEntries)
         completedEntries = entries.filter { !$0.state.isActive }
+        unmeasuredHandoffCount = builtEntries.count {
+            $0.upload == .notMeasuredAfterHandoff
+                || $0.download == .notMeasuredAfterHandoff
+        }
     }
 
     func recentEntries(limit: Int, since cutoff: Date? = nil) -> [FlowLedgerEntry] {

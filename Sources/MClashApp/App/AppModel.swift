@@ -56,6 +56,18 @@ final class AppModel {
         var lastMatchedAt: Date?
     }
 
+    private struct AppRoutingActivityProcessingResult: Sendable {
+        let activities: [AppRoutingActivity]
+        let activitiesByIdentifier: [UUID: AppRoutingActivity]
+        let ruleStatistics: [String: AppRoutingRuleStatistics]
+        let rateTracker: AppRoutingTrafficRateTracker
+        let trafficRates: AppRoutingTrafficRateSnapshot
+        let activeCount: Int
+        let removedCount: Int
+        let mergedUpdates: Bool
+        let needsAccounting: Bool
+    }
+
     struct ClosedConnectionRecord: Identifiable {
         let id = UUID()
         let connection: MihomoConnection
@@ -392,6 +404,7 @@ final class AppModel {
     var trafficHistory: [TrafficSample] = []
     var connections: MihomoConnectionSnapshot? {
         didSet {
+            connectionPresentationRevision &+= 1
             let recordedClosures = recordClosedConnections(
                 previous: oldValue,
                 current: connections
@@ -411,9 +424,14 @@ final class AppModel {
             }
         }
     }
+    private(set) var connectionPresentationRevision: UInt64 = 0
     private(set) var recentlyClosedConnections: [ClosedConnectionRecord] = []
     private(set) var flowLedger = FlowLedger(activeConnections: [])
-    private(set) var appRoutingFlowEntries: [UUID: FlowLedgerEntry] = [:]
+    private(set) var appRoutingFlowEntries: [UUID: FlowLedgerEntry] = [:] {
+        didSet {
+            appRoutingActivityPresentationRevision &+= 1
+        }
+    }
     var routeTrafficEntries: [TrafficAttribution.Entry] = [] {
         didSet {
             proxyInspectorTrafficRevision &+= 1
@@ -425,7 +443,15 @@ final class AppModel {
     private(set) var systemProxyPreferences: SystemProxyPreferences = .defaults
     private(set) var networkCaptureState: NetworkCaptureState = .off
     private(set) var networkCapturePreferences = NetworkCapturePreferences.disabled()
-    private(set) var appRoutingActivities: [AppRoutingActivity] = []
+    private(set) var appRoutingActivities: [AppRoutingActivity] = [] {
+        didSet {
+            appRoutingActivityStateRevision &+= 1
+            appRoutingActivityPresentationRevision &+= 1
+        }
+    }
+    private var appRoutingActivityStateRevision: UInt64 = 0
+    private(set) var appRoutingActivityPresentationRevision: UInt64 = 0
+    private(set) var appRoutingActiveCount = 0
     private(set) var appRoutingRuleStatistics: [String: AppRoutingRuleStatistics] = [:]
     private(set) var appRoutingActivityError: String?
     private(set) var appRoutingTrafficRates: AppRoutingTrafficRateSnapshot = .zero
@@ -515,6 +541,8 @@ final class AppModel {
     private var connectionsTask: Task<Void, Never>?
     private var connectionStreamIntervalMilliseconds: Int?
     private var apiLogTask: Task<Void, Never>?
+    private var pendingCoreLogs: [CoreLogLine] = []
+    private var coreLogFlushTask: Task<Void, Never>?
     private var proxyRefreshTask: Task<Void, Never>?
     private var liveFreshnessWatchdogTask: Task<Void, Never>?
     private var subscriptionUpdateTask: Task<Void, Never>?
@@ -3338,6 +3366,9 @@ final class AppModel {
     }
 
     func clearLogs() {
+        coreLogFlushTask?.cancel()
+        coreLogFlushTask = nil
+        pendingCoreLogs.removeAll(keepingCapacity: true)
         logs.removeAll(keepingCapacity: true)
     }
 
@@ -3359,6 +3390,7 @@ final class AppModel {
             appRoutingActivityError = nil
             appRoutingTrafficRateTracker.reset()
             appRoutingTrafficRates = .zero
+            appRoutingActiveCount = 0
             appRoutingActivityDroppedCount = 0
             appRoutingActivityCoverageStartedAt = Date()
             scheduleFlowLedgerRefresh()
@@ -4183,7 +4215,16 @@ final class AppModel {
                 )
                 for try await snapshot in stream {
                     guard streamShouldContinue(generation) else { return }
-                    applyConnectionSnapshot(snapshot, generation: generation)
+                    let worker = Task.detached(priority: .utility) {
+                        Self.normalizedConnectionSnapshot(snapshot)
+                    }
+                    let normalized = await withTaskCancellationHandler {
+                        await worker.value
+                    } onCancel: {
+                        worker.cancel()
+                    }
+                    guard streamShouldContinue(generation) else { return }
+                    applyConnectionSnapshot(normalized, generation: generation)
                     markStreamHealthy(.connections)
                     attempt = 0
                 }
@@ -4207,9 +4248,14 @@ final class AppModel {
             do {
                 let stream = try await client.logStream(minimumLevel: .info)
                 markStreamHealthy(.logs)
+                var lastHealthPublication = Date()
                 for try await entry in stream {
                     guard streamShouldContinue(generation) else { return }
-                    markStreamHealthy(.logs)
+                    let now = Date()
+                    if now.timeIntervalSince(lastHealthPublication) >= 1 {
+                        markStreamHealthy(.logs)
+                        lastHealthPublication = now
+                    }
                     attempt = 0
                     appendCoreLog(
                         CoreLogLine(
@@ -4317,6 +4363,7 @@ final class AppModel {
         appRoutingActivityCursor = 0
         appRoutingTrafficRateTracker.reset()
         appRoutingTrafficRates = .zero
+        appRoutingActiveCount = 0
         appRoutingActivityDroppedCount = 0
         appRoutingActivityCoverageStartedAt = Date()
         appRoutingProviderStatusFailureCount = 0
@@ -4381,6 +4428,7 @@ final class AppModel {
                         appRoutingActivityCursor = 0
                         appRoutingTrafficRateTracker.reset()
                         appRoutingTrafficRates = .zero
+                        appRoutingActiveCount = 0
                         appRoutingActivityCoverageStartedAt = Date()
                         activityUpdates.removeAll(keepingCapacity: true)
                         continue
@@ -4392,13 +4440,51 @@ final class AppModel {
                         await Task.yield()
                     }
                 }
-                if !activityUpdates.isEmpty {
-                    mergeAppRoutingActivities(activityUpdates)
+                let processingCursor = appRoutingActivityCursor
+                let processingRevision = appRoutingActivityStateRevision
+                let currentActivities = appRoutingActivities
+                let currentActivitiesByIdentifier = appRoutingActivitiesByIdentifier
+                let currentRuleStatistics = appRoutingRuleStatistics
+                let currentRateTracker = appRoutingTrafficRateTracker
+                let sampledAt = Date()
+                let worker = Task.detached(priority: .utility) {
+                    Self.processAppRoutingActivities(
+                        updates: activityUpdates,
+                        currentActivities: currentActivities,
+                        currentActivitiesByIdentifier: currentActivitiesByIdentifier,
+                        currentRuleStatistics: currentRuleStatistics,
+                        currentRateTracker: currentRateTracker,
+                        sampledAt: sampledAt
+                    )
                 }
-                appRoutingTrafficRates = appRoutingTrafficRateTracker.ingest(
-                    appRoutingActivities,
-                    at: Date()
-                )
+                let processed = await withTaskCancellationHandler {
+                    await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard appRoutingMonitorShouldContinue(
+                    generation: generation,
+                    expectedRevision: expectedRevision
+                ), appRoutingActivityCursor == processingCursor,
+                   appRoutingActivityStateRevision == processingRevision else { continue }
+
+                appRoutingTrafficRateTracker = processed.rateTracker
+                appRoutingTrafficRates = processed.trafficRates
+                appRoutingActiveCount = processed.activeCount
+                if processed.mergedUpdates {
+                    appRoutingActivities = processed.activities
+                    appRoutingActivitiesByIdentifier = processed.activitiesByIdentifier
+                    appRoutingRuleStatistics = processed.ruleStatistics
+                    if processed.removedCount > 0 {
+                        appRoutingActivityDroppedCount = Self.saturatingAdd(
+                            appRoutingActivityDroppedCount,
+                            UInt64(processed.removedCount)
+                        )
+                    }
+                    scheduleFlowLedgerRefresh(
+                        neededForAccounting: processed.needsAccounting
+                    )
+                }
                 failureAttempt = 0
                 successfulPollsSinceProviderCheck += 1
                 let providerCheckInterval = hasDetailedPresentation
@@ -4684,38 +4770,76 @@ final class AppModel {
         dnsProxyRuntimeFailureCount = 0
         appRoutingTrafficRateTracker.reset()
         appRoutingTrafficRates = .zero
+        appRoutingActiveCount = 0
     }
 
-    private func mergeAppRoutingActivities(_ updates: [AppRoutingActivity]) {
-        guard !updates.isEmpty else { return }
+    nonisolated private static func processAppRoutingActivities(
+        updates: [AppRoutingActivity],
+        currentActivities: [AppRoutingActivity],
+        currentActivitiesByIdentifier: [UUID: AppRoutingActivity],
+        currentRuleStatistics: [String: AppRoutingRuleStatistics],
+        currentRateTracker: AppRoutingTrafficRateTracker,
+        sampledAt: Date
+    ) -> AppRoutingActivityProcessingResult {
+        var activities = currentActivities
+        var activitiesByIdentifier = currentActivitiesByIdentifier
+        var ruleStatistics = currentRuleStatistics
+        var removedCount = 0
+        var needsAccounting = false
+
         for activity in updates {
-            appRoutingActivitiesByIdentifier[activity.flowIdentifier] = activity
+            activitiesByIdentifier[activity.flowIdentifier] = activity
+            if activity.endedAt != nil
+                || activity.relayState == .completed
+                || activity.relayState == .failed
+                || activity.relayState == .notApplicable {
+                needsAccounting = true
+            }
         }
-        appRoutingActivities = appRoutingActivitiesByIdentifier.values
-            .sorted {
+        if !updates.isEmpty {
+            activities = activitiesByIdentifier.values.sorted {
                 if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
                 return $0.sequence > $1.sequence
             }
-        if appRoutingActivities.count > 2_000 {
-            let removed = appRoutingActivities.count - 2_000
-            appRoutingActivities.removeLast(removed)
-            appRoutingActivityDroppedCount = Self.saturatingAdd(
-                appRoutingActivityDroppedCount,
-                UInt64(removed)
-            )
-            appRoutingActivitiesByIdentifier = Dictionary(
-                uniqueKeysWithValues: appRoutingActivities.map {
-                    ($0.flowIdentifier, $0)
-                }
+            if activities.count > 2_000 {
+                removedCount = activities.count - 2_000
+                activities.removeLast(removedCount)
+                activitiesByIdentifier = Dictionary(
+                    uniqueKeysWithValues: activities.map {
+                        ($0.flowIdentifier, $0)
+                    }
+                )
+            }
+            ruleStatistics = makeAppRoutingRuleStatistics(
+                from: activities
             )
         }
-        appRoutingRuleStatistics = Self.makeAppRoutingRuleStatistics(
-            from: appRoutingActivities
+
+        var rateTracker = currentRateTracker
+        let trafficRates = rateTracker.ingest(
+            activities,
+            at: sampledAt
         )
-        scheduleFlowLedgerRefresh(neededForAccounting: true)
+        let activeCount = activities.count {
+            $0.endedAt == nil
+                && $0.relayState != .completed
+                && $0.relayState != .failed
+                && $0.relayState != .notApplicable
+        }
+        return AppRoutingActivityProcessingResult(
+            activities: activities,
+            activitiesByIdentifier: activitiesByIdentifier,
+            ruleStatistics: ruleStatistics,
+            rateTracker: rateTracker,
+            trafficRates: trafficRates,
+            activeCount: activeCount,
+            removedCount: removedCount,
+            mergedUpdates: !updates.isEmpty,
+            needsAccounting: needsAccounting
+        )
     }
 
-    private static func makeAppRoutingRuleStatistics(
+    nonisolated private static func makeAppRoutingRuleStatistics(
         from activities: [AppRoutingActivity]
     ) -> [String: AppRoutingRuleStatistics] {
         activities.reduce(into: [:]) { result, activity in
@@ -4768,8 +4892,7 @@ final class AppModel {
 
     private func startFlowLedgerRefreshIfNeeded() {
         let needsRefresh = flowLedgerAccountingRefreshPending
-            || (flowLedgerPresentationRefreshPending
-                && presentationTelemetryPolicy.appRoutingActivity)
+            || flowLedgerPresentationRefreshPending
         guard needsRefresh, flowLedgerTask == nil else { return }
         flowLedgerTaskGeneration &+= 1
         let generation = flowLedgerTaskGeneration
@@ -4779,12 +4902,17 @@ final class AppModel {
     }
 
     private func cancelPresentationFlowLedgerRefresh() {
-        flowLedgerPresentationRefreshPending = false
         guard !flowLedgerAccountingRefreshPending,
-              !flowLedgerActiveBuildNeedsAccounting else { return }
+              !flowLedgerActiveBuildNeedsAccounting,
+              flowLedgerTask != nil else { return }
+        // Preserve the invalidated shared ledger for low-frequency background
+        // consumers such as Automation, while restarting its build on the
+        // slower hidden-surface cadence.
+        flowLedgerPresentationRefreshPending = true
         flowLedgerTaskGeneration &+= 1
         flowLedgerTask?.cancel()
         flowLedgerTask = nil
+        startFlowLedgerRefreshIfNeeded()
     }
 
     private func runFlowLedgerRefreshLoop(generation: UInt64) async {
@@ -4792,15 +4920,19 @@ final class AppModel {
             let hasPresentationDemand = presentationTelemetryPolicy.appRoutingActivity
             let needsAccounting = flowLedgerAccountingRefreshPending
             let needsPresentation = flowLedgerPresentationRefreshPending
-                && hasPresentationDemand
             guard needsAccounting || needsPresentation else { break }
             do {
                 // Coalesce connection and provider updates into one trailing
                 // build. A single loop owns the detached worker, so stale
                 // generations can never overlap on multiple utility threads.
-                try await Task.sleep(
-                    for: hasPresentationDemand ? .milliseconds(350) : .seconds(2)
-                )
+                let delay: Duration = if hasPresentationDemand {
+                    .milliseconds(350)
+                } else if needsAccounting {
+                    .seconds(2)
+                } else {
+                    .seconds(5)
+                }
+                try await Task.sleep(for: delay)
             } catch {
                 break
             }
@@ -4809,7 +4941,6 @@ final class AppModel {
 
             let buildNeedsAccounting = flowLedgerAccountingRefreshPending
             let buildNeedsPresentation = flowLedgerPresentationRefreshPending
-                && presentationTelemetryPolicy.appRoutingActivity
             guard buildNeedsAccounting || buildNeedsPresentation else { continue }
             flowLedgerAccountingRefreshPending = false
             if buildNeedsPresentation {
@@ -4847,13 +4978,15 @@ final class AppModel {
                         return (identifier, entry)
                     }
                 )
-                schedulePersistentTrafficHistory(from: ledger)
+                if buildNeedsAccounting {
+                    schedulePersistentTrafficHistory(from: ledger)
+                }
             } else if buildNeedsAccounting {
-                // A presentation-only invalidation can make this accounting
-                // build stale and then disappear when the window closes. Keep
-                // the durable refresh pending so completed flows still receive
-                // a successor build and persistence pass.
-                flowLedgerAccountingRefreshPending = true
+                // The build captured every completion which made accounting
+                // dirty. Persist those deltas even if a later active-counter
+                // update made the presentation revision stale; a successor
+                // background build will publish the freshest shared ledger.
+                schedulePersistentTrafficHistory(from: ledger)
             }
         }
 
@@ -4861,8 +4994,7 @@ final class AppModel {
         flowLedgerActiveBuildNeedsAccounting = false
         flowLedgerTask = nil
         if flowLedgerAccountingRefreshPending
-            || (flowLedgerPresentationRefreshPending
-                && presentationTelemetryPolicy.appRoutingActivity) {
+            || flowLedgerPresentationRefreshPending {
             startFlowLedgerRefreshIfNeeded()
         }
     }
@@ -5232,7 +5364,13 @@ final class AppModel {
             generation: generation
         )
         routeTrafficEntries = trafficAttribution.entries
-        connections = MihomoConnectionSnapshot(
+        connections = snapshot
+    }
+
+    nonisolated private static func normalizedConnectionSnapshot(
+        _ snapshot: MihomoConnectionSnapshot
+    ) -> MihomoConnectionSnapshot {
+        MihomoConnectionSnapshot(
             downloadTotal: snapshot.downloadTotal,
             uploadTotal: snapshot.uploadTotal,
             connections: snapshot.connections.sorted {
@@ -5317,10 +5455,33 @@ final class AppModel {
     }
 
     private func appendCoreLog(_ line: CoreLogLine) {
-        logs.append(line)
+        pendingCoreLogs.append(line)
+        if pendingCoreLogs.count >= 64 {
+            flushPendingCoreLogs()
+            return
+        }
+        guard coreLogFlushTask == nil else { return }
+        coreLogFlushTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(80))
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.coreLogFlushTask = nil
+            self.flushPendingCoreLogs()
+        }
+    }
+
+    private func flushPendingCoreLogs() {
+        coreLogFlushTask?.cancel()
+        coreLogFlushTask = nil
+        guard !pendingCoreLogs.isEmpty else { return }
+        logs.append(contentsOf: pendingCoreLogs)
+        pendingCoreLogs.removeAll(keepingCapacity: true)
         if logs.count > 1_500 {
             // Trim in batches so a noisy core does not shift the full observable array
-            // for every line after reaching the display limit.
+            // for every batch after reaching the display limit.
             logs.removeFirst(logs.count - 1_350)
         }
     }
@@ -5468,7 +5629,7 @@ final class AppModel {
     static let appRoutingProviderStatusCheckInterval = 5
     static let maximumDedicatedMihomoRoutes = 64
 
-    private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+    nonisolated private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
         let (value, overflow) = lhs.addingReportingOverflow(rhs)
         return overflow ? .max : value
     }

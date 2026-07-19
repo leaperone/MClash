@@ -10,6 +10,7 @@ struct LogsView: View {
     @State private var exportError: String?
     @State private var layout: LogsLayout = .wide
     @State private var pendingPresentationTask: Task<Void, Never>?
+    @State private var presentationRequestGeneration: UInt64 = 0
     @State private var pendingScrollTask: Task<Void, Never>?
     @State private var presentation = LogPresentationSnapshot.empty
 
@@ -123,7 +124,7 @@ struct LogsView: View {
                 schedulePresentationRefresh()
             }
             .onAppear {
-                refreshPresentation()
+                requestPresentationRefresh(delay: false)
             }
         }
         .mclashPageSurface()
@@ -193,36 +194,53 @@ struct LogsView: View {
         }
     }
 
-    @discardableResult
-    private func refreshPresentation() -> UUID? {
-        pendingPresentationTask?.cancel()
-        pendingPresentationTask = nil
-        let next = LogPresentationSnapshot(
-            logs: model.logs,
-            filter: sourceFilter,
-            searchText: searchText
-        )
-        presentation = next
-        return next.latestID
+    private func schedulePresentationRefresh() {
+        requestPresentationRefresh(delay: true)
     }
 
-    private func schedulePresentationRefresh() {
+    private func requestPresentationRefresh(delay: Bool) {
+        presentationRequestGeneration &+= 1
+        startPresentationRefresh(delay: delay)
+    }
+
+    private func startPresentationRefresh(delay: Bool) {
         guard pendingPresentationTask == nil else { return }
+        let requestGeneration = presentationRequestGeneration
         pendingPresentationTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(80))
+            if delay {
+                do {
+                    try await Task.sleep(for: .milliseconds(80))
+                } catch {
+                    return
+                }
+            }
             guard !Task.isCancelled else { return }
 
-            let next = LogPresentationSnapshot(
-                logs: model.logs,
-                filter: sourceFilter,
-                searchText: searchText
-            )
-            presentation = next
-
-            pendingPresentationTask = nil
-            if next.sourceLatestID != model.logs.last?.id {
-                schedulePresentationRefresh()
+            let logs = model.logs
+            let filter = sourceFilter
+            let query = searchText
+            let worker = Task.detached(priority: .userInitiated) {
+                LogPresentationSnapshot(
+                    logs: logs,
+                    filter: filter,
+                    searchText: query
+                )
             }
+            let next = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            pendingPresentationTask = nil
+            guard requestGeneration == presentationRequestGeneration,
+                  filter == sourceFilter,
+                  query == searchText,
+                  next.sourceLatestID == model.logs.last?.id else {
+                startPresentationRefresh(delay: false)
+                return
+            }
+            presentation = next
         }
     }
 
@@ -374,7 +392,7 @@ private enum LogsLayout: Equatable {
     }
 }
 
-private struct LogPresentationSnapshot {
+private struct LogPresentationSnapshot: Sendable {
     static let empty = LogPresentationSnapshot(logs: [], filter: .all, searchText: "")
 
     let allCount: Int
@@ -391,13 +409,19 @@ private struct LogPresentationSnapshot {
         if filter == .all, query.isEmpty {
             visibleLines = logs
         } else {
-            visibleLines = logs.filter { line in
-                guard filter.includes(line.stream) else { return false }
-                guard !query.isEmpty else { return true }
-                return line.message.localizedCaseInsensitiveContains(query)
+            var filtered: [CoreLogLine] = []
+            filtered.reserveCapacity(logs.count)
+            for (index, line) in logs.enumerated() {
+                if index.isMultiple(of: 64), Task.isCancelled { break }
+                guard filter.includes(line.stream) else { continue }
+                if query.isEmpty
+                    || line.message.localizedCaseInsensitiveContains(query)
                     || LogSourceFilter.title(for: line.stream)
-                        .localizedCaseInsensitiveContains(query)
+                        .localizedCaseInsensitiveContains(query) {
+                    filtered.append(line)
+                }
             }
+            visibleLines = filtered
         }
 
         latestID = visibleLines.last?.id
@@ -409,7 +433,7 @@ private struct LogPresentationSnapshot {
     }
 }
 
-private enum LogSourceFilter: String, CaseIterable, Identifiable {
+private enum LogSourceFilter: String, CaseIterable, Identifiable, Sendable {
     case all
     case stdout
     case stderr

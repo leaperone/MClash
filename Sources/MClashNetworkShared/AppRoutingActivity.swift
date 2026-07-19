@@ -298,21 +298,26 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
     /// Returns records whose most recent update is newer than `cursor`.
     /// Negative limits are treated as zero; limits above capacity are harmless.
     public func batch(after cursor: UInt64 = 0, limit: Int) -> AppRoutingActivityBatch {
-        withLock {
+        let snapshot = withLock {
             let boundedLimit = min(max(0, limit), capacity)
             var candidates = active.values.filter { $0.sequence > cursor }
             candidates.append(contentsOf: history.values.lazy
                 .map(\.activity)
                 .filter { $0.sequence > cursor })
-            candidates.sort { $0.sequence < $1.sequence }
-            let selected = Array(candidates.prefix(boundedLimit))
-            return AppRoutingActivityBatch(
-                activities: selected,
-                nextCursor: selected.last?.sequence ?? cursor,
-                droppedBeforeSequence: droppedBefore,
-                hasMore: candidates.count > selected.count
-            )
+            return (candidates, boundedLimit, droppedBefore)
         }
+        // Sorting can dominate this operation at the 2,000-record bound. Do it
+        // after copying the value snapshot so flow admission and counter upserts
+        // do not wait behind O(n log n) work on the ring's only lock.
+        var candidates = snapshot.0
+        candidates.sort { $0.sequence < $1.sequence }
+        let selected = Array(candidates.prefix(snapshot.1))
+        return AppRoutingActivityBatch(
+            activities: selected,
+            nextCursor: selected.last?.sequence ?? cursor,
+            droppedBeforeSequence: snapshot.2,
+            hasMore: candidates.count > selected.count
+        )
     }
 
     /// Clears retained records without reusing sequences. Existing cursors can

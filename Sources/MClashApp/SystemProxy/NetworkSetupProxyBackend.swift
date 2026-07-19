@@ -10,11 +10,18 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
 
     init(
         reader: any SystemProxyBackend = SystemConfigurationProxyBackend(),
-        runner: any NetworkSetupCommandRunning = ProcessNetworkSetupRunner()
+        runner: any NetworkSetupCommandRunning = ProcessNetworkSetupRunner(),
+        serviceCatalogCacheLifetime: Duration = .seconds(30),
+        serviceCatalogNow: @escaping @Sendable () -> ContinuousClock.Instant = {
+            ContinuousClock.now
+        }
     ) {
         self.reader = reader
         self.runner = runner
-        serviceNameCache = NetworkSetupServiceNameCache()
+        serviceNameCache = NetworkSetupServiceNameCache(
+            lifetime: serviceCatalogCacheLifetime,
+            now: serviceCatalogNow
+        )
     }
 
     func enabledNetworkServices() throws -> [SystemProxyNetworkService] {
@@ -33,10 +40,19 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
 
     func applyProxyStates(_ states: [SystemProxyServiceState]) throws {
         let currentServices = try reader.enabledNetworkServices()
-        let supportedNames = try networkServiceNames(
+        var supportedNames = try networkServiceNames(
             covering: Set(currentServices.map(\.name))
         )
         let servicesByID = Dictionary(uniqueKeysWithValues: currentServices.map { ($0.id, $0) })
+        if states.contains(where: { state in
+            guard let currentService = servicesByID[state.service.id] else { return false }
+            return !supportedNames.contains(currentService.name)
+        }) {
+            serviceNameCache.invalidate()
+            supportedNames = try networkServiceNames(
+                covering: Set(currentServices.map(\.name))
+            )
+        }
         if let unavailableState = states.first(where: { state in
             guard let currentService = servicesByID[state.service.id] else { return true }
             return !supportedNames.contains(currentService.name)
@@ -44,18 +60,26 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
             throw SystemProxyError.serviceNotFound(unavailableState.service.id)
         }
         let writer = NetworkSetupWriter(runner: runner)
-        for state in states {
-            guard let currentService = servicesByID[state.service.id] else {
-                throw SystemProxyError.serviceNotFound(state.service.id)
+        do {
+            for state in states {
+                guard let currentService = servicesByID[state.service.id] else {
+                    throw SystemProxyError.serviceNotFound(state.service.id)
+                }
+                try apply(
+                    SystemProxyServiceState(
+                        service: currentService,
+                        protocolExists: state.protocolExists,
+                        configuration: state.configuration
+                    ),
+                    writer: writer
+                )
             }
-            try apply(
-                SystemProxyServiceState(
-                    service: currentService,
-                    protocolExists: state.protocolExists,
-                    configuration: state.configuration
-                ),
-                writer: writer
-            )
+        } catch {
+            // A service can be enabled, disabled, renamed, or replaced while the
+            // app is running. Make the next guard pass reload the catalog instead
+            // of preserving a stale success or failure until relaunch.
+            serviceNameCache.invalidate()
+            throw error
         }
     }
 
@@ -193,30 +217,60 @@ private final class NetworkSetupServiceNameCache: @unchecked Sendable {
     private struct Snapshot {
         var observedNames: Set<String>
         var supportedNames: Set<String>
+        var loadedAt: ContinuousClock.Instant
     }
 
     private let lock = NSLock()
+    private let lifetime: Duration
+    private let now: @Sendable () -> ContinuousClock.Instant
     private var snapshot: Snapshot?
+    private var generation: UInt64 = 0
+
+    init(
+        lifetime: Duration,
+        now: @escaping @Sendable () -> ContinuousClock.Instant
+    ) {
+        self.lifetime = lifetime < .zero ? .zero : lifetime
+        self.now = now
+    }
 
     func supportedNames(
         covering observedNames: Set<String>,
         load: () throws -> Set<String>
     ) throws -> Set<String> {
-        if let cached = lock.withLock({ snapshot }),
-           observedNames.isSubset(of: cached.observedNames) {
-            return cached.supportedNames
-        }
+        while true {
+            let requestedAt = now()
+            let state = lock.withLock { (snapshot, generation) }
+            if let cached = state.0 {
+                let age = cached.loadedAt.duration(to: requestedAt)
+                if age >= .zero,
+                   age < lifetime,
+                   observedNames.isSubset(of: cached.observedNames) {
+                    return cached.supportedNames
+                }
+            }
 
-        let loaded = try load()
-        return lock.withLock {
-            var allObservedNames = snapshot?.observedNames ?? []
-            allObservedNames.formUnion(observedNames)
-            let refreshed = Snapshot(
-                observedNames: allObservedNames,
-                supportedNames: loaded
-            )
-            snapshot = refreshed
-            return refreshed.supportedNames
+            let loaded = try load()
+            let installed = lock.withLock { () -> Set<String>? in
+                guard generation == state.1 else { return nil }
+                var allObservedNames = snapshot?.observedNames ?? []
+                allObservedNames.formUnion(observedNames)
+                let refreshed = Snapshot(
+                    observedNames: allObservedNames,
+                    supportedNames: loaded,
+                    loadedAt: requestedAt
+                )
+                snapshot = refreshed
+                return refreshed.supportedNames
+            }
+            if let installed { return installed }
+        }
+    }
+
+    func invalidate() {
+        lock.withLock {
+            snapshot = nil
+            generation &+= 1
         }
     }
 }

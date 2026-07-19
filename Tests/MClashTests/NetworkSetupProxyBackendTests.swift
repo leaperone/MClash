@@ -36,6 +36,81 @@ struct NetworkSetupProxyBackendTests {
         #expect(runner.commands == [["-listallnetworkservices"]])
     }
 
+    @Test("The service catalog refreshes only after its cache lifetime")
+    func refreshesExpiredServiceCatalog() throws {
+        let wiFi = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+        let clock = ManualMonotonicClock()
+        let runner = RecordingNetworkSetupRunner(
+            serviceLists: ["*Wi-Fi\n", "Wi-Fi\n"]
+        )
+        let backend = NetworkSetupProxyBackend(
+            reader: StaticProxyReader(services: [wiFi], states: []),
+            runner: runner,
+            serviceCatalogCacheLifetime: .seconds(30),
+            serviceCatalogNow: clock.now
+        )
+
+        #expect(try backend.enabledNetworkServices().isEmpty)
+        clock.advance(by: .seconds(29))
+        #expect(try backend.enabledNetworkServices().isEmpty)
+        clock.advance(by: .seconds(1))
+        #expect(try backend.enabledNetworkServices() == [wiFi])
+        #expect(runner.commands == [
+            ["-listallnetworkservices"],
+            ["-listallnetworkservices"],
+        ])
+    }
+
+    @Test("A failed write invalidates the service catalog")
+    func invalidatesCatalogAfterWriteFailure() throws {
+        let wiFi = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+        let state = try SystemProxyServiceState(
+            service: wiFi,
+            protocolExists: true,
+            configuration: [:]
+        )
+        let runner = RecordingNetworkSetupRunner(
+            serviceList: "Wi-Fi\n",
+            failWriteAt: 1
+        )
+        let backend = NetworkSetupProxyBackend(
+            reader: StaticProxyReader(services: [wiFi], states: [state]),
+            runner: runner
+        )
+
+        #expect(throws: SystemProxyError.self) {
+            try backend.applyProxyStates([state])
+        }
+        #expect(try backend.enabledNetworkServices() == [wiFi])
+        #expect(
+            runner.commands.filter { $0 == ["-listallnetworkservices"] }.count == 2
+        )
+    }
+
+    @Test("A stale unsupported preflight reloads before rejecting a service")
+    func reloadsStaleUnsupportedPreflight() throws {
+        let wiFi = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+        let state = try SystemProxyServiceState(
+            service: wiFi,
+            protocolExists: true,
+            configuration: [:]
+        )
+        let runner = RecordingNetworkSetupRunner(
+            serviceLists: ["*Wi-Fi\n", "Wi-Fi\n"]
+        )
+        let backend = NetworkSetupProxyBackend(
+            reader: StaticProxyReader(services: [wiFi], states: [state]),
+            runner: runner
+        )
+
+        try backend.applyProxyStates([state])
+
+        #expect(Array(runner.commands.prefix(2)) == [
+            ["-listallnetworkservices"],
+            ["-listallnetworkservices"],
+        ])
+    }
+
     @Test("HTTP, HTTPS, SOCKS, PAC, discovery, and bypass commands are explicit")
     func buildsCompleteProxyCommands() throws {
         let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
@@ -207,15 +282,36 @@ struct NetworkSetupProxyBackendTests {
     }
 }
 
+private final class ManualMonotonicClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instant = ContinuousClock.now
+
+    func now() -> ContinuousClock.Instant {
+        lock.withLock { instant }
+    }
+
+    func advance(by duration: Duration) {
+        lock.withLock {
+            instant = instant.advanced(by: duration)
+        }
+    }
+}
+
 private final class RecordingNetworkSetupRunner: NetworkSetupCommandRunning, @unchecked Sendable {
     private let lock = NSLock()
-    private let serviceList: String
+    private var serviceLists: [String]
+    private var serviceListReadCount = 0
     private let failWriteAt: Int?
     private var storedCommands: [[String]] = []
     private var writeCount = 0
 
     init(serviceList: String, failWriteAt: Int? = nil) {
-        self.serviceList = serviceList
+        serviceLists = [serviceList]
+        self.failWriteAt = failWriteAt
+    }
+
+    init(serviceLists: [String], failWriteAt: Int? = nil) {
+        self.serviceLists = serviceLists
         self.failWriteAt = failWriteAt
     }
 
@@ -227,7 +323,9 @@ private final class RecordingNetworkSetupRunner: NetworkSetupCommandRunning, @un
         try lock.withLock {
             storedCommands.append(arguments)
             if arguments == ["-listallnetworkservices"] {
-                return serviceList
+                let index = min(serviceListReadCount, max(0, serviceLists.count - 1))
+                serviceListReadCount += 1
+                return serviceLists[index]
             }
             writeCount += 1
             if writeCount == failWriteAt {

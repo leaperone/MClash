@@ -1,6 +1,6 @@
 import MClashNetworkShared
 
-enum AppRoutingActivityFilter: String, CaseIterable, Identifiable {
+enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
     case focused = "Proxy & Issues"
     case all = "All"
     case active = "Active"

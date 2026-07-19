@@ -21,6 +21,7 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
     private var flows: [UUID: FlowState] = [:]
     private var terminalFlowIdentifiers: Set<UUID> = []
     private var terminalFlowOrder: [UUID] = []
+    private var terminalFlowEvictionIndex = 0
     private var stopped = false
 
     private static let maximumTerminalFlowIdentifiers = 4_096
@@ -169,6 +170,7 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
         flows.removeAll(keepingCapacity: false)
         terminalFlowIdentifiers.removeAll(keepingCapacity: false)
         terminalFlowOrder.removeAll(keepingCapacity: false)
+        terminalFlowEvictionIndex = 0
         let failedStatus = status
         lock.unlock()
         timer?.setEventHandler {}
@@ -223,6 +225,7 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
             self.flows.removeAll(keepingCapacity: false)
             self.terminalFlowIdentifiers.removeAll(keepingCapacity: false)
             self.terminalFlowOrder.removeAll(keepingCapacity: false)
+            self.terminalFlowEvictionIndex = 0
         }
     }
 
@@ -235,11 +238,15 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
 
     private func rememberTerminalFlow(_ identifier: UUID) {
         guard terminalFlowIdentifiers.insert(identifier).inserted else { return }
-        terminalFlowOrder.append(identifier)
-        if terminalFlowOrder.count > Self.maximumTerminalFlowIdentifiers {
-            let expired = terminalFlowOrder.removeFirst()
-            terminalFlowIdentifiers.remove(expired)
+        if terminalFlowOrder.count < Self.maximumTerminalFlowIdentifiers {
+            terminalFlowOrder.append(identifier)
+            return
         }
+        let expired = terminalFlowOrder[terminalFlowEvictionIndex]
+        terminalFlowIdentifiers.remove(expired)
+        terminalFlowOrder[terminalFlowEvictionIndex] = identifier
+        terminalFlowEvictionIndex = (terminalFlowEvictionIndex + 1)
+            % Self.maximumTerminalFlowIdentifiers
     }
 
     private func publishBestEffort(
