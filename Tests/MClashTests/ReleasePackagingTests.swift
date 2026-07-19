@@ -153,8 +153,8 @@ struct ReleasePackagingTests {
         #expect(releaseHelperSign.lowerBound < releaseHostSign.lowerBound)
     }
 
-    @Test("Login agent launches the main app without presenting its window")
-    func loginAgentIsBackgroundOnly() throws {
+    @Test("Legacy login agent remains packaged only for safe migration")
+    func legacyLoginAgentCanBeUnregisteredAfterUpgrade() throws {
         let agent = try plist(
             at: repositoryRoot.appendingPathComponent(
                 "Support/LaunchAgents/one.leaper.mclash.login.plist"
@@ -170,6 +170,20 @@ struct ReleasePackagingTests {
         )
         #expect(buildScript.contains("${contents}/Library/LaunchAgents"))
         #expect(buildScript.contains("one.leaper.mclash.login.plist"))
+
+        let manager = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/MClashApp/App/LoginItemManager.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(manager.contains("SMAppService.mainApp.register()"))
+        #expect(manager.contains("legacyBackgroundAgent.unregister()"))
+
+        let hostInfo = try plist(
+            at: repositoryRoot.appendingPathComponent("Support/Info.plist")
+        )
+        #expect(hostInfo["LSMultipleInstancesProhibited"] as? Bool == true)
     }
 
     private var repositoryRoot: URL {

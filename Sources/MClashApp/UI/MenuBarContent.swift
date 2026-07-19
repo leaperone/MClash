@@ -11,21 +11,15 @@ struct MenuBarContent: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     statusHeader
-                    operatingState
                     if model.isConnected {
                         liveMetrics
                     }
                     appRoutingStatus
-                    operationalEvidence
-                    managementLinks
+                    profileControl
                     primaryAction
 
-                    Divider()
-
-                    profileControl
-
-                    if model.isConnected {
-                        connectedControls
+                    if !model.operationalIssues.isEmpty {
+                        operationalEvidence
                     }
 
                     if let issueMessage {
@@ -67,9 +61,10 @@ struct MenuBarContent: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(statusTitle)
                     .font(.headline)
-                Text(statusSubtitle)
+                Text(compactStatusSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -901,9 +896,15 @@ struct MenuBarContent: View {
     }
 
     private var popoverHeight: CGFloat {
-        if model.isConnected { return 600 }
-        if !model.operationalIssues.isEmpty || issueMessage != nil { return 520 }
-        return 480
+        if !model.operationalIssues.isEmpty || issueMessage != nil { return 440 }
+        return model.isConnected ? 400 : 340
+    }
+
+    private var compactStatusSubtitle: String {
+        if let profile = model.activeProfile?.name {
+            return profile
+        }
+        return "Choose a profile to connect"
     }
 }
 

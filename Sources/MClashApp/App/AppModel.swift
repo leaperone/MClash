@@ -104,6 +104,20 @@ final class AppModel {
         }
     }
 
+    enum MenuBarDisplayStyle: String, CaseIterable, Identifiable, Sendable {
+        case logo
+        case proxyStatus
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .logo: "MClash Logo"
+            case .proxyStatus: "Proxy Status"
+            }
+        }
+    }
+
     struct PresentationTelemetryPolicy: Equatable, Sendable {
         var traffic = false
         var connections = false
@@ -119,7 +133,8 @@ final class AppModel {
             mainWindowVisible: Bool,
             menuBarContentVisible: Bool,
             destination: Destination?,
-            appRoutingActivityVisible: Bool
+            appRoutingActivityVisible: Bool,
+            menuBarStatusVisible: Bool = false
         ) -> Self {
             var policy = Self()
 
@@ -127,6 +142,10 @@ final class AppModel {
                 policy.traffic = true
                 policy.connections = true
                 policy.proxies = true
+            }
+            if menuBarStatusVisible {
+                policy.traffic = true
+                policy.connections = true
             }
 
             guard mainWindowVisible else { return policy }
@@ -443,7 +462,7 @@ final class AppModel {
     var systemProxyState: SystemProxyState = .off
     private(set) var systemProxyPreferences: SystemProxyPreferences = .defaults
     private(set) var networkCaptureState: NetworkCaptureState = .off
-    private(set) var networkCapturePreferences = NetworkCapturePreferences.disabled()
+    private(set) var networkCapturePreferences = NetworkCapturePreferences.defaults()
     private(set) var appRoutingActivities: [AppRoutingActivity] = [] {
         didSet {
             appRoutingActivityStateRevision &+= 1
@@ -466,6 +485,7 @@ final class AppModel {
     private(set) var networkCaptureRollbackFailure: String?
     private var dnsProxyRuntimeFailureCount = 0
     private(set) var launchAtLogin = false
+    private(set) var launchAtLoginRequiresApproval = false
     private(set) var notificationsEnabled = false
     var controllerState: ControllerState = .idle
     private(set) var pendingSubscriptionImport: SubscriptionImportRequest?
@@ -481,6 +501,15 @@ final class AppModel {
     var autoEnableSystemProxy: Bool {
         didSet {
             preferenceDefaults.set(autoEnableSystemProxy, forKey: Self.autoEnableSystemProxyKey)
+        }
+    }
+    var menuBarDisplayStyle: MenuBarDisplayStyle {
+        didSet {
+            preferenceDefaults.set(
+                menuBarDisplayStyle.rawValue,
+                forKey: Self.menuBarDisplayStyleKey
+            )
+            presentationDemandDidChange()
         }
     }
     var closeConnectionsOnRoutingChange: Bool {
@@ -626,6 +655,10 @@ final class AppModel {
         } else {
             autoEnableSystemProxy = preferenceDefaults.bool(forKey: Self.autoEnableSystemProxyKey)
         }
+        menuBarDisplayStyle = preferenceDefaults.string(
+            forKey: Self.menuBarDisplayStyleKey
+        )
+        .flatMap(MenuBarDisplayStyle.init(rawValue:)) ?? .logo
         if preferenceDefaults.object(forKey: Self.closeConnectionsOnRoutingChangeKey) == nil {
             closeConnectionsOnRoutingChange = true
         } else {
@@ -634,7 +667,9 @@ final class AppModel {
             )
         }
         notificationsEnabled = preferenceDefaults.bool(forKey: Self.notificationsEnabledKey)
-        launchAtLogin = LoginItemManager().isEnabled
+        let loginItemManager = LoginItemManager()
+        launchAtLogin = loginItemManager.isEnabled
+        launchAtLoginRequiresApproval = loginItemManager.requiresApproval
 
         var initializationFailures: [StorageInitializationFailure] = []
         let layout: ProfileDirectoryLayout?
@@ -766,10 +801,12 @@ final class AppModel {
 
         do {
             try LoginItemManager().migrateLegacyRegistrationIfNeeded()
-            launchAtLogin = LoginItemManager().isEnabled
+            let loginItemManager = LoginItemManager()
+            launchAtLogin = loginItemManager.isEnabled
+            launchAtLoginRequiresApproval = loginItemManager.requiresApproval
         } catch {
             appendSupervisorLog(
-                "Launch at Login could not be migrated to background mode: \(error.localizedDescription)"
+                "Launch at Login could not be migrated to the system main-app registration: \(error.localizedDescription)"
             )
         }
         await prepareTrafficHistoryPersistenceIfNeeded()
@@ -904,7 +941,7 @@ final class AppModel {
 
         let connected = await performConnect()
         guard !shutdownInProgress, !Task.isCancelled else { return }
-        if connected, autoEnableSystemProxy {
+        if connected, autoEnableSystemProxy, !networkCapturePreferences.enabled {
             await enableSystemProxyAfterConnect()
         }
     }
@@ -961,7 +998,8 @@ final class AppModel {
             mainWindowVisible: mainWindowIsVisible,
             menuBarContentVisible: menuBarContentIsVisible,
             destination: selection,
-            appRoutingActivityVisible: appRoutingActivityViewIsVisible
+            appRoutingActivityVisible: appRoutingActivityViewIsVisible,
+            menuBarStatusVisible: menuBarDisplayStyle == .proxyStatus
         )
     }
 
@@ -1366,8 +1404,10 @@ final class AppModel {
             throw AppModelError.operationInProgress
         }
         defer { end(.changeApplicationSettings) }
-        try LoginItemManager().setEnabled(enabled)
-        launchAtLogin = LoginItemManager().isEnabled
+        let loginItemManager = LoginItemManager()
+        try loginItemManager.setEnabled(enabled)
+        launchAtLogin = loginItemManager.isEnabled
+        launchAtLoginRequiresApproval = loginItemManager.requiresApproval
     }
 
     func setNotificationsEnabled(_ enabled: Bool) async {
@@ -2439,6 +2479,10 @@ final class AppModel {
 
     func setNetworkCaptureEnabled(_ enabled: Bool) async {
         guard enabled != networkCapturePreferences.enabled else { return }
+        if activeProfileID == nil {
+            await persistNetworkCaptureEnabledWithoutProfile(enabled)
+            return
+        }
         do {
             try await applyNetworkCaptureRules(
                 networkCapturePreferences.snapshot.rules,
@@ -2446,6 +2490,44 @@ final class AppModel {
                 // DNS follows the App Routing lifecycle by default. The saved
                 // value can only differ through the explicitly advanced opt-out.
                 dnsEnabled: networkCapturePreferences.dnsEnabled
+            )
+        } catch {
+            recordOperationFailure(error, context: "Network capture update")
+        }
+    }
+
+    private func persistNetworkCaptureEnabledWithoutProfile(_ enabled: Bool) async {
+        guard begin(.changeNetworkCapture) else { return }
+        pendingNetworkCaptureEnabled = enabled
+        defer {
+            pendingNetworkCaptureEnabled = nil
+            end(.changeNetworkCapture)
+        }
+        guard let store = networkCaptureConfigurationStore else {
+            recordOperationFailure(
+                AppModelError.profileStoreUnavailable,
+                context: "Network capture update"
+            )
+            return
+        }
+
+        do {
+            networkCapturePreferences = try await store.replaceRules(
+                networkCapturePreferences.snapshot.rules,
+                enabled: enabled,
+                dnsEnabled: networkCapturePreferences.dnsEnabled,
+                failOpen: networkCapturePreferences.failOpen
+            )
+            networkCaptureState = enabled ? .waitingForConnection : .off
+            networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                completedAt: Date(),
+                duration: 0,
+                outcome: .savedForNextActivation
+            )
+            appendSupervisorLog(
+                enabled
+                    ? "App Routing will start when a profile becomes available."
+                    : "Automatic App Routing startup was disabled."
             )
         } catch {
             recordOperationFailure(error, context: "Network capture update")
@@ -3683,7 +3765,9 @@ final class AppModel {
         guard await completeCrashProxyRestoreIfNeeded() else { return }
         if requiresCrashIntent, !shouldReenableSystemProxyAfterCrash { return }
         shouldReenableSystemProxyAfterCrash = false
-        guard isConnected, controllerIsReady else { return }
+        guard isConnected,
+              controllerIsReady,
+              !networkCapturePreferences.enabled else { return }
         await performEnableSystemProxy()
     }
 
@@ -5670,6 +5754,7 @@ final class AppModel {
 
     static let autoConnectOnLaunchKey = "network.autoConnectOnLaunch"
     static let autoEnableSystemProxyKey = "network.autoEnableSystemProxy"
+    static let menuBarDisplayStyleKey = "application.menuBarDisplayStyle"
     static let closeConnectionsOnRoutingChangeKey = "network.closeConnectionsOnRoutingChange"
     static let trafficHistoryPersistenceChoiceKey = "traffic.history.persistenceChoice"
     static let notificationsEnabledKey = "application.notificationsEnabled"

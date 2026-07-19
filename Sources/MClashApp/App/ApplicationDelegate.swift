@@ -2,19 +2,100 @@ import AppKit
 
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
+    enum QuitChoice {
+        case keepRunning
+        case quitCompletely
+        case cancel
+    }
+
+    struct TerminationContext {
+        let coreIsConnected: Bool
+        let appRoutingIsActive: Bool
+        let systemProxyIsActive: Bool
+    }
+
     var shutdownHandler: (@MainActor () async -> Bool)?
     var forceShutdownHandler: (@MainActor () async -> Void)?
     var willTerminateHandler: (@MainActor () -> Void)?
+    var terminationContextProvider: (@MainActor () -> TerminationContext)?
+    var quitChoiceHandler: (@MainActor () -> QuitChoice)?
+    var keepRunningHandler: (@MainActor () -> Void)?
     private var terminationInProgress = false
     private var mainWindow: NSWindow?
     private var mainWindowObservers: [NSObjectProtocol] = []
     private var mainWindowVisibilityHandler: (@MainActor (Bool) -> Void)?
+    private let instanceLock = ApplicationInstanceLock()
+    private var applicationDidFinishLaunching = false
+    private var applicationPreparationHandler: (@MainActor () async -> Void)?
+    private var applicationPreparationTask: Task<Void, Never>?
+    private var skipNextQuitConfirmation = false
     private var shouldPresentInitialMainWindow = ApplicationDelegate.initialWindowShouldPresent(
         arguments: CommandLine.arguments
     )
 
+    override init() {
+        super.init()
+        if instanceLock.isOwner {
+            DistributedNotificationCenter.default().addObserver(
+                self,
+                selector: #selector(activateExistingInstance(_:)),
+                name: Self.activationRequestNotification,
+                object: nil
+            )
+        }
+    }
+
+    deinit {
+        DistributedNotificationCenter.default().removeObserver(self)
+    }
+
+    private static let activationRequestNotification = Notification.Name(
+        "one.leaper.mclash.activate-existing-instance"
+    )
+
     static func initialWindowShouldPresent(arguments: [String]) -> Bool {
         !arguments.contains("--mclash-background")
+    }
+
+    static func isLoginItemLaunch(event: NSAppleEventDescriptor?) -> Bool {
+        event?.eventID == kAEOpenApplication
+            && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+                == keyAELaunchedAsLogInItem
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if Self.isLoginItemLaunch(
+            event: NSAppleEventManager.shared().currentAppleEvent
+        ) {
+            shouldPresentInitialMainWindow = false
+        }
+
+        guard instanceLock.isOwner else {
+            if shouldPresentInitialMainWindow {
+                DistributedNotificationCenter.default().postNotificationName(
+                    Self.activationRequestNotification,
+                    object: nil,
+                    userInfo: nil,
+                    deliverImmediately: true
+                )
+                activateRunningApplication()
+            }
+            NSApplication.shared.terminate(nil)
+            return
+        }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        applicationDidFinishLaunching = true
+        startApplicationPreparationIfReady()
+    }
+
+    func registerApplicationPreparation(
+        _ handler: @escaping @MainActor () async -> Void
+    ) {
+        guard applicationPreparationHandler == nil else { return }
+        applicationPreparationHandler = handler
+        startApplicationPreparationIfReady()
     }
 
     func registerMainWindow(
@@ -72,6 +153,22 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         guard !terminationInProgress else { return .terminateLater }
         guard let shutdownHandler else { return .terminateNow }
 
+        if !skipNextQuitConfirmation,
+           !Self.isSystemTermination(
+                event: NSAppleEventManager.shared().currentAppleEvent
+           ) {
+            switch quitChoiceHandler?() ?? quitChoiceAlert().runModal().runModalChoice {
+            case .keepRunning:
+                keepRunningInMenuBar(sender)
+                return .terminateCancel
+            case .cancel:
+                return .terminateCancel
+            case .quitCompletely:
+                break
+            }
+        }
+        skipNextQuitConfirmation = false
+
         terminationInProgress = true
         Task {
             while true {
@@ -93,6 +190,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                     return
                 default:
                     terminationInProgress = false
+                    skipNextQuitConfirmation = false
                     sender.reply(toApplicationShouldTerminate: false)
                     return
                 }
@@ -112,6 +210,67 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         return alert
     }
 
+    private func quitChoiceAlert() -> NSAlert {
+        let context = terminationContextProvider?() ?? TerminationContext(
+            coreIsConnected: false,
+            appRoutingIsActive: false,
+            systemProxyIsActive: false
+        )
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Keep MClash Running in the Menu Bar?"
+
+        var details = [
+            "Keep Running hides MClash windows while the menu bar item remains available."
+        ]
+        if context.coreIsConnected {
+            details.append("Mihomo stays connected and continues providing local proxy service.")
+        }
+        if context.appRoutingIsActive {
+            details.append("App Routing and DNS Routing remain active.")
+        }
+        if context.systemProxyIsActive {
+            details.append(
+                "Quit Completely stops the proxy and safely restores the previous macOS System Proxy settings."
+            )
+        } else {
+            details.append("Quit Completely stops MClash and its active networking services.")
+        }
+        alert.informativeText = details.joined(separator: " ")
+
+        alert.addButton(withTitle: "Keep Running")
+        let quitButton = alert.addButton(withTitle: "Quit Completely")
+        quitButton.hasDestructiveAction = true
+        let cancelButton = alert.addButton(withTitle: "Cancel")
+        cancelButton.keyEquivalent = "\u{1b}"
+        return alert
+    }
+
+    static func isSystemTermination(event: NSAppleEventDescriptor?) -> Bool {
+        guard event?.eventID == kAEQuitApplication,
+              let reason = event?.paramDescriptor(
+                forKeyword: kAEQuitReason
+              )?.enumCodeValue else { return false }
+        return reason == kAEQuitAll
+            || reason == kAEShutDown
+            || reason == kAERestart
+            || reason == kAEReallyLogOut
+    }
+
+    func requestFullTermination() {
+        skipNextQuitConfirmation = true
+        NSApplication.shared.terminate(nil)
+    }
+
+    private func keepRunningInMenuBar(_ sender: NSApplication) {
+        if let keepRunningHandler {
+            keepRunningHandler()
+            return
+        }
+        mainWindowVisibilityHandler?(false)
+        sender.hide(nil)
+    }
+
     func showMainWindow() {
         guard let mainWindow else {
             shouldPresentInitialMainWindow = true
@@ -120,6 +279,31 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindowVisibilityHandler?(true)
         mainWindow.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    @objc
+    private func activateExistingInstance(_ notification: Notification) {
+        showMainWindow()
+    }
+
+    private func activateRunningApplication() {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
+        let currentProcessIdentifier = ProcessInfo.processInfo.processIdentifier
+        NSRunningApplication.runningApplications(
+            withBundleIdentifier: bundleIdentifier
+        )
+        .first { $0.processIdentifier != currentProcessIdentifier }?
+        .activate(options: [])
+    }
+
+    private func startApplicationPreparationIfReady() {
+        guard instanceLock.isOwner,
+              applicationDidFinishLaunching,
+              applicationPreparationTask == nil,
+              let applicationPreparationHandler else { return }
+        applicationPreparationTask = Task {
+            await applicationPreparationHandler()
+        }
     }
 
     private func observeMainWindow(_ window: NSWindow) {
@@ -175,5 +359,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         let center = NotificationCenter.default
         mainWindowObservers.forEach(center.removeObserver)
         mainWindowObservers.removeAll()
+    }
+}
+
+private extension NSApplication.ModalResponse {
+    var runModalChoice: ApplicationDelegate.QuitChoice {
+        switch self {
+        case .alertFirstButtonReturn: .keepRunning
+        case .alertSecondButtonReturn: .quitCompletely
+        default: .cancel
+        }
     }
 }

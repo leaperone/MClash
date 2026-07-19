@@ -5,15 +5,15 @@ import Testing
 
 @Suite("Network capture configuration store")
 struct NetworkCaptureConfigurationStoreTests {
-    @Test("Missing configuration is disabled and fail-open")
-    func missingConfigurationIsSafe() async throws {
+    @Test("Missing configuration enables fail-open App Routing by default")
+    func missingConfigurationUsesProductDefaults() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let store = try NetworkCaptureConfigurationStore(applicationRoot: fixture.root)
 
         let value = try await store.load()
 
-        #expect(!value.enabled)
+        #expect(value.enabled)
         #expect(value.dnsEnabled)
         #expect(value.failOpen)
         #expect(value.snapshot.revision == 0)

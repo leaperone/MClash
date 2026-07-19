@@ -32,6 +32,23 @@ struct PresentationTelemetryPolicyTests {
         #expect(!policy.appRoutingActivity)
     }
 
+    @Test("Proxy status menu bar style keeps only quick metrics live")
+    func menuBarStatusPolicyIsLightweight() {
+        let policy = AppModel.PresentationTelemetryPolicy.resolve(
+            mainWindowVisible: false,
+            menuBarContentVisible: false,
+            destination: nil,
+            appRoutingActivityVisible: false,
+            menuBarStatusVisible: true
+        )
+
+        #expect(policy.traffic)
+        #expect(policy.connections)
+        #expect(!policy.proxies)
+        #expect(!policy.logs)
+        #expect(!policy.appRoutingActivity)
+    }
+
     @Test("Only the selected main-window destination requests its expensive streams")
     func destinationPolicyIsSelective() {
         let logs = AppModel.PresentationTelemetryPolicy.resolve(

@@ -30,8 +30,12 @@ struct MClashApp: App {
                         }
                     }
                 }
-                .task {
-                    await prepareApplication()
+                .background {
+                    ApplicationLifecycleRegistrationView {
+                        applicationDelegate.registerApplicationPreparation {
+                            await prepareApplication()
+                        }
+                    }
                 }
                 .onOpenURL { url in
                     applicationDelegate.showMainWindow()
@@ -59,7 +63,6 @@ struct MClashApp: App {
             MenuBarContent(model: model) { destination in
                 showMainWindow(destination: destination)
             }
-                .task { await prepareApplication() }
         } label: {
             MenuBarStatusLabel(model: model)
         }
@@ -87,6 +90,26 @@ struct MClashApp: App {
         applicationDelegate.forceShutdownHandler = { [weak model] in
             await model?.forceShutdown()
         }
+        applicationDelegate.terminationContextProvider = { [weak model] in
+            guard let model else {
+                return ApplicationDelegate.TerminationContext(
+                    coreIsConnected: false,
+                    appRoutingIsActive: false,
+                    systemProxyIsActive: false
+                )
+            }
+            let appRoutingIsActive: Bool
+            if case .on = model.networkCaptureState {
+                appRoutingIsActive = true
+            } else {
+                appRoutingIsActive = false
+            }
+            return ApplicationDelegate.TerminationContext(
+                coreIsConnected: model.isConnected,
+                appRoutingIsActive: appRoutingIsActive,
+                systemProxyIsActive: model.systemProxyEnabled
+            )
+        }
         applicationDelegate.willTerminateHandler = { [automationServer] in
             automationServer.stop()
         }
@@ -104,11 +127,63 @@ struct MClashApp: App {
     }
 }
 
+private struct ApplicationLifecycleRegistrationView: NSViewRepresentable {
+    let register: @MainActor () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        registerIfNeeded(context.coordinator)
+        return NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        registerIfNeeded(context.coordinator)
+    }
+
+    private func registerIfNeeded(_ coordinator: Coordinator) {
+        guard !coordinator.didRegister else { return }
+        coordinator.didRegister = true
+        register()
+    }
+
+    final class Coordinator {
+        var didRegister = false
+    }
+}
+
 private struct MenuBarStatusLabel: View {
     @Bindable var model: AppModel
 
+    @ViewBuilder
     var body: some View {
-        Label(accessibilityLabel, systemImage: symbol)
+        switch model.menuBarDisplayStyle {
+        case .logo:
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .renderingMode(.original)
+                .scaledToFit()
+                .frame(width: 18, height: 18)
+                .accessibilityLabel(accessibilityLabel)
+        case .proxyStatus:
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                if model.isConnected {
+                    Text(
+                        "↓ \(menuBarRate(model.traffic.download))  "
+                            + "↑ \(menuBarRate(model.traffic.upload))  "
+                            + "↔ \(menuBarConnectionCount)"
+                    )
+                    .monospacedDigit()
+                } else {
+                    Text(model.statusTitle)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel)
+        }
     }
 
     private var symbol: String {
@@ -154,6 +229,16 @@ private struct MenuBarStatusLabel: View {
             return "MClash, core running, macOS System Proxy off"
         }
         return "MClash, \(model.statusTitle)"
+    }
+
+    private func menuBarRate(_ value: Int64) -> String {
+        guard model.liveStreamHealth[.traffic]?.phase == .live else { return "—" }
+        return formattedByteRate(value)
+    }
+
+    private var menuBarConnectionCount: String {
+        guard model.liveStreamHealth[.connections]?.phase == .live else { return "—" }
+        return formattedCount(model.connections?.connections.count ?? 0)
     }
 }
 

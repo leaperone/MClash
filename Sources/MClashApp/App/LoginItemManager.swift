@@ -6,41 +6,53 @@ import ServiceManagement
 struct LoginItemManager {
     private static let agentPlistName = "one.leaper.mclash.login.plist"
 
-    private var backgroundAgent: SMAppService {
+    private var legacyBackgroundAgent: SMAppService {
         SMAppService.agent(plistName: Self.agentPlistName)
     }
 
     var isEnabled: Bool {
-        backgroundAgent.status == .enabled
-            || SMAppService.mainApp.status == .enabled
+        Self.isRegistered(SMAppService.mainApp.status)
+            || Self.isRegistered(legacyBackgroundAgent.status)
+    }
+
+    var requiresApproval: Bool {
+        SMAppService.mainApp.status == .requiresApproval
+            || legacyBackgroundAgent.status == .requiresApproval
     }
 
     func setEnabled(_ enabled: Bool) throws {
         if enabled {
-            if SMAppService.mainApp.status == .enabled
-                || SMAppService.mainApp.status == .requiresApproval {
-                try SMAppService.mainApp.unregister()
+            if !Self.isRegistered(SMAppService.mainApp.status) {
+                try SMAppService.mainApp.register()
             }
-            guard backgroundAgent.status != .enabled else { return }
-            try backgroundAgent.register()
+            if SMAppService.mainApp.status == .enabled,
+               Self.isRegistered(legacyBackgroundAgent.status) {
+                try legacyBackgroundAgent.unregister()
+            }
         } else {
-            if backgroundAgent.status == .enabled
-                || backgroundAgent.status == .requiresApproval {
-                try backgroundAgent.unregister()
+            if Self.isRegistered(legacyBackgroundAgent.status) {
+                try legacyBackgroundAgent.unregister()
             }
-            if SMAppService.mainApp.status == .enabled
-                || SMAppService.mainApp.status == .requiresApproval {
+            if Self.isRegistered(SMAppService.mainApp.status) {
                 try SMAppService.mainApp.unregister()
             }
         }
     }
 
     func migrateLegacyRegistrationIfNeeded() throws {
-        guard SMAppService.mainApp.status == .enabled else { return }
-        if backgroundAgent.status != .enabled {
-            try backgroundAgent.register()
+        guard Self.isRegistered(legacyBackgroundAgent.status) else { return }
+        if !Self.isRegistered(SMAppService.mainApp.status) {
+            try SMAppService.mainApp.register()
         }
-        try SMAppService.mainApp.unregister()
+        // Keep the old agent until the replacement is actually eligible to
+        // launch. This avoids disabling startup while macOS awaits approval.
+        if SMAppService.mainApp.status == .enabled {
+            try legacyBackgroundAgent.unregister()
+        }
+    }
+
+    private static func isRegistered(_ status: SMAppService.Status) -> Bool {
+        status == .enabled || status == .requiresApproval
     }
 }
 #endif

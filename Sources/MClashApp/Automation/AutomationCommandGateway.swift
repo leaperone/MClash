@@ -212,6 +212,14 @@ final class AutomationCommandGateway {
             if let value = request.optionalBool("autoEnableSystemProxy") {
                 model.autoEnableSystemProxy = value
             }
+            if let value = request.optionalString("menuBarDisplayStyle") {
+                guard let style = AppModel.MenuBarDisplayStyle(rawValue: value) else {
+                    throw GatewayError.invalidParameters(
+                        "menuBarDisplayStyle must be logo or proxyStatus"
+                    )
+                }
+                model.menuBarDisplayStyle = style
+            }
             if let value = request.optionalBool("closeConnectionsOnRoutingChange") {
                 model.closeConnectionsOnRoutingChange = value
             }
@@ -1383,6 +1391,7 @@ final class AutomationCommandGateway {
             "notificationsEnabled": .bool(model.notificationsEnabled),
             "autoConnectOnLaunch": .bool(model.autoConnectOnLaunch),
             "autoEnableSystemProxy": .bool(model.autoEnableSystemProxy),
+            "menuBarDisplayStyle": .string(model.menuBarDisplayStyle.rawValue),
             "closeConnectionsOnRoutingChange": .bool(model.closeConnectionsOnRoutingChange),
         ])
     }
@@ -2069,6 +2078,7 @@ final class AutomationCommandGateway {
         "settings.patch": [
             "launchAtLogin": .optional(.bool), "notificationsEnabled": .optional(.bool),
             "autoConnectOnLaunch": .optional(.bool), "autoEnableSystemProxy": .optional(.bool),
+            "menuBarDisplayStyle": .optional(.string, maximumStringBytes: 32),
             "closeConnectionsOnRoutingChange": .optional(.bool),
         ],
         "profiles.list": ["offset": .optional(.integer), "limit": .optional(.integer)],

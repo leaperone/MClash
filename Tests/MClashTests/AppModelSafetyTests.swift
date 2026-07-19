@@ -6,6 +6,29 @@ import Testing
 @Suite("App model network safety")
 struct AppModelSafetyTests {
     @MainActor
+    @Test("Default App Routing can be disabled before a profile exists")
+    func defaultAppRoutingCanBeDisabledWithoutProfile() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "mclash-default-app-routing-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        try layout.createDirectories()
+        let model = AppModel(profileDirectoryLayout: layout)
+
+        #expect(model.networkCapturePreferences.enabled)
+        await model.setNetworkCaptureEnabled(false)
+
+        #expect(!model.networkCapturePreferences.enabled)
+        #expect(model.networkCaptureState == .off)
+        let stored = try await NetworkCaptureConfigurationStore(
+            profileLayout: layout
+        ).load()
+        #expect(!stored.enabled)
+    }
+
+    @MainActor
     @Test("Storage initialization failures remain visible instead of looking like empty data")
     func storageInitializationFailuresAreDurableOperationalIssues() throws {
         let root = FileManager.default.temporaryDirectory.appending(

@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 struct SettingsView: View {
@@ -14,11 +15,57 @@ struct SettingsView: View {
         Form {
             Section("Startup") {
                 Toggle("Open MClash at login", isOn: launchAtLoginBinding)
+                if model.launchAtLoginRequiresApproval {
+                    HStack {
+                        Label("macOS approval is required before MClash can open at login.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("Open Login Items") {
+                            SMAppService.openSystemSettingsLoginItems()
+                        }
+                    }
+                }
                 Toggle("Connect the active profile when MClash opens", isOn: $model.autoConnectOnLaunch)
+                Toggle(
+                    "Enable App Routing automatically after connecting",
+                    isOn: Binding(
+                        get: {
+                            model.pendingNetworkCaptureEnabled
+                                ?? model.networkCapturePreferences.enabled
+                        },
+                        set: { enabled in
+                            Task { await model.setNetworkCaptureEnabled(enabled) }
+                        }
+                    )
+                )
+                .disabled(
+                    model.pendingNetworkCaptureEnabled != nil
+                        || !model.canPerform(.changeNetworkCapture)
+                )
+
+                Toggle(
+                    "Show proxy status in the menu bar",
+                    isOn: Binding(
+                        get: { model.menuBarDisplayStyle == .proxyStatus },
+                        set: { enabled in
+                            model.menuBarDisplayStyle = enabled ? .proxyStatus : .logo
+                        }
+                    )
+                )
+                Text("Proxy Status shows live download, upload, and connection count. Logo uses less background telemetry.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Routing & macOS Proxy") {
                 Toggle("Enable macOS system proxy when connecting", isOn: $model.autoEnableSystemProxy)
+                    .disabled(model.networkCapturePreferences.enabled)
+                if model.networkCapturePreferences.enabled {
+                    Text("App Routing is enabled and takes precedence over the mutually exclusive macOS System Proxy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle(
                     "Close existing connections after changing mode or node",
                     isOn: $model.closeConnectionsOnRoutingChange

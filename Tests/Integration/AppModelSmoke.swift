@@ -41,6 +41,13 @@ struct AppModelSmoke {
         )
 
         let systemProxyBackend = try IsolatedSystemProxyBackend()
+        // This smoke test exercises the mutually exclusive macOS System Proxy
+        // path. Persist that explicit opt-out so the new App Routing product
+        // default does not attempt to load a real Network Extension manager in
+        // this command-line test host.
+        _ = try await NetworkCaptureConfigurationStore(
+            profileLayout: layout
+        ).replaceRules([], enabled: false, dnsEnabled: true)
         let model = AppModel(
             binaryLocator: locator,
             secretStore: StaticSecretProvider(),

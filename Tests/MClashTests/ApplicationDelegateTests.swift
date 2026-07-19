@@ -64,4 +64,24 @@ struct ApplicationDelegateTests {
 
         #expect(visibilityChanges == [false, false])
     }
+
+    @MainActor
+    @Test("Quitting can keep the proxy running in the menu bar")
+    func quitCanBecomeBackgroundOperation() {
+        let delegate = ApplicationDelegate()
+        var shutdownWasRequested = false
+        var keptRunning = false
+        delegate.shutdownHandler = {
+            shutdownWasRequested = true
+            return true
+        }
+        delegate.quitChoiceHandler = { .keepRunning }
+        delegate.keepRunningHandler = { keptRunning = true }
+
+        let response = delegate.applicationShouldTerminate(.shared)
+
+        #expect(response == .terminateCancel)
+        #expect(keptRunning)
+        #expect(!shutdownWasRequested)
+    }
 }

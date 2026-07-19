@@ -20,12 +20,13 @@ struct NetworkCapturePreferences: Codable, Equatable, Sendable {
         self.snapshot = snapshot
     }
 
-    static func disabled() -> NetworkCapturePreferences {
+    static func defaults() -> NetworkCapturePreferences {
         // The empty, current-schema snapshot is structurally infallible. Keeping
-        // the fallback here lets a missing settings document always fail open.
+        // the fallback here makes App Routing opt-out for a new installation;
+        // Direct remains the fail-open result until the user adds routing rules.
         let snapshot = try! CaptureConfigurationSnapshot(revision: 0, rules: [])
         return try! NetworkCapturePreferences(
-            enabled: false,
+            enabled: true,
             dnsEnabled: true,
             snapshot: snapshot
         )
@@ -70,8 +71,8 @@ enum NetworkCaptureConfigurationStoreError: Error, Equatable, LocalizedError, Se
 /// Durable, versioned source of truth for host-to-provider capture rules.
 ///
 /// The actor serializes revisions and writes a private document through the
-/// same staged atomic replacement path used by runtime configuration. A bad or
-/// missing document never silently enables interception.
+/// same staged atomic replacement path used by runtime configuration. A missing
+/// document uses product defaults; malformed state still never enables capture.
 actor NetworkCaptureConfigurationStore {
     static let currentSchemaVersion = 2
     private static let independentlyManagedDNSSchemaVersion = 1
@@ -116,7 +117,7 @@ actor NetworkCaptureConfigurationStore {
 
     func load() throws -> NetworkCapturePreferences {
         guard fileManager.fileExists(atPath: layout.preferencesURL.path) else {
-            return .disabled()
+            return .defaults()
         }
         let data = try Data(
             contentsOf: layout.preferencesURL,
