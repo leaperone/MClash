@@ -16,6 +16,8 @@ Make these Actions secrets available to the MClash repository:
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for that Apple ID |
 | `APPLE_TEAM_ID` | Ten-character Apple Developer Team ID |
 | `SPARKLE_PRIVATE_KEY` | Private Ed25519 key exported by Sparkle's `generate_keys -x` tool |
+| `MCLASH_HOST_DEVID_PROFILE` | Base64-encoded Developer ID provisioning profile for the host app |
+| `MCLASH_NETWORK_EXTENSION_DEVID_PROFILE` | Base64-encoded Developer ID provisioning profile for the Network Extension |
 
 The existing organization-level Apple secrets may be reused. Set their visibility to **Selected repositories** and include MClash instead of exposing them to every public repository in the organization. `GITHUB_TOKEN` is supplied automatically and should not be added as a secret.
 
@@ -48,9 +50,10 @@ The workflow performs these operations:
 5. Apple notarization and stapling of both the app and disk image, followed by Gatekeeper assessment.
 6. Creation of a compressed APFS DMG with an Applications shortcut and a Sparkle update ZIP.
 7. Packaging of the complete source tree for the exact bundled mihomo revision and Sparkle's MIT notice.
-8. Ed25519 signing of the update through standard input, generation of `appcast.xml`, and SHA-256 checksums.
-9. Publication of all runtime, update, corresponding-source, notice, and checksum assets to the same GitHub Release.
-10. Destruction of the temporary Keychain and certificate file even if the job fails.
+8. Generation, reverse-application, code-signing verification, and Ed25519 signing of delta updates from up to two recent stable builds.
+9. Ed25519 signing of the full update through standard input, generation of `appcast.xml`, and SHA-256 checksums.
+10. Publication of all runtime, update, corresponding-source, notice, and checksum assets to the same GitHub Release.
+11. Destruction of the temporary Keychain and certificate file even if the job fails.
 
 The Release workflow has read-only repository access during tests. Only the protected publishing job receives `contents: write` and release secrets.
 
@@ -60,10 +63,13 @@ Each release contains:
 
 - `MClash-<version>-macos-arm64.dmg` — first-install download.
 - `MClash-<version>-macos-arm64.zip` — Sparkle update archive.
+- `MClash-<version>-from-<old-version>-macos-arm64.delta` — optional verified incremental update for a recent build.
 - `appcast.xml` — signed Sparkle update feed.
 - `mihomo-<revision>-source.tar.gz` — complete corresponding source for the bundled GPL-3.0 core.
 - `Sparkle-2.9.4-LICENSE.txt` — Sparkle's MIT license notice.
 - `SHA256SUMS` — hashes for the public artifacts.
+
+The full ZIP is always published and remains the fallback. Sparkle selects a delta only when its `deltaFrom` build matches the installed build; if applying the delta fails, Sparkle automatically retries with the full archive. Failure to produce a valid, smaller delta therefore warns during packaging but does not block a safe full update.
 
 The application reads the stable feed URL:
 

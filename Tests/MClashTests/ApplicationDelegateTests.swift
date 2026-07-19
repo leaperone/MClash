@@ -84,4 +84,22 @@ struct ApplicationDelegateTests {
         #expect(keptRunning)
         #expect(!shutdownWasRequested)
     }
+
+    @MainActor
+    @Test("Sparkle relaunch bypasses the interactive quit choice")
+    func updaterRelaunchSkipsQuitChoice() {
+        let delegate = ApplicationDelegate()
+        var quitChoiceWasRequested = false
+        delegate.shutdownHandler = { true }
+        delegate.quitChoiceHandler = {
+            quitChoiceWasRequested = true
+            return .cancel
+        }
+
+        delegate.prepareForUpdaterRelaunch()
+        let response = delegate.applicationShouldTerminate(.shared)
+
+        #expect(response == .terminateLater)
+        #expect(!quitChoiceWasRequested)
+    }
 }

@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.1.21"
+        default: "1.1.22"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -100,6 +100,9 @@ jobs:
       - name: Run unit tests
         shell: zsh {0}
         run: ./scripts/test-direct.sh
+
+      - name: Test Sparkle delta metadata
+        run: python3 scripts/test-attach-appcast-deltas.py
 
       - name: Run integration tests
         shell: zsh {0}
@@ -449,6 +452,9 @@ jobs:
             "${release_dir}/Sparkle-2.9.4-LICENSE.txt"
             "${release_dir}/SHA256SUMS"
           )
+          for delta in "${release_dir}"/MClash-${MCLASH_VERSION}-from-*-macos-arm64.delta(N); do
+            assets+=("${delta}")
+          done
           prerelease_args=()
           if [[ "${PRERELEASE}" == "true" ]]; then
             prerelease_args+=(--prerelease)

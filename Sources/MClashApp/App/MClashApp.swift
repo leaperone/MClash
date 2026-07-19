@@ -83,6 +83,9 @@ struct MClashApp: App {
 
     @MainActor
     private func prepareApplication() async {
+        applicationUpdater.willRelaunchApplication = { [weak applicationDelegate] in
+            applicationDelegate?.prepareForUpdaterRelaunch()
+        }
         applicationDelegate.shutdownHandler = { [weak model] in
             guard let model else { return true }
             return await model.shutdown()

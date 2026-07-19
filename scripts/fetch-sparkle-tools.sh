@@ -31,7 +31,7 @@ if [[ ! -x "${tools_root}/bin/generate_appcast" ]]; then
   tar -xJf "${archive}" -C "${tools_root}"
 fi
 
-for tool in generate_appcast sign_update generate_keys; do
+for tool in BinaryDelta generate_appcast sign_update generate_keys; do
   if [[ ! -x "${tools_root}/bin/${tool}" ]]; then
     print -u2 "Sparkle distribution is missing bin/${tool}."
     exit 1

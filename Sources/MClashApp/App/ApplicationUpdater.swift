@@ -18,16 +18,25 @@ final class ApplicationUpdater {
     @ObservationIgnored
     private let controller: SPUStandardUpdaterController
     @ObservationIgnored
+    private let updaterDelegate: ApplicationUpdaterDelegate
+    @ObservationIgnored
     private var observations: [NSKeyValueObservation] = []
 
     init(startingUpdater: Bool = true) {
+        let updaterDelegate = ApplicationUpdaterDelegate()
+        self.updaterDelegate = updaterDelegate
         controller = SPUStandardUpdaterController(
             startingUpdater: startingUpdater,
-            updaterDelegate: nil,
+            updaterDelegate: updaterDelegate,
             userDriverDelegate: nil
         )
         observeUpdaterSettings()
         refreshSnapshot()
+    }
+
+    var willRelaunchApplication: (@MainActor () -> Void)? {
+        get { updaterDelegate.willRelaunchApplication }
+        set { updaterDelegate.willRelaunchApplication = newValue }
     }
 
     func checkForUpdates() {
@@ -74,5 +83,14 @@ final class ApplicationUpdater {
         automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
         automaticallyDownloadsUpdates = updater.automaticallyDownloadsUpdates
         allowsAutomaticUpdates = updater.allowsAutomaticUpdates
+    }
+}
+
+@MainActor
+private final class ApplicationUpdaterDelegate: NSObject, SPUUpdaterDelegate {
+    var willRelaunchApplication: (@MainActor () -> Void)?
+
+    func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        willRelaunchApplication?()
     }
 }

@@ -3,6 +3,10 @@ set -euo pipefail
 
 repo_root="${0:A:h:h}"
 
+run_release_script_tests() {
+  python3 "${repo_root}/scripts/test-attach-appcast-deltas.py"
+}
+
 # GitHub-hosted runners provide a complete Xcode toolchain, where SwiftPM is
 # the stable way to locate Swift Testing and binary-target dependencies. The
 # direct path below remains the fallback for standalone Command Line Tools,
@@ -10,6 +14,7 @@ repo_root="${0:A:h:h}"
 if [[ "${CI:-}" == "true" ]]; then
   cd "${repo_root}"
   swift test --configuration debug
+  run_release_script_tests
   exit 0
 fi
 
@@ -197,3 +202,4 @@ swiftc \
   -o "${build_dir}/MClashAutomationProtocolPackageTests"
 
 "${build_dir}/MClashAutomationProtocolPackageTests"
+run_release_script_tests

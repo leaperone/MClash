@@ -257,9 +257,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             || reason == kAEReallyLogOut
     }
 
-    func requestFullTermination() {
+    func prepareForUpdaterRelaunch() {
         skipNextQuitConfirmation = true
-        NSApplication.shared.terminate(nil)
     }
 
     private func keepRunningInMenuBar(_ sender: NSApplication) {

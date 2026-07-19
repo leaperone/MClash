@@ -5,13 +5,14 @@ repo_root="${0:A:h:h}"
 archive="${1:-}"
 output="${2:-}"
 release_notes="${3:-}"
+delta_manifest="${4:-}"
 repository="${GITHUB_REPOSITORY:-leaperone/MClash}"
 tag="${MCLASH_RELEASE_TAG:-}"
 build_number="${MCLASH_BUILD_NUMBER:-}"
 private_key="${SPARKLE_PRIVATE_KEY:-}"
 
 if [[ -z "${archive}" || -z "${output}" || -z "${tag}" || -z "${build_number}" || -z "${private_key}" ]]; then
-  print -u2 "Usage: generate-appcast.sh UPDATE_ARCHIVE OUTPUT_APPCAST [RELEASE_NOTES]"
+  print -u2 "Usage: generate-appcast.sh UPDATE_ARCHIVE OUTPUT_APPCAST [RELEASE_NOTES] [DELTA_MANIFEST]"
   print -u2 "Set MCLASH_RELEASE_TAG, MCLASH_BUILD_NUMBER, and SPARKLE_PRIVATE_KEY."
   exit 2
 fi
@@ -23,9 +24,18 @@ if [[ -n "${release_notes}" && ! -f "${release_notes}" ]]; then
   print -u2 "Release notes do not exist: ${release_notes}"
   exit 1
 fi
+if [[ -n "${delta_manifest}" && ! -f "${delta_manifest}" ]]; then
+  print -u2 "Delta manifest does not exist: ${delta_manifest}"
+  exit 1
+fi
 
 sparkle_tools="$(${repo_root}/scripts/fetch-sparkle-tools.sh)"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/mclash-appcast.XXXXXX")"
+trap 'rm -rf "${work_dir}"' EXIT
+if [[ -z "${delta_manifest}" ]]; then
+  delta_manifest="${work_dir}/deltas.json"
+  print -r -- '[]' > "${delta_manifest}"
+fi
 archive_name="${archive:t}"
 cp "${archive}" "${work_dir}/${archive_name}"
 if [[ -n "${release_notes}" ]]; then
@@ -62,4 +72,8 @@ fi
 
 mkdir -p "${output:h}"
 cp "${generated}" "${output}"
+python3 "${repo_root}/scripts/attach-appcast-deltas.py" \
+  "${output}" \
+  "${build_number}" \
+  "${delta_manifest}"
 print "Appcast ready: ${output}"

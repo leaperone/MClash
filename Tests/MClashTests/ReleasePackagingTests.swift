@@ -186,6 +186,26 @@ struct ReleasePackagingTests {
         #expect(hostInfo["LSMultipleInstancesProhibited"] as? Bool == true)
     }
 
+    @Test("Sparkle deltas are verified and published with a full fallback")
+    func sparkleDeltaReleasePipeline() throws {
+        let deltaScript = try source("scripts/generate-delta-updates.sh")
+        let appcastScript = try source("scripts/generate-appcast.sh")
+        let releaseScript = try source("scripts/release-app.sh")
+        let workflow = try source(".github/workflows/release.yml")
+        let toolsScript = try source("scripts/fetch-sparkle-tools.sh")
+
+        #expect(toolsScript.contains("BinaryDelta"))
+        #expect(deltaScript.contains("\"${binary_delta}\" create"))
+        #expect(deltaScript.contains("\"${binary_delta}\" apply"))
+        #expect(deltaScript.contains("codesign --verify --deep --strict"))
+        #expect(deltaScript.contains("The full Sparkle update remains available"))
+        #expect(appcastScript.contains("attach-appcast-deltas.py"))
+        #expect(releaseScript.contains("xattr -cr \"${app}\""))
+        #expect(releaseScript.contains("generate-delta-updates.sh"))
+        #expect(releaseScript.contains("macos-arm64.delta(N)"))
+        #expect(workflow.contains("macos-arm64.delta(N)"))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -198,6 +218,13 @@ struct ReleasePackagingTests {
         return try #require(
             PropertyListSerialization.propertyList(from: data, format: nil)
                 as? [String: Any]
+        )
+    }
+
+    private func source(_ path: String) throws -> String {
+        try String(
+            contentsOf: repositoryRoot.appendingPathComponent(path),
+            encoding: .utf8
         )
     }
 }

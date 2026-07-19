@@ -263,6 +263,9 @@ if [[ ! -d "${app}" ]]; then
   exit 1
 fi
 
+# Sparkle's BinaryDelta rejects legacy code-signing xattrs. Clear the fresh
+# build before signing so the released target is a deterministic delta input.
+xattr -cr "${app}"
 sign_application "${app}"
 system_extension="${app}/Contents/Library/SystemExtensions/${network_extension_bundle_id}.systemextension"
 codesign --verify --strict --verbose=2 "${system_extension}"
@@ -286,6 +289,7 @@ update_zip="${release_dir}/MClash-${version}-macos-arm64.zip"
 dmg="${release_dir}/MClash-${version}-macos-arm64.dmg"
 appcast="${release_dir}/appcast.xml"
 checksums="${release_dir}/SHA256SUMS"
+delta_manifest="${release_dir}/delta-manifest.json"
 mihomo_source="${release_dir}/mihomo-${MIHOMO_ALPHA_REVISION}-source.tar.gz"
 sparkle_license="${release_dir}/Sparkle-2.9.4-LICENSE.txt"
 
@@ -308,22 +312,33 @@ codesign --verify --strict --verbose=2 "${dmg}"
 spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg}"
 
 export MCLASH_RELEASE_TAG="${release_tag}"
+"${repo_root}/scripts/generate-delta-updates.sh" \
+  "${app}" \
+  "${update_zip}" \
+  "${release_dir}" \
+  "${delta_manifest}"
 "${repo_root}/scripts/generate-appcast.sh" \
   "${update_zip}" \
   "${appcast}" \
-  "${release_notes}"
+  "${release_notes}" \
+  "${delta_manifest}"
 "${repo_root}/scripts/package-mihomo-source.sh" "${mihomo_source}"
 sparkle_tools="$(${repo_root}/scripts/fetch-sparkle-tools.sh)"
 cp "${sparkle_tools}/LICENSE" "${sparkle_license}"
 
 (
   cd "${release_dir}"
-  shasum -a 256 \
+  checksum_assets=(
     "${dmg:t}" \
     "${update_zip:t}" \
     "${appcast:t}" \
     "${mihomo_source:t}" \
-    "${sparkle_license:t}" > "${checksums:t}"
+    "${sparkle_license:t}"
+  )
+  for delta in MClash-${version}-from-*-macos-arm64.delta(N); do
+    checksum_assets+=("${delta}")
+  done
+  shasum -a 256 "${checksum_assets[@]}" > "${checksums:t}"
 )
 
 print "Release assets ready in ${release_dir}:"
@@ -332,4 +347,7 @@ print "  ${update_zip:t}"
 print "  ${appcast:t}"
 print "  ${mihomo_source:t}"
 print "  ${sparkle_license:t}"
+for delta in "${release_dir}"/MClash-${version}-from-*-macos-arm64.delta(N); do
+  print "  ${delta:t}"
+done
 print "  ${checksums:t}"
