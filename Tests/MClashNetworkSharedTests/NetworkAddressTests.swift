@@ -71,6 +71,26 @@ struct NetworkAddressTests {
     }
 
     @Test
+    func testPrivateAndLocalNetworkClassification() throws {
+        for address in [
+            "10.0.0.1", "172.16.0.1", "172.31.255.254", "192.168.1.1",
+            "fc00::1", "fd12:3456::1", "::ffff:192.168.1.1"
+        ] {
+            #expect(try IPAddress(address).isPrivate)
+            #expect(try IPAddress(address).isLocalNetwork)
+        }
+
+        for address in ["172.15.255.255", "172.32.0.1", "100.64.0.1", "1.1.1.1", "2001:4860:4860::8888"] {
+            #expect(try !IPAddress(address).isPrivate)
+        }
+
+        #expect(try IPAddress("127.0.0.1").isLocalNetwork)
+        #expect(try IPAddress("169.254.1.1").isLocalNetwork)
+        #expect(try IPAddress("fe80::1").isLocalNetwork)
+        #expect(try !IPAddress("1.1.1.1").isLocalNetwork)
+    }
+
+    @Test
     func testPortRangeBoundariesAndValidation() throws {
         let range = try PortRange(lowerBound: 443, upperBound: 8443)
         #expect(range.contains(443))

@@ -122,6 +122,37 @@ public struct IPAddress: Hashable, Sendable {
         }
     }
 
+    /// Addresses that are intended to stay inside a private network.
+    ///
+    /// This deliberately excludes the shared CGNAT range (`100.64.0.0/10`):
+    /// it is not an RFC 1918 private address and may be meaningful to a user's
+    /// routing profile.
+    public var isPrivate: Bool {
+        switch family {
+        case .ipv4:
+            return bytes[0] == 10
+                || (bytes[0] == 172 && (16 ... 31).contains(bytes[1]))
+                || (bytes[0] == 192 && bytes[1] == 168)
+        case .ipv6:
+            if bytes[0] & 0xFE == 0xFC {
+                return true
+            }
+            guard bytes.prefix(10).allSatisfy({ $0 == 0 }),
+                  bytes[10] == 0xFF,
+                  bytes[11] == 0xFF else {
+                return false
+            }
+            let mappedIPv4 = Array(bytes.suffix(4))
+            return mappedIPv4[0] == 10
+                || (mappedIPv4[0] == 172 && (16 ... 31).contains(mappedIPv4[1]))
+                || (mappedIPv4[0] == 192 && mappedIPv4[1] == 168)
+        }
+    }
+
+    public var isLocalNetwork: Bool {
+        isPrivate || isLoopback || isLinkLocal
+    }
+
     public var isMulticast: Bool {
         switch family {
         case .ipv4:

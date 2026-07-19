@@ -53,7 +53,7 @@ struct SettingsView: View {
                         }
                     )
                 )
-                Text("Proxy Status shows live download, upload, and connection count. Logo uses less background telemetry.")
+                Text("Proxy Status uses three fixed-width fields for download, upload, and connections. Network Icon uses less background telemetry.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

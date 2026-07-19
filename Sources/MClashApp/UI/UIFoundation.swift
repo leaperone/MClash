@@ -59,6 +59,38 @@ func formattedByteRate(_ value: Int64) -> String {
     "\(formattedByteCount(value))/s"
 }
 
+/// A menu-bar-safe rate with short, stable units and at most four characters.
+/// The surrounding icon communicates direction, so `/s` is intentionally
+/// omitted to keep all three status fields compact.
+func compactMenuBarByteRate(_ value: Int64) -> String {
+    compactMenuBarMagnitude(Double(max(0, value)), suffixes: ["B", "K", "M", "G", "T", "P", "E"])
+}
+
+func compactMenuBarCount(_ value: Int) -> String {
+    compactMenuBarMagnitude(Double(max(0, value)), suffixes: ["", "K", "M", "G", "T", "P", "E"])
+}
+
+private func compactMenuBarMagnitude(_ value: Double, suffixes: [String]) -> String {
+    var scaled = value
+    var suffixIndex = 0
+    while scaled >= 1_000, suffixIndex < suffixes.count - 1 {
+        scaled /= 1_000
+        suffixIndex += 1
+    }
+    if scaled >= 999.5, suffixIndex < suffixes.count - 1 {
+        scaled /= 1_000
+        suffixIndex += 1
+    }
+
+    let number: String
+    if suffixIndex > 0, scaled < 9.95 {
+        number = String(format: "%.1f", scaled)
+    } else {
+        number = String(Int(scaled.rounded()))
+    }
+    return number + suffixes[suffixIndex]
+}
+
 func formattedCount(_ value: Int) -> String {
     max(0, value).formatted(.number.grouping(.automatic))
 }

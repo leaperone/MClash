@@ -164,28 +164,48 @@ private struct MenuBarStatusLabel: View {
     var body: some View {
         switch model.menuBarDisplayStyle {
         case .logo:
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-                .resizable()
-                .renderingMode(.original)
-                .scaledToFit()
-                .frame(width: 18, height: 18)
+            Image(systemName: symbol)
+                .symbolRenderingMode(.monochrome)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 16, height: 16)
                 .accessibilityLabel(accessibilityLabel)
         case .proxyStatus:
-            HStack(spacing: 4) {
-                Image(systemName: symbol)
-                if model.isConnected {
-                    Text(
-                        "↓ \(menuBarRate(model.traffic.download))  "
-                            + "↑ \(menuBarRate(model.traffic.upload))  "
-                            + "↔ \(menuBarConnectionCount)"
-                    )
-                    .monospacedDigit()
-                } else {
-                    Text(model.statusTitle)
-                }
+            HStack(spacing: 3) {
+                menuBarMetric(
+                    symbol: "arrow.down",
+                    value: menuBarRate(model.traffic.download),
+                    valueWidth: 27
+                )
+                menuBarMetric(
+                    symbol: "arrow.up",
+                    value: menuBarRate(model.traffic.upload),
+                    valueWidth: 27
+                )
+                menuBarMetric(
+                    symbol: "arrow.left.arrow.right",
+                    value: menuBarConnectionCount,
+                    valueWidth: 24
+                )
             }
+            .frame(width: 114, alignment: .leading)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)
+        }
+    }
+
+    private func menuBarMetric(
+        symbol: String,
+        value: String,
+        valueWidth: CGFloat
+    ) -> some View {
+        HStack(spacing: 1) {
+            Image(systemName: symbol)
+                .font(.system(size: 8, weight: .medium))
+                .frame(width: 9)
+            Text(value)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .lineLimit(1)
+                .frame(width: valueWidth, alignment: .trailing)
         }
     }
 
@@ -236,12 +256,12 @@ private struct MenuBarStatusLabel: View {
 
     private func menuBarRate(_ value: Int64) -> String {
         guard model.liveStreamHealth[.traffic]?.phase == .live else { return "—" }
-        return formattedByteRate(value)
+        return compactMenuBarByteRate(value)
     }
 
     private var menuBarConnectionCount: String {
         guard model.liveStreamHealth[.connections]?.phase == .live else { return "—" }
-        return formattedCount(model.connections?.connections.count ?? 0)
+        return compactMenuBarCount(model.connections?.connections.count ?? 0)
     }
 }
 

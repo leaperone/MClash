@@ -9,7 +9,7 @@ struct MenuBarContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
                     statusHeader
                     if model.isConnected {
                         liveMetrics
@@ -18,15 +18,21 @@ struct MenuBarContent: View {
                     profileControl
                     primaryAction
 
+                    if model.isConnected {
+                        connectedControls
+                    }
+
                     if !model.operationalIssues.isEmpty {
                         operationalEvidence
                     }
+
+                    managementLinks
 
                     if let issueMessage {
                         inlineError(issueMessage)
                     }
                 }
-                .padding(16)
+                .padding(12)
             }
             .frame(maxHeight: .infinity)
 
@@ -38,7 +44,7 @@ struct MenuBarContent: View {
         }
         // MenuBarExtra windows cannot infer a useful intrinsic height from ScrollView content.
         // An explicit popover size keeps the entire quick-control surface visible on every launch.
-        .frame(width: 360, height: popoverHeight)
+        .frame(width: 344, height: popoverHeight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("MClash quick controls")
         .background {
@@ -51,16 +57,16 @@ struct MenuBarContent: View {
     }
 
     private var statusHeader: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 9) {
             Image(systemName: statusSymbol)
-                .font(.system(size: 19, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(statusColor)
-                .frame(width: 28, height: 28)
+                .frame(width: 21, height: 21)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(statusTitle)
-                    .font(.headline)
+                    .font(.callout.weight(.semibold))
                 Text(compactStatusSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -165,7 +171,7 @@ struct MenuBarContent: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(9)
+        .padding(7)
         .background(
             Color(nsColor: .controlBackgroundColor),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -397,7 +403,16 @@ struct MenuBarContent: View {
                     set: { enabled in Task { await model.setSystemProxyEnabled(enabled) } }
                 )
             )
-            .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
+            .disabled(
+                !model.controllerIsReady
+                    || !model.canPerform(.changeSystemProxy)
+                    || model.networkCapturePreferences.enabled
+            )
+            .help(
+                model.networkCapturePreferences.enabled
+                    ? "App Routing is active. Turn it off before enabling the mutually exclusive macOS System Proxy."
+                    : "Route compatible macOS applications through MClash's local proxy listeners."
+            )
 
             if !model.localListenerEndpoints.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
@@ -464,7 +479,9 @@ struct MenuBarContent: View {
                 }
             }
 
-            if !model.systemProxyEnabled, model.controllerIsReady {
+            if !model.systemProxyEnabled,
+               model.controllerIsReady,
+               !model.networkCapturePreferences.enabled {
                 Label(
                     "Enable System Proxy to route macOS apps through MClash.",
                     systemImage: "info.circle"
@@ -896,8 +913,8 @@ struct MenuBarContent: View {
     }
 
     private var popoverHeight: CGFloat {
-        if !model.operationalIssues.isEmpty || issueMessage != nil { return 440 }
-        return model.isConnected ? 400 : 340
+        if !model.operationalIssues.isEmpty || issueMessage != nil { return 580 }
+        return model.isConnected ? 540 : 410
     }
 
     private var compactStatusSubtitle: String {

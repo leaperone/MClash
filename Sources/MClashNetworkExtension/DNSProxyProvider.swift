@@ -35,10 +35,36 @@ enum DNSProxyBootstrapError: LocalizedError {
     }
 }
 
-/// DNS proxy entry point. Every accepted TCP/UDP DNS flow is relayed through
-/// the same private authenticated Mihomo SOCKS5 listener used by App Routing.
-/// Unlike a transparent provider, DNS has no safe per-flow pass-through path:
-/// a relay failure is reported to the host heartbeat so the host can disable
+enum DNSRelayRoute: Equatable, Sendable {
+    case directTrustedComponent
+    case directLocalResolver
+    case mihomo
+
+    var bypassesMihomo: Bool {
+        self != .mihomo
+    }
+}
+
+enum DNSRelayRoutingPolicy {
+    static func route(
+        destination: SOCKS5Endpoint,
+        isTrustedMClashComponent: Bool
+    ) -> DNSRelayRoute {
+        if isTrustedMClashComponent {
+            return .directTrustedComponent
+        }
+        if destination.address.ipAddress?.isLocalNetwork == true {
+            return .directLocalResolver
+        }
+        return .mihomo
+    }
+}
+
+/// DNS proxy entry point. Public DNS endpoints are relayed through the same
+/// private authenticated Mihomo SOCKS5 listener used by App Routing. Local
+/// resolvers are relayed directly so requests such as `192.168.1.1:53` do not
+/// make a redundant round trip through Mihomo or pollute its connection list.
+/// A relay failure is reported to the host heartbeat so the host can disable
 /// the DNS manager and restore the system resolver.
 final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private let runtime = ProviderRuntimeState(providerName: "dns-proxy")
@@ -264,7 +290,11 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 transportProtocol: .tcp
             )
         }
-        if isTrustedMClashComponent(tcpFlow) {
+        let route = DNSRelayRoutingPolicy.route(
+            destination: destination,
+            isTrustedMClashComponent: isTrustedMClashComponent(tcpFlow)
+        )
+        if route.bypassesMihomo {
             // Mihomo's own DNS egress must not be sent back through Mihomo's
             // SOCKS listener. Relay it from the provider process, whose own
             // sockets are outside the DNS interception path, to break the
@@ -272,7 +302,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             tcpRelays.startDirect(
                 flow: tcpFlow,
                 destination: destination,
-                relayNote: "Trusted MClash DNS egress bypassed the private SOCKS listener.",
+                relayNote: directRelayNote(for: route),
                 activityObserver: observer
             )
         } else {
@@ -404,11 +434,15 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             return true
         }
         let parentIdentifier = UUID()
-        let bypassMihomo = isTrustedMClashComponent(flow)
+        let sourceIsTrusted = isTrustedMClashComponent(flow)
+        let initialRoute = DNSRelayRoutingPolicy.route(
+            destination: initialDestination,
+            isTrustedMClashComponent: sourceIsTrusted
+        )
         let initialPlan = dnsPlan(
             destination: initialDestination,
-            proxy: bypassMihomo ? nil : proxy,
-            bypassMihomo: bypassMihomo,
+            proxy: initialRoute.bypassesMihomo ? nil : proxy,
+            route: initialRoute,
             parentIdentifier: parentIdentifier
         )
         let reporter = runtimeState.reporter
@@ -421,10 +455,14 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                       let proxy = self.runtimeDataPlaneSnapshot().proxy else {
                     return initialPlan
                 }
+                let route = DNSRelayRoutingPolicy.route(
+                    destination: destination,
+                    isTrustedMClashComponent: sourceIsTrusted
+                )
                 return self.dnsPlan(
                     destination: destination,
-                    proxy: bypassMihomo ? nil : proxy,
-                    bypassMihomo: bypassMihomo,
+                    proxy: route.bypassesMihomo ? nil : proxy,
+                    route: route,
                     parentIdentifier: parentIdentifier
                 )
             },
@@ -454,12 +492,13 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private func dnsPlan(
         destination: SOCKS5Endpoint,
         proxy: ProviderSOCKSConfiguration?,
-        bypassMihomo: Bool,
+        route: DNSRelayRoute,
         parentIdentifier: UUID
     ) -> UDPFlowInterceptionPlan {
+        let bypassMihomo = route.bypassesMihomo
         let decision = FlowTrafficDecision(
             disposition: bypassMihomo ? .direct : .mihomo(.profileRules),
-            reason: bypassMihomo
+            reason: route == .directTrustedComponent
                 ? .rule(.builtInBypass(.trustedMClashComponent))
                 : .rule(.defaultDirect)
         )
@@ -498,6 +537,17 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             activity: activity,
             parentFlowIdentifier: parentIdentifier
         )
+    }
+
+    private func directRelayNote(for route: DNSRelayRoute) -> String {
+        switch route {
+        case .directTrustedComponent:
+            "Trusted MClash DNS egress bypassed the private SOCKS listener."
+        case .directLocalResolver:
+            "Local DNS resolver bypassed the private SOCKS listener."
+        case .mihomo:
+            ""
+        }
     }
 
     private func isTrustedMClashComponent(_ flow: NEAppProxyFlow) -> Bool {

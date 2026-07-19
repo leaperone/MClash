@@ -112,7 +112,7 @@ final class AppModel {
 
         var title: String {
             switch self {
-            case .logo: "MClash Logo"
+            case .logo: "Network Icon"
             case .proxyStatus: "Proxy Status"
             }
         }
