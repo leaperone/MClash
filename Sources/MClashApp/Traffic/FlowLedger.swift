@@ -4,10 +4,10 @@ import MClashNetworkShared
 /// A stable, presentation-independent account of traffic observed by MClash.
 ///
 /// The ledger deliberately distinguishes measured bytes from traffic that was
-/// handed back to the operating system. App Routing's owned TCP and UDP Direct
-/// relays are measured at confirmed delivery boundaries; built-in bypasses and
-/// fail-open handoffs remain explicitly unmeasured rather than becoming a
-/// misleading zero.
+/// handed back to the operating system. Normal Direct and fail-open decisions
+/// remain explicitly unmeasured rather than becoming a misleading zero. A
+/// Direct fallback inside an already-owned flow is measured at confirmed
+/// delivery boundaries.
 struct FlowLedger: Sendable {
     private static let defaultAssociationWindow: TimeInterval = 15
 

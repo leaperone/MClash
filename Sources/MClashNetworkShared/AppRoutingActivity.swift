@@ -50,9 +50,9 @@ public struct AppRoutingActivityDestination: Codable, Hashable, Sendable {
 }
 
 public enum AppRoutingRelayState: String, Codable, Hashable, Sendable {
-    /// Rejected, built-in bypass, or fail-open decisions do not create a
-    /// measurable relay. Owned TCP and UDP Direct decisions use the normal
-    /// relay lifecycle states.
+    /// Rejected, normal Direct, built-in bypass, and fail-open decisions do not
+    /// create a measurable relay. A Direct fallback inside an already-owned
+    /// Mihomo flow uses the normal relay lifecycle states.
     case notApplicable
     case pending
     case connecting

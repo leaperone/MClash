@@ -21,6 +21,21 @@ struct NetworkSetupProxyBackendTests {
         #expect(services == [wiFi])
     }
 
+    @Test("Repeated reads reuse the networksetup service catalog")
+    func cachesSupportedServiceNames() throws {
+        let wiFi = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+        let adapter = SystemProxyNetworkService(id: "adapter", name: "Virtual Adapter")
+        let runner = RecordingNetworkSetupRunner(serviceList: "Wi-Fi\n")
+        let backend = NetworkSetupProxyBackend(
+            reader: StaticProxyReader(services: [wiFi, adapter], states: []),
+            runner: runner
+        )
+
+        #expect(try backend.enabledNetworkServices() == [wiFi])
+        #expect(try backend.enabledNetworkServices() == [wiFi])
+        #expect(runner.commands == [["-listallnetworkservices"]])
+    }
+
     @Test("HTTP, HTTPS, SOCKS, PAC, discovery, and bypass commands are explicit")
     func buildsCompleteProxyCommands() throws {
         let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")

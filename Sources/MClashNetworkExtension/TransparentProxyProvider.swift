@@ -10,10 +10,11 @@ private let appRoutingFlowLogger = Logger(
 )
 
 /// Transparent application proxy entry point. The framework first sends all
-/// outbound TCP/UDP flows (except loopback) to this provider. The local rule
-/// engine owns selected TCP and UDP Direct flows for exact relay accounting as
-/// well as reject and Mihomo routes. Security-critical loop bypasses and true
-/// fail-open decisions remain on the original unmeasured network path.
+/// outbound TCP/UDP flows (except loopback) to this provider. Direct and true
+/// fail-open decisions are handed back to macOS immediately so they keep the
+/// original kernel-managed network path. Only reject and Mihomo routes are
+/// owned; an already-owned Mihomo flow may still use the Direct relay as a
+/// fail-open fallback because returning it to macOS is no longer possible.
 final class TransparentProxyProvider: NETransparentProxyProvider {
     private let runtime = ProviderRuntimeState(providerName: "transparent-proxy")
     private let flowDecisionCoordinator = NetworkExtensionFlowDecisionCoordinator()
@@ -69,24 +70,14 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             activities.upsert(activity)
             Self.logDecision(activity)
             decision = plan.decision
+            guard InitialFlowOwnershipPolicy.owns(decision.disposition) else {
+                return false
+            }
             switch decision.disposition {
             case .direct:
-                // Security-critical loop/trusted-component bypasses must stay
-                // outside the relay so MClash cannot recursively capture itself.
-                if Self.isBuiltInBypass(decision) {
-                    return false
-                }
-                guard let destination = plan.destination else {
-                    recordDirectRelayUnavailable(plan.activity)
-                    return false
-                }
-                markRelayConnecting(plan.activity.flowIdentifier)
-                tcpRelays.startDirect(
-                    flow: tcpFlow,
-                    destination: destination,
-                    activityObserver: relayObserver(for: plan.activity.flowIdentifier)
-                )
-                return true
+                // Kept as a defensive fallback if the ownership policy gains
+                // a new exception without this switch being updated.
+                return false
             case .failOpen:
                 return false
             case .reject:
@@ -153,15 +144,11 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         let activity = Self.annotatedActivity(plan.activity)
         activities.upsert(activity)
         Self.logDecision(activity)
-        switch plan.decision.disposition {
-        case .direct:
-            if Self.isBuiltInBypass(plan.decision) {
-                return false
-            }
-        case .failOpen:
+        // A Direct initial UDP decision stays on the original macOS path.
+        // Per-destination Direct fallback remains available only inside a flow
+        // that was already owned by a Mihomo/reject decision.
+        guard InitialFlowOwnershipPolicy.owns(plan.decision.disposition) else {
             return false
-        case .reject, .mihomo:
-            break
         }
 
         guard plan.initialDestination != nil else {
@@ -220,19 +207,24 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         }
 
         if usedKernelFlowMetadata && usedDefaultDirect {
-            activity.relayNote = "Process details were unavailable, so rules were evaluated using macOS flow metadata and destination information. No rule matched and the default Direct route was used."
+            activity.relayNote = "Process details were unavailable, so rules were evaluated using macOS flow metadata and destination information. No rule matched; macOS kept the original Direct connection and its payload was not measured."
         } else if usedKernelFlowMetadata {
             activity.relayNote = "Process details were unavailable; the rule was evaluated using macOS flow metadata and destination information."
         } else if usedDefaultDirect {
-            activity.relayNote = "No enabled App Routing rule matched, so the default Direct route was used."
+            activity.relayNote = "No enabled App Routing rule matched; macOS kept the original Direct connection and its payload was not measured."
+        } else if activity.effectiveAction == .direct,
+                  activity.relayState == .notApplicable {
+            activity.relayNote = "macOS kept the original Direct connection; its payload was not measured by MClash."
         }
         return activity
     }
 
-    /// Emits one structured decision record per flow. Potentially identifying
-    /// values are hashed by Unified Logging; audit tokens, full executable
-    /// paths, payloads, and proxy credentials are never logged.
+    /// Emits only exceptional fail-open decisions. Normal decisions already
+    /// live in the bounded activity ring; formatting and privacy-hashing a
+    /// Unified Logging record for every short connection adds avoidable work to
+    /// the synchronous admission path.
     private static func logDecision(_ activity: AppRoutingActivity) {
+        guard case .failOpen = activity.effectiveAction else { return }
         let sourceMode = activity.source.processIdentifier > 0
             ? "resolved-process"
             : "kernel-flow-metadata"
@@ -248,15 +240,9 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         let flow = String(activity.flowIdentifier.uuidString.prefix(8))
         let transport = activity.transportProtocol.rawValue
 
-        if case .failOpen = activity.effectiveAction {
-            appRoutingFlowLogger.error(
-                "decision flow=\(flow, privacy: .public) protocol=\(transport, privacy: .public) source=\(sourceMode, privacy: .public) disposition=\(disposition, privacy: .public) reason=\(reason, privacy: .public) pid=\(activity.source.processIdentifier, privacy: .public) process=\(processName, privacy: .private(mask: .hash)) destination=\(destination, privacy: .private(mask: .hash)) port=\(activity.destination.port, privacy: .public) rule=\(rule, privacy: .private(mask: .hash))"
-            )
-        } else {
-            appRoutingFlowLogger.debug(
-                "decision flow=\(flow, privacy: .public) protocol=\(transport, privacy: .public) source=\(sourceMode, privacy: .public) disposition=\(disposition, privacy: .public) reason=\(reason, privacy: .public) pid=\(activity.source.processIdentifier, privacy: .public) process=\(processName, privacy: .private(mask: .hash)) destination=\(destination, privacy: .private(mask: .hash)) port=\(activity.destination.port, privacy: .public) rule=\(rule, privacy: .private(mask: .hash))"
-            )
-        }
+        appRoutingFlowLogger.error(
+            "decision flow=\(flow, privacy: .public) protocol=\(transport, privacy: .public) source=\(sourceMode, privacy: .public) disposition=\(disposition, privacy: .public) reason=\(reason, privacy: .public) pid=\(activity.source.processIdentifier, privacy: .public) process=\(processName, privacy: .private(mask: .hash)) destination=\(destination, privacy: .private(mask: .hash)) port=\(activity.destination.port, privacy: .public) rule=\(rule, privacy: .private(mask: .hash))"
+        )
     }
 
     private static func diagnosticDisposition(_ disposition: FlowTrafficDisposition) -> String {
@@ -615,13 +601,6 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             activities.upsert(activity)
             return true
         }
-    }
-
-    private static func isBuiltInBypass(_ decision: FlowTrafficDecision) -> Bool {
-        guard case let .rule(cause) = decision.reason,
-              case .builtInBypass = cause
-        else { return false }
-        return true
     }
 
     private func relayObserver(

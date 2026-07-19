@@ -3,6 +3,54 @@ import MClashNetworkShared
 import Network
 import NetworkExtension
 
+enum InitialFlowOwnershipPolicy {
+    /// Returning `false` from an NE transparent provider preserves the original
+    /// application connection. Direct must therefore never be owned merely for
+    /// byte accounting; doing so adds a second socket and a user-space relay to
+    /// traffic that explicitly requested the native network path.
+    static func owns(_ disposition: FlowTrafficDisposition) -> Bool {
+        switch disposition {
+        case .direct, .failOpen:
+            false
+        case .reject, .mihomo:
+            true
+        }
+    }
+}
+
+enum MihomoRouteAvailabilityPolicy {
+    /// Availability is route-specific. Treating one live listener (normally
+    /// Profile Rules) as proof that every group/global listener exists can turn
+    /// a requested Direct fallback into an unnecessary owned relay.
+    static func resolve(
+        _ decision: FlowTrafficDecision,
+        availableRoutes: Set<MihomoRoute>,
+        rulesByIdentifier: [String: CaptureRule]
+    ) -> FlowTrafficDecision {
+        guard case let .mihomo(route) = decision.disposition,
+              !availableRoutes.contains(route),
+              case let .rule(cause) = decision.reason else {
+            return decision
+        }
+        let fallback: UnavailableFallback
+        if case let .matchedRule(identifier) = cause,
+           let rule = rulesByIdentifier[identifier] {
+            fallback = rule.unavailableFallback
+        } else {
+            fallback = .direct
+        }
+        let disposition: FlowTrafficDisposition = switch fallback {
+        case .direct: .direct
+        case .reject: .reject
+        }
+        return FlowTrafficDecision(
+            disposition: disposition,
+            reason: .mihomoUnavailable(rule: cause, fallback: fallback),
+            ruleEvidence: decision.ruleEvidence
+        )
+    }
+}
+
 final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     private struct State: Sendable {
         var revision: UInt64 = 0
@@ -11,14 +59,13 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             .failOpen(.missingEncodedSnapshot)
         )
         var mihomoSOCKSConfigurations: [MihomoRoute: ProviderSOCKSConfiguration] = [:]
-
-        var configuration: CaptureConfigurationLoadResult {
-            preparedConfiguration.loadResult
-        }
+        var availableMihomoRoutes: Set<MihomoRoute> = []
+        var rulesByIdentifier: [String: CaptureRule] = [:]
     }
 
     private let lock = NSLock()
     private let identityResolver = ProcessIdentityResolver()
+    private let identityCache = ProcessIdentityResolutionCache(capacity: 256)
     private let trustedComponentPolicy = TrustedMClashComponentPolicy()
     private let contextBuilder = FlowContextBuilder()
     private let decisionAdapter = FlowTrafficDecisionAdapter()
@@ -40,9 +87,14 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         state.revision = Self.uint64(configuration?[ProviderConfigurationKey.revision]) ?? 0
         state.captureEnabled = captureEnabled
         state.preparedConfiguration = preparedConfiguration
-        state.mihomoSOCKSConfigurations = ProviderSOCKSConfiguration.routeCatalog(
+        let routeCatalog = ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
         ) ?? [:]
+        state.mihomoSOCKSConfigurations = routeCatalog
+        state.availableMihomoRoutes = Set(routeCatalog.keys)
+        state.rulesByIdentifier = Dictionary(
+            uniqueKeysWithValues: loadResult.snapshot?.rules.map { ($0.id, $0) } ?? []
+        )
         lock.unlock()
     }
 
@@ -110,10 +162,15 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             transportProtocol: .tcp,
             state: currentState
         )
-        let destinations = try? ProviderSOCKSConfiguration.destinations(
-            for: endpoint,
-            preferredHostname: outcome.destinationHostname
-        )
+        let destinations: ProviderSOCKSDestinations?
+        if case .mihomo = outcome.decision.disposition {
+            destinations = try? ProviderSOCKSConfiguration.destinations(
+                for: endpoint,
+                preferredHostname: outcome.destinationHostname
+            )
+        } else {
+            destinations = nil
+        }
         return TCPFlowInterceptionPlan(
             decision: outcome.decision,
             destination: destinations?.original,
@@ -121,7 +178,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             proxy: proxy(for: outcome.decision, state: currentState),
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
-                configuration: currentState.configuration
+                rulesByIdentifier: currentState.rulesByIdentifier
             ),
             activity: outcome.activity
         )
@@ -262,8 +319,11 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             sourceAppSigningIdentifier: metadata.sourceAppSigningIdentifier
         )
         let identityResolution: ProcessIdentityResolution
-        if let auditToken = applicationMetadata.sourceAppAuditToken {
-            identityResolution = identityResolver.resolve(sourceAppAuditToken: auditToken)
+        if let auditTokenData = applicationMetadata.sourceAppAuditToken {
+            identityResolution = identityCache.resolve(
+                sourceAppAuditToken: auditTokenData,
+                using: identityResolver
+            )
         } else {
             identityResolution = .unavailable(.invalidAuditTokenLength(expected: 32, actual: 0))
         }
@@ -279,11 +339,16 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             transportProtocol: transportProtocol,
             isTrustedMClashComponent: isTrustedMClashComponent
         )
-        let decision = decisionAdapter.decide(
+        let preliminaryDecision = decisionAdapter.decide(
             preparedConfiguration: currentState.preparedConfiguration,
             context: context,
             captureEnabled: currentState.captureEnabled,
             mihomoAvailable: !currentState.mihomoSOCKSConfigurations.isEmpty
+        )
+        let decision = MihomoRouteAvailabilityPolicy.resolve(
+            preliminaryDecision,
+            availableRoutes: currentState.availableMihomoRoutes,
+            rulesByIdentifier: currentState.rulesByIdentifier
         )
         return FlowDecisionOutcome(
             decision: decision,
@@ -317,10 +382,16 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             remoteHostname: remoteHostname,
             parentFlowIdentifier: parentFlowIdentifier
         )
-        let destinations = try? ProviderSOCKSConfiguration.destinations(
-            for: endpoint,
-            preferredHostname: outcome.destinationHostname
-        )
+        let destinations: ProviderSOCKSDestinations?
+        switch outcome.decision.disposition {
+        case .reject, .mihomo:
+            destinations = try? ProviderSOCKSConfiguration.destinations(
+                for: endpoint,
+                preferredHostname: outcome.destinationHostname
+            )
+        case .direct, .failOpen:
+            destinations = nil
+        }
         return UDPFlowInterceptionPlan(
             decision: outcome.decision,
             initialDestination: destinations?.original,
@@ -328,7 +399,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             proxy: proxy(for: outcome.decision, state: currentState),
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
-                configuration: currentState.configuration
+                rulesByIdentifier: currentState.rulesByIdentifier
             ),
             activity: outcome.activity
         )
@@ -367,12 +438,12 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let endpointAddress = try? IPAddress(endpointHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]")))
         let configuredAction = actionRequested(
             by: decision,
-            configuration: state.configuration
+            rulesByIdentifier: state.rulesByIdentifier
         )
-        let terminal = Self.isTerminalWithoutRelay(
-            decision,
-            transportProtocol: transportProtocol
-        )
+        let terminal: Bool = switch decision.disposition {
+        case .mihomo: false
+        case .direct, .reject, .failOpen: true
+        }
 
         return AppRoutingActivity(
             flowIdentifier: flowIdentifier ?? UUID(),
@@ -436,7 +507,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
 
     private func actionRequested(
         by decision: FlowTrafficDecision,
-        configuration: CaptureConfigurationLoadResult
+        rulesByIdentifier: [String: CaptureRule]
     ) -> CaptureAction {
         let cause: RuleDecisionCause?
         switch decision.reason {
@@ -448,8 +519,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             cause = nil
         }
         if case let .matchedRule(identifier) = cause,
-           case let .loaded(snapshot) = configuration,
-           let rule = snapshot.rules.first(where: { $0.id == identifier }) {
+           let rule = rulesByIdentifier[identifier] {
             return rule.action
         }
         return switch decision.disposition {
@@ -461,7 +531,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
 
     private func unavailableFallbackRequested(
         by decision: FlowTrafficDecision,
-        configuration: CaptureConfigurationLoadResult
+        rulesByIdentifier: [String: CaptureRule]
     ) -> UnavailableFallback {
         let cause: RuleDecisionCause?
         switch decision.reason {
@@ -476,29 +546,10 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             cause = nil
         }
         if case let .matchedRule(identifier) = cause,
-           case let .loaded(snapshot) = configuration,
-           let rule = snapshot.rules.first(where: { $0.id == identifier }) {
+           let rule = rulesByIdentifier[identifier] {
             return rule.unavailableFallback
         }
         return .direct
-    }
-
-    private static func isTerminalWithoutRelay(
-        _ decision: FlowTrafficDecision,
-        transportProtocol: TransportProtocol
-    ) -> Bool {
-        switch decision.disposition {
-        case .direct:
-            if case let .rule(cause) = decision.reason,
-               case .builtInBypass = cause {
-                return true
-            }
-            return false
-        case .reject, .failOpen:
-            return true
-        case .mihomo:
-            return false
-        }
     }
 
     private func snapshotState() -> State {

@@ -195,3 +195,65 @@ public struct ProcessIdentityResolver: Sendable {
         ))
     }
 }
+
+/// Small FIFO cache for identities whose audit tokens were fully verified.
+/// Audit tokens are process-instance identities (PID plus PID version), not
+/// reusable bare PIDs. The fixed capacity keeps paths and signing metadata
+/// bounded for the lifetime of the Network Extension.
+final class ProcessIdentityResolutionCache: @unchecked Sendable {
+    let capacity: Int
+
+    private let lock = NSLock()
+    private var identities: [SourceAppAuditToken: ResolvedProcessIdentity] = [:]
+    private var insertionOrder: [SourceAppAuditToken] = []
+
+    init(capacity: Int) {
+        self.capacity = max(0, capacity)
+        identities.reserveCapacity(self.capacity)
+        insertionOrder.reserveCapacity(self.capacity)
+    }
+
+    func identity(for token: SourceAppAuditToken) -> ResolvedProcessIdentity? {
+        withLock { identities[token] }
+    }
+
+    /// Code-signing inspection is one of the most expensive operations on the
+    /// new-flow path. An audit token includes the PID version, so a successfully
+    /// resolved identity can be reused safely without confusing a recycled PID.
+    /// Failures are intentionally not cached because permission and Security
+    /// framework errors can be transient.
+    func resolve(
+        sourceAppAuditToken data: Data,
+        using resolver: ProcessIdentityResolver
+    ) -> ProcessIdentityResolution {
+        guard let token = try? SourceAppAuditToken(data) else {
+            return resolver.resolve(sourceAppAuditToken: data)
+        }
+        if let identity = identity(for: token) {
+            return .resolved(identity)
+        }
+        let resolution = resolver.resolve(sourceAppAuditToken: data)
+        if case let .resolved(identity) = resolution {
+            insert(identity)
+        }
+        return resolution
+    }
+
+    func insert(_ identity: ResolvedProcessIdentity) {
+        withLock {
+            guard capacity > 0,
+                  identities[identity.auditToken] == nil else { return }
+            while insertionOrder.count >= capacity {
+                identities.removeValue(forKey: insertionOrder.removeFirst())
+            }
+            identities[identity.auditToken] = identity
+            insertionOrder.append(identity.auditToken)
+        }
+    }
+
+    private func withLock<T>(_ operation: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try operation()
+    }
+}

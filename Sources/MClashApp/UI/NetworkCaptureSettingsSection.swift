@@ -721,7 +721,7 @@ struct AppRoutingView: View {
                 Spacer(minLength: 12)
                 providerHeartbeat
             }
-            Text("Active includes every retained open conversation. Outcome counts cover flows started in the last minute. Owned TCP and UDP Direct traffic is measured; built-in bypass and fail-open handoffs remain explicitly unmeasured.")
+            Text("Active includes every retained open conversation. Outcome counts cover flows started in the last minute. Normal Direct traffic stays on the original macOS path and is unmeasured; only Direct fallback inside an already-owned flow can be measured.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             HStack(spacing: 12) {
@@ -2066,7 +2066,7 @@ private struct AppRoutingFlowInspector: View {
                         } else if activity.effectiveAction == .direct,
                                   activity.payloadBytesAreMeasured == true {
                             Label(
-                                "App Routing owned this Direct flow and counted bytes only after upstream acceptance and application delivery.",
+                                "This flow had already been intercepted before switching to Direct fallback, so App Routing counted bytes after upstream acceptance and application delivery.",
                                 systemImage: "checkmark.circle"
                             )
                             .font(.caption)

@@ -977,7 +977,7 @@ private struct OverviewTrafficSection: View {
             UInt64(max(0, model.traffic.upload)),
             model.appRoutingTrafficRates.direct.upload
         )
-        return "MClash-observable total now: ↓ \(formattedByteRate(Int64(clamping: download))) · ↑ \(formattedByteRate(Int64(clamping: upload))). This adds Mihomo core traffic and measured App Routing Direct relays; unmeasured handoffs are excluded."
+        return "MClash-observable total now: ↓ \(formattedByteRate(Int64(clamping: download))) · ↑ \(formattedByteRate(Int64(clamping: upload))). This adds Mihomo core traffic and any measured Direct fallback inside already-owned flows; normal Direct handoffs are excluded."
     }
 
     private func saturatingRateSum(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {

@@ -6,6 +6,7 @@ import Foundation
 struct NetworkSetupProxyBackend: SystemProxyBackend {
     private let reader: any SystemProxyBackend
     private let runner: any NetworkSetupCommandRunning
+    private let serviceNameCache: NetworkSetupServiceNameCache
 
     init(
         reader: any SystemProxyBackend = SystemConfigurationProxyBackend(),
@@ -13,11 +14,15 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
     ) {
         self.reader = reader
         self.runner = runner
+        serviceNameCache = NetworkSetupServiceNameCache()
     }
 
     func enabledNetworkServices() throws -> [SystemProxyNetworkService] {
-        let supportedNames = try networkServiceNames()
-        return try reader.enabledNetworkServices().filter { supportedNames.contains($0.name) }
+        let services = try reader.enabledNetworkServices()
+        let supportedNames = try networkServiceNames(
+            covering: Set(services.map(\.name))
+        )
+        return services.filter { supportedNames.contains($0.name) }
     }
 
     func proxyStates(
@@ -27,8 +32,10 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
     }
 
     func applyProxyStates(_ states: [SystemProxyServiceState]) throws {
-        let supportedNames = try networkServiceNames()
         let currentServices = try reader.enabledNetworkServices()
+        let supportedNames = try networkServiceNames(
+            covering: Set(currentServices.map(\.name))
+        )
         let servicesByID = Dictionary(uniqueKeysWithValues: currentServices.map { ($0.id, $0) })
         if let unavailableState = states.first(where: { state in
             guard let currentService = servicesByID[state.service.id] else { return true }
@@ -140,17 +147,21 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
         )
     }
 
-    private func networkServiceNames() throws -> Set<String> {
-        let output = try runner.run(["-listallnetworkservices"])
-        return Set(
-            output.split(whereSeparator: \.isNewline).compactMap { line -> String? in
-                let name = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !name.isEmpty,
-                      !name.hasPrefix("An asterisk"),
-                      !name.hasPrefix("*") else { return nil }
-                return name
-            }
-        )
+    private func networkServiceNames(
+        covering observedNames: Set<String>
+    ) throws -> Set<String> {
+        try serviceNameCache.supportedNames(covering: observedNames) {
+            let output = try runner.run(["-listallnetworkservices"])
+            return Set(
+                output.split(whereSeparator: \.isNewline).compactMap { line -> String? in
+                    let name = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty,
+                          !name.hasPrefix("An asterisk"),
+                          !name.hasPrefix("*") else { return nil }
+                    return name
+                }
+            )
+        }
     }
 
     private func enabledValue(_ value: SystemProxyPropertyValue?) -> String {
@@ -170,6 +181,43 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
     private func stringArrayValue(_ value: SystemProxyPropertyValue?) -> [String] {
         guard case let .array(values) = value else { return [] }
         return values.compactMap(stringValue)
+    }
+}
+
+/// `networksetup -listallnetworkservices` launches a subprocess. System proxy
+/// verification runs periodically, while the supported-name set changes only
+/// when SystemConfiguration exposes a name not seen before. Cache both supported
+/// and unsupported observed names so virtual adapters do not force a subprocess
+/// on every guard pass.
+private final class NetworkSetupServiceNameCache: @unchecked Sendable {
+    private struct Snapshot {
+        var observedNames: Set<String>
+        var supportedNames: Set<String>
+    }
+
+    private let lock = NSLock()
+    private var snapshot: Snapshot?
+
+    func supportedNames(
+        covering observedNames: Set<String>,
+        load: () throws -> Set<String>
+    ) throws -> Set<String> {
+        if let cached = lock.withLock({ snapshot }),
+           observedNames.isSubset(of: cached.observedNames) {
+            return cached.supportedNames
+        }
+
+        let loaded = try load()
+        return lock.withLock {
+            var allObservedNames = snapshot?.observedNames ?? []
+            allObservedNames.formUnion(observedNames)
+            let refreshed = Snapshot(
+                observedNames: allObservedNames,
+                supportedNames: loaded
+            )
+            snapshot = refreshed
+            return refreshed.supportedNames
+        }
     }
 }
 

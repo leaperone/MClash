@@ -45,6 +45,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private let tcpRelays = TCPFlowRelayRegistry()
     private let udpSessions = UDPFlowSessionRegistry()
     private let identityResolver = ProcessIdentityResolver()
+    private let identityCache = ProcessIdentityResolutionCache(capacity: 64)
     private let trustedComponentPolicy = TrustedMClashComponentPolicy()
     private var reporter: DNSProxyRuntimeReporter?
     private var proxy: ProviderSOCKSConfiguration?
@@ -500,9 +501,17 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     }
 
     private func isTrustedMClashComponent(_ flow: NEAppProxyFlow) -> Bool {
+        if trustedComponentPolicy.contains(
+            metadataSigningIdentifier: flow.metaData.sourceAppSigningIdentifier
+        ) {
+            return true
+        }
         guard let auditToken = flow.metaData.sourceAppAuditToken else { return false }
         return trustedComponentPolicy.contains(
-            identityResolver.resolve(sourceAppAuditToken: auditToken)
+            identityCache.resolve(
+                sourceAppAuditToken: auditToken,
+                using: identityResolver
+            )
         )
     }
 
