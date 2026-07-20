@@ -602,6 +602,37 @@ struct MenuBarContent: View {
                 }
             }
 
+            Menu {
+                ForEach(availableQuickRouteGroups, id: \.name) { group in
+                    let isPinned = model.pinnedQuickRouteNames.contains(group.name)
+                    Button {
+                        model.setQuickRoutePinned(
+                            group.name,
+                            pinned: !isPinned,
+                            availableNames: availableQuickRouteGroups.map(\.name)
+                        )
+                    } label: {
+                        Label(
+                            group.name,
+                            systemImage: isPinned ? "pin.fill" : "pin"
+                        )
+                    }
+                    .disabled(!isPinned && activePinnedQuickRouteCount >= QuickRouteSelectionPolicy.maximumVisibleRoutes)
+                }
+
+                if !model.pinnedQuickRouteNames.isEmpty {
+                    Divider()
+                    Button("Use Automatic Order") {
+                        model.clearPinnedQuickRoutes()
+                    }
+                }
+            } label: {
+                Label("Customize Quick Routes", systemImage: "pin")
+            }
+            .menuStyle(.borderlessButton)
+            .controlSize(.small)
+            .help("Pin up to three policy groups; unfilled slots follow profile order.")
+
             Button("Manage All Routes…") {
                 showMainWindow(destination: .proxies)
             }
@@ -610,13 +641,25 @@ struct MenuBarContent: View {
     }
 
     private var quickRouteGroups: [MihomoProxy] {
+        let selectedNames = QuickRouteSelectionPolicy.select(
+            availableNames: availableQuickRouteGroups.map(\.name),
+            pinnedNames: model.pinnedQuickRouteNames
+        )
+        return selectedNames.compactMap { name in
+            availableQuickRouteGroups.first { $0.name == name }
+        }
+    }
+
+    private var availableQuickRouteGroups: [MihomoProxy] {
         let mode = (model.pendingMode ?? model.runtimeConfig?.mode ?? "rule").lowercased()
         guard mode != "direct" else { return [] }
-        return Array(
-            ProxyGroupPartitionSnapshot(model: model, routingMode: mode)
-                .orderedForPresentation
-                .prefix(3)
-        )
+        return ProxyGroupPartitionSnapshot(model: model, routingMode: mode)
+            .orderedForPresentation
+    }
+
+    private var activePinnedQuickRouteCount: Int {
+        let availableNames = Set(availableQuickRouteGroups.map(\.name))
+        return model.pinnedQuickRouteNames.filter(availableNames.contains).count
     }
 
     private func pickerBinding(for groupName: String) -> Binding<Bool> {

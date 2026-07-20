@@ -47,6 +47,28 @@ struct FlowLedgerTests {
         #expect(!ledger.entries.contains { $0.id == .mihomo("exact") })
     }
 
+    @Test("DNS Proxy activity remains distinct from App Routing")
+    func dnsProxyCaptureOrigin() throws {
+        let activity = appActivity(captureOrigin: .dnsProxy)
+        let ledger = FlowLedger(
+            activeConnections: [],
+            appRoutingActivities: [activity]
+        )
+
+        #expect(try #require(ledger.entries.first).captureOrigin == .dnsProxy)
+    }
+
+    @Test("Legacy activity without an origin remains App Routing")
+    func legacyCaptureOrigin() throws {
+        let activity = appActivity(captureOrigin: nil)
+        let ledger = FlowLedger(
+            activeConnections: [],
+            appRoutingActivities: [activity]
+        )
+
+        #expect(try #require(ledger.entries.first).captureOrigin == .appRouting)
+    }
+
     @Test("A claimed relay-port candidate falls back to destination matching")
     func claimedExactCandidateFallsBackToHeuristic() throws {
         let first = appActivity(
@@ -350,6 +372,7 @@ struct FlowLedgerTests {
 
     private func appActivity(
         id: UUID = UUID(),
+        captureOrigin: AppRoutingActivityCaptureOrigin? = .appRouting,
         disposition: FlowTrafficDisposition = .mihomo(.profileRules),
         relayState: AppRoutingRelayState = .relaying,
         relayLocalPort: UInt16? = 55_001,
@@ -364,6 +387,7 @@ struct FlowLedgerTests {
         )
         return AppRoutingActivity(
             flowIdentifier: id,
+            captureOrigin: captureOrigin,
             configurationRevision: 7,
             startedAt: startedAt ?? baseDate,
             endedAt: relayState == .completed || relayState == .notApplicable

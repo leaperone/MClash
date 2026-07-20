@@ -1624,6 +1624,8 @@ private func captureOriginTitle(_ origin: FlowLedgerCaptureOrigin) -> String {
         return "System Proxy"
     case .appRouting:
         return "App Routing"
+    case .dnsProxy:
+        return "DNS Proxy"
     case let .localListener(name):
         return "\(name) · local listener (origin unverified)"
     case .unknown:

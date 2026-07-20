@@ -206,11 +206,7 @@ struct AppRoutingView: View {
                 ZStack {
                     switch workspace {
                     case .rules:
-                        if orderedRules.isEmpty {
-                            emptyState
-                        } else {
-                            rulesTable
-                        }
+                        rulesWorkspace
                     case .activity:
                         activityWorkspace
                     }
@@ -1152,6 +1148,56 @@ struct AppRoutingView: View {
         .onDeleteCommand { removeSelectedRule() }
     }
 
+    private var rulesWorkspace: some View {
+        VStack(spacing: 0) {
+            effectivePolicyBar
+            Divider()
+            if orderedRules.isEmpty {
+                emptyState
+            } else {
+                rulesTable
+            }
+        }
+    }
+
+    private var effectivePolicyBar: some View {
+        HStack(spacing: 8) {
+            Text("Effective Policy")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if enabledRuleCount == 0 {
+                Label("Applications Direct", systemImage: "arrow.right.circle")
+                    .font(.callout.weight(.medium))
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(dnsPolicyTitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("\(enabledRuleCount) enabled \(enabledRuleCount == 1 ? "rule" : "rules")")
+                    .font(.callout.weight(.medium))
+                Text("· First match wins · \(dnsPolicyTitle)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 12)
+
+            if enabledRuleCount == 0 {
+                Button(action: addRule) {
+                    Label("Add Rule…", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!model.canPerform(.changeNetworkCapture))
+            }
+        }
+        .frame(height: 44)
+        .padding(.horizontal, MClashLayout.pagePadding)
+        .accessibilityElement(children: .contain)
+    }
+
     @ViewBuilder
     private var activityWorkspace: some View {
         let visibleActivities = activityPresentation.visibleActivities
@@ -1377,7 +1423,7 @@ struct AppRoutingView: View {
     private var headerCount: String {
         switch workspace {
         case .rules:
-            "· \(orderedRules.count) \(orderedRules.count == 1 ? "rule" : "rules")"
+            "· \(enabledRuleCount) enabled"
         case .activity:
             if activityPresentation.visibleActivities.count == activityPresentation.activeCount {
                 "· \(activityPresentation.activeCount) active"
@@ -1390,7 +1436,9 @@ struct AppRoutingView: View {
     private var headerDescription: String {
         switch workspace {
         case .rules:
-            "Rules are evaluated from top to bottom. The first matching rule decides whether traffic uses Mihomo, connects directly, or is rejected."
+            enabledRuleCount == 0
+                ? "With no enabled rules, applications connect directly. DNS follows its separate setting."
+                : "Enabled rules are evaluated from top to bottom. The first matching rule decides whether traffic uses Mihomo, connects directly, or is rejected."
         case .activity:
             "Live provider-owned connections stay here until they close, with their target, route, current speed, transferred bytes, and duration."
         }
@@ -1740,6 +1788,14 @@ struct AppRoutingView: View {
             }
             return lhs.offset < rhs.offset
         }.map(\.element)
+    }
+
+    private var enabledRuleCount: Int {
+        orderedRules.lazy.filter(\.enabled).count
+    }
+
+    private var dnsPolicyTitle: String {
+        model.networkCapturePreferences.dnsEnabled ? "DNS On" : "DNS Off"
     }
 
     private func formattedRuleTraffic(_ bytes: UInt64, partial: Bool) -> String {
@@ -2155,7 +2211,13 @@ private struct AppRoutingFlowInspector: View {
                 VStack(alignment: .leading, spacing: 22) {
                     inspectorSection("Route Pipeline") {
                         pipelineStage("Application", value: applicationName, symbol: "app")
-                        pipelineStage("Capture", value: "App Routing", symbol: "network.badge.shield.half.filled")
+                        pipelineStage(
+                            "Capture",
+                            value: activity.effectiveCaptureOrigin == .dnsProxy
+                                ? "DNS Proxy"
+                                : "App Routing",
+                            symbol: "network.badge.shield.half.filled"
+                        )
                         pipelineStage(
                             "App Rule",
                             value: activity.matchedRuleIdentifier ?? "Built-in / default decision",

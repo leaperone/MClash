@@ -34,10 +34,53 @@ struct SubscriptionFeaturesTests {
         let lastCheckedAt = try #require(metadata.lastCheckedAt)
         #expect(metadata.automaticUpdatesEnabled)
         #expect(metadata.effectiveUpdateIntervalHours == 24)
+        #expect(metadata.lastFailureAt == nil)
+        #expect(metadata.consecutiveFailureCount == 0)
+        #expect(metadata.nextRetryAt == nil)
         #expect(
             metadata.nextAutomaticUpdateAt()
                 == lastCheckedAt.addingTimeInterval(24 * 3_600)
         )
+    }
+
+    @Test("Remote metadata backs off failed refreshes and presents retry status")
+    func failedRefreshBackoffAndPresentation() throws {
+        let failureAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let url = try #require(URL(string: "https://example.com/profile.yaml"))
+        var metadata = RemoteSubscriptionMetadata(url: url)
+
+        metadata.recordRefreshFailure(at: failureAt, jitterFactor: 1)
+        let firstRetryAt = failureAt.addingTimeInterval(15 * 60)
+        #expect(metadata.lastCheckedAt == failureAt)
+        #expect(metadata.lastFailureAt == failureAt)
+        #expect(metadata.consecutiveFailureCount == 1)
+        #expect(metadata.nextRetryAt == firstRetryAt)
+        #expect(!metadata.isAutomaticUpdateDue(at: firstRetryAt.addingTimeInterval(-1)))
+        #expect(metadata.isAutomaticUpdateDue(at: firstRetryAt))
+        #expect(
+            SubscriptionRefreshStatusText.failure(metadata) { date in
+                date == failureAt ? "recently" : "soon"
+            } == "Last refresh failed recently · Automatic retry soon"
+        )
+
+        metadata.recordRefreshFailure(at: firstRetryAt, jitterFactor: 1)
+        #expect(metadata.consecutiveFailureCount == 2)
+        #expect(metadata.nextRetryAt == firstRetryAt.addingTimeInterval(30 * 60))
+
+        for _ in 0..<12 {
+            metadata.recordRefreshFailure(at: failureAt, jitterFactor: 1.2)
+        }
+        #expect(
+            metadata.nextRetryAt
+                == failureAt.addingTimeInterval(
+                    RemoteSubscriptionMetadata.automaticRetryMaximumDelay
+                )
+        )
+
+        metadata.clearRefreshFailure()
+        #expect(metadata.lastFailureAt == nil)
+        #expect(metadata.consecutiveFailureCount == 0)
+        #expect(metadata.nextRetryAt == nil)
     }
 
     @Test("Subscription downloads enforce declared and streamed byte limits")

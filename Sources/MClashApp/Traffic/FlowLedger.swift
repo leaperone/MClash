@@ -444,10 +444,18 @@ struct FlowLedger: Sendable {
         let state = state(activity)
         let matchedRoute = match.map { Self.route($0.record.connection) }
         let measurements = measurements(activity)
+        let captureOrigin: FlowLedgerCaptureOrigin
+        switch activity.effectiveCaptureOrigin {
+        case .appRouting:
+            captureOrigin = .appRouting
+        case .dnsProxy:
+            captureOrigin = .dnsProxy
+        }
+
         return FlowLedgerEntry(
             id: .appRouting(activity.flowIdentifier),
             application: application(activity.source),
-            captureOrigin: .appRouting,
+            captureOrigin: captureOrigin,
             destination: destination(activity.destination),
             appRoutingRule: nonEmpty(activity.matchedRuleIdentifier),
             mihomoRoute: matchedRoute,
@@ -737,6 +745,7 @@ enum FlowLedgerByteMeasurement: Hashable, Sendable {
 enum FlowLedgerCaptureOrigin: Hashable, Sendable {
     case systemProxy
     case appRouting
+    case dnsProxy
     case localListener(name: String)
     case unknown
 }

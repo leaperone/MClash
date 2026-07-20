@@ -160,6 +160,74 @@ struct ProfileStoreTests {
             return
         }
         #expect(remote.eTag == "old")
+        #expect(remote.lastFailureAt != nil)
+        #expect(remote.consecutiveFailureCount == 1)
+        #expect(remote.nextRetryAt != nil)
+    }
+
+    @Test("Refresh failure persists retry state and manual refresh ignores backoff")
+    func refreshFailurePersistsRetryStateAndManualRefreshIgnoresBackoff() async throws {
+        let initialDate = Date(timeIntervalSince1970: 1_789_000_000)
+        let failureDate = initialDate.addingTimeInterval(60 * 60)
+        let dateSource = TestDateSource(initialDate)
+        let downloader = StubDownloader(steps: [
+            .response(SubscriptionDownloadResponse(
+                statusCode: 200,
+                data: Data("mixed-port: 7890\n".utf8),
+                eTag: "old"
+            )),
+            .failure(.noResponse),
+            .response(SubscriptionDownloadResponse(statusCode: 304, data: nil)),
+        ])
+        let fixture = try Fixture(
+            downloader: downloader,
+            now: { dateSource.value },
+            retryJitterFactor: { 1 }
+        )
+        let url = try #require(URL(string: "https://example.com/profile.yaml"))
+        let profile = try await fixture.store.createRemoteProfile(
+            name: "Remote",
+            subscriptionURL: url
+        )
+
+        dateSource.value = failureDate
+        await #expect(throws: StubDownloaderError.noResponse) {
+            _ = try await fixture.store.refreshRemoteProfile(profile.id)
+        }
+
+        let failedProfile = try await fixture.store.metadata(for: profile.id)
+        guard case let .remote(failedRemote) = failedProfile.origin else {
+            Issue.record("Expected remote metadata")
+            return
+        }
+        let retryAt = failureDate.addingTimeInterval(15 * 60)
+        #expect(failedRemote.lastFailureAt == failureDate)
+        #expect(failedRemote.consecutiveFailureCount == 1)
+        #expect(failedRemote.nextRetryAt == retryAt)
+        #expect(
+            try await fixture.store.remoteProfileIDsDueForAutomaticUpdate(
+                at: retryAt.addingTimeInterval(-1)
+            ).isEmpty
+        )
+        #expect(
+            try await fixture.store.remoteProfileIDsDueForAutomaticUpdate(at: retryAt)
+                == [profile.id]
+        )
+
+        // The direct Store API is the manual refresh path. It must not reject
+        // an attempt merely because the automatic retry deadline is pending.
+        dateSource.value = failureDate.addingTimeInterval(60)
+        let result = try await fixture.store.refreshRemoteProfile(profile.id)
+        guard case let .notModified(recoveredProfile) = result,
+              case let .remote(recoveredRemote) = recoveredProfile.origin else {
+            Issue.record("Expected a successful not-modified refresh")
+            return
+        }
+        #expect(recoveredRemote.lastFailureAt == nil)
+        #expect(recoveredRemote.consecutiveFailureCount == 0)
+        #expect(recoveredRemote.nextRetryAt == nil)
+        let requestCount = await downloader.requests.count
+        #expect(requestCount == 3)
     }
 
     @Test("Captured profile contents can be restored after a failed runtime rollout")
@@ -198,7 +266,13 @@ private struct Fixture {
     let layout: ProfileDirectoryLayout
     let store: ProfileStore
 
-    init(downloader: any SubscriptionDownloading = StubDownloader(responses: [])) throws {
+    init(
+        downloader: any SubscriptionDownloading = StubDownloader(responses: []),
+        now: @escaping @Sendable () -> Date = {
+            Date(timeIntervalSince1970: 1_789_000_000)
+        },
+        retryJitterFactor: @escaping @Sendable () -> Double = { 1 }
+    ) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MClashTests-\(UUID().uuidString)",
             isDirectory: true
@@ -208,30 +282,57 @@ private struct Fixture {
         store = try ProfileStore(
             layout: layout,
             downloader: downloader,
-            now: { Date(timeIntervalSince1970: 1_789_000_000) }
+            now: now,
+            retryJitterFactor: retryJitterFactor
         )
     }
 }
 
 private actor StubDownloader: SubscriptionDownloading {
-    private var queuedResponses: [SubscriptionDownloadResponse]
+    private var steps: [StubDownloadStep]
     private(set) var requests: [URLRequest] = []
 
     init(responses: [SubscriptionDownloadResponse]) {
-        self.queuedResponses = responses
+        steps = responses.map(StubDownloadStep.response)
+    }
+
+    init(steps: [StubDownloadStep]) {
+        self.steps = steps
     }
 
     func download(_ request: URLRequest) async throws -> SubscriptionDownloadResponse {
         requests.append(request)
-        guard !queuedResponses.isEmpty else {
+        guard !steps.isEmpty else {
             throw StubDownloaderError.noResponse
         }
-        return queuedResponses.removeFirst()
+        switch steps.removeFirst() {
+        case let .response(response): return response
+        case let .failure(error): throw error
+        }
     }
 }
 
-private enum StubDownloaderError: Error {
+private enum StubDownloadStep: Sendable {
+    case response(SubscriptionDownloadResponse)
+    case failure(StubDownloaderError)
+}
+
+private enum StubDownloaderError: Error, Equatable, Sendable {
     case noResponse
+}
+
+private final class TestDateSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Date
+
+    init(_ value: Date) {
+        storedValue = value
+    }
+
+    var value: Date {
+        get { lock.withLock { storedValue } }
+        set { lock.withLock { storedValue = newValue } }
+    }
 }
 
 private actor RecordingValidator: ProfileValidating {

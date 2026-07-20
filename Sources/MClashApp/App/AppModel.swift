@@ -324,6 +324,7 @@ final class AppModel {
         case changeMode
         case changeSystemProxy
         case changeNetworkCapture
+        case recoverNetworkEnvironment
         case selectProxy(String)
         case clearProxyOverride(String)
         case measureDelay(String)
@@ -512,6 +513,7 @@ final class AppModel {
             presentationDemandDidChange()
         }
     }
+    private(set) var pinnedQuickRouteNames: [String]
     var closeConnectionsOnRoutingChange: Bool {
         didSet {
             preferenceDefaults.set(
@@ -553,6 +555,7 @@ final class AppModel {
     private let systemProxyPreferencesStore: SystemProxyPreferencesStore?
     private let networkCaptureConfigurationStore: NetworkCaptureConfigurationStore?
     private let networkExtensionControl: any NetworkExtensionControlling
+    private let networkEnvironmentMonitor: any NetworkEnvironmentMonitoring
     private let systemProxyManager: SystemProxyManager
     private let localPortProbe: LocalPortProbe
     private let geoDataInstaller: BundledGeoDataInstaller
@@ -607,6 +610,13 @@ final class AppModel {
     private var appRoutingMonitorGeneration: UInt64 = 0
     private var dnsProxyRuntimeTask: Task<Void, Never>?
     private var dnsProxyMonitorGeneration: UInt64 = 0
+    private var networkEnvironmentEventTask: Task<Void, Never>?
+    private var networkEnvironmentDebounceTask: Task<Void, Never>?
+    private var networkEnvironmentRecoveryTask: Task<Void, Never>?
+    private var networkEnvironmentRecoveryPolicy = NetworkEnvironmentRecoveryPolicy()
+    private var networkEnvironmentRecoveryArmed = false
+    private var networkEnvironmentDebounceGeneration: UInt64 = 0
+    private var networkEnvironmentRecoveryGeneration: UInt64 = 0
     private var appRoutingActivityCursor: UInt64 = 0
     private var appRoutingActivitiesByIdentifier: [UUID: AppRoutingActivity] = [:]
     private var appRoutingTrafficRateTracker = AppRoutingTrafficRateTracker()
@@ -626,7 +636,8 @@ final class AppModel {
         profileStoreOverride: ProfileStore? = nil,
         geoDataInstaller: BundledGeoDataInstaller = .applicationBundle(),
         preferenceDefaults: UserDefaults = .standard,
-        networkExtensionControl: any NetworkExtensionControlling = NetworkExtensionControlService.live()
+        networkExtensionControl: any NetworkExtensionControlling = NetworkExtensionControlService.live(),
+        networkEnvironmentMonitor: any NetworkEnvironmentMonitoring = AppleNetworkEnvironmentMonitor()
     ) {
         self.supervisor = supervisor
         self.binaryLocator = binaryLocator
@@ -636,6 +647,7 @@ final class AppModel {
         self.geoDataInstaller = geoDataInstaller
         self.preferenceDefaults = preferenceDefaults
         self.networkExtensionControl = networkExtensionControl
+        self.networkEnvironmentMonitor = networkEnvironmentMonitor
         if preferenceDefaults.object(forKey: Self.trafficHistoryPersistenceChoiceKey) == nil {
             trafficHistoryPersistenceChoice = .undecided
         } else {
@@ -659,6 +671,9 @@ final class AppModel {
             forKey: Self.menuBarDisplayStyleKey
         )
         .flatMap(MenuBarDisplayStyle.init(rawValue:)) ?? .logo
+        pinnedQuickRouteNames = Self.normalizedQuickRouteNames(
+            preferenceDefaults.stringArray(forKey: Self.pinnedQuickRouteNamesKey) ?? []
+        )
         if preferenceDefaults.object(forKey: Self.closeConnectionsOnRoutingChangeKey) == nil {
             closeConnectionsOnRoutingChange = true
         } else {
@@ -915,6 +930,7 @@ final class AppModel {
             guard !shutdownInProgress else { return }
             prepared = true
             startSubscriptionUpdateScheduler()
+            startNetworkEnvironmentMonitoring()
         } catch is CancellationError {
             return
         } catch {
@@ -1938,11 +1954,13 @@ final class AppModel {
             rollbackSnapshot = nil
         }
 
+        var remoteRefreshCompleted = false
         do {
             let result = try await profileStore.refreshRemoteProfile(
                 id,
                 validator: try makeProfileValidator()
             )
+            remoteRefreshCompleted = true
             profiles = try await profileStore.profiles()
             if activeProfileID == id, case .updated = result {
                 try await performActivateProfile(
@@ -1956,7 +1974,7 @@ final class AppModel {
             case .notModified: .unchanged
             }
         } catch {
-            if let rollbackSnapshot {
+            if let rollbackSnapshot, remoteRefreshCompleted {
                 do {
                     try await profileStore.restoreProfile(
                         metadata: rollbackSnapshot.metadata,
@@ -1968,6 +1986,11 @@ final class AppModel {
                         "Subscription rollback failed: \(error.localizedDescription)"
                     )
                 }
+            } else if let refreshedProfiles = try? await profileStore.profiles() {
+                // A fetch or validation failure is already transactional in
+                // ProfileStore. Reload its persisted retry metadata instead of
+                // restoring the pre-attempt snapshot and erasing backoff state.
+                profiles = refreshedProfiles
             }
             let message = redactedSubscriptionMessage(
                 error.localizedDescription,
@@ -2033,6 +2056,7 @@ final class AppModel {
         defer { end(.connection) }
 
         if isConnected || isBusy {
+            setNetworkEnvironmentRecoveryArmed(false)
             _ = await performDisconnect()
         } else {
             let connected = await performConnect()
@@ -2054,6 +2078,7 @@ final class AppModel {
     func disconnect() async {
         guard begin(.connection) else { return }
         defer { end(.connection) }
+        setNetworkEnvironmentRecoveryArmed(false)
         _ = await performDisconnect()
     }
 
@@ -2100,7 +2125,11 @@ final class AppModel {
             if isConnected, controllerIsReady, networkCapturePreferences.enabled {
                 await performNetworkCaptureActivation()
             }
-            return isConnected && controllerIsReady
+            let connected = isConnected && controllerIsReady
+            if connected {
+                setNetworkEnvironmentRecoveryArmed(true)
+            }
+            return connected
         } catch is CancellationError {
             return false
         } catch {
@@ -3439,6 +3468,8 @@ final class AppModel {
 
     @discardableResult
     func shutdown() async -> Bool {
+        let recoveryWasArmed = networkEnvironmentRecoveryArmed
+        stopNetworkEnvironmentMonitoring()
         shutdownInProgress = true
         subscriptionUpdateTask?.cancel()
         subscriptionUpdateTask = nil
@@ -3452,6 +3483,9 @@ final class AppModel {
         if networkCaptureIsActive,
            !(await performNetworkCaptureDeactivation()) {
             shutdownInProgress = false
+            resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
+                recoveryWasArmed: recoveryWasArmed
+            )
             return false
         }
         if systemProxyEnabled || hasSystemProxySnapshot {
@@ -3460,17 +3494,24 @@ final class AppModel {
                 // task to begin an automatic restore/authorization loop.
                 if hasSystemProxySnapshot { prepared = true }
                 shutdownInProgress = false
+                resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
+                    recoveryWasArmed: recoveryWasArmed
+                )
                 return false
             }
         }
         guard await stopCore() else {
             shutdownInProgress = false
+            resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
+                recoveryWasArmed: recoveryWasArmed
+            )
             return false
         }
         return true
     }
 
     func forceShutdown() async {
+        stopNetworkEnvironmentMonitoring()
         shutdownInProgress = true
         subscriptionUpdateTask?.cancel()
         subscriptionUpdateTask = nil
@@ -3749,6 +3790,9 @@ final class AppModel {
 
     private func handleRunningSession(_ session: CoreSession) async {
         await controllerDidStart(session)
+        if controllerIsReady, isConnected {
+            setNetworkEnvironmentRecoveryArmed(true)
+        }
         if controllerIsReady,
            isConnected,
            networkCapturePreferences.enabled,
@@ -4490,6 +4534,267 @@ final class AppModel {
         routeTrafficEntries = []
         traffic = MihomoTraffic(upload: 0, download: 0, uploadTotal: 0, downloadTotal: 0)
         trafficHistory = []
+    }
+
+    private func startNetworkEnvironmentMonitoring() {
+        guard prepared, !shutdownInProgress, networkEnvironmentEventTask == nil else { return }
+        let events = networkEnvironmentMonitor.start()
+        networkEnvironmentEventTask = Task { @MainActor [weak self] in
+            for await event in events {
+                guard !Task.isCancelled, let self else { return }
+                self.receiveNetworkEnvironmentEvent(event)
+            }
+        }
+    }
+
+    private func stopNetworkEnvironmentMonitoring() {
+        networkEnvironmentEventTask?.cancel()
+        networkEnvironmentEventTask = nil
+        networkEnvironmentDebounceGeneration &+= 1
+        networkEnvironmentDebounceTask?.cancel()
+        networkEnvironmentDebounceTask = nil
+        networkEnvironmentRecoveryGeneration &+= 1
+        networkEnvironmentRecoveryTask?.cancel()
+        networkEnvironmentRecoveryTask = nil
+        networkEnvironmentMonitor.stop()
+        networkEnvironmentRecoveryArmed = false
+        networkEnvironmentRecoveryPolicy = NetworkEnvironmentRecoveryPolicy()
+    }
+
+    private func resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
+        recoveryWasArmed: Bool
+    ) {
+        guard prepared, !shutdownInProgress else { return }
+        setNetworkEnvironmentRecoveryArmed(recoveryWasArmed)
+        startNetworkEnvironmentMonitoring()
+    }
+
+    private func setNetworkEnvironmentRecoveryArmed(_ armed: Bool) {
+        networkEnvironmentRecoveryArmed = armed
+        applyNetworkEnvironmentRecoveryDirective(
+            networkEnvironmentRecoveryPolicy.setArmed(armed)
+        )
+    }
+
+    private func receiveNetworkEnvironmentEvent(_ event: NetworkEnvironmentEvent) {
+        guard !shutdownInProgress else { return }
+        if event == .willSleep {
+            networkEnvironmentRecoveryTask?.cancel()
+        }
+        applyNetworkEnvironmentRecoveryDirective(
+            networkEnvironmentRecoveryPolicy.receive(event)
+        )
+    }
+
+    private func applyNetworkEnvironmentRecoveryDirective(
+        _ directive: NetworkEnvironmentRecoveryPolicy.Directive
+    ) {
+        switch directive {
+        case .none:
+            return
+
+        case .cancelScheduledRecovery:
+            networkEnvironmentDebounceGeneration &+= 1
+            networkEnvironmentDebounceTask?.cancel()
+            networkEnvironmentDebounceTask = nil
+
+        case let .schedule(delay):
+            networkEnvironmentDebounceGeneration &+= 1
+            let generation = networkEnvironmentDebounceGeneration
+            networkEnvironmentDebounceTask?.cancel()
+            networkEnvironmentDebounceTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(delay))
+                } catch {
+                    return
+                }
+                guard let self,
+                      !Task.isCancelled,
+                      generation == self.networkEnvironmentDebounceGeneration else { return }
+                self.networkEnvironmentDebounceTask = nil
+                self.applyNetworkEnvironmentRecoveryDirective(
+                    self.networkEnvironmentRecoveryPolicy.scheduledRecoveryFired()
+                )
+            }
+
+        case .recover:
+            networkEnvironmentRecoveryGeneration &+= 1
+            let generation = networkEnvironmentRecoveryGeneration
+            networkEnvironmentRecoveryTask?.cancel()
+            networkEnvironmentRecoveryTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                let succeeded = await self.performNetworkEnvironmentRecovery()
+                guard generation == self.networkEnvironmentRecoveryGeneration else { return }
+                self.networkEnvironmentRecoveryTask = nil
+                self.applyNetworkEnvironmentRecoveryDirective(
+                    self.networkEnvironmentRecoveryPolicy.recoveryCompleted(
+                        succeeded: succeeded
+                    )
+                )
+            }
+
+        case .suppressAfterRepeatedFailures:
+            appendSupervisorLog(
+                "Automatic network-environment recovery paused after repeated failures. A later wake or network-path change will re-evaluate the session."
+            )
+        }
+    }
+
+    private func performNetworkEnvironmentRecovery() async -> Bool {
+        guard networkEnvironmentRecoveryArmed,
+              !shutdownInProgress,
+              !Task.isCancelled else { return true }
+        guard begin(.recoverNetworkEnvironment) else {
+            appendSupervisorLog(
+                "Network-environment recovery was deferred while another network operation was in progress."
+            )
+            return false
+        }
+        defer { end(.recoverNetworkEnvironment) }
+
+        appendSupervisorLog(
+            "Verifying the network data plane after a wake or network-path change."
+        )
+
+        if !(await verifyCoreAndLocalListenersForNetworkRecovery()) {
+            guard await reconnectForNetworkEnvironmentRecovery() else { return false }
+        }
+        guard !Task.isCancelled,
+              networkEnvironmentRecoveryArmed,
+              isConnected,
+              controllerIsReady else { return false }
+
+        guard await verifyOrRecoverAppRoutingForNetworkEnvironment() else {
+            return false
+        }
+        guard await verifySystemProxyForNetworkEnvironment() else {
+            return false
+        }
+
+        appendSupervisorLog("Network-environment recovery verification succeeded.")
+        return true
+    }
+
+    private func verifyCoreAndLocalListenersForNetworkRecovery() async -> Bool {
+        guard isConnected,
+              controllerIsReady,
+              let session = runningSession,
+              let httpPort = localHTTPProxyPort,
+              let socksPort = localSOCKSProxyPort else { return false }
+        do {
+            let probe = try MihomoAPIClient(
+                baseURL: session.endpoint,
+                secret: session.secret,
+                requestTimeout: 3
+            )
+            _ = try await probe.fetchVersion()
+            try Task.checkCancellation()
+            try await localPortProbe.waitUntilProxyProtocols(
+                httpPort: httpPort,
+                socksPort: socksPort
+            )
+            if let listener = activeNetworkExtensionMihomoListener {
+                try await localPortProbe.waitUntilListening(
+                    ports: Set(listener.routeListeners.map { Int($0.port) })
+                )
+            }
+            return true
+        } catch {
+            appendSupervisorLog(
+                "Core or local listener verification failed after the network environment changed: \(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
+    private func reconnectForNetworkEnvironmentRecovery() async -> Bool {
+        let shouldRestoreSystemProxy = systemProxyEnabled || hasSystemProxySnapshot
+        appendSupervisorLog(
+            "Restarting the current proxy session because the core, controller, or a local listener could not be verified."
+        )
+        guard await performDisconnect(),
+              !Task.isCancelled,
+              networkEnvironmentRecoveryArmed else { return false }
+        guard await performConnect() else { return false }
+        if shouldRestoreSystemProxy, !networkCapturePreferences.enabled {
+            await enableSystemProxyAfterConnect()
+        }
+        return await verifyCoreAndLocalListenersForNetworkRecovery()
+    }
+
+    private func verifyOrRecoverAppRoutingForNetworkEnvironment() async -> Bool {
+        guard networkCapturePreferences.enabled else { return true }
+        switch networkCaptureState {
+        case .requiresReboot, .awaitingUserApproval:
+            // These require explicit operating-system or user action; repeatedly
+            // restarting the data plane cannot make progress.
+            return true
+        case .enabling, .disabling:
+            return false
+        case .off, .waitingForConnection, .failed:
+            return await restartAppRoutingForNetworkEnvironment()
+        case let .on(revision):
+            guard await appRoutingRuntimeIsHealthyForNetworkEnvironment(
+                expectedRevision: revision
+            ) else {
+                return await restartAppRoutingForNetworkEnvironment()
+            }
+            return true
+        }
+    }
+
+    private func appRoutingRuntimeIsHealthyForNetworkEnvironment(
+        expectedRevision: UInt64
+    ) async -> Bool {
+        do {
+            let provider = try await networkExtensionControl.providerRuntimeStatus()
+            guard provider.running,
+                  provider.captureEnabled,
+                  provider.revision == expectedRevision else { return false }
+            if networkCapturePreferences.dnsEnabled {
+                guard let dns = try await networkExtensionControl
+                    .dnsProviderRuntimeStatus(),
+                    dns.isOperational else { return false }
+                dnsProxyRuntimeStatus = dns
+                dnsProxyRuntimeError = nil
+                dnsProxyRuntimeFailureCount = 0
+                dnsProxyLastVerifiedAt = Date()
+            }
+            appRoutingProviderStatusFailureCount = 0
+            appRoutingProviderLastVerifiedAt = Date()
+            return true
+        } catch {
+            appendSupervisorLog(
+                "App Routing runtime verification failed after the network environment changed: \(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
+    private func restartAppRoutingForNetworkEnvironment() async -> Bool {
+        appendSupervisorLog(
+            "Retrying App Routing and DNS Routing after runtime verification failed."
+        )
+        if networkCaptureIsActive,
+           !(await performNetworkCaptureDeactivation()) {
+            return false
+        }
+        guard !Task.isCancelled, networkEnvironmentRecoveryArmed else { return false }
+        await performNetworkCaptureActivation()
+        guard case let .on(revision) = networkCaptureState else { return false }
+        return await appRoutingRuntimeIsHealthyForNetworkEnvironment(
+            expectedRevision: revision
+        )
+    }
+
+    private func verifySystemProxyForNetworkEnvironment() async -> Bool {
+        guard systemProxyEnabled else { return true }
+        guard let endpoints = currentSystemProxyEndpoints() else { return false }
+        await performSystemProxyGuardCheck(
+            endpoints: endpoints,
+            bypassDomains: systemProxyPreferences.effectiveBypassDomains
+        )
+        return systemProxyGuardFailure == nil
     }
 
     private func startAppRoutingActivityMonitor() {
@@ -5621,6 +5926,49 @@ final class AppModel {
         operations.remove(operation)
     }
 
+    func setQuickRoutePinned(
+        _ name: String,
+        pinned: Bool,
+        availableNames: [String]? = nil
+    ) {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { return }
+
+        let availableSet = availableNames.map { names in
+            Set(names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+        }
+        if pinned, let availableSet, !availableSet.contains(normalizedName) {
+            return
+        }
+        var names = pinnedQuickRouteNames.filter {
+            $0 != normalizedName && (availableSet?.contains($0) ?? true)
+        }
+        if pinned {
+            guard names.count < QuickRouteSelectionPolicy.maximumVisibleRoutes else { return }
+            names.append(normalizedName)
+        }
+        names = Self.normalizedQuickRouteNames(names)
+        guard names != pinnedQuickRouteNames else { return }
+        pinnedQuickRouteNames = names
+        preferenceDefaults.set(names, forKey: Self.pinnedQuickRouteNamesKey)
+    }
+
+    func clearPinnedQuickRoutes() {
+        guard !pinnedQuickRouteNames.isEmpty else { return }
+        pinnedQuickRouteNames = []
+        preferenceDefaults.removeObject(forKey: Self.pinnedQuickRouteNamesKey)
+    }
+
+    private static func normalizedQuickRouteNames(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        let normalized: [String] = names.compactMap { rawName in
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, seen.insert(name).inserted else { return nil }
+            return name
+        }
+        return Array(normalized.prefix(QuickRouteSelectionPolicy.maximumVisibleRoutes))
+    }
+
     private func systemProxySnapshotURL(layout: ProfileDirectoryLayout) -> URL {
         layout.stateDirectory.appending(path: "system-proxy-snapshot.json")
     }
@@ -5755,6 +6103,7 @@ final class AppModel {
     static let autoConnectOnLaunchKey = "network.autoConnectOnLaunch"
     static let autoEnableSystemProxyKey = "network.autoEnableSystemProxy"
     static let menuBarDisplayStyleKey = "application.menuBarDisplayStyle"
+    static let pinnedQuickRouteNamesKey = "application.menuBarPinnedQuickRoutes"
     static let closeConnectionsOnRoutingChangeKey = "network.closeConnectionsOnRoutingChange"
     static let trafficHistoryPersistenceChoiceKey = "traffic.history.persistenceChoice"
     static let notificationsEnabledKey = "application.notificationsEnabled"
@@ -5786,7 +6135,8 @@ private extension AppModel.Operation {
              .exportBackup,
              .restoreBackup,
              .changeSystemProxy,
-             .changeNetworkCapture:
+             .changeNetworkCapture,
+             .recoverNetworkEnvironment:
             true
         case .changeMode,
              .selectProxy,
@@ -5833,7 +6183,8 @@ private extension AppModel.Operation {
              .exportBackup,
              .restoreBackup,
              .changeSystemProxy,
-             .changeNetworkCapture:
+             .changeNetworkCapture,
+             .recoverNetworkEnvironment:
             false
         }
     }

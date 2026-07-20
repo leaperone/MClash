@@ -41,11 +41,17 @@ public struct SubscriptionUsage: Codable, Equatable, Sendable {
 }
 
 public struct RemoteSubscriptionMetadata: Equatable, Sendable {
+    static let automaticRetryBaseDelay: TimeInterval = 15 * 60
+    static let automaticRetryMaximumDelay: TimeInterval = 24 * 60 * 60
+
     public let url: URL
     public var eTag: String?
     public var lastModified: String?
     public var lastCheckedAt: Date?
     public var lastSuccessfulUpdateAt: Date?
+    public var lastFailureAt: Date?
+    public var consecutiveFailureCount: Int
+    public var nextRetryAt: Date?
     public var automaticUpdatesEnabled: Bool
     public var updateIntervalHours: Int?
     public var providerSuggestedUpdateIntervalHours: Int?
@@ -58,6 +64,9 @@ public struct RemoteSubscriptionMetadata: Equatable, Sendable {
         lastModified: String? = nil,
         lastCheckedAt: Date? = nil,
         lastSuccessfulUpdateAt: Date? = nil,
+        lastFailureAt: Date? = nil,
+        consecutiveFailureCount: Int = 0,
+        nextRetryAt: Date? = nil,
         automaticUpdatesEnabled: Bool = true,
         updateIntervalHours: Int? = nil,
         providerSuggestedUpdateIntervalHours: Int? = nil,
@@ -69,6 +78,9 @@ public struct RemoteSubscriptionMetadata: Equatable, Sendable {
         self.lastModified = lastModified
         self.lastCheckedAt = lastCheckedAt
         self.lastSuccessfulUpdateAt = lastSuccessfulUpdateAt
+        self.lastFailureAt = lastFailureAt
+        self.consecutiveFailureCount = max(0, consecutiveFailureCount)
+        self.nextRetryAt = nextRetryAt
         self.automaticUpdatesEnabled = automaticUpdatesEnabled
         self.updateIntervalHours = Self.normalizedInterval(updateIntervalHours)
         self.providerSuggestedUpdateIntervalHours = Self.normalizedInterval(
@@ -84,6 +96,9 @@ public struct RemoteSubscriptionMetadata: Equatable, Sendable {
 
     public func nextAutomaticUpdateAt() -> Date? {
         guard automaticUpdatesEnabled else { return nil }
+        if consecutiveFailureCount > 0, let nextRetryAt {
+            return nextRetryAt
+        }
         guard let anchor = lastCheckedAt ?? lastSuccessfulUpdateAt else { return nil }
         return anchor.addingTimeInterval(TimeInterval(effectiveUpdateIntervalHours) * 3_600)
     }
@@ -92,6 +107,29 @@ public struct RemoteSubscriptionMetadata: Equatable, Sendable {
         guard automaticUpdatesEnabled else { return false }
         guard let next = nextAutomaticUpdateAt() else { return true }
         return next <= date
+    }
+
+    mutating func recordRefreshFailure(at date: Date, jitterFactor: Double) {
+        if consecutiveFailureCount < Int.max {
+            consecutiveFailureCount += 1
+        }
+        lastCheckedAt = date
+        lastFailureAt = date
+
+        let exponent = min(max(consecutiveFailureCount - 1, 0), 16)
+        let exponentialDelay = Self.automaticRetryBaseDelay * pow(2, Double(exponent))
+        let boundedJitter = min(max(jitterFactor, 0.8), 1.2)
+        let delay = min(
+            Self.automaticRetryMaximumDelay,
+            exponentialDelay * boundedJitter
+        )
+        nextRetryAt = date.addingTimeInterval(delay)
+    }
+
+    mutating func clearRefreshFailure() {
+        lastFailureAt = nil
+        consecutiveFailureCount = 0
+        nextRetryAt = nil
     }
 
     private static func normalizedInterval(_ value: Int?) -> Int? {
@@ -107,6 +145,9 @@ extension RemoteSubscriptionMetadata: Codable {
         case lastModified
         case lastCheckedAt
         case lastSuccessfulUpdateAt
+        case lastFailureAt
+        case consecutiveFailureCount
+        case nextRetryAt
         case automaticUpdatesEnabled
         case updateIntervalHours
         case providerSuggestedUpdateIntervalHours
@@ -125,6 +166,12 @@ extension RemoteSubscriptionMetadata: Codable {
                 Date.self,
                 forKey: .lastSuccessfulUpdateAt
             ),
+            lastFailureAt: try container.decodeIfPresent(Date.self, forKey: .lastFailureAt),
+            consecutiveFailureCount: try container.decodeIfPresent(
+                Int.self,
+                forKey: .consecutiveFailureCount
+            ) ?? 0,
+            nextRetryAt: try container.decodeIfPresent(Date.self, forKey: .nextRetryAt),
             automaticUpdatesEnabled: try container.decodeIfPresent(
                 Bool.self,
                 forKey: .automaticUpdatesEnabled
@@ -149,6 +196,9 @@ extension RemoteSubscriptionMetadata: Codable {
         try container.encodeIfPresent(lastModified, forKey: .lastModified)
         try container.encodeIfPresent(lastCheckedAt, forKey: .lastCheckedAt)
         try container.encodeIfPresent(lastSuccessfulUpdateAt, forKey: .lastSuccessfulUpdateAt)
+        try container.encodeIfPresent(lastFailureAt, forKey: .lastFailureAt)
+        try container.encode(consecutiveFailureCount, forKey: .consecutiveFailureCount)
+        try container.encodeIfPresent(nextRetryAt, forKey: .nextRetryAt)
         try container.encode(automaticUpdatesEnabled, forKey: .automaticUpdatesEnabled)
         try container.encodeIfPresent(updateIntervalHours, forKey: .updateIntervalHours)
         try container.encodeIfPresent(

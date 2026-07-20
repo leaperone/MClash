@@ -169,6 +169,27 @@ private enum ProfilesLayout: Equatable {
     }
 }
 
+enum SubscriptionRefreshStatusText {
+    static func failure(
+        _ remote: RemoteSubscriptionMetadata,
+        relativeDate: (Date) -> String
+    ) -> String? {
+        guard remote.consecutiveFailureCount > 0,
+              let lastFailureAt = remote.lastFailureAt else { return nil }
+
+        var parts = ["Last refresh failed \(relativeDate(lastFailureAt))"]
+        if remote.consecutiveFailureCount > 1 {
+            parts.append("\(remote.consecutiveFailureCount) consecutive failures")
+        }
+        if remote.automaticUpdatesEnabled, let nextRetryAt = remote.nextRetryAt {
+            parts.append("Automatic retry \(relativeDate(nextRetryAt))")
+        } else if !remote.automaticUpdatesEnabled {
+            parts.append("Automatic retry off")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
 private struct ProfileRow: View {
     @Bindable var model: AppModel
     let profile: ProfileMetadata
@@ -291,6 +312,18 @@ private struct ProfileRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .contain)
+            }
+
+            if case let .remote(remote) = profile.origin,
+               let refreshFailure = SubscriptionRefreshStatusText.failure(
+                   remote,
+                   relativeDate: relativeDate
+               ) {
+                Label(refreshFailure, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(compact ? 3 : 2)
+                    .accessibilityLabel(refreshFailure)
             }
 
             if case let .remote(remote) = profile.origin,

@@ -62,6 +62,15 @@ public enum AppRoutingRelayState: String, Codable, Hashable, Sendable {
     case failed
 }
 
+/// Identifies the Network Extension data plane that observed a flow.
+///
+/// This field was added after App Routing activity persistence shipped, so
+/// consumers must continue to treat a missing value as ordinary App Routing.
+public enum AppRoutingActivityCaptureOrigin: String, Codable, Hashable, Sendable {
+    case appRouting
+    case dnsProxy
+}
+
 /// The latest observable state for one flow handled by App Routing.
 ///
 /// `decision` preserves the rule engine's original result. `configuredAction`
@@ -75,6 +84,9 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
     /// application UDP flow. TCP activities and legacy UDP records leave this
     /// value nil.
     public let parentFlowIdentifier: UUID?
+    /// The provider that observed this flow. Legacy records leave this nil and
+    /// are interpreted as ordinary App Routing by consumers.
+    public let captureOrigin: AppRoutingActivityCaptureOrigin?
     public var sequence: UInt64
     public let configurationRevision: UInt64
     public let startedAt: Date
@@ -106,6 +118,11 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
     public var lastPayloadAt: Date?
 
     public var id: UUID { flowIdentifier }
+    /// Normalized origin for presentation and attribution. Activity records
+    /// written before capture origins were introduced are App Routing records.
+    public var effectiveCaptureOrigin: AppRoutingActivityCaptureOrigin {
+        captureOrigin ?? .appRouting
+    }
     /// Whether the Network Extension still owns this flow and can continue
     /// reporting its lifecycle and payload counters.
     ///
@@ -127,6 +144,7 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
     public init(
         flowIdentifier: UUID = UUID(),
         parentFlowIdentifier: UUID? = nil,
+        captureOrigin: AppRoutingActivityCaptureOrigin? = .appRouting,
         sequence: UInt64 = 0,
         configurationRevision: UInt64,
         startedAt: Date,
@@ -151,6 +169,7 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
     ) {
         self.flowIdentifier = flowIdentifier
         self.parentFlowIdentifier = parentFlowIdentifier
+        self.captureOrigin = captureOrigin
         self.sequence = sequence
         self.configurationRevision = configurationRevision
         self.startedAt = startedAt

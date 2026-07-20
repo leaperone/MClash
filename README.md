@@ -13,14 +13,22 @@ WebSocket API.
   fallbacks, and consistent system backgrounds across every destination
 - Alpha core discovery, configuration validation, lifecycle supervision, and
   bounded crash recovery
+- Automatic, bounded data-plane verification and recovery after sleep, wake,
+  and meaningful network-path changes
 - Per-launch in-memory local controller secret (no connection-time Keychain prompt)
 - Local and remote profile storage with transactional activation and rollback
+- Persistent subscription failure backoff with visible retry timing and manual
+  refresh override
 - Rule / Global / Direct routing with YAML-stable policy-group ordering,
   searchable node selection, latency testing, nested dependency topology, and
   current-path inspection
+- Customizable menu-bar Quick Routes plus native navigation, connection, and
+  routing-mode keyboard commands
 - Session-scoped routing explanations that connect observed domains and rules
   to the actual group-to-node chain reported by mihomo
 - Rules, proxy providers, rule providers, live connections, logs, and traffic
+- Explicit App Routing effective-policy summaries and distinct DNS Proxy flow
+  attribution
 - Shared numeric formatting for rates, byte totals, memory, and localized counts
 - REST/WebSocket API models, authenticated client, and stream reconnection
 - Complete macOS proxy snapshots with `networksetup` activation and rollback

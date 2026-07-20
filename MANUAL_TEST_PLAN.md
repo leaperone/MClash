@@ -42,6 +42,11 @@ before testing failure scenarios.
   Activity Monitor. Confirm MClash reports the crash, performs bounded restart,
   reconnects live metrics without duplicating streams, and safely restores then
   re-enables System Proxy if it was on before the crash.
+- While connected, put the Mac to sleep and wake it, then switch between Wi-Fi
+  networks or Ethernet and Wi-Fi. Confirm MClash debounces the event, verifies
+  the controller, local listeners, App Routing/DNS provider, and active System
+  Proxy, and recovers only the failed layer without launching duplicate cores or
+  entering a restart loop.
 - On a clean macOS account, block outbound access to GitHub before importing a
   profile containing GEOIP, GEOSITE, and IP-ASN rules. Confirm profile validation
   and the first connection succeed without a GEO database download. Repeat with
@@ -117,15 +122,29 @@ before testing failure scenarios.
   after the new controller is ready.
 - Open each of the first three policy groups, search for a long node name, select
   it, and run latency testing. Confirm large node lists scroll smoothly.
+- Open **Customize Quick Routes**, pin up to three groups, and confirm the menu
+  follows the pinned order while remaining slots follow profile order. Relaunch
+  MClash and confirm the pins persist; choose **Use Automatic Order** to reset.
+- Verify Command-1 through Command-5 open Overview, Traffic, Proxies, App
+  Routing, and Profiles. Verify Command-Shift-C toggles connection and
+  Command-Option-1/2/3 select Rule, Global, and Direct only when available.
 - Refresh the active subscription while connected. Confirm an unchanged
   subscription does not restart the core and an updated subscription safely
   reconnects.
+- Force a remote subscription refresh failure. Confirm Profiles shows the last
+  failure and next automatic retry, automatic attempts back off instead of
+  retrying continuously, a manual refresh remains available immediately, and a
+  later success clears the failure state.
 
 ## 6. Main feature coverage
 
 - App Routing: confirm the dedicated sidebar destination opens its rule table,
   Settings shows only a status summary and **Manage App Routing…**, and the
   selected destination is restored after relaunching the app.
+- App Routing: with no enabled rules, confirm **Effective Policy** says
+  **Applications Direct** and shows the independent DNS state plus **Add Rule…**.
+  Enable multiple rules and confirm it shows the enabled count and **First match
+  wins** without counting disabled rules.
 - App Routing: add a rule by selecting a running application, then add another
   with **Choose Other Application…** and select a signed `.app` that is not
   running. Confirm its icon, display name, bundle identifier, and executable
@@ -219,6 +238,10 @@ before testing failure scenarios.
   handoffs; rejected rows must say no payload. Interrupt Mihomo or Provider
   telemetry and confirm existing rows are labeled last-known/stale rather than
   disappearing or masquerading as current data.
+- Traffic: generate DNS activity and ordinary application traffic through the
+  Network Extension. Confirm DNS sessions are labeled **DNS Proxy**, ordinary
+  sessions remain **App Routing**, and older retained activity without the new
+  field still opens as App Routing.
 - Logs: confirm source filters, search, pause/resume follow, **Export
   Diagnostics…**, and Clear work under load. Inspect the exported report for
   operating status, concurrent Attention items, source freshness, and filtered
@@ -276,6 +299,9 @@ before testing failure scenarios.
 - Inspect the shipped `Info.plist` and confirm `SUFeedURL` targets the current
   repository, `SUPublicEDKey` is populated, and the downloaded archive's
   EdDSA signature is accepted. An unsigned or modified archive must fail.
+- From an eligible recent release, confirm the appcast offers a signed delta for
+  the new build and Sparkle can install it. Remove or invalidate that delta and
+  confirm the full signed archive remains a working fallback.
 
 ## Release sign-off
 

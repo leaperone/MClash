@@ -21,6 +21,7 @@ fi
 build_dir="${repo_root}/.build/direct-tests"
 sparkle_framework_dir="${SPARKLE_FRAMEWORK_DIR:-$("${repo_root}/scripts/fetch-sparkle-tools.sh")}"
 developer_dir="${DEVELOPER_DIR:-$(xcode-select -p)}"
+target_triple="$(uname -m)-apple-macosx14.0"
 runtime_resource_path="$(swiftc -print-target-info | \
   plutil -extract paths.runtimeResourcePath raw -o - -)"
 plugins="${runtime_resource_path}/host/plugins/testing"
@@ -73,12 +74,20 @@ automation_sources=("${repo_root}"/Sources/MClashAutomationProtocol/*.swift(N))
 automation_tests=("${repo_root}"/Tests/MClashAutomationProtocolTests/*.swift(N))
 network_shared_sources=("${repo_root}"/Sources/MClashNetworkShared/*.swift(N))
 network_shared_tests=("${repo_root}"/Tests/MClashNetworkSharedTests/*.swift(N))
+network_extension_sources=()
+for source in "${repo_root}"/Sources/MClashNetworkExtension/*.swift(N); do
+  if [[ "${source:t}" != "main.swift" ]]; then
+    network_extension_sources+=("${source}")
+  fi
+done
+network_extension_tests=("${repo_root}"/Tests/MClashNetworkExtensionTests/*.swift(N))
 
 swiftc \
   -parse-as-library \
   -swift-version 6 \
   -strict-concurrency=complete \
   -warnings-as-errors \
+  -target "${target_triple}" \
   -enable-testing \
   -emit-module \
   -emit-library \
@@ -93,6 +102,7 @@ swiftc \
   -swift-version 6 \
   -strict-concurrency=complete \
   -warnings-as-errors \
+  -target "${target_triple}" \
   -enable-testing \
   -emit-module \
   -emit-library \
@@ -105,6 +115,28 @@ swiftc \
   -parse-as-library \
   -swift-version 6 \
   -strict-concurrency=complete \
+  -warnings-as-errors \
+  -target "${target_triple}" \
+  -enable-testing \
+  -emit-module \
+  -emit-library \
+  -module-name MClashNetworkExtension \
+  -framework Network \
+  -framework NetworkExtension \
+  -framework Security \
+  -lbsm \
+  -I "${build_dir}" \
+  -L "${build_dir}" \
+  -lMClashNetworkShared \
+  "${network_extension_sources[@]}" \
+  -emit-module-path "${build_dir}/MClashNetworkExtension.swiftmodule" \
+  -o "${build_dir}/libMClashNetworkExtension.dylib"
+
+swiftc \
+  -parse-as-library \
+  -swift-version 6 \
+  -strict-concurrency=complete \
+  -target "${target_triple}" \
   -enable-testing \
   -emit-module \
   -emit-library \
@@ -132,6 +164,7 @@ swiftc \
   -parse-as-library \
   -swift-version 6 \
   -strict-concurrency=complete \
+  -target "${target_triple}" \
   -I "${build_dir}" \
   -L "${build_dir}" \
   -lMClashApp \
@@ -162,6 +195,7 @@ swiftc \
   -swift-version 6 \
   -strict-concurrency=complete \
   -warnings-as-errors \
+  -target "${target_triple}" \
   -I "${build_dir}" \
   -L "${build_dir}" \
   -lMClashNetworkShared \
@@ -185,6 +219,36 @@ swiftc \
   -swift-version 6 \
   -strict-concurrency=complete \
   -warnings-as-errors \
+  -target "${target_triple}" \
+  -I "${build_dir}" \
+  -L "${build_dir}" \
+  -lMClashNetworkExtension \
+  -lMClashNetworkShared \
+  -framework Network \
+  -framework NetworkExtension \
+  -framework Security \
+  -lbsm \
+  -F "${frameworks}" \
+  -framework Testing \
+  -plugin-path "${plugins}" \
+  "${network_extension_tests[@]}" \
+  "${repo_root}/Tests/TestRunner.swift" \
+  -Xlinker -rpath \
+  -Xlinker "${build_dir}" \
+  -Xlinker -rpath \
+  -Xlinker "${frameworks}" \
+  -Xlinker -rpath \
+  -Xlinker "${testing_interop}" \
+  -o "${build_dir}/MClashNetworkExtensionPackageTests"
+
+"${build_dir}/MClashNetworkExtensionPackageTests"
+
+swiftc \
+  -parse-as-library \
+  -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
+  -target "${target_triple}" \
   -I "${build_dir}" \
   -L "${build_dir}" \
   -lMClashAutomationProtocol \

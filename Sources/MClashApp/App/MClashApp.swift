@@ -57,6 +57,28 @@ struct MClashApp: App {
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
+
+            CommandMenu("Navigate") {
+                navigationCommand("Overview", destination: .overview, key: "1")
+                navigationCommand("Traffic", destination: .connections, key: "2")
+                navigationCommand("Proxies", destination: .proxies, key: "3")
+                navigationCommand("App Routing", destination: .appRouting, key: "4")
+                navigationCommand("Profiles", destination: .profiles, key: "5")
+            }
+
+            CommandMenu("Routing") {
+                Button(model.isConnected ? "Disconnect" : "Connect") {
+                    Task { await model.toggleConnection() }
+                }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(!model.canPerform(.connection) || (!model.isConnected && model.activeProfile == nil))
+
+                Divider()
+
+                routingModeCommand("Rule", mode: "rule", key: "1")
+                routingModeCommand("Global", mode: "global", key: "2")
+                routingModeCommand("Direct", mode: "direct", key: "3")
+            }
         }
 
         MenuBarExtra {
@@ -79,6 +101,36 @@ struct MClashApp: App {
     private func showMainWindow(destination: AppModel.Destination) {
         model.selection = destination
         applicationDelegate.showMainWindow()
+    }
+
+    @MainActor
+    private func navigationCommand(
+        _ title: String,
+        destination: AppModel.Destination,
+        key: KeyEquivalent
+    ) -> some View {
+        Button(title) {
+            showMainWindow(destination: destination)
+        }
+        .keyboardShortcut(key, modifiers: .command)
+    }
+
+    @MainActor
+    private func routingModeCommand(
+        _ title: String,
+        mode: String,
+        key: KeyEquivalent
+    ) -> some View {
+        Button(title) {
+            Task { await model.setMode(mode) }
+        }
+        .keyboardShortcut(key, modifiers: [.command, .option])
+        .disabled(
+            !model.isConnected
+                || !model.controllerIsReady
+                || !model.canPerform(.changeMode)
+                || (model.pendingMode ?? model.runtimeConfig?.mode)?.lowercased() == mode
+        )
     }
 
     @MainActor

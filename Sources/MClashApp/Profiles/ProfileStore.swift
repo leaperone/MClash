@@ -7,6 +7,7 @@ public actor ProfileStore {
     private let downloader: any SubscriptionDownloading
     private let replacer: AtomicFileReplacer
     private let now: @Sendable () -> Date
+    private let retryJitterFactor: @Sendable () -> Double
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -14,12 +15,16 @@ public actor ProfileStore {
         layout: ProfileDirectoryLayout,
         downloader: any SubscriptionDownloading = URLSessionSubscriptionDownloader(),
         replacer: AtomicFileReplacer = AtomicFileReplacer(),
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        retryJitterFactor: @escaping @Sendable () -> Double = {
+            Double.random(in: 0.8...1.2)
+        }
     ) throws {
         self.layout = layout
         self.downloader = downloader
         self.replacer = replacer
         self.now = now
+        self.retryJitterFactor = retryJitterFactor
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -298,60 +303,56 @@ public actor ProfileStore {
             throw ProfileStoreError.profileIsNotRemote(id)
         }
 
-        var request = URLRequest(url: remote.url)
-        if let eTag = remote.eTag {
-            request.setValue(eTag, forHTTPHeaderField: "If-None-Match")
-        }
-        if let lastModified = remote.lastModified {
-            request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
-        }
+        do {
+            var request = URLRequest(url: remote.url)
+            if let eTag = remote.eTag {
+                request.setValue(eTag, forHTTPHeaderField: "If-None-Match")
+            }
+            if let lastModified = remote.lastModified {
+                request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
+            }
 
-        let response = try await downloader.download(request)
-        let checkedAt = now()
-        remote.lastCheckedAt = checkedAt
+            let response = try await downloader.download(request)
+            let checkedAt = now()
+            remote.lastCheckedAt = checkedAt
 
-        if response.statusCode == 304 {
-            remote.eTag = response.eTag ?? remote.eTag
-            remote.lastModified = response.lastModified ?? remote.lastModified
-            remote.providerSuggestedUpdateIntervalHours =
-                response.suggestedUpdateIntervalHours
-                ?? remote.providerSuggestedUpdateIntervalHours
-            remote.usage = response.usage ?? remote.usage
-            remote.webPageURL = response.webPageURL ?? remote.webPageURL
-            profile.origin = .remote(remote)
-            let metadataReceipt = try await replaceEncoded(
-                profile,
-                at: layout.metadataURL(for: id),
-                preferredName: "metadata.json"
+            if response.statusCode == 304 {
+                remote.eTag = response.eTag ?? remote.eTag
+                remote.lastModified = response.lastModified ?? remote.lastModified
+                remote.providerSuggestedUpdateIntervalHours =
+                    response.suggestedUpdateIntervalHours
+                    ?? remote.providerSuggestedUpdateIntervalHours
+                remote.usage = response.usage ?? remote.usage
+                remote.webPageURL = response.webPageURL ?? remote.webPageURL
+                remote.clearRefreshFailure()
+                profile.origin = .remote(remote)
+                try await persistMetadata(profile, preferredName: "metadata.json")
+                return .notModified(profile)
+            }
+
+            guard (200..<300).contains(response.statusCode) else {
+                throw ProfileStoreError.unexpectedHTTPStatus(response.statusCode)
+            }
+            guard let data = response.data, !data.isEmpty else {
+                throw ProfileStoreError.emptyConfiguration
+            }
+
+            let stagedConfiguration = try await replacer.stage(
+                data: data,
+                in: layout.runtimeStagingDirectory,
+                preferredName: "subscription.yaml"
             )
-            try await replacer.commit(metadataReceipt)
-            return .notModified(profile)
-        }
+            do {
+                try await validator.validate(configurationAt: stagedConfiguration)
+            } catch {
+                try? fileManager.removeItem(at: stagedConfiguration)
+                throw error
+            }
 
-        guard (200..<300).contains(response.statusCode) else {
-            throw ProfileStoreError.unexpectedHTTPStatus(response.statusCode)
-        }
-        guard let data = response.data, !data.isEmpty else {
-            throw ProfileStoreError.emptyConfiguration
-        }
-
-        let stagedConfiguration = try await replacer.stage(
-            data: data,
-            in: layout.runtimeStagingDirectory,
-            preferredName: "subscription.yaml"
-        )
-        do {
-            try await validator.validate(configurationAt: stagedConfiguration)
-        } catch {
-            try? fileManager.removeItem(at: stagedConfiguration)
-            throw error
-        }
-
-        let configurationReceipt = try await replacer.replace(
-            destinationURL: layout.configurationURL(for: id),
-            withStagedFile: stagedConfiguration
-        )
-        do {
+            let configurationReceipt = try await replacer.replace(
+                destinationURL: layout.configurationURL(for: id),
+                withStagedFile: stagedConfiguration
+            )
             remote.eTag = response.eTag
             remote.lastModified = response.lastModified
             remote.lastSuccessfulUpdateAt = checkedAt
@@ -360,19 +361,37 @@ public actor ProfileStore {
                 ?? remote.providerSuggestedUpdateIntervalHours
             remote.usage = response.usage ?? remote.usage
             remote.webPageURL = response.webPageURL ?? remote.webPageURL
+            remote.clearRefreshFailure()
             profile.origin = .remote(remote)
             profile.updatedAt = checkedAt
 
-            let metadataReceipt = try await replaceEncoded(
-                profile,
-                at: layout.metadataURL(for: id),
-                preferredName: "metadata.json"
-            )
-            try await replacer.commit(metadataReceipt)
-            try await replacer.commit(configurationReceipt)
-            return .updated(profile)
+            do {
+                let metadataReceipt = try await replaceEncoded(
+                    profile,
+                    at: layout.metadataURL(for: id),
+                    preferredName: "metadata.json"
+                )
+                try await replacer.commit(metadataReceipt)
+                try await replacer.commit(configurationReceipt)
+                return .updated(profile)
+            } catch {
+                try? await replacer.rollback(configurationReceipt)
+                throw error
+            }
         } catch {
-            try? await replacer.rollback(configurationReceipt)
+            let failureAt = now()
+            remote.recordRefreshFailure(
+                at: failureAt,
+                jitterFactor: retryJitterFactor()
+            )
+            profile.origin = .remote(remote)
+            // Persist only bounded timestamps and a count. Never store the
+            // downloader/validator error because it may contain subscription
+            // credentials or other endpoint details.
+            try? await persistMetadata(
+                profile,
+                preferredName: "subscription-refresh-failure.json"
+            )
             throw error
         }
     }

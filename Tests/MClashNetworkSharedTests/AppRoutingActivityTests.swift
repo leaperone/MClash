@@ -40,12 +40,26 @@ struct AppRoutingActivityTests {
         #expect(decoded.cause == activity.decision.reason)
         #expect(decoded.ruleEvidence == evidence)
         #expect(decoded.relayNote == activity.relayNote)
+        #expect(decoded.captureOrigin == .appRouting)
 
         let json = String(decoding: data, as: UTF8.self)
         #expect(!json.contains("auditToken"))
         #expect(!json.contains("password"))
         #expect(!json.contains("designatedRequirement"))
         #expect(!json.contains("not-a-telemetry-secret"))
+    }
+
+    @Test("Legacy activity without capture origin defaults to App Routing semantics")
+    func legacyActivityWithoutCaptureOriginDecodes() throws {
+        let activity = makeActivity()
+        let encoded = try JSONEncoder().encode(activity)
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "captureOrigin")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(AppRoutingActivity.self, from: legacyData)
+        #expect(decoded.captureOrigin == nil)
+        #expect(decoded.effectiveCaptureOrigin == .appRouting)
     }
 
     @Test("Legacy activity without structured rule evidence still decodes")

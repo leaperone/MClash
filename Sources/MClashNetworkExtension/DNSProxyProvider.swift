@@ -506,6 +506,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             ?? destination.address.domain
         let activity = AppRoutingActivity(
             parentFlowIdentifier: parentIdentifier,
+            captureOrigin: .dnsProxy,
             configurationRevision: runtime.snapshot().revision,
             startedAt: Date(),
             source: AppRoutingActivitySource(
