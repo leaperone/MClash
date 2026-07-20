@@ -637,7 +637,7 @@ final class AppModel {
         geoDataInstaller: BundledGeoDataInstaller = .applicationBundle(),
         preferenceDefaults: UserDefaults = .standard,
         networkExtensionControl: any NetworkExtensionControlling = NetworkExtensionControlService.live(),
-        networkEnvironmentMonitor: any NetworkEnvironmentMonitoring = AppleNetworkEnvironmentMonitor()
+        networkEnvironmentMonitor: (any NetworkEnvironmentMonitoring)? = nil
     ) {
         self.supervisor = supervisor
         self.binaryLocator = binaryLocator
@@ -647,7 +647,11 @@ final class AppModel {
         self.geoDataInstaller = geoDataInstaller
         self.preferenceDefaults = preferenceDefaults
         self.networkExtensionControl = networkExtensionControl
-        self.networkEnvironmentMonitor = networkEnvironmentMonitor
+        if let networkEnvironmentMonitor {
+            self.networkEnvironmentMonitor = networkEnvironmentMonitor
+        } else {
+            self.networkEnvironmentMonitor = AppleNetworkEnvironmentMonitor()
+        }
         if preferenceDefaults.object(forKey: Self.trafficHistoryPersistenceChoiceKey) == nil {
             trafficHistoryPersistenceChoice = .undecided
         } else {
