@@ -19,20 +19,25 @@ The first positional argument may be any method returned by
 `system.capabilities`. `status` and `capabilities` are aliases for
 `system.snapshot` and `system.capabilities`.
 
-The first authenticated command opens a local pairing dialog. `mclashctl`
-requests only the scope required by that command, saves the returned token in
-the mclashctl-only Keychain access group, and retries the original request with
-the same request ID. A later command needing a different scope asks to pair again.
-MClash stores only a SHA-256 token hash. Pairings expire after 180 days and can
-be inspected or revoked with `auth.clients.list` and `auth.clients.revoke`.
+The first authenticated command opens a local pairing dialog. **Allow Needed
+Access** grants the scopes requested so far; later requests accumulate scopes
+and may open the dialog again. **Trust This Client** grants every scope and
+permits unattended destructive operations. `mclashctl` saves the returned token
+in the current user's Keychain and retries the original command with the same
+request ID. MClash stores only a SHA-256 token hash. Pairings expire after 180
+days and can be inspected or revoked with `auth.clients.list` and
+`auth.clients.revoke`. Trust is monotonic for a pairing: revoke the client before
+pairing it again if you want to return it to standard access.
 
-`mclashctl` is intentionally a user-level broker: granting it a scope allows
-other processes running under the same macOS login to invoke that scope by
-executing the helper. Destructive operations still require a one-time local
-confirmation. Clients that need an identity boundary between agents should use
-their own independently code-signed native executable and connect to the socket
-directly. Pairing a shared interpreter such as Python, Node, or a shell binds
-the interpreter identity, not an individual script.
+`mclashctl` is intentionally a user-level broker: granting it authority allows
+other processes running under the same macOS login to invoke that authority by
+executing the helper. Standard access still requires a one-time local
+confirmation for each destructive operation. Trusting `mclashctl` allows those
+same-login processes to perform destructive operations unattended. Clients that
+need an identity boundary between agents should use their own independently
+code-signed native executable and connect to the socket directly. Pairing a
+shared interpreter such as Python, Node, or a shell binds the interpreter
+identity, not an individual script.
 
 CLI options:
 
@@ -42,7 +47,8 @@ CLI options:
   process arguments or shell history.
 - `--params-file <path>` reads the JSON params object from a file.
 - `--allow-interaction` allows a capability marked `requiresInteraction` to
-  present its local panel or one-time confirmation. It never means silent approval.
+  present its local panel or, for a standard client, its one-time confirmation.
+  It never grants or upgrades trust.
 - `--pretty` pretty-prints the response.
 - `--no-launch` fails instead of opening MClash when it is not running.
 - `--timeout <seconds>` sets the startup/request timeout (default 60 seconds).
@@ -103,7 +109,8 @@ are globally rate-limited. The scopes are:
 - `read.sensitive`: connections, process candidates, rules, logs, and detailed
   diagnostics. Logs and error text are still redacted for credentials.
 - `control`: non-destructive state changes.
-- `destructive`: destructive requests; each call still needs local approval.
+- `destructive`: destructive requests; standard clients need local approval for
+  each call, while trusted clients may invoke them unattended.
 
 Recent mutation request IDs are idempotent per paired client for the current
 MClash process (up to 256 responses or 4 MiB per client, with a global cap of
@@ -162,7 +169,8 @@ cannot use MClash as an arbitrary file reader or writer.
   paired, scoped, expiring token bound to the client's code identity.
 - The bundled CLI checks `LOCAL_PEERPID` and validates the server's MClash code
   signature/team before sending a token or command.
-- Destructive commands require a fresh local approval dialog on every call.
+- Destructive commands require a fresh local approval for standard clients;
+  explicitly trusted clients may invoke them unattended until expiry or revocation.
 - Controller secrets, Network Extension credentials, full subscription URLs,
   and raw internal service methods are never returned.
 - The API cannot invoke a shell command, evaluate code, or proxy arbitrary

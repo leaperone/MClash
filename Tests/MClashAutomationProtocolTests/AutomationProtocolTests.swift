@@ -62,6 +62,20 @@ struct AutomationProtocolTests {
         #expect(decoded == value)
     }
 
+    @Test("Pairing trust choices have stable wire values")
+    func clientTrustRoundTrip() throws {
+        #expect(AutomationClientTrust.standard.rawValue == "standard")
+        #expect(AutomationClientTrust.trusted.rawValue == "trusted")
+
+        let encoded = try JSONEncoder.automation.encode(AutomationClientTrust.trusted)
+        #expect(String(decoding: encoded, as: UTF8.self) == "\"trusted\"")
+        let decoded = try JSONDecoder.automation.decode(
+            AutomationClientTrust.self,
+            from: encoded
+        )
+        #expect(decoded.rawValue == AutomationClientTrust.trusted.rawValue)
+    }
+
     @Test("Discovery rejects group-readable and symlink metadata")
     func discoveryPermissions() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

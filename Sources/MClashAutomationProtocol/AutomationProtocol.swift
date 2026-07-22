@@ -116,6 +116,17 @@ public enum AutomationClientScope: String, Codable, CaseIterable, Sendable {
     case destructive
 }
 
+/// Controls how much ongoing authority a paired local client receives.
+///
+/// Standard clients accumulate only the scopes explicitly approved during
+/// pairing and still require a local confirmation for destructive requests.
+/// Trusted clients receive every scope and may perform destructive requests
+/// unattended until the pairing expires or is revoked.
+public enum AutomationClientTrust: String, Codable, CaseIterable, Sendable {
+    case standard
+    case trusted
+}
+
 public struct AutomationRPCError: Codable, Equatable, Sendable {
     public let code: Int
     public let type: String

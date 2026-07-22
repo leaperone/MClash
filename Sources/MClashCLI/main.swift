@@ -217,19 +217,13 @@ private final class LaunchResultBox: @unchecked Sendable {
 private enum AutomationTokenKeychain {
     private static let service = "one.leaper.mclash.automation"
     private static let account = "mclashctl"
-    private static let accessGroup = "5UAHRS482C.one.leaper.mclash.cli"
 
     private static var key: [CFString: Any] {
-        var value: [CFString: Any] = [
+        [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
         ]
-        if AutomationCodeSignature.currentProcessTeamIdentifier() != nil {
-            value[kSecAttrAccessGroup] = accessGroup
-            value[kSecUseDataProtectionKeychain] = true
-        }
-        return value
     }
 
     static func load() throws -> String? {
@@ -281,7 +275,7 @@ private struct Invocation {
       --params <json>         JSON object passed as RPC params
       --params-stdin          Read the JSON params object from standard input
       --params-file <path>    Read the JSON params object from a file
-      --allow-interaction     Allow MClash to ask for one-time local confirmation
+      --allow-interaction     Allow MClash to present required local UI
       --pretty                Pretty-print the JSON response
       --no-launch             Do not launch MClash when it is not running
       --socket <path>         Connect to an explicit Unix socket (development)

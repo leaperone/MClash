@@ -48,6 +48,7 @@ final class AutomationAuthorizationStore {
         let name: String
         let tokenHash: String
         let scopes: Set<AutomationClientScope>
+        let trust: AutomationClientTrust?
         let executablePath: String
         let signingIdentifier: String?
         let teamIdentifier: String?
@@ -60,6 +61,7 @@ final class AutomationAuthorizationStore {
         let id: UUID
         let name: String
         let scopes: Set<AutomationClientScope>
+        let trust: AutomationClientTrust
         let executablePath: String
         let signingIdentifier: String?
         let teamIdentifier: String?
@@ -98,6 +100,7 @@ final class AutomationAuthorizationStore {
     func issue(
         name: String,
         scopes requestedScopes: Set<AutomationClientScope>,
+        trust requestedTrust: AutomationClientTrust = .standard,
         peer: AutomationPeerIdentity
     ) throws -> (client: PublicClient, token: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -122,16 +125,24 @@ final class AutomationAuthorizationStore {
                 && $0.expiresAt > now
                 && Self.matches(client: $0, peer: peer)
         }
-        let effectiveScopes = scopesForPairing(
-            name: trimmedName,
-            requestedScopes: requestedScopes,
-            peer: peer
-        )
+        let existingTrust = existingClient?.trust ?? .standard
+        let effectiveTrust: AutomationClientTrust =
+            existingTrust == .trusted || requestedTrust == .trusted
+                ? .trusted
+                : .standard
+        let effectiveScopes = effectiveTrust == .trusted
+            ? Set(AutomationClientScope.allCases)
+            : scopesForPairing(
+                name: trimmedName,
+                requestedScopes: requestedScopes,
+                peer: peer
+            )
         let client = Client(
             id: existingClient?.id ?? UUID(),
             name: trimmedName,
             tokenHash: Self.hash(token),
             scopes: effectiveScopes,
+            trust: effectiveTrust,
             executablePath: peer.executablePath,
             signingIdentifier: peer.signingIdentifier,
             teamIdentifier: peer.teamIdentifier,
@@ -205,6 +216,7 @@ final class AutomationAuthorizationStore {
             id: client.id,
             name: client.name,
             scopes: client.scopes,
+            trust: client.trust ?? .standard,
             executablePath: client.executablePath,
             signingIdentifier: client.signingIdentifier,
             teamIdentifier: client.teamIdentifier,

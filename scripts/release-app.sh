@@ -26,10 +26,8 @@ if [[ -n "${application_identifier_prefix}" && "${application_identifier_prefix}
 fi
 signing_team_identifier="${apple_team_id:-${application_identifier_prefix%.}}"
 host_application_identifier="${application_identifier_prefix}${host_bundle_id}"
-cli_application_identifier="${application_identifier_prefix}${host_bundle_id}.cli"
 extension_application_identifier="${application_identifier_prefix}${network_extension_bundle_id}"
 host_keychain_group="${application_identifier_prefix}${host_bundle_id}.authorization"
-cli_keychain_group="${application_identifier_prefix}${host_bundle_id}.cli"
 
 if [[ -z "${version}" || -z "${build_number}" || -z "${identity}" ]]; then
   print -u2 "Set MCLASH_VERSION, MCLASH_BUILD_NUMBER, and CODE_SIGN_IDENTITY."
@@ -184,6 +182,26 @@ verify_keychain_identity() {
   rm -f "${entitlements}"
 }
 
+verify_unrestricted_cli_entitlements() {
+  local target_path="$1"
+  local entitlements
+  entitlements="$(mktemp "${TMPDIR:-/tmp}/mclash-cli-entitlements.XXXXXX")"
+  codesign -d --entitlements :- "${target_path}" > "${entitlements}" 2>/dev/null
+  plutil -lint "${entitlements}" >/dev/null
+  for restricted_key in \
+    com.apple.application-identifier \
+    com.apple.developer.team-identifier \
+    keychain-access-groups
+  do
+    if /usr/libexec/PlistBuddy -c "Print :${restricted_key}" "${entitlements}" >/dev/null 2>&1; then
+      rm -f "${entitlements}"
+      print -u2 "Signed automation CLI claims restricted entitlement ${restricted_key}."
+      exit 1
+    fi
+  done
+  rm -f "${entitlements}"
+}
+
 sign_application() {
   local app="$1"
   local sparkle="${app}/Contents/Frameworks/Sparkle.framework"
@@ -248,7 +266,7 @@ sign_application() {
   verify_signed_entitlements "${system_extension}" 0 "${extension_application_identifier}"
   verify_signed_entitlements "${app}" 1 "${host_application_identifier}"
   verify_keychain_identity "${app}" "${host_application_identifier}" "${host_keychain_group}"
-  verify_keychain_identity "${automation_cli}" "${cli_application_identifier}" "${cli_keychain_group}"
+  verify_unrestricted_cli_entitlements "${automation_cli}"
 }
 
 export CONFIGURATION=release

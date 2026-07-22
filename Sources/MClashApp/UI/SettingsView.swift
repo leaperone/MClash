@@ -10,9 +10,29 @@ struct SettingsView: View {
     @State private var showingRuntimeSettings = false
     @State private var showingSystemProxySettings = false
     @State private var applicationSettingsError: String?
+    @AppStorage(AppLanguage.storageKey) private var appLanguageRawValue = AppLanguage.system.rawValue
 
     var body: some View {
         Form {
+            Section("Appearance") {
+                Picker("Language", selection: $appLanguageRawValue) {
+                    ForEach(AppLanguage.allCases) { language in
+                        if language == .system {
+                            Text("System Default")
+                                .tag(language.rawValue)
+                        } else {
+                            Text(verbatim: language.displayName)
+                                .tag(language.rawValue)
+                        }
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text("MClash updates its interface language immediately. System dialogs continue to follow macOS.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Startup") {
                 Toggle("Open MClash at login", isOn: launchAtLoginBinding)
                 if model.launchAtLoginRequiresApproval {

@@ -32,11 +32,9 @@ if [[ -n "${team_identifier_prefix}" && "${team_identifier_prefix}" != *. ]]; th
 fi
 team_identifier="${APPLE_TEAM_ID:-${team_identifier_prefix%.}}"
 host_application_identifier="${team_identifier_prefix}${host_bundle_id}"
-cli_application_identifier="${team_identifier_prefix}${host_bundle_id}.cli"
 extension_application_identifier="${team_identifier_prefix}${network_extension_bundle_id}"
 app_group_identifier="${host_application_identifier}"
 host_keychain_group="${team_identifier_prefix}${host_bundle_id}.authorization"
-cli_keychain_group="${team_identifier_prefix}${host_bundle_id}.cli"
 
 plist_array_contains() {
   local plist="$1"
@@ -223,6 +221,9 @@ cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BU
 ditto "${geodata_source}" "${contents}/Resources/GeoData"
 cp "${license_source}" "${contents}/Resources/GeoData/LICENSE.txt"
 cp "${repo_root}/Sources/MClashApp/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"
+for localization_source in "${repo_root}"/Sources/MClashApp/Resources/*.lproj(N/); do
+  ditto "${localization_source}" "${contents}/Resources/${localization_source:t}"
+done
 cp "${mclash_license}" "${contents}/Resources/MClash-LICENSE.txt"
 cp "${license_source}" "${contents}/Resources/ThirdParty/mihomo-LICENSE.txt"
 cp "${corresponding_source}" "${contents}/Resources/ThirdParty/mihomo-SOURCE.txt"
@@ -426,20 +427,21 @@ if [[ "${code_sign_identity}" != "-" ]]; then
     print -u2 "Signed host is missing Keychain group ${host_keychain_group}."
     exit 1
   fi
-  if ! plist_array_contains "${signed_cli_entitlements}" "keychain-access-groups" "${cli_keychain_group}"; then
-    print -u2 "Signed mclashctl is missing Keychain group ${cli_keychain_group}."
-    exit 1
-  fi
   if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${signed_host_entitlements}" 2>/dev/null)" != "${host_application_identifier}" ]] || \
      [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${signed_host_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
     print -u2 "Signed host identity does not match ${host_application_identifier} / ${team_identifier}."
     exit 1
   fi
-  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${signed_cli_entitlements}" 2>/dev/null)" != "${cli_application_identifier}" ]] || \
-     [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${signed_cli_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
-    print -u2 "Signed mclashctl identity does not match ${cli_application_identifier} / ${team_identifier}."
-    exit 1
-  fi
+  for restricted_key in \
+    com.apple.application-identifier \
+    com.apple.developer.team-identifier \
+    keychain-access-groups
+  do
+    if /usr/libexec/PlistBuddy -c "Print :${restricted_key}" "${signed_cli_entitlements}" >/dev/null 2>&1; then
+      print -u2 "Signed mclashctl must not claim restricted entitlement ${restricted_key}."
+      exit 1
+    fi
+  done
   if [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "${signed_extension_entitlements}" 2>/dev/null)" != "${extension_application_identifier}" ]] || \
      [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "${signed_extension_entitlements}" 2>/dev/null)" != "${team_identifier}" ]]; then
     print -u2 "Signed Network Extension identity does not match ${extension_application_identifier} / ${team_identifier}."

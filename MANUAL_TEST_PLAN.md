@@ -303,6 +303,38 @@ before testing failure scenarios.
   the new build and Sparkle can install it. Remove or invalidate that delta and
   confirm the full signed archive remains a working fallback.
 
+## 9. Local automation authorization
+
+- Run the bundled `mclashctl status --pretty` from the installed application.
+  Confirm it launches normally, opens one pairing dialog, persists its token in
+  Keychain, and does not ask to pair again after MClash or the Mac restarts.
+- Choose **Allow Needed Access**. Confirm only the requested scopes are listed,
+  a command requiring a new scope asks again, and previously approved scopes
+  remain usable after that upgrade.
+- With standard access, invoke a destructive method with `--allow-interaction`.
+  Confirm MClash names the operation and requires a fresh approval. Without
+  `--allow-interaction`, it must fail without presenting UI.
+- Revoke the pairing, pair again, and choose **Trust This Client**. Confirm later
+  read, control, and destructive methods do not open more authorization dialogs.
+  Verify `auth.clients.list` reports trusted authority and all scopes.
+- Confirm the trust warning explains that trusting bundled `mclashctl` also
+  authorizes processes under the same macOS login that can execute it.
+- Revoke the trusted client and confirm its token immediately stops working.
+  Replace or re-sign a test client and confirm its old token fails the code
+  identity check. A process from another UID must never connect to the socket.
+
+## 10. Localization
+
+- In Settings, switch among System Default, English, 简体中文, 繁體中文, 日本語,
+  한국어, Français, Deutsch, and Español. Confirm the main window updates
+  immediately and the selected language survives relaunch.
+- In every language, inspect Overview, Traffic, Proxies, App Routing, Profiles,
+  Settings, the menu bar window, sheets, alerts, empty states, and errors. Confirm
+  text is translated, controls do not clip, and technical values remain intact.
+- Switch back to System Default, change the macOS preferred language, and
+  relaunch. Confirm MClash follows the system choice while native system dialogs
+  continue to use macOS language preferences.
+
 ## Release sign-off
 
 Record macOS version, Mac architecture, MClash version/build, bundled mihomo

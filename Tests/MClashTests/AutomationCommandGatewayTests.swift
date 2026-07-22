@@ -153,8 +153,46 @@ struct AutomationCommandGatewayTests {
         #expect(fixture.model.networkCapturePreferences.snapshot == before)
     }
 
-    @Test("Scope upgrades rotate tokens and retain only unexpired grants")
-    func scopeUpgradeRotatesToken() throws {
+    @Test("A standard client with every scope still needs destructive confirmation")
+    func standardFullScopePreservesDestructiveConfirmation() async throws {
+        let fixture = try makeFixture(
+            scopes: Set(AutomationClientScope.allCases),
+            trust: .standard
+        )
+        fixture.model.logs = [CoreLogLine(stream: .supervisor, message: "keep me")]
+        let response = await fixture.gateway.execute(
+            AutomationRPCRequest(
+                method: "logs.clear",
+                authorization: fixture.token
+            ),
+            peer: fixture.peer
+        )
+
+        #expect(response.error?.type == "confirmation_required")
+        #expect(
+            response.error?.data?.objectValue?["requiresUserApproval"] == .bool(true)
+        )
+        #expect(fixture.model.logs.count == 1)
+    }
+
+    @Test("A trusted client can perform destructive calls without another prompt")
+    func trustedClientSkipsDestructiveConfirmation() async throws {
+        let fixture = try makeFixture(scopes: [.readBasic], trust: .trusted)
+        fixture.model.logs = [CoreLogLine(stream: .supervisor, message: "clear me")]
+        let response = await fixture.gateway.execute(
+            AutomationRPCRequest(
+                method: "logs.clear",
+                authorization: fixture.token
+            ),
+            peer: fixture.peer
+        )
+
+        #expect(response.error == nil)
+        #expect(fixture.model.logs.isEmpty)
+    }
+
+    @Test("Scope upgrades rotate tokens, preserve grants, and can grant all scopes")
+    func scopeUpgradeRotatesTokenAndAccumulatesScopes() throws {
         let root = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let store = try AutomationAuthorizationStore(
@@ -171,8 +209,10 @@ struct AutomationCommandGatewayTests {
         let first = try store.issue(
             name: "Agent",
             scopes: [.readBasic],
+            trust: .standard,
             peer: original
         )
+        #expect(first.client.trust == .standard)
         let moved = AutomationPeerIdentity(
             processIdentifier: 11,
             userIdentifier: getuid(),
@@ -180,9 +220,15 @@ struct AutomationCommandGatewayTests {
             signingIdentifier: "example.agent",
             teamIdentifier: "EXAMPLETEAM"
         )
+        #expect(store.scopesForPairing(
+            name: "Agent",
+            requestedScopes: [.control],
+            peer: moved
+        ) == [.readBasic, .control])
         let upgraded = try store.issue(
             name: "Agent",
             scopes: [.control],
+            trust: .standard,
             peer: moved
         )
         #expect(store.list().count == 1)
@@ -200,10 +246,54 @@ struct AutomationCommandGatewayTests {
             requiredScope: .readBasic,
             peer: moved
         ).id == upgraded.client.id)
+
+        let allScopes = Set(AutomationClientScope.allCases)
+        let fullyTrusted = try store.issue(
+            name: "Agent",
+            scopes: [.readSensitive],
+            trust: .trusted,
+            peer: moved
+        )
+        #expect(store.list().count == 1)
+        #expect(fullyTrusted.client.id == first.client.id)
+        #expect(fullyTrusted.client.trust == .trusted)
+        #expect(fullyTrusted.client.scopes == allScopes)
+        #expect(throws: AuthorizationError.self) {
+            try store.authorize(
+                token: upgraded.token,
+                requiredScope: .control,
+                peer: moved
+            )
+        }
+
+        let monotonicTrust = try store.issue(
+            name: "Agent",
+            scopes: [.readBasic],
+            trust: .standard,
+            peer: moved
+        )
+        #expect(monotonicTrust.client.id == first.client.id)
+        #expect(monotonicTrust.client.trust == .trusted)
+        #expect(monotonicTrust.client.scopes == allScopes)
+        #expect(throws: AuthorizationError.self) {
+            try store.authorize(
+                token: fullyTrusted.token,
+                requiredScope: .destructive,
+                peer: moved
+            )
+        }
+        for scope in AutomationClientScope.allCases {
+            #expect(try store.authorize(
+                token: monotonicTrust.token,
+                requiredScope: scope,
+                peer: moved
+            ).id == monotonicTrust.client.id)
+        }
     }
 
     private func makeFixture(
         scopes: Set<AutomationClientScope>,
+        trust: AutomationClientTrust = .standard,
         defaults: UserDefaults? = nil
     ) throws -> Fixture {
         let root = temporaryRoot()
@@ -224,7 +314,12 @@ struct AutomationCommandGatewayTests {
             signingIdentifier: "example.test-agent",
             teamIdentifier: "EXAMPLETEAM"
         )
-        let issued = try store.issue(name: "Test Agent", scopes: scopes, peer: peer)
+        let issued = try store.issue(
+            name: "Test Agent",
+            scopes: scopes,
+            trust: trust,
+            peer: peer
+        )
         let gateway = AutomationCommandGateway(
             model: model,
             updater: ApplicationUpdater(startingUpdater: false),

@@ -2,85 +2,114 @@
 
 MClash is a native macOS controller for the
 [MetaCubeX mihomo Alpha](https://github.com/MetaCubeX/mihomo/tree/Alpha) core.
-The application is written with SwiftUI and AppKit. The Go core remains an
-isolated process and is controlled through its authenticated loopback REST and
-WebSocket API.
+It bundles and supervises the core, manages Clash-compatible profiles, and
+provides System Proxy and per-application routing without exposing routine core
+maintenance to the user.
 
-## Current scope
+MClash is a controller, not a proxy service. You need your own compatible YAML
+profile or subscription.
 
-- Native window and dedicated menu bar quick-control popup
-- Responsive native layouts with wide-screen dashboard composition, compact
-  fallbacks, and consistent system backgrounds across every destination
-- Alpha core discovery, configuration validation, lifecycle supervision, and
-  bounded crash recovery
-- Automatic, bounded data-plane verification and recovery after sleep, wake,
-  and meaningful network-path changes
-- Per-launch in-memory local controller secret (no connection-time Keychain prompt)
-- Local and remote profile storage with transactional activation and rollback
-- Persistent subscription failure backoff with visible retry timing and manual
-  refresh override
-- Rule / Global / Direct routing with YAML-stable policy-group ordering,
-  searchable node selection, latency testing, nested dependency topology, and
-  current-path inspection
-- Customizable menu-bar Quick Routes plus native navigation, connection, and
-  routing-mode keyboard commands
-- Session-scoped routing explanations that connect observed domains and rules
-  to the actual group-to-node chain reported by mihomo
-- Rules, proxy providers, rule providers, live connections, logs, and traffic
-- Explicit App Routing effective-policy summaries and distinct DNS Proxy flow
-  attribution
-- Shared numeric formatting for rates, byte totals, memory, and localized counts
-- REST/WebSocket API models, authenticated client, and stream reconnection
-- Complete macOS proxy snapshots with `networksetup` activation and rollback
-- Runtime-managed local listener fallback for subscriptions that omit HTTP/SOCKS ports
-- Dynamic loopback controller port to avoid conflicts with other Clash/mihomo clients
-- Optional automatic connection reset after routing mode or node changes
-- Signed Sparkle updates from GitHub Releases with automatic checking,
-  background downloads, and user-approved installation and relaunch
-- Versioned local JSON-RPC automation with a signed, bundled `mclashctl` for
-  AI agents, scripts, and other same-user tools
+## Highlights
 
-TUN mode will be implemented behind a signed, narrow XPC privileged helper. It
-is intentionally not handled through arbitrary shell commands or a root-owned
-general-purpose launcher.
+- Native SwiftUI and AppKit interface, main window, and menu bar controls
+- Interface languages: English, Simplified and Traditional Chinese, Japanese,
+  Korean, French, German, and Spanish, with a System Default option
+- Bundled, checksum-verified mihomo Alpha core and GEO databases
+- Local YAML profiles and remote subscriptions with validation, transactional
+  activation, rollback, scheduled refresh, and bounded retry backoff
+- Rule, Global, and Direct modes with searchable proxy groups, latency tests,
+  nested-route inspection, topology view, and customizable Quick Routes
+- Safe macOS System Proxy activation with complete snapshot and restoration of
+  the previous HTTP, HTTPS, SOCKS, PAC, auto-discovery, and bypass settings
+- Per-application TCP and UDP routing through a signed macOS Network Extension
+- Live traffic, connection history, rules, providers, logs, routing evidence,
+  and actionable health diagnostics
+- Recovery after sleep, wake, network changes, or a bounded core failure
+- Signed Sparkle updates and a versioned local automation API
 
 ## Requirements
 
 - macOS 14 or later
-- Xcode with the macOS SDK for normal development
-- Swift 6
+- Apple Silicon for published releases
+- A Clash/mihomo-compatible local profile or subscription
 
-The current machine's standalone Command Line Tools installation has a known
-SwiftPM `PackageDescription` interface/dylib mismatch. `scripts/typecheck.sh`
-therefore provides a direct compiler verification path until full Xcode is
-selected.
+The repository contains architecture-selection support for Intel, but an Intel
+release is not produced until its mihomo artifact has an independently reviewed
+hash in the manifest.
 
-## Development
+## Install
 
-```sh
-cd ~/CodingSpace/MClash
-./scripts/typecheck.sh
-./scripts/test-direct.sh
-./scripts/integration-test.sh
-./scripts/build-app.sh
-open .build/release/MClash.app
-```
+1. Download the current Apple Silicon DMG from
+   [GitHub Releases](https://github.com/leaperone/MClash/releases/latest).
+2. Open the DMG and move **MClash** to **Applications**.
+3. Launch MClash. Keep the app in `/Applications` so its signed helper, Network
+   Extension, and automatic updates retain a stable identity.
 
-The user-driven release candidate checklist is in
-[`MANUAL_TEST_PLAN.md`](MANUAL_TEST_PLAN.md). It deliberately keeps UI and
-network-setting validation manual while automated tests cover data, state, API,
-profile transaction, and proxy restoration behavior.
+Published builds are Developer ID signed, notarized by Apple, and updated from
+the signed Sparkle feed. The mihomo executable and GEO data are already included;
+end users do not download or select a core.
 
-`build-app.sh` automatically downloads the architecture-appropriate Alpha core,
-verifies its upstream archive checksum and recorded unpacked SHA-256, and embeds
-it in the application as `mclash-mihomo`. End users never select or download a
-core.
+## Get started
+
+1. Open **Profiles** and choose **Import & Activate** for a local YAML file, or
+   **Add Subscription** for an HTTP/HTTPS subscription.
+2. Select the profile and connect the mihomo core.
+3. Choose how macOS traffic should enter MClash:
+
+   - Enable **Use macOS System Proxy** for ordinary proxy-aware applications.
+   - Open **App Routing** to send selected applications or destinations through
+     Mihomo while leaving other applications direct.
+   - Leave both off when you only need the local HTTP/SOCKS listeners shown by
+     MClash.
+
+4. Select Rule, Global, or Direct mode and, when applicable, choose the desired
+   policy-group route.
+
+Choose **Settings → Appearance → Language** to override the macOS language, or
+leave **System Default** selected.
+
+MClash validates a profile with `mihomo -t` before activation. If a profile does
+not define a usable HTTP, SOCKS, or mixed listener, MClash supplies a temporary
+loopback listener without rewriting the stored profile.
+
+## App Routing
+
+App Routing uses a macOS app-proxy Network Extension to evaluate traffic before
+it reaches Mihomo. The first enabled matching rule wins. If no rule is enabled,
+application traffic is explicitly Direct. DNS routing has its own on/off state
+and runs through the companion DNS Proxy provider.
+
+A rule can match:
+
+- one or more signed applications, application/bundle identifier patterns,
+  executables, running process instances, or user IDs;
+- exact domains, domain suffixes, wildcard hostname patterns, IP addresses, or
+  CIDR networks; and
+- TCP, UDP, and destination port ranges.
+
+A match can go Direct, be rejected, follow the active profile rules, use Mihomo
+GLOBAL, or enter a specific Mihomo policy group. Each rule also defines what to
+do if its requested Mihomo route is unavailable. Rules can be reordered,
+disabled, duplicated, and updated transactionally. Existing Proxifier `.ppx`
+routing rules can be previewed and selectively imported; proxy servers,
+credentials, and chains are not imported.
+
+For predictable rules, prefer a selected signed application over a broad name
+pattern, keep one application or intent per rule, enable UDP when the application
+uses QUIC or calls, and place narrow exceptions above broad fallbacks. The
+**Activity** and **Traffic** views show the application-to-rule-to-proxy path
+that MClash actually observed.
+
+The first App Routing activation may require approval of the system extension
+and network configuration in macOS. If macOS reports that a restart is required,
+restart the Mac before trying again.
 
 ## Automation API
 
-Release builds include `MClash.app/Contents/Helpers/mclashctl`. The CLI starts
-MClash in the background when needed, discovers its private per-user Unix
-socket, and prints one JSON-RPC response to stdout:
+Release builds include a signed `mclashctl` helper at
+`MClash.app/Contents/Helpers/mclashctl`. It starts MClash in the background when
+needed, discovers the current user's private Unix socket, sends one JSON-RPC
+request, and prints one JSON-RPC response to stdout.
 
 ```sh
 /Applications/MClash.app/Contents/Helpers/mclashctl capabilities --pretty
@@ -90,108 +119,148 @@ socket, and prints one JSON-RPC response to stdout:
   --params '{"mode":"rule"}'
 ```
 
-For a stable shell command, link—not copy—the signed helper:
+For a stable shell command, link the helper instead of copying it:
 
 ```sh
 mkdir -p ~/.local/bin
 ln -sf /Applications/MClash.app/Contents/Helpers/mclashctl ~/.local/bin/mclashctl
 ```
 
-`system.capabilities` is the authoritative, machine-readable operation list.
-It covers application/window lifecycle, settings and updates, core lifecycle,
-profiles and backups, runtime overrides, routing and proxy selection, Mihomo
-rules/providers, System Proxy, App Routing, connections/history, logs, and
-diagnostics. Destructive operations fail with `confirmation_required` unless
-the caller passes `--allow-interaction`; MClash then shows a local one-time
-approval dialog naming the exact operation.
+`system.capabilities` is the authoritative operation list for the installed
+version. The API covers app and core lifecycle, profiles and backups, settings,
+routing and proxy selection, Mihomo rules/providers, System Proxy, App Routing,
+traffic/history, logs, and diagnostics.
 
-On first use, `mclashctl` asks MClash to pair locally. The approval dialog shows
-the executable identity and requested scopes; the resulting 256-bit token is
-kept in the caller's macOS Keychain, while MClash stores only its SHA-256 hash.
-Tokens are bound to the client's code identity, expire after 180 days, and can
-be listed or revoked through `auth.clients.*`.
+### Trusted local clients
 
-The bundled CLI is a user-level broker: granting `mclashctl` a scope allows
-processes under the same macOS login to invoke that scope through the helper.
-Agents that require separate trust identities should use independently signed
-native clients. Stable `--request-id` values make mutation recovery idempotent;
-secret parameters can be supplied with `--params-stdin` or `--params-file`.
+The local pairing dialog offers two explicit choices:
 
-The endpoint never listens on TCP or LAN, accepts only paired clients with the
-same macOS user ID, and does not expose the Mihomo controller secret, Network
-Extension credentials, or full subscription URLs. Read calls return cached
-state and freshness metadata, so a background AI client does not reactivate
-the high-frequency UI telemetry streams. Protocol and command details are in
-[`docs/AUTOMATION.md`](docs/AUTOMATION.md).
+- **Allow Needed Access** grants only the scopes needed by the commands a client
+  has requested. New scopes can prompt again, and every destructive operation
+  still requires a fresh local confirmation naming the exact operation.
+- **Trust This Client** grants the identified client all automation scopes for
+  180 days. It removes later pairing dialogs and permits destructive operations
+  to run unattended during that period. This is intentionally broad authority,
+  not a convenience alias for standard scoped access.
 
-## Bundled mihomo Alpha artifact
+Both choices are limited to the same macOS user and bound to the client's code
+identity. Trust can be listed or revoked with `auth.clients.*`, and an identity
+change invalidates it. With standard access, `--allow-interaction` permits
+MClash to show a required local confirmation; it never approves the operation
+by itself.
 
-MClash currently pins `alpha-a70af27` at commit
-`a70af27451ac6837bcbbd3c542d8207304096e2f` from the upstream
-`Prerelease-Alpha` channel. Release metadata lives in `Support/mihomo-alpha.env`; SHA-256 values for
-the unpacked, executable artifacts live in `Support/mihomo-alpha.sha256`.
+The bundled CLI is a same-user broker: any process under the same macOS login
+that can run it can use the authority granted to that helper. Choosing **Trust
+This Client** for `mclashctl` therefore also allows those processes to invoke
+unattended destructive operations. Use **Allow Needed Access** for least
+privilege, or an independently signed native client when separate tools need
+separate trust identities. Tokens are stored in the client's Keychain; MClash
+stores only their SHA-256 hashes.
 
-Both Apple Silicon and Intel use the same artifact-selection code. The first
-release target is Apple Silicon; every supported architecture must have a
-separately reviewed raw hash in the manifest before its core can be fetched.
-The reviewed Apple Silicon artifact is committed as an explicit release input
-because the upstream Alpha release tag is mutable. It is verified against the
-recorded unpacked SHA-256 before every application build and integration run:
+The endpoint does not listen on TCP or LAN. It accepts the same macOS user only,
+binds authorization to the client's code identity, and does not return the
+Mihomo controller secret, Network Extension credentials, or full subscription
+URLs. See [Automation API v1](docs/AUTOMATION.md) for the protocol, scopes,
+idempotency rules, CLI options, and complete operation families.
+
+## Development
+
+Development requires Xcode with the macOS SDK and Swift 6. From the repository
+root:
+
+```sh
+./scripts/typecheck.sh
+./scripts/test-direct.sh
+./scripts/integration-test.sh
+./scripts/build-app.sh
+open .build/release/MClash.app
+```
+
+`build-app.sh` creates an ad-hoc-signed local application by default. It fetches
+Sparkle tools and immutable build inputs when needed, verifies the selected
+mihomo artifact and GEO databases, and assembles the host app, `mclashctl`, and
+Network Extension. A production-capable Network Extension build requires the
+Developer ID identity, provisioning profiles, and entitlements used by the
+protected release workflow.
+
+The standalone Command Line Tools installation on some machines has a SwiftPM
+`PackageDescription` interface/dylib mismatch. `scripts/typecheck.sh` and
+`scripts/test-direct.sh` provide direct compiler/test paths; CI uses `swift test`
+with a complete Xcode toolchain.
+
+Useful verification commands:
 
 ```sh
 ./scripts/verify-mihomo-alpha.sh
-./scripts/verify-mihomo-alpha.sh --architecture x86_64
+./scripts/verify-mihomo-geodata.sh .build/release/MClash.app/Contents/Resources/GeoData
 ```
 
-The second command intentionally fails until an independently reviewed Intel
-hash and artifact are added in a dedicated release change.
+The pinned core version and commit live in `Support/mihomo-alpha.env`; reviewed
+raw executable hashes live in `Support/mihomo-alpha.sha256`. Production builds
+also bundle verified `geoip.metadb`, `GeoIP.dat`, `GeoSite.dat`, and `ASN.mmdb`.
 
-`fetch-mihomo-alpha.sh` is a guarded recovery path for as long as the pinned
-asset remains available upstream. It never follows the moving `version.txt`,
-verifies the selected archive against upstream `checksums.txt`, and refuses to
-replace an artifact unless its unpacked hash was already reviewed and committed
-to the manifest.
-The built application's Info.plist also records the pinned core version and
-pre-signing upstream binary hash as `MClashMihomoAlphaVersion` and
-`MClashMihomoAlphaRawSHA256`.
+### Repository layout
 
-## Bundled GEO databases
+| Path | Purpose |
+| --- | --- |
+| `Sources/MClashApp` | macOS application, UI, core/profile management, System Proxy, and automation server |
+| `Sources/MClashNetworkExtension` | App Routing and DNS Network Extension providers |
+| `Sources/MClashNetworkShared` | Shared capture-rule, flow, relay, and process-identity models |
+| `Sources/MClashAutomationProtocol` | JSON-RPC protocol and Unix-socket client |
+| `Sources/MClashCLI` | `mclashctl` command-line client |
+| `Tests` | Unit, Network Extension, protocol, and integration coverage |
+| `Support` | Plists, entitlements, release inputs, and bundled-artifact manifests |
+| `scripts` | Local build, test, artifact verification, packaging, and release tooling |
+| `docs` | Automation and release documentation |
 
-Production builds resolve the current `MetaCubeX/meta-rules-dat` release-branch
-revision, download that immutable snapshot, and verify its upstream SHA-256
-files before packaging. MClash bundles `geoip.metadb`, `GeoIP.dat`,
-`GeoSite.dat`, and `ASN.mmdb`, then seeds missing files into both mihomo's
-validation and live core homes. Existing non-empty databases are preserved, so
-later user or core updates are never replaced by the app bundle.
+## Security and privacy
 
-## Production release
+- The Mihomo controller binds to a dynamic `127.0.0.1` port and uses a random
+  per-launch secret retained only for the current MClash process.
+- The automation endpoint is a mode-0600, per-user Unix socket. It checks the
+  peer UID, client identity, token, and authorized access before dispatch.
+- Profile changes are validated before activation and use transactional rollback.
+- MClash snapshots all relevant macOS proxy settings before changing them and
+  restores the snapshot on disable, disconnect, quit, update, or recovery.
+- Diagnostics redact credentials, bearer tokens, sensitive query values, and
+  subscription details before export.
+- Backups are intentionally unencrypted and may contain subscription URLs and
+  proxy credentials. Store them as secrets.
+- Core updates arrive as part of a signed MClash release; MClash does not use
+  Mihomo's in-place `/upgrade` endpoint.
+- TUN mode is not currently exposed. Its design requires a separately signed,
+  narrow privileged helper rather than arbitrary root shell execution.
 
-Public releases are built by the protected GitHub Actions Release workflow.
-It runs the test suite, imports the Developer ID certificate into an ephemeral
-Keychain, signs with the hardened runtime, notarizes and staples the app and
-DMG, signs the Sparkle update, and publishes all assets to GitHub Releases.
+Report suspected vulnerabilities privately through GitHub's **Report a
+vulnerability** form. Do not attach real subscriptions, credentials, logs, or
+backup archives to a public issue. See [Privacy](PRIVACY.md) and the
+[Security Policy](SECURITY.md).
 
-Maintainers normally publish by pushing a semantic tag such as `v1.0.0`; the
-workflow can also be started manually. No production signing credential is
-required on a maintainer's Mac. See [`docs/RELEASING.md`](docs/RELEASING.md)
-for the protected environment, required Secrets, build-number policy, and
-complete release procedure.
+## Releases
 
-## Safety invariants
+Production releases are built by the protected GitHub Actions release workflow.
+It runs the test suite, verifies dependencies, signs with the hardened runtime,
+notarizes and staples the app and DMG, signs Sparkle full and delta updates, and
+publishes checksums and corresponding third-party source material.
 
-- A profile is checked with `mihomo -t` before activation.
-- The control API binds only to `127.0.0.1` and uses a random secret retained
-  only for the current MClash process lifetime.
-- Connection readiness requires live local HTTP and SOCKS5 listeners. When a
-  subscription omits them, MClash applies an in-memory mixed-port override
-  without rewriting the stored subscription.
-- The app owns runtime configuration persistence; API patches are not treated
-  as durable state.
-- Existing proxy dictionaries are captured before changes; HTTP, HTTPS, SOCKS,
-  PAC, auto-discovery, and bypass settings are restored through Apple’s
-  `/usr/sbin/networksetup` utility.
-- Core updates are delivered with a signed MClash release rather than through
-  mihomo's in-place `/upgrade` endpoint.
-- Production discovery accepts only the signed bundled core. Developers can
-  explicitly opt into fallback discovery with `MCLASH_ALLOW_CORE_OVERRIDE=1`;
-  even then, `MCLASH_CORE_PATH` cannot shadow a valid bundled artifact.
+Maintainers publish a semantic tag such as `v1.2.2`; end users receive signed
+updates in the app. See [Releasing MClash](docs/RELEASING.md) for required
+secrets, build-number policy, published assets, and the complete procedure.
+
+## Documentation
+
+- [Product principles](PRODUCT.md)
+- [Interface design system](DESIGN.md)
+- [Automation API v1](docs/AUTOMATION.md)
+- [Release candidate test plan](MANUAL_TEST_PLAN.md)
+- [Release process](docs/RELEASING.md)
+- [TUN implementation boundary](TUN_IMPLEMENTATION.md)
+- [Security policy](SECURITY.md)
+- [Privacy](PRIVACY.md)
+- [mihomo distribution notice](ThirdParty/mihomo/NOTICE.md)
+
+## License
+
+MClash source is available for inspection under the
+[MClash Source Code License](LICENSE); it is not an open-source license.
+Bundled third-party components remain under their own licenses and notices.

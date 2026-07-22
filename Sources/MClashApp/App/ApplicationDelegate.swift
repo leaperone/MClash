@@ -202,11 +202,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private func terminationFailureAlert() -> NSAlert {
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = "MClash Couldn’t Restore Network Settings"
-        alert.informativeText = "macOS may still be configured to use MClash as its proxy. Quitting now may interrupt network access."
-        alert.addButton(withTitle: "Try Again")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Quit Anyway")
+        alert.messageText = AppLocalization.string("MClash Couldn’t Restore Network Settings")
+        alert.informativeText = AppLocalization.string("macOS may still be configured to use MClash as its proxy. Quitting now may interrupt network access.")
+        alert.addButton(withTitle: AppLocalization.string("Try Again"))
+        alert.addButton(withTitle: AppLocalization.string("Cancel"))
+        alert.addButton(withTitle: AppLocalization.string("Quit Anyway"))
         return alert
     }
 
@@ -218,30 +218,44 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         )
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = "Keep MClash Running in the Menu Bar?"
+        alert.messageText = AppLocalization.string("Keep MClash Running in the Menu Bar?")
 
         var details = [
-            "Keep Running hides MClash windows while the menu bar item remains available."
+            AppLocalization.string(
+                "Keep Running hides MClash windows while the menu bar item remains available."
+            )
         ]
         if context.coreIsConnected {
-            details.append("Mihomo stays connected and continues providing local proxy service.")
+            details.append(
+                AppLocalization.string(
+                    "Mihomo stays connected and continues providing local proxy service."
+                )
+            )
         }
         if context.appRoutingIsActive {
-            details.append("App Routing and DNS Routing remain active.")
+            details.append(
+                AppLocalization.string("App Routing and DNS Routing remain active.")
+            )
         }
         if context.systemProxyIsActive {
             details.append(
-                "Quit Completely stops the proxy and safely restores the previous macOS System Proxy settings."
+                AppLocalization.string(
+                    "Quit Completely stops the proxy and safely restores the previous macOS System Proxy settings."
+                )
             )
         } else {
-            details.append("Quit Completely stops MClash and its active networking services.")
+            details.append(
+                AppLocalization.string(
+                    "Quit Completely stops MClash and its active networking services."
+                )
+            )
         }
         alert.informativeText = details.joined(separator: " ")
 
-        alert.addButton(withTitle: "Keep Running")
-        let quitButton = alert.addButton(withTitle: "Quit Completely")
+        alert.addButton(withTitle: AppLocalization.string("Keep Running"))
+        let quitButton = alert.addButton(withTitle: AppLocalization.string("Quit Completely"))
         quitButton.hasDestructiveAction = true
-        let cancelButton = alert.addButton(withTitle: "Cancel")
+        let cancelButton = alert.addButton(withTitle: AppLocalization.string("Cancel"))
         cancelButton.keyEquivalent = "\u{1b}"
         return alert
     }

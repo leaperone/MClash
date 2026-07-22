@@ -6,6 +6,7 @@ struct MClashApp: App {
     @State private var model = AppModel()
     @State private var applicationUpdater = ApplicationUpdater()
     @State private var automationServer = AutomationSocketServer()
+    @AppStorage(AppLanguage.storageKey) private var appLanguageRawValue = AppLanguage.system.rawValue
     @State private var mainWindowContentIsActive = ApplicationDelegate
         .initialWindowShouldPresent(arguments: CommandLine.arguments)
 
@@ -42,6 +43,7 @@ struct MClashApp: App {
                     Task { await model.handleIncomingURL(url) }
                 }
         }
+        .environment(\.locale, selectedLanguage.locale)
         .defaultSize(width: 1_180, height: 760)
         .commands {
             CommandGroup(after: .appInfo) {
@@ -88,8 +90,13 @@ struct MClashApp: App {
         } label: {
             MenuBarStatusLabel(model: model)
         }
+        .environment(\.locale, selectedLanguage.locale)
         .menuBarExtraStyle(.window)
 
+    }
+
+    private var selectedLanguage: AppLanguage {
+        AppLanguage(rawValue: appLanguageRawValue) ?? .system
     }
 
     @MainActor
@@ -105,7 +112,7 @@ struct MClashApp: App {
 
     @MainActor
     private func navigationCommand(
-        _ title: String,
+        _ title: LocalizedStringKey,
         destination: AppModel.Destination,
         key: KeyEquivalent
     ) -> some View {
@@ -117,7 +124,7 @@ struct MClashApp: App {
 
     @MainActor
     private func routingModeCommand(
-        _ title: String,
+        _ title: LocalizedStringKey,
         mode: String,
         key: KeyEquivalent
     ) -> some View {

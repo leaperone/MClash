@@ -1,8 +1,8 @@
 # Product
 
-## Register
+## Product Category
 
-product
+Native macOS network routing and proxy controller.
 
 ## Users
 

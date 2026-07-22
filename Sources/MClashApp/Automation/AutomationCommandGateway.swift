@@ -104,7 +104,8 @@ final class AutomationCommandGateway {
             defer {
                 if ownsMutationSlot { mutationInProgress = false }
             }
-            if capability.risk == .destructive {
+            if capability.risk == .destructive,
+               authorizedClient?.trust != .trusted {
                 try confirmDestructiveRequest(
                     request,
                     summary: capability.summary,
@@ -856,15 +857,27 @@ final class AutomationCommandGateway {
         try beginInteractivePresentation()
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Allow External MClash Operation?"
-        let clientName = displaySafe(client?.name ?? "Unknown paired client")
+        alert.messageText = AppLocalization.string("Allow External MClash Operation?")
+        let clientName = displaySafe(
+            client?.name ?? AppLocalization.string("Unknown paired client")
+        )
         let signingIdentity = [
             peer.signingIdentifier,
             peer.teamIdentifier,
         ].compactMap { $0 }.map { displaySafe($0) }.joined(separator: " / ")
-        alert.informativeText = "Client: \(clientName)\nProcess: \(displaySafe(peer.displayName)) (PID \(peer.processIdentifier))\nPath: \(displaySafe(peer.executablePath, maximumLength: 240))\nSigning: \(signingIdentity.isEmpty ? "Ad hoc signed" : signingIdentity)\n\nRequested: \(displaySafe(summary))\nMethod: \(displaySafe(request.method))\n\(requestSummary(request))\n\nApprove this operation once?"
-        alert.addButton(withTitle: "Approve Once")
-        alert.addButton(withTitle: "Deny")
+        alert.informativeText = AppLocalization.format(
+            "Client: %@\nProcess: %@ (PID %d)\nPath: %@\nSigning: %@\n\nRequested: %@\nMethod: %@\n%@\n\nApprove this operation once?",
+            clientName,
+            displaySafe(peer.displayName),
+            peer.processIdentifier,
+            displaySafe(peer.executablePath, maximumLength: 240),
+            signingIdentity.isEmpty ? AppLocalization.string("Ad hoc signed") : signingIdentity,
+            displaySafe(summary),
+            displaySafe(request.method),
+            requestSummary(request)
+        )
+        alert.addButton(withTitle: AppLocalization.string("Approve Once"))
+        alert.addButton(withTitle: AppLocalization.string("Deny"))
         NSApplication.shared.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else {
             throw GatewayError.permissionDenied(request.method)
@@ -904,29 +917,54 @@ final class AutomationCommandGateway {
         )
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Pair External Client with MClash?"
+        alert.messageText = AppLocalization.string("Pair External Client with MClash?")
         let signatureDescription: String
         if let teamIdentifier = peer.teamIdentifier, !teamIdentifier.isEmpty {
-            signatureDescription = "Signing ID: \(displaySafe(peer.signingIdentifier ?? "Unknown"))\nTeam ID: \(displaySafe(teamIdentifier))"
+            signatureDescription = AppLocalization.format(
+                "Signing ID: %@\nTeam ID: %@",
+                displaySafe(peer.signingIdentifier ?? "Unknown"),
+                displaySafe(teamIdentifier)
+            )
         } else {
             let fingerprint = peer.codeHash.map { String($0.prefix(16)) } ?? "none"
-            signatureDescription = "Signing: Ad hoc signed\nIdentifier: \(displaySafe(peer.signingIdentifier ?? "none"))\nCode fingerprint: \(fingerprint)"
+            signatureDescription = AppLocalization.format(
+                "Signing: Ad hoc signed\nIdentifier: %@\nCode fingerprint: %@",
+                displaySafe(peer.signingIdentifier ?? "none"),
+                fingerprint
+            )
         }
         let brokerWarning = peer.displayName == "mclashctl"
-            ? "\n\nThe bundled mclashctl is a user-level broker. Granting it access allows processes running under this macOS login to invoke these scopes through it."
+            ? AppLocalization.string("\n\nThe bundled mclashctl is a user-level broker. Granting it access allows processes running under this macOS login to invoke these scopes through it.")
             : ""
-        alert.informativeText = "Client: \(name)\nProcess: \(displaySafe(peer.displayName)) (PID \(peer.processIdentifier))\nPath: \(displaySafe(peer.executablePath, maximumLength: 240))\n\(signatureDescription)\nScopes: \(scopes.map(\.rawValue).sorted().joined(separator: ", "))\n\nThe token expires after 180 days and can be revoked. Destructive operations will still require one-time confirmation.\(brokerWarning)"
-        alert.addButton(withTitle: "Pair Client")
-        alert.addButton(withTitle: "Deny")
+        alert.informativeText = AppLocalization.format(
+            "Client: %@\nProcess: %@ (PID %d)\nPath: %@\n%@\nNeeded scopes: %@\n\nAllow Needed Access grants only these scopes and keeps one-time confirmation for destructive operations. Trust This Client grants every scope and allows unattended destructive operations for 180 days, or until revoked.%@",
+            name,
+            displaySafe(peer.displayName),
+            peer.processIdentifier,
+            displaySafe(peer.executablePath, maximumLength: 240),
+            signatureDescription,
+            scopes.map(\.rawValue).sorted().joined(separator: ", "),
+            brokerWarning
+        )
+        alert.addButton(withTitle: AppLocalization.string("Allow Needed Access"))
+        alert.addButton(withTitle: AppLocalization.string("Trust This Client"))
+        alert.addButton(withTitle: AppLocalization.string("Deny"))
         NSApplication.shared.activate(ignoringOtherApps: true)
         let response = alert.runModal()
         lastPairingPromptAt = Date()
-        guard response == .alertFirstButtonReturn else {
+        let trust: AutomationClientTrust
+        switch response {
+        case .alertFirstButtonReturn:
+            trust = .standard
+        case .alertSecondButtonReturn:
+            trust = .trusted
+        default:
             throw GatewayError.permissionDenied("auth.pair")
         }
         let issued = try authorizationStore.issue(
             name: name,
             scopes: scopes,
+            trust: trust,
             peer: peer
         )
         return .object([

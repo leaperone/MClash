@@ -116,10 +116,11 @@ struct ReleasePackagingTests {
                 "Support/Signing/MClashCLI-DeveloperID.entitlements"
             )
         )
-        #expect(
-            (cliEntitlements["keychain-access-groups"] as? [String])?
-                .contains("\(teamIdentifier).one.leaper.mclash.cli") == true
-        )
+        #expect(cliEntitlements["com.apple.application-identifier"] == nil)
+        #expect(cliEntitlements["com.apple.developer.team-identifier"] == nil)
+        #expect(cliEntitlements["keychain-access-groups"] == nil)
+        #expect(buildScript.contains("Signed mclashctl must not claim restricted entitlement"))
+        #expect(releaseScript.contains("verify_unrestricted_cli_entitlements"))
 
         let adHocHelperSign = try #require(
             buildScript.range(
