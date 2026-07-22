@@ -243,7 +243,7 @@ It runs the test suite, verifies dependencies, signs with the hardened runtime,
 notarizes and staples the app and DMG, signs Sparkle full and delta updates, and
 publishes checksums and corresponding third-party source material.
 
-Maintainers publish a semantic tag such as `v1.2.2`; end users receive signed
+Maintainers publish a semantic tag such as `v1.2.3`; end users receive signed
 updates in the app. See [Releasing MClash](docs/RELEASING.md) for required
 secrets, build-number policy, published assets, and the complete procedure.
 

@@ -82,6 +82,15 @@ struct LocalizationTests {
         #expect(script.contains("${contents}/Resources/${localization_source:t}"))
     }
 
+    @Test("SwiftPM declares English as the default localization")
+    func packageDeclaresDefaultLocalization() throws {
+        let manifest = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Package.swift"),
+            encoding: .utf8
+        )
+        #expect(manifest.contains("defaultLocalization: \"en\""))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

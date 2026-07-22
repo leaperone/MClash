@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MClash",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14)
     ],
