@@ -7,6 +7,21 @@ import UniformTypeIdentifiers
 struct ReleasePackagingTests {
     private let teamIdentifier = "5UAHRS482C"
 
+    @Test("CI serializes process-wide Apple manager tests")
+    func ciDisablesSwiftTestingParallelism() throws {
+        let testScript = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "scripts/test-direct.sh"
+            ),
+            encoding: .utf8
+        )
+        #expect(
+            testScript.contains(
+                "swift test --configuration debug --no-parallel"
+            )
+        )
+    }
+
     @Test("Mach service is a child of the shared macOS App Group")
     func machServiceUsesSharedAppGroupPrefix() throws {
         let hostEntitlements = try plist(
