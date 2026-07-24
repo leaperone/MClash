@@ -1,3 +1,4 @@
+import Foundation
 import MClashNetworkShared
 import Testing
 @testable import MClashNetworkExtension
@@ -65,6 +66,35 @@ struct InitialFlowOwnershipPolicyTests {
         )
 
         #expect(resolved == original)
+    }
+
+    @Test("A missing profile-specific target uses the existing unavailable fallback")
+    func missingProfileTargetFallback() throws {
+        let profileA = RoutingProfileID(
+            UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        )
+        let profileB = RoutingProfileID(
+            UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+        )
+        let requested = MihomoRoute.profile(profileA, target: .rules)
+        let rule = try CaptureRule(
+            id: "profile-a",
+            priority: 0,
+            action: .mihomo(requested),
+            unavailableFallback: .reject
+        )
+
+        let resolved = MihomoRouteAvailabilityPolicy.resolve(
+            decision(rule: rule, route: requested),
+            availableRoutes: [.profile(profileB, target: .rules)],
+            rulesByIdentifier: [rule.id: rule]
+        )
+
+        #expect(resolved.disposition == .reject)
+        #expect(resolved.reason == .mihomoUnavailable(
+            rule: .matchedRule(rule.id),
+            fallback: .reject
+        ))
     }
 
     private func decision(

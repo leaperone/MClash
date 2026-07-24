@@ -59,8 +59,8 @@ public struct NetworkExtensionMihomoListenerConfiguration: Equatable, Sendable {
         public let port: UInt16
 
         fileprivate var outboundProxy: String? {
-            switch route {
-            case .profileRules: nil
+            switch route.profileRoute {
+            case .rules: nil
             case .global: "GLOBAL"
             case let .group(group): group
             }
@@ -78,20 +78,28 @@ public struct NetworkExtensionMihomoListenerConfiguration: Equatable, Sendable {
     public let port: UInt16
     public let authentication: NetworkExtensionMihomoAuthentication?
     public let routeListeners: [RouteListener]
+    public let includesLegacyProfileRules: Bool
 
     public init(
         port: Int,
         authentication: NetworkExtensionMihomoAuthentication? = nil,
-        routePorts: [MihomoRoute: Int] = [:]
+        routePorts: [MihomoRoute: Int] = [:],
+        includesLegacyProfileRules: Bool = true
     ) throws {
         guard (1 ... Int(UInt16.max)).contains(port) else {
             throw NetworkExtensionMihomoListenerValidationError.invalidPort(port)
         }
         self.port = UInt16(port)
         self.authentication = authentication
+        self.includesLegacyProfileRules = includesLegacyProfileRules
 
         var requested = routePorts
-        requested[.profileRules] = port
+        if includesLegacyProfileRules {
+            requested[.profileRules] = port
+        }
+        guard !requested.isEmpty else {
+            throw NetworkExtensionMihomoListenerValidationError.missingRoute
+        }
         let sorted = requested.sorted {
             Self.routeSortKey($0.key) < Self.routeSortKey($1.key)
         }
@@ -123,7 +131,11 @@ public struct NetworkExtensionMihomoListenerConfiguration: Equatable, Sendable {
     }
 
     public func encodedRouteProxyCatalog() throws -> Data {
-        try MihomoRouteProxyCatalog.encode(routeListeners.map { listener in
+        try MihomoRouteProxyCatalog.encode(try routeProxyEndpoints())
+    }
+
+    public func routeProxyEndpoints() throws -> [MihomoRouteProxyEndpoint] {
+        try routeListeners.map { listener in
             try MihomoRouteProxyEndpoint(
                 route: listener.route,
                 host: Self.ipv4Host,
@@ -131,7 +143,7 @@ public struct NetworkExtensionMihomoListenerConfiguration: Equatable, Sendable {
                 username: authentication?.username,
                 password: authentication?.password
             )
-        })
+        }
     }
 
     var listenerDescriptors: [ListenerDescriptor] {
@@ -160,11 +172,7 @@ public struct NetworkExtensionMihomoListenerConfiguration: Equatable, Sendable {
     }
 
     private static func routeSortKey(_ route: MihomoRoute) -> String {
-        switch route {
-        case .profileRules: "0:profile"
-        case .global: "1:global"
-        case let .group(group): "2:group:\(group)"
-        }
+        route.stableSortKey
     }
 }
 
@@ -186,6 +194,7 @@ public enum NetworkExtensionMihomoListenerValidationError: Error, Equatable, Sen
 
     case invalidPort(Int)
     case duplicatePort(Int)
+    case missingRoute
     case invalidCredentialLength(field: CredentialField, utf8ByteCount: Int)
     case invalidCredentialCharacters(field: CredentialField)
 }
@@ -197,6 +206,8 @@ extension NetworkExtensionMihomoListenerValidationError: LocalizedError {
             "The Network Extension SOCKS5 port must be between 1 and 65535; received \(port)."
         case let .duplicatePort(port):
             "Each private App Routing route needs a distinct SOCKS5 port; \(port) was reused."
+        case .missingRoute:
+            "A private App Routing listener configuration needs at least one route."
         case let .invalidCredentialLength(field, byteCount):
             "The Network Extension SOCKS5 \(field.rawValue) must contain 1 to 255 UTF-8 bytes; received \(byteCount)."
         case let .invalidCredentialCharacters(field):

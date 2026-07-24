@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import MClashNetworkShared
 
 @main
 struct AppModelSmoke {
@@ -35,6 +36,10 @@ struct AppModelSmoke {
             from: repository.appending(path: "Tests/Fixtures/minimal.yaml"),
             name: "Startup profile"
         )
+        let auxiliaryProfile = try await profileStore.importProfile(
+            from: repository.appending(path: "Tests/Fixtures/minimal.yaml"),
+            name: "Auxiliary profile"
+        )
         _ = try await profileStore.activateProfile(
             startupProfile.id,
             validator: AcceptingProfileValidator()
@@ -54,7 +59,9 @@ struct AppModelSmoke {
             systemProxyManager: SystemProxyManager(backend: systemProxyBackend),
             profileDirectoryLayout: layout,
             profileStoreOverride: profileStore,
-            preferenceDefaults: defaults
+            preferenceDefaults: defaults,
+            networkExtensionControl: InertNetworkExtensionControl(),
+            networkEnvironmentMonitor: InertNetworkEnvironmentMonitor()
         )
 
         do {
@@ -91,6 +98,58 @@ struct AppModelSmoke {
             }
 
             try verifyProxyProtocols(model: model)
+
+            let auxiliaryMixedPort = try LocalPortProbe()
+                .availableTCPAndUDPPorts(count: 1)[0]
+            for _ in 0..<100
+            where !model.canPerform(.updateProfile(auxiliaryProfile.id)) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            guard model.canPerform(.updateProfile(auxiliaryProfile.id)) else {
+                throw SmokeFailure.profileRuntimeUpdateStayedBusy(
+                    "\(model.operations)"
+                )
+            }
+            try await model.updateProfileRuntime(
+                profileID: auxiliaryProfile.id,
+                enabled: true,
+                mixedPort: auxiliaryMixedPort
+            )
+            for _ in 0..<100 {
+                if case .running = model.auxiliaryCoreStates[auxiliaryProfile.id] {
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            guard case .running = model.auxiliaryCoreStates[auxiliaryProfile.id] else {
+                throw SmokeFailure.auxiliaryProfileDidNotStart
+            }
+            try verifyProxyProtocols(port: auxiliaryMixedPort)
+
+            let occupiedAuxiliaryPort = try OccupiedIPv6TCPPort()
+            let auxiliaryStateBeforeRejectedUpdate =
+                model.auxiliaryCoreStates[auxiliaryProfile.id]
+            do {
+                try await model.updateProfileRuntime(
+                    profileID: auxiliaryProfile.id,
+                    enabled: true,
+                    mixedPort: occupiedAuxiliaryPort.port
+                )
+                throw SmokeFailure.occupiedAuxiliaryRuntimePortWasAccepted
+            } catch let error as SmokeFailure {
+                throw error
+            } catch {
+                // The occupied candidate must be rejected before reconcile
+                // stops or replaces the healthy session on its old port.
+            }
+            guard model.profileSessionSpec(for: auxiliaryProfile.id)?.mixedPort
+                    == auxiliaryMixedPort,
+                  case .running = model.auxiliaryCoreStates[auxiliaryProfile.id],
+                  model.auxiliaryCoreStates[auxiliaryProfile.id]
+                    == auxiliaryStateBeforeRejectedUpdate else {
+                throw SmokeFailure.auxiliaryRuntimePortRollbackFailed
+            }
+            try verifyProxyProtocols(port: auxiliaryMixedPort)
 
             for _ in 0..<100 where !model.canPerform(.changeSystemProxy) {
                 try await Task.sleep(for: .milliseconds(50))
@@ -150,8 +209,8 @@ struct AppModelSmoke {
             } catch let error as SmokeFailure {
                 throw error
             } catch {
-                // The candidate must fail its protocol readiness check and the
-                // model must restore every durable and live network surface.
+                // Port ownership must fail before the healthy core is
+                // replaced, leaving every durable and live surface unchanged.
             }
             let persistedOverrides = try await RuntimeOverrideStore(profileLayout: layout).load()
             guard model.runtimeOverrides == previousOverrides,
@@ -163,9 +222,21 @@ struct AppModelSmoke {
                   model.localMixedListenerPort == requestedMixedPort,
                   case .failed = model.runtimeSettingsApplyState,
                   let startedAt = model.runningSession?.startedAt,
-                  startedAt != successfulSettingsStartedAt else {
+                  startedAt == successfulSettingsStartedAt else {
                 throw SmokeFailure.runtimeSettingsRollbackFailed(
-                    model.errorMessage ?? "No additional error was reported."
+                    [
+                        "error=\(model.errorMessage ?? "none")",
+                        "state=\(model.runtimeSettingsApplyState)",
+                        "connected=\(model.isConnected)",
+                        "controller=\(model.controllerIsReady)",
+                        "systemProxy=\(model.systemProxyState)",
+                        "mixed=\(model.localMixedListenerPort?.description ?? "none")",
+                        "startedAt=\(model.runningSession?.startedAt.description ?? "none")",
+                        "expectedStartedAt=\(successfulSettingsStartedAt)",
+                        "modelOverrides=\(model.runtimeOverrides == previousOverrides)",
+                        "storedOverrides=\(persistedOverrides == previousOverrides)",
+                        "runtimeBytes=\((try? Data(contentsOf: layout.runtimeConfigurationURL)) == previousRuntime)",
+                    ].joined(separator: ", ")
                 )
             }
 
@@ -202,7 +273,15 @@ struct AppModelSmoke {
 
             _ = try await model.resetRuntimeOverrides()
 
-            model.activeConfigURL = repository.appending(path: "Tests/Fixtures/no-listener.yaml")
+            _ = try await model.importProfile(
+                data: Data(
+                    contentsOf: repository.appending(
+                        path: "Tests/Fixtures/no-listener.yaml"
+                    )
+                ),
+                suggestedFileName: "no-listener.yaml",
+                activate: true
+            )
             await model.connect()
 
             guard model.isConnected,
@@ -222,10 +301,21 @@ struct AppModelSmoke {
 
             try verifyProxyProtocols(model: model)
 
-            await model.disconnect()
-            guard !model.isConnected else { throw SmokeFailure.didNotDisconnect }
+            let finalMixedPort = model.localMixedListenerPort
+            guard await model.shutdown() else {
+                throw SmokeFailure.gracefulShutdownFailed
+            }
+            guard try processIDs(containing: layout.rootDirectory.path).isEmpty else {
+                throw SmokeFailure.gracefulShutdownLeftCoreProcesses
+            }
+            guard !LocalPortProbe().isListening(port: auxiliaryMixedPort),
+                  finalMixedPort.map({
+                      !LocalPortProbe().isListening(port: $0)
+                  }) ?? true else {
+                throw SmokeFailure.gracefulShutdownLeftPortsOccupied
+            }
 
-            print("App model HTTP/SOCKS, runtime-listener, and crash-recovery smoke passed")
+            print("App model dual-profile, HTTP/SOCKS, runtime-listener, crash-recovery, and graceful-shutdown smoke passed")
         } catch {
             await model.shutdown()
             throw error
@@ -240,9 +330,24 @@ struct AppModelSmoke {
             throw SmokeFailure.proxyTestConfigurationUnavailable
         }
 
+        try verifyProxyProtocols(port: httpPort, socksPort: socksPort, target: target)
+    }
+
+    private static func verifyProxyProtocols(port: Int) throws {
+        guard let target = ProcessInfo.processInfo.environment["MCLASH_PROXY_SMOKE_URL"] else {
+            throw SmokeFailure.proxyTestConfigurationUnavailable
+        }
+        try verifyProxyProtocols(port: port, socksPort: port, target: target)
+    }
+
+    private static func verifyProxyProtocols(
+        port: Int,
+        socksPort: Int,
+        target: String
+    ) throws {
         try runCurl([
             "--noproxy", "", "--fail", "--silent", "--show-error", "--max-time", "10",
-            "--proxy", "http://127.0.0.1:\(httpPort)", target
+            "--proxy", "http://127.0.0.1:\(port)", target
         ])
         try runCurl([
             "--noproxy", "", "--fail", "--silent", "--show-error", "--max-time", "10",
@@ -264,6 +369,13 @@ struct AppModelSmoke {
     }
 
     private static func processID(containing marker: String) throws -> pid_t {
+        guard let first = try processIDs(containing: marker).first else {
+            throw SmokeFailure.coreProcessNotFound
+        }
+        return first
+    }
+
+    private static func processIDs(containing marker: String) throws -> [pid_t] {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(filePath: "/usr/bin/pgrep")
@@ -278,11 +390,62 @@ struct AppModelSmoke {
             .split(whereSeparator: \.isNewline)
             .compactMap { pid_t($0) }
             .filter { $0 != getpid() }
-        guard let pid = values.first else {
-            throw SmokeFailure.coreProcessNotFound
-        }
-        return pid
+        return values
     }
+}
+
+/// The command-line integration host is not an entitled container for the
+/// system Network Extension. Startup still exercises the production cold-host
+/// cleanup call, while this inert boundary makes that cleanup deterministic
+/// instead of asking NetworkExtension.framework to load user preferences.
+private actor InertNetworkExtensionControl: NetworkExtensionControlling {
+    func enable(
+        _ configuration: NetworkExtensionRuntimeConfiguration,
+        progress reportProgress: @escaping @Sendable (
+            NetworkExtensionEnableProgress
+        ) -> Void
+    ) async throws -> NetworkExtensionEnableOutcome {
+        .running
+    }
+
+    func disable() async throws {}
+
+    func uninstall() async throws -> NetworkExtensionUninstallOutcome {
+        .uninstalled
+    }
+
+    func currentState() async -> NetworkExtensionControlState {
+        .inactive
+    }
+
+    func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus {
+        throw URLError(.unsupportedURL)
+    }
+
+    func appRoutingActivity(
+        after cursor: UInt64,
+        limit: Int
+    ) async throws -> AppRoutingActivityBatch {
+        AppRoutingActivityBatch(
+            activities: [],
+            nextCursor: cursor,
+            droppedBeforeSequence: nil,
+            hasMore: false
+        )
+    }
+
+    func clearAppRoutingActivity() async throws {}
+}
+
+@MainActor
+private final class InertNetworkEnvironmentMonitor: NetworkEnvironmentMonitoring {
+    func start() -> AsyncStream<NetworkEnvironmentEvent> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func stop() {}
 }
 
 private enum SmokeFailure: Error {
@@ -301,6 +464,61 @@ private enum SmokeFailure: Error {
     case coreProcessNotFound
     case coreTerminationFailed(Int32)
     case crashRecoveryDidNotRestoreSystemProxy(String)
+    case auxiliaryProfileDidNotStart
+    case occupiedAuxiliaryRuntimePortWasAccepted
+    case auxiliaryRuntimePortRollbackFailed
+    case profileRuntimeUpdateStayedBusy(String)
+    case gracefulShutdownFailed
+    case gracefulShutdownLeftCoreProcesses
+    case gracefulShutdownLeftPortsOccupied
+}
+
+private final class OccupiedIPv6TCPPort {
+    let descriptor: Int32
+    let port: Int
+
+    init() throws {
+        let socketDescriptor = Darwin.socket(AF_INET6, SOCK_STREAM, 0)
+        guard socketDescriptor >= 0 else {
+            throw SmokeFailure.coreTerminationFailed(errno)
+        }
+
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = 0
+        address.sin6_addr = in6addr_loopback
+        let bindResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(
+                    socketDescriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in6>.size)
+                )
+            }
+        }
+        guard bindResult == 0, Darwin.listen(socketDescriptor, 128) == 0 else {
+            Darwin.close(socketDescriptor)
+            throw SmokeFailure.coreTerminationFailed(errno)
+        }
+
+        var addressLength = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        let lookupResult = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.getsockname(socketDescriptor, $0, &addressLength)
+            }
+        }
+        guard lookupResult == 0 else {
+            Darwin.close(socketDescriptor)
+            throw SmokeFailure.coreTerminationFailed(errno)
+        }
+        descriptor = socketDescriptor
+        port = Int(UInt16(bigEndian: address.sin6_port))
+    }
+
+    deinit {
+        Darwin.close(descriptor)
+    }
 }
 
 private final class OccupiedTCPPort {

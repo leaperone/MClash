@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="${0:A:h:h}"
 source "${repo_root}/scripts/mihomo-alpha-common.sh"
 version="${MCLASH_VERSION:-}"
+bundle_version="${MCLASH_BUNDLE_VERSION:-${version%%[-+]*}}"
 build_number="${MCLASH_BUILD_NUMBER:-}"
 release_tag="${MCLASH_RELEASE_TAG:-v${version}}"
 identity="${CODE_SIGN_IDENTITY:-}"
@@ -35,6 +36,10 @@ if [[ -z "${version}" || -z "${build_number}" || -z "${identity}" ]]; then
 fi
 if [[ ! "${version}" =~ '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' ]]; then
   print -u2 "MCLASH_VERSION must be a semantic version: ${version}"
+  exit 2
+fi
+if [[ ! "${bundle_version}" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
+  print -u2 "MCLASH_BUNDLE_VERSION must contain three dot-separated integers: ${bundle_version}"
   exit 2
 fi
 if [[ ! "${build_number}" =~ '^[1-9][0-9]*$' ]]; then
@@ -271,6 +276,7 @@ sign_application() {
 
 export CONFIGURATION=release
 export MCLASH_VERSION="${version}"
+export MCLASH_BUNDLE_VERSION="${bundle_version}"
 export MCLASH_BUILD_NUMBER="${build_number}"
 export CODE_SIGN_IDENTITY="${identity}"
 "${repo_root}/scripts/build-app.sh"

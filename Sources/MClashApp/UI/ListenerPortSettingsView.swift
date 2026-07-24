@@ -3,7 +3,6 @@ import SwiftUI
 enum ListenerPortMode: String, CaseIterable, Identifiable {
     case profile
     case custom
-    case off
 
     var id: Self { self }
 
@@ -11,7 +10,6 @@ enum ListenerPortMode: String, CaseIterable, Identifiable {
         switch self {
         case .profile: "Use Profile"
         case .custom: "Custom"
-        case .off: "Off"
         }
     }
 }
@@ -26,13 +24,8 @@ struct ListenerPortDraft: Equatable {
         profileValue = effectiveValue
         self.suggestedValue = suggestedValue
         if let override {
-            if override == 0 {
-                mode = .off
-                customValue = String(effectiveValue ?? suggestedValue)
-            } else {
-                mode = .custom
-                customValue = String(override)
-            }
+            mode = .custom
+            customValue = String(override)
         } else {
             mode = .profile
             customValue = String(effectiveValue.flatMap { $0 > 0 ? $0 : nil } ?? suggestedValue)
@@ -42,7 +35,6 @@ struct ListenerPortDraft: Equatable {
     var overrideValue: Int? {
         switch mode {
         case .profile: nil
-        case .off: 0
         case .custom: Int(customValue)
         }
     }
@@ -51,8 +43,6 @@ struct ListenerPortDraft: Equatable {
         switch mode {
         case .profile:
             return profileValue.flatMap { $0 > 0 ? $0 : nil }
-        case .off:
-            return nil
         case .custom:
             guard let value = Int(customValue), value > 0 else { return nil }
             return value
@@ -74,64 +64,33 @@ struct ListenerPortDraft: Equatable {
 }
 
 struct ListenerPortSettingsDraft: Equatable {
-    var http: ListenerPortDraft
-    var socks: ListenerPortDraft
     var mixed: ListenerPortDraft
 
     init(
         overrides: RuntimePortOverrides,
-        profileHTTPPort: Int?,
-        profileSOCKSPort: Int?,
         profileMixedPort: Int?
     ) {
-        http = ListenerPortDraft(
-            override: overrides.port,
-            effectiveValue: profileHTTPPort,
-            suggestedValue: 7_890
-        )
-        socks = ListenerPortDraft(
-            override: overrides.socksPort,
-            effectiveValue: profileSOCKSPort,
-            suggestedValue: 7_891
-        )
         mixed = ListenerPortDraft(
             override: overrides.mixedPort,
             effectiveValue: profileMixedPort,
-            suggestedValue: 7_892
+            suggestedValue: 7_890
         )
     }
 
     var validationMessage: String? {
-        if let message = http.validationMessage { return "HTTP: \(message)" }
-        if let message = socks.validationMessage { return "SOCKS5: \(message)" }
         if let message = mixed.validationMessage { return "Mixed: \(message)" }
-
-        let enabled = [
-            ("HTTP", http.effectiveValue),
-            ("SOCKS5", socks.effectiveValue),
-            ("Mixed", mixed.effectiveValue),
-        ]
-        for index in enabled.indices {
-            guard let port = enabled[index].1 else { continue }
-            for otherIndex in enabled.index(after: index)..<enabled.endIndex
-                where enabled[otherIndex].1 == port {
-                return "\(enabled[index].0) and \(enabled[otherIndex].0) cannot both use port \(port)."
-            }
-        }
         return nil
     }
 
     func applying(to overrides: RuntimeOverrides) -> RuntimeOverrides {
         var updated = overrides
-        updated.ports.port = http.overrideValue
-        updated.ports.socksPort = socks.overrideValue
+        updated.ports.port = 0
+        updated.ports.socksPort = 0
         updated.ports.mixedPort = mixed.overrideValue
         return updated
     }
 
     mutating func useProfileForAll() {
-        http.useProfile()
-        socks.useProfile()
         mixed.useProfile()
     }
 }
@@ -145,11 +104,7 @@ struct ListenerPortSettingsEditor: View {
     @State private var errorMessage: String?
     @FocusState private var focusedListener: ListenerKind?
 
-    private enum ListenerKind: Hashable {
-        case http
-        case socks
-        case mixed
-    }
+    private enum ListenerKind: Hashable { case mixed }
 
     init(model: AppModel, isPresented: Binding<Bool>) {
         self.model = model
@@ -158,8 +113,6 @@ struct ListenerPortSettingsEditor: View {
         _draft = State(
             initialValue: ListenerPortSettingsDraft(
                 overrides: model.runtimeOverrides.ports,
-                profileHTTPPort: profilePorts.port,
-                profileSOCKSPort: profilePorts.socksPort,
                 profileMixedPort: profilePorts.mixedPort
             )
         )
@@ -168,9 +121,9 @@ struct ListenerPortSettingsEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("Local Proxy Ports")
+                Text("Local Proxy Port")
                     .font(.title2.weight(.semibold))
-                Text("Choose which ports MClash should use without changing your subscription.")
+                Text("Choose one Mixed port for HTTP, HTTPS proxy, and SOCKS5 clients.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -183,22 +136,10 @@ struct ListenerPortSettingsEditor: View {
             Form {
                 Section("Listeners") {
                     portRow(
-                        title: "HTTP",
-                        subtitle: "Also handles HTTPS proxy connections",
-                        systemImage: "globe",
-                        draft: $draft.http,
-                        kind: .http
-                    )
-                    portRow(
-                        title: "SOCKS5",
-                        subtitle: "For apps that support SOCKS proxies",
-                        systemImage: "point.3.connected.trianglepath.dotted",
-                        draft: $draft.socks,
-                        kind: .socks
-                    )
-                    portRow(
                         title: "Mixed",
-                        subtitle: "One port that accepts both HTTP and SOCKS5",
+                        subtitle: AppLocalization.string(
+                            "One port that accepts both HTTP and SOCKS5"
+                        ),
                         systemImage: "arrow.triangle.branch",
                         draft: $draft.mixed,
                         kind: .mixed
@@ -230,7 +171,7 @@ struct ListenerPortSettingsEditor: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button("Use Profile for All") {
+                    Button("Use Profile") {
                         draft.useProfileForAll()
                         errorMessage = nil
                     }
@@ -262,7 +203,7 @@ struct ListenerPortSettingsEditor: View {
             .padding(.vertical, 16)
             .background(.bar)
         }
-        .frame(minWidth: 520, idealWidth: 560, minHeight: 500, idealHeight: 560)
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 390, idealHeight: 430)
         .interactiveDismissDisabled(isSaving)
     }
 
@@ -356,8 +297,6 @@ struct ListenerPortSettingsEditor: View {
             } else {
                 "Not set"
             }
-        case .off:
-            "Disabled"
         case .custom:
             draft.customValue
         }

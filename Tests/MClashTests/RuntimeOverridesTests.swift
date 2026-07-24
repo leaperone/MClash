@@ -220,6 +220,313 @@ struct RuntimeOverridesTests {
         #expect(ports.tproxyPort == nil)
     }
 
+    @Test("Bound-port scan covers advanced DNS and custom listeners only")
+    func scansEveryPrimaryBoundPort() throws {
+        let configuration = Data(
+            #"""
+            port: 0
+            socks-port: 0
+            mixed-port: 7890
+            redir-port: !!int 7891
+            tproxy-port: 7892
+            "\u0065xternal-controller": "127.0.0.1\u003a9090"
+            dns:
+              enable: true
+              listen: !!str "0.0.0.0:1053"
+            listeners:
+              - name: custom-http
+                type: http
+                port: 18080/18082-18083
+              - {name: custom-socks, type: socks, port: "18081"}
+              - name: tagged-mixed
+                type: mixed
+                port: !!int 18084
+            ss-config: ss://YWVzLTI1Ni1nY206cGFzc3dvcmRAMTI3LjAuMC4xOjYyMDA1
+            vmess-config: vmess://1:00000000-0000-0000-0000-000000000000@:12345
+            tuic-server:
+              enable: true
+              listen: 127.0.0.1:10443
+            tunnels:
+              - tcp/udp,127.0.0.1:6553,8.8.8.8:53,DIRECT
+              - network: [tcp, udp]
+                address: 127.0.0.1:7777
+                target: 8.8.4.4:53
+            proxies:
+              - name: remote
+                type: socks5
+                server: example.com
+                port: 443
+            """#.utf8
+        )
+
+        let ports = try RuntimeConfigurationComposer()
+            .boundListenerPorts(in: configuration)
+
+        #expect(
+            ports == [
+                6553, 7777, 7890, 7891, 7892, 9090, 10443, 1053,
+                12345, 18080, 18081, 18082, 18083, 18084, 62005,
+            ]
+        )
+        #expect(!ports.contains(443))
+        #expect(!ports.contains(53))
+    }
+
+    @Test("Bound-port scan handles inline DNS maps")
+    func scansInlineDNSListen() throws {
+        let configuration = Data(
+            "mixed-port: 7890\ndns: {enable: true, listen: '[::1]:5353'}\n".utf8
+        )
+        #expect(
+            try RuntimeConfigurationComposer()
+                .boundListenerPorts(in: configuration) == [7890, 5353]
+        )
+    }
+
+    @Test("Bound-port scan normalizes reverse listener ranges and rejects ephemeral ports")
+    func validatesListenerPortSpecifications() throws {
+        let reverseRange = Data(
+            """
+            listeners:
+              - name: reverse-range
+                type: mixed
+                port: 62042-62040
+            """.utf8
+        )
+        #expect(
+            try RuntimeConfigurationComposer()
+                .boundListenerPorts(in: reverseRange) == [62040, 62041, 62042]
+        )
+
+        for invalidSpecification in ["0", "65536", "62040,,62041"] {
+            let configuration = Data(
+                """
+                listeners:
+                  - name: invalid
+                    type: mixed
+                    port: \(invalidSpecification)
+                """.utf8
+            )
+            #expect(
+                throws: RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax("listeners.port")
+            ) {
+                try RuntimeConfigurationComposer()
+                    .boundListenerPorts(in: configuration)
+            }
+        }
+    }
+
+    @Test("Bound-port scan fails closed for merged or block-scalar bindings")
+    func rejectsUnexpandedBindingSyntax() {
+        let composer = RuntimeConfigurationComposer()
+        let mergedDNS = Data(
+            """
+            dns-template: &dns-template
+              enable: true
+              listen: 127.0.0.1:62015
+            dns: {<<: *dns-template}
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("dns.<<")
+        ) {
+            try composer.boundListenerPorts(in: mergedDNS)
+        }
+
+        let blockDNS = Data(
+            """
+            dns:
+              enable: true
+              listen: >-
+                127.0.0.1:62016
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("dns.listen")
+        ) {
+            try composer.boundListenerPorts(in: blockDNS)
+        }
+
+        let escapedMultilineDNS = Data(
+            #"""
+            dns:
+              enable: true
+              listen: "127.0.0.1:620\
+                34"
+            """#.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("dns.listen")
+        ) {
+            try composer.boundListenerPorts(in: escapedMultilineDNS)
+        }
+
+        let foldedPlainDNS = Data(
+            """
+            dns:
+              enable: true
+              listen: 127.0.0.1:620
+                35
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("dns.listen")
+        ) {
+            try composer.boundListenerPorts(in: foldedPlainDNS)
+        }
+
+        let outOfRangeDNS = Data(
+            """
+            dns:
+              enable: true
+              listen: 127.0.0.1:99999
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("dns.listen")
+        ) {
+            try composer.boundListenerPorts(in: outOfRangeDNS)
+        }
+
+        let aliasedListener = Data(
+            """
+            listener-template: &listener-template
+              name: aliased
+              type: mixed
+              port: 62017
+            listeners:
+              - *listener-template
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("listeners alias")
+        ) {
+            try composer.boundListenerPorts(in: aliasedListener)
+        }
+
+        let rootMerge = Data(
+            """
+            defaults: &defaults
+              mixed-port: 62018
+            <<: *defaults
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("root mapping")
+        ) {
+            try composer.boundListenerPorts(in: rootMerge)
+        }
+
+        let scalarAlias = Data(
+            """
+            shared-port: &shared-port 62019
+            redir-port: *shared-port
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("redir-port")
+        ) {
+            try composer.boundListenerPorts(in: scalarAlias)
+        }
+
+        let escapedBindingKey = Data(
+            #"""
+            listeners:
+              - name: escaped-key
+                type: mixed
+                "po\u0072t": 62020
+            """#.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("listeners mapping key")
+        ) {
+            try composer.boundListenerPorts(in: escapedBindingKey)
+        }
+
+        let nonDecimalPort = Data(
+            """
+            listeners:
+              - name: non-decimal
+                type: mixed
+                port: 0xF245
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("listeners.port")
+        ) {
+            try composer.boundListenerPorts(in: nonDecimalPort)
+        }
+
+        let blockTunnel = Data(
+            """
+            tunnels:
+              - >-
+                tcp,127.0.0.1:62021,example.com:443,DIRECT
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("tunnels compact scalar")
+        ) {
+            try composer.boundListenerPorts(in: blockTunnel)
+        }
+
+        let keyProperty = Data(
+            """
+            listeners:
+              - name: key-property
+                type: mixed
+                &binding-key port: 62022
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("listeners mapping key")
+        ) {
+            try composer.boundListenerPorts(in: keyProperty)
+        }
+
+        let leadingZeroInteger = Data(
+            """
+            mixed-port: 0777
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("mixed-port")
+        ) {
+            try composer.boundListenerPorts(in: leadingZeroInteger)
+        }
+
+        let listenerLeadingZeroInteger = Data(
+            """
+            listeners:
+              - name: octal
+                type: mixed
+                port: !!int "0_777"
+            """.utf8
+        )
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax(
+                    "listeners.port leading-zero integer"
+                )
+        ) {
+            try composer.boundListenerPorts(in: listenerLeadingZeroInteger)
+        }
+    }
+
     @Test("Nil and empty rule layers have explicit no-op persistence semantics")
     func emptyRuleLayersAreNoOpButRemainPersisted() async throws {
         let fixture = try Fixture()

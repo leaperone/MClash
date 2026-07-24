@@ -281,6 +281,7 @@ struct AppRoutingView: View {
                 draft: $draft,
                 applicationCandidates: applicationCandidates,
                 processCandidates: processCandidates,
+                routingProfiles: model.profiles,
                 mihomoGroupNames: model.proxyTopology.groupOrder,
                 existingRuleIDs: Set(rules.map(\.id).filter { $0 != editingRuleID }),
                 appliesImmediately: model.networkCapturePreferences.enabled
@@ -790,7 +791,7 @@ struct AppRoutingView: View {
                 statusNotice(
                     title: "Rules updated without interrupting connections",
                     message: dnsEnabled
-                        ? "New connections now use the updated rules. Mihomo, existing App Routing relays, and DNS Routing stayed online. Completed in \(formattedDuration(receipt.duration))."
+                        ? "New connections now use the updated rules. DNS Routing was refreshed through the verified provider path. Completed in \(formattedDuration(receipt.duration))."
                         : "New connections now use the updated rules. Mihomo and existing App Routing relays stayed online. Completed in \(formattedDuration(receipt.duration)).",
                     symbol: "checkmark.circle.fill",
                     color: .green
@@ -1593,11 +1594,18 @@ struct AppRoutingView: View {
         case .failOpen:
             return "Fail-open"
         case let .mihomo(route):
-            return switch route {
-            case .profileRules: "Mihomo Rules"
-            case .global: "Mihomo Global"
+            let target = switch route.profileRoute {
+            case .rules: "Rules"
+            case .global: "Global"
             case let .group(group): group
             }
+            guard let profileID = route.routingProfileID else {
+                return "Mihomo \(target)"
+            }
+            let name = model.profiles.first {
+                $0.id.rawValue == profileID.uuid
+            }?.name ?? AppLocalization.string("Unavailable profile")
+            return "\(name) · \(target)"
         }
     }
 
@@ -1774,6 +1782,8 @@ struct AppRoutingView: View {
         case .mihomo(.profileRules): "Mihomo Rules"
         case .mihomo(.global): "Mihomo GLOBAL"
         case let .mihomo(.group(group)): group
+        case let .mihomo(.profile(profileID, target)):
+            "\(routingProfileName(profileID)) · \(profileRouteTitle(target))"
         }
     }
 
@@ -1921,7 +1931,8 @@ struct AppRoutingView: View {
         selectedRuleID = nil
         draft = CaptureRuleDraft(
             identifier: uniqueRuleName("New Rule"),
-            priority: nextPriority
+            priority: nextPriority,
+            routingProfileID: model.activeProfileID
         )
         editorError = nil
         showingEditor = true
@@ -2175,6 +2186,22 @@ struct AppRoutingView: View {
         case .mihomo(.profileRules): "Mihomo Rules"
         case .mihomo(.global): "Mihomo Global"
         case let .mihomo(.group(group)): group
+        case let .mihomo(.profile(profileID, target)):
+            "\(routingProfileName(profileID)) · \(profileRouteTitle(target))"
+        }
+    }
+
+    private func routingProfileName(_ profileID: RoutingProfileID) -> String {
+        model.profiles.first {
+            $0.id.rawValue == profileID.uuid
+        }?.name ?? AppLocalization.string("Unavailable profile")
+    }
+
+    private func profileRouteTitle(_ route: MihomoProfileRoute) -> String {
+        switch route {
+        case .rules: "Rules"
+        case .global: "Global"
+        case let .group(group): group
         }
     }
 

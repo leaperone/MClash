@@ -16,7 +16,7 @@ struct NetworkCaptureConfigurationStoreTests {
         #expect(value.enabled)
         #expect(value.dnsEnabled)
         #expect(value.failOpen)
-        #expect(value.snapshot.revision == 0)
+        #expect(value.snapshot.revision == 1)
         #expect(value.snapshot.rules.isEmpty)
     }
 
@@ -83,7 +83,7 @@ struct NetworkCaptureConfigurationStoreTests {
         )
         let loaded = try await store.load()
 
-        #expect(saved.snapshot.revision == 1)
+        #expect(saved.snapshot.revision == 2)
         #expect(loaded == saved)
         #expect(loaded.snapshot.rules == [rule])
 

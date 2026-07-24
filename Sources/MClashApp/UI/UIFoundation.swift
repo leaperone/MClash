@@ -20,16 +20,12 @@ enum MClashLayout {
 extension AppModel.LocalListenerKind {
     var presentationTitle: String {
         switch self {
-        case .http: "HTTP"
-        case .socks5: "SOCKS5"
         case .mixed: "Mixed"
         }
     }
 
     var presentationSystemImage: String {
         switch self {
-        case .http: "globe"
-        case .socks5: "point.3.connected.trianglepath.dotted"
         case .mixed: "arrow.triangle.branch"
         }
     }

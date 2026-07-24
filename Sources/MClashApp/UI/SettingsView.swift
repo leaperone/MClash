@@ -35,6 +35,8 @@ struct SettingsView: View {
 
             Section("Startup") {
                 Toggle("Open MClash at login", isOn: launchAtLoginBinding)
+                Toggle("Open quietly at login", isOn: $model.openAtLoginSilently)
+                    .disabled(!model.launchAtLogin)
                 if model.launchAtLoginRequiresApproval {
                     HStack {
                         Label("macOS approval is required before MClash can open at login.", systemImage: "exclamationmark.triangle.fill")
@@ -46,7 +48,11 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Toggle("Connect the active profile when MClash opens", isOn: $model.autoConnectOnLaunch)
+                Toggle("Restore the last connected session when MClash opens", isOn: $model.autoConnectOnLaunch)
+                Toggle("Lightweight mode", isOn: $model.lightweightMode)
+                Text("Lightweight mode pauses background traffic and connection telemetry while MClash is hidden. Proxying, App Routing, DNS routing, subscription updates, and recovery stay active.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle(
                     "Enable App Routing automatically after connecting",
                     isOn: Binding(
@@ -73,6 +79,7 @@ struct SettingsView: View {
                         }
                     )
                 )
+                .disabled(model.lightweightMode)
                 Text("Proxy Status uses three fixed-width fields for download, upload, and connections. Network Icon uses less background telemetry.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -157,17 +164,15 @@ struct SettingsView: View {
             }
 
             Section("Local Proxy") {
-                if model.localListenerEndpoints.isEmpty {
+                if let endpoint = model.localListenerEndpoints.first {
+                    listenerAddressRow(endpoint)
+                } else {
                     Text(
                         model.isConnected
                             ? "No local listener is currently available."
                             : "Connect the active profile to see its live listener addresses."
                     )
                     .foregroundStyle(.secondary)
-                } else {
-                    ForEach(model.localListenerEndpoints) { endpoint in
-                        listenerAddressRow(endpoint)
-                    }
                 }
 
                 Button(model.isConnected ? "Edit Ports & Restart…" : "Edit Ports…") {
@@ -177,7 +182,7 @@ struct SettingsView: View {
 
                 runtimeSettingsFeedback
 
-                Text("HTTP also handles HTTPS proxy connections. Mixed accepts both HTTP and SOCKS5 on one port. Port changes are validated and automatically restart a running core.")
+                Text("MClash exposes one Mixed port that accepts HTTP, HTTPS proxy, and SOCKS5 clients. Port changes are validated and automatically restart a running core.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -645,7 +650,7 @@ private struct RuntimeSettingsEditor: View {
                 Section("Transparent Proxy Ports") {
                     OptionalPortField("Redirect", value: $overrides.ports.redirPort, suggestedValue: 0)
                     OptionalPortField("TProxy", value: $overrides.ports.tproxyPort, suggestedValue: 0)
-                    Text("HTTP, SOCKS5, and Mixed ports are configured from Local Proxy settings. A value of 0 disables these advanced listeners.")
+                    Text("The Mixed port is configured from Local Proxy settings. Separate HTTP and SOCKS5 listeners are disabled by MClash.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -8,6 +8,7 @@ struct CaptureRuleEditorSheet: View {
     @Binding private var draft: CaptureRuleDraft
     private let applicationCandidates: [ApplicationCaptureCandidate]
     private let processCandidates: [RunningProcessCaptureCandidate]
+    private let routingProfiles: [ProfileMetadata]
     private let mihomoGroupNames: [String]
     private let existingRuleIDs: Set<String>
     private let appliesImmediately: Bool
@@ -28,6 +29,7 @@ struct CaptureRuleEditorSheet: View {
         draft: Binding<CaptureRuleDraft>,
         applicationCandidates: [ApplicationCaptureCandidate],
         processCandidates: [RunningProcessCaptureCandidate],
+        routingProfiles: [ProfileMetadata] = [],
         mihomoGroupNames: [String] = [],
         existingRuleIDs: Set<String> = [],
         appliesImmediately: Bool = false,
@@ -37,6 +39,7 @@ struct CaptureRuleEditorSheet: View {
         _draft = draft
         self.applicationCandidates = applicationCandidates
         self.processCandidates = processCandidates
+        self.routingProfiles = routingProfiles
         self.mihomoGroupNames = mihomoGroupNames
         self.existingRuleIDs = existingRuleIDs
         self.appliesImmediately = appliesImmediately
@@ -362,7 +365,40 @@ struct CaptureRuleEditorSheet: View {
         Section("Action") {
             Picker("Route traffic", selection: $draft.action) {
                 ForEach(CaptureRuleDraftAction.allCases) { action in
-                    Text(action.title).tag(action)
+                    Text(action.title)
+                        .tag(action)
+                        .disabled(
+                            action == .mihomoGroup
+                                && draft.routingProfileID != nil
+                        )
+                }
+            }
+
+            if routesThroughMihomo {
+                Picker("Profile", selection: $draft.routingProfileID) {
+                    Text("Current default profile").tag(nil as ProfileID?)
+                    ForEach(routingProfiles) { profile in
+                        Text(profile.name).tag(profile.id as ProfileID?)
+                    }
+                    if let selected = draft.routingProfileID,
+                       !routingProfiles.contains(where: { $0.id == selected }) {
+                        Text(
+                            AppLocalization.format(
+                                "Unavailable profile · %@",
+                                selected.description
+                            )
+                        )
+                            .tag(selected as ProfileID?)
+                    }
+                }
+
+                Text("Each selected profile runs in its own Mihomo session with an independent Mixed port and private App Routing listener.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if draft.routingProfileID != nil {
+                    Text("Policy-group routing is currently available only for the default profile. Other profiles support Profile Rules and GLOBAL.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -383,6 +419,12 @@ struct CaptureRuleEditorSheet: View {
             Text(actionHelp)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .onChange(of: draft.routingProfileID) { _, profileID in
+            if profileID != nil, draft.action == .mihomoGroup {
+                draft.action = .mihomoProfileRules
+                draft.mihomoGroup = ""
+            }
         }
     }
 
@@ -635,17 +677,29 @@ struct CaptureRuleEditorSheet: View {
     }
 
     private var actionHelp: String {
-        switch draft.action {
+        let profileName = routingProfiles.first(where: {
+            $0.id == draft.routingProfileID
+        })?.name ?? "the current default profile"
+        return switch draft.action {
         case .mihomoProfileRules:
-            "Send matching traffic to Mihomo and apply the active profile's routing rules."
+            "Send matching traffic to \(profileName) and apply that profile's routing rules."
         case .mihomoGlobal:
-            "Send matching traffic directly to Mihomo's GLOBAL routing target through a dedicated private listener."
+            "Send matching traffic to \(profileName)'s GLOBAL target through a dedicated private listener."
         case .mihomoGroup:
-            "Send matching traffic directly to the selected Mihomo policy group through its own private listener."
+            "Send matching traffic to the selected policy group in \(profileName) through its own private listener."
         case .direct:
             "Connect matching traffic directly without using a proxy."
         case .reject:
             "Block matching connections."
+        }
+    }
+
+    private var routesThroughMihomo: Bool {
+        switch draft.action {
+        case .mihomoProfileRules, .mihomoGlobal, .mihomoGroup:
+            true
+        case .direct, .reject:
+            false
         }
     }
 

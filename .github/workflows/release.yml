@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.2.3"
+        default: "1.3.0-rc.1"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -18,7 +18,7 @@ on:
       prerelease:
         description: "Publish as a GitHub prerelease"
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -35,6 +35,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.metadata.outputs.version }}
+      bundle_version: ${{ steps.metadata.outputs.bundle_version }}
       tag: ${{ steps.metadata.outputs.tag }}
       build_number: ${{ steps.metadata.outputs.build_number }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
@@ -68,6 +69,15 @@ jobs:
             echo "Invalid release version: ${version}" >&2
             exit 2
           fi
+          bundle_version="${version%%[-+]*}"
+          if [[ ! "${bundle_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid Apple bundle version: ${bundle_version}" >&2
+            exit 2
+          fi
+          if [[ "${version}" == *-* && "${prerelease}" != "true" ]]; then
+            echo "A suffixed version must be published as a prerelease: ${version}" >&2
+            exit 2
+          fi
           build_number="${INPUT_BUILD_NUMBER:-${RUN_NUMBER}}"
           if [[ ! "${build_number}" =~ ^[1-9][0-9]*$ ]]; then
             echo "Invalid build number: ${build_number}" >&2
@@ -75,6 +85,7 @@ jobs:
           fi
           {
             echo "version=${version}"
+            echo "bundle_version=${bundle_version}"
             echo "tag=${tag}"
             echo "build_number=${build_number}"
             echo "prerelease=${prerelease}"
@@ -120,6 +131,7 @@ jobs:
       contents: write
     env:
       MCLASH_VERSION: ${{ needs.prepare.outputs.version }}
+      MCLASH_BUNDLE_VERSION: ${{ needs.prepare.outputs.bundle_version }}
       MCLASH_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       MCLASH_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
       MCLASH_RELEASE_NOTES: ${{ github.workspace }}/ReleaseNotes/${{ needs.prepare.outputs.version }}.md

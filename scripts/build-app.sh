@@ -5,7 +5,7 @@ repo_root="${0:A:h:h}"
 source "${repo_root}/scripts/mihomo-alpha-common.sh"
 
 configuration="${CONFIGURATION:-release}"
-app_version="${MCLASH_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${repo_root}/Support/Info.plist")}"
+app_version="${MCLASH_BUNDLE_VERSION:-${MCLASH_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${repo_root}/Support/Info.plist")}}"
 build_number="${MCLASH_BUILD_NUMBER:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${repo_root}/Support/Info.plist")}"
 code_sign_identity="${CODE_SIGN_IDENTITY:--}"
 build_root="${repo_root}/.build/${configuration}"

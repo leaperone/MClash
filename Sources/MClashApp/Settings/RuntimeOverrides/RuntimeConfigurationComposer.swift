@@ -126,6 +126,107 @@ public struct RuntimeConfigurationComposer: Sendable {
         return result
     }
 
+    /// Extracts every TCP/UDP listener port that the final primary mihomo
+    /// configuration can bind. This is intentionally broader than the
+    /// user-facing Mixed-port editor: Redirect, TProxy, DNS listen, custom
+    /// listeners, and an existing external controller all share the same
+    /// machine-wide port namespace with auxiliary profile sessions.
+    public func boundListenerPorts(in configurationData: Data) throws -> Set<Int> {
+        guard let yaml = String(data: configurationData, encoding: .utf8) else {
+            throw RuntimeConfigurationComposerError.profileIsNotUTF8
+        }
+        let lines = YAMLLine.split(yaml)
+        try Self.validateBoundListenerSyntax(in: yaml, lines: lines)
+        var ports = Set<Int>()
+        let rootIntegerKeys: Set<String> = [
+            "port",
+            "socks-port",
+            "mixed-port",
+            "redir-port",
+            "tproxy-port",
+        ]
+        for line in lines {
+            guard let key = line.rootMappingKey,
+                  rootIntegerKeys.contains(key),
+                  let port = line.rootIntegerValue,
+                  (1...65_535).contains(port) else {
+                continue
+            }
+            ports.insert(port)
+        }
+
+        for (index, line) in lines.enumerated() {
+            guard let key = line.rootMappingKey,
+                  ["dns", "listeners", "tuic-server", "tunnels"].contains(key) else {
+                continue
+            }
+            var end = index + 1
+            while end < lines.count {
+                let candidate = lines[end]
+                if candidate.rootMappingKey != nil
+                    || candidate.isRootDocumentStart
+                    || candidate.isRootDocumentEnd
+                    || candidate.isRootDirective {
+                    break
+                }
+                end += 1
+            }
+            let section = lines[index..<end].map(\.raw).joined()
+            switch key {
+            case "dns", "tuic-server":
+                let pattern =
+                    #"(?m)(?:^|[\{,])\s*["']?listen["']?\s*:\s*(?:!!str[ \t]+)?["']?(?:\[[^\]]+\]|[^\s,'"}]*):([0-9]{1,5})"#
+                let endpointPorts = Self.capturedIntegerValues(
+                    in: section,
+                    pattern: pattern
+                )
+                guard endpointPorts.allSatisfy({ (0...65_535).contains($0) }) else {
+                    throw RuntimeConfigurationComposerError
+                        .unsupportedBoundListenerSyntax("\(key).listen")
+                }
+                ports.formUnion(endpointPorts.filter { $0 > 0 })
+            case "listeners":
+                let pattern =
+                    #"(?m)(?:^|[\{,])\s*(?:-\s*)?["']?port["']?\s*:\s*(?:!!(?:int|str)[ \t]+)?["']?([0-9][0-9_,/ \t-]*)["']?[ \t]*(?=$|#|,|\}|\r?\n)"#
+                ports.formUnion(
+                    try Self.capturedPortSpecifications(
+                        in: section,
+                        pattern: pattern,
+                        binding: "listeners.port"
+                    )
+                )
+            case "tunnels":
+                let addressPattern =
+                    #"(?m)(?:^|[\{,])\s*(?:-\s*)?["']?address["']?\s*:\s*(?:!!str[ \t]+)?["']?(?:\[[^\]]+\]|[^\s,'"}]*):([0-9]{1,5})"#
+                let compactPattern =
+                    #"(?m)^\s*-\s*[^,\r\n]+,\s*(?:\[[^\]]+\]|[^,\s'"}]*):([0-9]{1,5})"#
+                ports.formUnion(Self.capturedPorts(in: section, pattern: addressPattern))
+                ports.formUnion(Self.capturedPorts(in: section, pattern: compactPattern))
+            default:
+                break
+            }
+        }
+
+        for line in lines {
+            guard let key = line.rootMappingKey,
+                  let value = line.rootScalarValue else {
+                continue
+            }
+            if key == "external-controller"
+                || key == "external-controller-tls"
+                || key == "ss-config"
+                || key == "vmess-config" {
+                if let port = Self.endpointPort(in: value) {
+                    ports.insert(port)
+                } else if key == "ss-config",
+                          let port = Self.legacyShadowsocksPort(in: value) {
+                    ports.insert(port)
+                }
+            }
+        }
+        return ports
+    }
+
     public func applying(
         _ overrides: RuntimeOverrides,
         toProfileAt url: URL,
@@ -137,6 +238,78 @@ public struct RuntimeConfigurationComposer: Sendable {
             to: data,
             networkExtensionListener: networkExtensionListener
         )
+    }
+
+    /// Removes profile-owned listener surfaces that cannot safely coexist in
+    /// a multi-core process fleet. MClash adds back only its isolated Mixed
+    /// and authenticated App Routing listeners after this pass.
+    public func sanitizingForManagedSession(_ profileData: Data) throws -> Data {
+        try sanitizing(
+            profileData,
+            removingRootKeys: [
+                "listeners",
+                "tun",
+                "tunnels",
+                "ss-config",
+                "vmess-config",
+                "tuic-server",
+                "external-controller",
+                "external-controller-tls",
+                "external-controller-unix",
+                "external-controller-pipe",
+            ]
+        )
+    }
+
+    /// Compatibility spelling for callers that explicitly describe an
+    /// auxiliary session. Primary and auxiliary sessions intentionally share
+    /// the same MClash-managed inbound surface.
+    public func sanitizingForAuxiliarySession(_ profileData: Data) throws -> Data {
+        try sanitizingForManagedSession(profileData)
+    }
+
+    private func sanitizing(
+        _ profileData: Data,
+        removingRootKeys removedKeys: Set<String>
+    ) throws -> Data {
+        guard let yaml = String(data: profileData, encoding: .utf8) else {
+            throw RuntimeConfigurationComposerError.profileIsNotUTF8
+        }
+        var output: [YAMLLine] = []
+        let lines = YAMLLine.split(yaml)
+        try Self.validateRootMappingStructure(lines)
+        var index = 0
+        var documentStartCount = 0
+        while index < lines.count {
+            let line = lines[index]
+            if line.isRootDocumentStart {
+                documentStartCount += 1
+                if documentStartCount > 1 {
+                    throw RuntimeConfigurationComposerError.multipleYAMLDocumentsUnsupported
+                }
+            }
+            guard let key = line.rootMappingKey,
+                  removedKeys.contains(key) else {
+                output.append(line)
+                index += 1
+                continue
+            }
+            index += 1
+            while index < lines.count {
+                let continuation = lines[index]
+                if continuation.rootMappingKey != nil
+                    || continuation.isRootDocumentStart
+                    || continuation.isRootDocumentEnd
+                    || continuation.isRootDirective {
+                    break
+                }
+                if continuation.isRootTrivia {
+                    output.append(continuation)
+                }
+                index += 1
+            }
+        }
+        return Data(output.map(\.raw).joined().utf8)
     }
 
     private func encodedEntries(for overrides: RuntimeOverrides) throws -> [(key: String, value: String)] {
@@ -155,6 +328,424 @@ public struct RuntimeConfigurationComposer: Sendable {
         try append(overrides.interfaceName, key: "interface-name", to: &entries)
         try append(overrides.logLevel, key: "log-level", to: &entries)
         return entries
+    }
+
+    private static func capturedPorts(
+        in text: String,
+        pattern: String
+    ) -> Set<Int> {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return Set(expression.matches(in: text, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let portRange = Range(match.range(at: 1), in: text),
+                  let port = Int(text[portRange]),
+                  (1...65_535).contains(port) else {
+                return nil
+            }
+            return port
+        })
+    }
+
+    private static func capturedPortSpecifications(
+        in text: String,
+        pattern: String,
+        binding: String
+    ) throws -> Set<Int> {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        var ports = Set<Int>()
+        for match in expression.matches(in: text, range: range) {
+            guard match.numberOfRanges > 1,
+                  let specificationRange = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+            var specification = String(text[specificationRange])
+            specification = specification
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: "/", with: ",")
+            let components = specification.split(
+                separator: ",",
+                omittingEmptySubsequences: false
+            )
+            guard !components.isEmpty else {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax(binding)
+            }
+            for component in components {
+                let trimmed = component.trimmingCharacters(in: .whitespaces)
+                let bounds = trimmed.split(
+                    separator: "-",
+                    maxSplits: 1,
+                    omittingEmptySubsequences: false
+                ).map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                }
+                if bounds.count == 1,
+                   let port = Int(bounds[0]),
+                   (1...65_535).contains(port) {
+                    ports.insert(port)
+                } else if bounds.count == 2,
+                          let lower = Int(bounds[0]),
+                          let upper = Int(bounds[1]),
+                          (1...65_535).contains(lower),
+                          (1...65_535).contains(upper) {
+                    ports.formUnion(min(lower, upper)...max(lower, upper))
+                } else {
+                    throw RuntimeConfigurationComposerError
+                        .unsupportedBoundListenerSyntax(binding)
+                }
+            }
+        }
+        return ports
+    }
+
+    private static func capturedIntegerValues(
+        in text: String,
+        pattern: String
+    ) -> [Int] {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return expression.matches(in: text, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let valueRange = Range(match.range(at: 1), in: text) else {
+                return nil
+            }
+            return Int(text[valueRange])
+        }
+    }
+
+    private static func legacyShadowsocksPort(in value: String) -> Int? {
+        guard value.hasPrefix("ss://") else { return nil }
+        var payload = String(value.dropFirst("ss://".count))
+        if let delimiter = payload.firstIndex(where: {
+            $0 == "#" || $0 == "?"
+        }) {
+            payload = String(payload[..<delimiter])
+        }
+        payload = payload
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = payload.count % 4
+        if remainder != 0 {
+            payload += String(repeating: "=", count: 4 - remainder)
+        }
+        guard let data = Data(base64Encoded: payload),
+              let decoded = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return endpointPort(in: decoded)
+    }
+
+    private static func validateBoundListenerSyntax(
+        in text: String,
+        lines: [YAMLLine]
+    ) throws {
+        try validateRootMappingStructure(lines)
+        let rootIntegerKeys: Set<String> = [
+            "port", "socks-port", "mixed-port", "redir-port", "tproxy-port",
+        ]
+        for line in lines {
+            guard let key = line.rootMappingKey else { continue }
+            if rootIntegerKeys.contains(key) {
+                guard let port = line.rootIntegerValue,
+                      (0...65_535).contains(port) else {
+                    throw RuntimeConfigurationComposerError
+                        .unsupportedBoundListenerSyntax(key)
+                }
+            }
+            if key == "external-controller" || key == "external-controller-tls" {
+                let value = line.rootScalarValue ?? ""
+                guard value.isEmpty
+                    || value == "null"
+                    || value == "~"
+                    || endpointPort(in: value) != nil else {
+                    throw RuntimeConfigurationComposerError
+                        .unsupportedBoundListenerSyntax(key)
+                }
+            }
+            if key == "ss-config" || key == "vmess-config" {
+                let value = line.rootScalarValue ?? ""
+                guard value.isEmpty
+                    || value == "null"
+                    || value == "~"
+                    || endpointPort(in: value) != nil
+                    || (key == "ss-config"
+                        && legacyShadowsocksPort(in: value) != nil) else {
+                    throw RuntimeConfigurationComposerError
+                        .unsupportedBoundListenerSyntax(key)
+                }
+            }
+        }
+
+        for (sectionKey, bindingKey, allowedPattern) in [
+            (
+                "dns",
+                "listen",
+                #"(?m)(?:^|[\{,])\s*["']?listen["']?\s*:\s*(?:!!str[ \t]+)?(?:"(?:\[[^\]"\\\r\n]+\]|[^"\\\s,'{}]*):[0-9]{1,5}"|'(?:\[[^\]'\r\n]+\]|[^'\s,{}]*):[0-9]{1,5}'|(?:\[[^\]\s,'"}]+\]|[^\s,'"}]*):[0-9]{1,5})[ \t]*(?=$|#|,|\})"#
+            ),
+            (
+                "tuic-server",
+                "listen",
+                #"(?m)(?:^|[\{,])\s*["']?listen["']?\s*:\s*(?:!!str[ \t]+)?(?:"(?:\[[^\]"\\\r\n]+\]|[^"\\\s,'{}]*):[0-9]{1,5}"|'(?:\[[^\]'\r\n]+\]|[^'\s,{}]*):[0-9]{1,5}'|(?:\[[^\]\s,'"}]+\]|[^\s,'"}]*):[0-9]{1,5})[ \t]*(?=$|#|,|\})"#
+            ),
+            (
+                "listeners",
+                "port",
+                #"(?m)(?:^|[\{,])\s*(?:-\s*)?["']?port["']?\s*:\s*(?:!!(?:int|str)[ \t]+)?["']?[0-9][0-9_,/ \t-]*["']?[ \t]*(?=$|#|,|\}|\r?\n)"#
+            ),
+            (
+                "tunnels",
+                "address",
+                #"(?m)(?:^|[\{,])\s*(?:-\s*)?["']?address["']?\s*:\s*(?:!!str[ \t]+)?["']?(?:\[[^\]]+\]|[^\s,'"}]*):[0-9]{1,5}"#
+            ),
+        ] {
+            if let rootLine = lines.first(where: {
+                $0.rootMappingKey == sectionKey
+            }), rootLine.rootScalarValue?.hasPrefix("*") == true {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax(sectionKey)
+            }
+            guard let section = rootSection(
+                sectionKey,
+                in: lines
+            ) else {
+                continue
+            }
+            let mergePattern =
+                #"(?m)(?:^|[\{,])\s*(?:-\s*)?["']?<<["']?\s*:"#
+            if matchCount(mergePattern, in: section) > 0 {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax("\(sectionKey).<<")
+            }
+            if containsUnquotedYAMLAlias(in: section) {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax(
+                        "\(sectionKey) alias"
+                    )
+            }
+            if containsUnsupportedMappingKeySyntax(in: section) {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax(
+                        "\(sectionKey) mapping key"
+                    )
+            }
+            if containsIndentedScalarContinuation(
+                after: bindingKey,
+                in: section
+            ) {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax(
+                        "\(sectionKey).\(bindingKey)"
+                    )
+            }
+            if sectionKey == "tunnels",
+               matchCount(#"(?m)^\s*-\s*[>|]"#, in: section) > 0 {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax("tunnels compact scalar")
+            }
+            if sectionKey == "listeners" {
+                let ambiguousIntegerPattern =
+                    #"(?m)(?:^|[\{,])\s*(?:-\s*)?["']?port["']?\s*:\s*(?:(?:!!int[ \t]+["']?0[0-9_]*[0-9]["']?)|(?:0[0-9_]*[0-9]))[ \t]*(?=$|#|,|\}|\r?\n)"#
+                if matchCount(ambiguousIntegerPattern, in: section) > 0 {
+                    throw RuntimeConfigurationComposerError
+                        .unsupportedBoundListenerSyntax(
+                            "listeners.port leading-zero integer"
+                        )
+                }
+            }
+            let bindingPattern =
+                #"(?m)(?:^|[\{,])\s*(?:-\s*)?["']?"#
+                + NSRegularExpression.escapedPattern(for: bindingKey)
+                + #"["']?\s*:"#
+            guard matchCount(bindingPattern, in: section)
+                == matchCount(allowedPattern, in: section) else {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax(
+                        "\(sectionKey).\(bindingKey)"
+                    )
+            }
+        }
+    }
+
+    private static func validateRootMappingStructure(
+        _ lines: [YAMLLine]
+    ) throws {
+        for line in lines where !line.isIndentedContent && !line.isRootTrivia {
+            guard line.isRootDocumentStart
+                    || line.isRootDocumentEnd
+                    || line.isRootDirective
+                    || line.rootMappingKey != nil else {
+                throw RuntimeConfigurationComposerError
+                    .unsupportedBoundListenerSyntax("root mapping")
+            }
+        }
+    }
+
+    private static func containsIndentedScalarContinuation(
+        after bindingKey: String,
+        in section: String
+    ) -> Bool {
+        let lines = YAMLLine.split(section)
+        let bindingPattern =
+            #"^\s*(?:-\s*)?["']?"#
+            + NSRegularExpression.escapedPattern(for: bindingKey)
+            + #"["']?\s*:"#
+        guard let expression = try? NSRegularExpression(
+            pattern: bindingPattern
+        ) else {
+            return true
+        }
+        for index in lines.indices {
+            let line = lines[index]
+            let range = NSRange(line.raw.startIndex..<line.raw.endIndex, in: line.raw)
+            guard expression.firstMatch(in: line.raw, range: range) != nil else {
+                continue
+            }
+            let indentation = line.raw.prefix {
+                $0 == " " || $0 == "\t"
+            }.count
+            var continuationIndex = index + 1
+            while continuationIndex < lines.count,
+                  lines[continuationIndex].isYAMLTrivia {
+                continuationIndex += 1
+            }
+            guard continuationIndex < lines.count else { continue }
+            let continuation = lines[continuationIndex]
+            let continuationIndentation = continuation.raw.prefix {
+                $0 == " " || $0 == "\t"
+            }.count
+            if continuationIndentation > indentation {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func containsUnsupportedMappingKeySyntax(
+        in text: String
+    ) -> Bool {
+        for rawLine in YAMLLine.split(text).map(\.raw) {
+            var line = yamlContentBeforeComment(rawLine)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("-") {
+                line = String(line.dropFirst())
+                    .trimmingCharacters(in: .whitespaces)
+            }
+            if line.hasPrefix("?")
+                || line.hasPrefix("!")
+                || line.hasPrefix("&") {
+                return true
+            }
+            if let colon = line.firstIndex(of: ":") {
+                let keyCandidate = line[..<colon]
+                if keyCandidate.contains("\\") {
+                    return true
+                }
+            }
+        }
+
+        let flowExplicitKeyPattern =
+            #"(?m)(?:^|[\{,])\s*(?:-\s*)?(?:\?\s*|!![A-Za-z0-9:._-]+[ \t]+)(?:["'][^"'\r\n]+["']|[A-Za-z0-9_-]+)\s*:"#
+        let flowEscapedKeyPattern =
+            #"(?m)(?:^|[\{,])\s*(?:-\s*)?["'][^"'\r\n]*\\[^"'\r\n]*["']\s*:"#
+        let flowKeyPropertyPattern =
+            #"(?m)(?:^|[\{,])\s*(?:-\s*)?[&!]"#
+        return matchCount(flowExplicitKeyPattern, in: text) > 0
+            || matchCount(flowEscapedKeyPattern, in: text) > 0
+            || matchCount(flowKeyPropertyPattern, in: text) > 0
+    }
+
+    private static func containsUnquotedYAMLAlias(in text: String) -> Bool {
+        var quote: Character?
+        var escaped = false
+        var comment = false
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            let next = text.index(after: index)
+            if comment {
+                if character == "\n" || character == "\r" {
+                    comment = false
+                }
+            } else if escaped {
+                escaped = false
+            } else if quote == "\"", character == "\\" {
+                escaped = true
+            } else if let activeQuote = quote {
+                if character == activeQuote {
+                    if activeQuote == "'",
+                       next < text.endIndex,
+                       text[next] == "'" {
+                        index = text.index(after: next)
+                        continue
+                    }
+                    quote = nil
+                }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == "#" {
+                comment = true
+            } else if character == "*",
+                      next < text.endIndex,
+                      text[next].isLetter || text[next].isNumber
+                        || text[next] == "_" || text[next] == "-" {
+                return true
+            }
+            index = next
+        }
+        return false
+    }
+
+    private static func rootSection(
+        _ key: String,
+        in lines: [YAMLLine]
+    ) -> String? {
+        guard let index = lines.firstIndex(where: {
+            $0.rootMappingKey == key
+        }) else {
+            return nil
+        }
+        var end = index + 1
+        while end < lines.count {
+            let candidate = lines[end]
+            if candidate.rootMappingKey != nil
+                || candidate.isRootDocumentStart
+                || candidate.isRootDocumentEnd
+                || candidate.isRootDirective {
+                break
+            }
+            end += 1
+        }
+        return lines[index..<end].map(\.raw).joined()
+    }
+
+    private static func matchCount(_ pattern: String, in text: String) -> Int {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return 0
+        }
+        return expression.numberOfMatches(
+            in: text,
+            range: NSRange(text.startIndex..<text.endIndex, in: text)
+        )
+    }
+
+    private static func endpointPort(in rawValue: String) -> Int? {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("!!str") {
+            value = String(value.dropFirst("!!str".count))
+                .trimmingCharacters(in: .whitespaces)
+        }
+        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        let pattern =
+            #"(?:\[[^\]]+\]|[^:\s]+):([0-9]{1,5})(?:[/?#].*)?$"#
+        return capturedPorts(in: value, pattern: pattern).first
     }
 
     private func applyingRuleOverrides(
@@ -703,6 +1294,7 @@ public enum RuntimeConfigurationComposerError: Error, Equatable, Sendable {
     case rulesSectionMustBeSequence
     case listenersSectionMustBeSequence
     case reservedListenerNameConflict(String)
+    case unsupportedBoundListenerSyntax(String)
     case scalarEncodingFailed
 }
 
@@ -723,6 +1315,8 @@ extension RuntimeConfigurationComposerError: LocalizedError {
             "The profile's top-level listeners value must be a block or inline YAML sequence."
         case let .reservedListenerNameConflict(name):
             "The profile already uses the reserved Network Extension listener name \(name)."
+        case let .unsupportedBoundListenerSyntax(binding):
+            "The listener binding \(binding) uses YAML syntax that MClash cannot safely include in its port-conflict preflight."
         case .scalarEncodingFailed:
             "A runtime override could not be encoded as a YAML scalar."
         }
@@ -803,14 +1397,60 @@ private struct YAMLLine {
         let valueStart = raw.index(after: colon)
         var value = yamlContentBeforeComment(String(raw[valueStart...]))
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        var usesStringSemantics = false
+        var hasExplicitIntegerTag = false
+        if value.hasPrefix("!!int") {
+            hasExplicitIntegerTag = true
+            value = String(value.dropFirst("!!int".count))
+                .trimmingCharacters(in: .whitespaces)
+        } else if value.hasPrefix("!!str") {
+            usesStringSemantics = true
+            value = String(value.dropFirst("!!str".count))
+                .trimmingCharacters(in: .whitespaces)
+        }
         if value.first == "\"", value.last == "\"", value.count >= 2,
            let decoded = try? JSONDecoder().decode(String.self, from: Data(value.utf8)) {
+            usesStringSemantics = !hasExplicitIntegerTag
             value = decoded
         } else if value.first == "'", value.last == "'", value.count >= 2 {
+            usesStringSemantics = !hasExplicitIntegerTag
             value = String(value.dropFirst().dropLast())
                 .replacingOccurrences(of: "''", with: "'")
         }
-        return Int(value.replacingOccurrences(of: "_", with: ""))
+        let normalized = value.replacingOccurrences(of: "_", with: "")
+        let magnitude = normalized.first == "+" || normalized.first == "-"
+            ? String(normalized.dropFirst())
+            : normalized
+        if !usesStringSemantics,
+           magnitude.count > 1,
+           magnitude.first == "0" {
+            return nil
+        }
+        return Int(normalized)
+    }
+
+    var rootScalarValue: String? {
+        guard rootMappingKey != nil,
+              let colon = raw.firstIndex(of: ":") else { return nil }
+        var value = yamlContentBeforeComment(
+            String(raw[raw.index(after: colon)...])
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("!!str") {
+            value = String(value.dropFirst("!!str".count))
+                .trimmingCharacters(in: .whitespaces)
+        }
+        if value.first == "\"", value.last == "\"", value.count >= 2,
+           let decoded = try? JSONDecoder().decode(
+               String.self,
+               from: Data(value.utf8)
+           ) {
+            return decoded
+        }
+        if value.first == "'", value.last == "'", value.count >= 2 {
+            return String(value.dropFirst().dropLast())
+                .replacingOccurrences(of: "''", with: "'")
+        }
+        return value
     }
 
     private var markerContent: String {

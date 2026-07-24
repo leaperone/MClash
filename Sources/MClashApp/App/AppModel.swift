@@ -15,6 +15,7 @@ final class AppModel {
             case runtimeOverrides = "Runtime Settings"
             case systemProxySettings = "System Proxy Settings"
             case appRoutingSettings = "App Routing Settings"
+            case profileRuntimePlan = "Profile Runtime Plan"
         }
 
         let component: Component
@@ -193,8 +194,6 @@ final class AppModel {
     }
 
     enum LocalListenerKind: String, CaseIterable, Identifiable, Sendable {
-        case http
-        case socks5
         case mixed
 
         var id: Self { self }
@@ -399,6 +398,8 @@ final class AppModel {
     var profiles: [ProfileMetadata] = []
     private(set) var profileBatchUpdateReceipt: ProfileBatchUpdateReceipt?
     var activeProfileID: ProfileID?
+    private(set) var profileRuntimePlan: ProfileRuntimePlan = .empty
+    private(set) var auxiliaryCoreStates: [ProfileID: CoreRunState] = [:]
     var runtimeConfig: MihomoConfig?
     private(set) var runtimeOverrides: RuntimeOverrides = .empty
     private(set) var activeProfileListenerPorts = RuntimePortOverrides()
@@ -488,6 +489,20 @@ final class AppModel {
     private(set) var launchAtLogin = false
     private(set) var launchAtLoginRequiresApproval = false
     private(set) var notificationsEnabled = false
+    var openAtLoginSilently: Bool {
+        didSet {
+            preferenceDefaults.set(
+                openAtLoginSilently,
+                forKey: Self.openAtLoginSilentlyKey
+            )
+        }
+    }
+    var lightweightMode: Bool {
+        didSet {
+            preferenceDefaults.set(lightweightMode, forKey: Self.lightweightModeKey)
+            presentationDemandDidChange()
+        }
+    }
     var controllerState: ControllerState = .idle
     private(set) var pendingSubscriptionImport: SubscriptionImportRequest?
     private(set) var pendingMode: String?
@@ -499,6 +514,7 @@ final class AppModel {
             preferenceDefaults.set(autoConnectOnLaunch, forKey: Self.autoConnectOnLaunchKey)
         }
     }
+    private(set) var connectionDesiredOnLaunch: Bool
     var autoEnableSystemProxy: Bool {
         didSet {
             preferenceDefaults.set(autoEnableSystemProxy, forKey: Self.autoEnableSystemProxyKey)
@@ -547,10 +563,12 @@ final class AppModel {
     private(set) var systemProxySettingsReceipt: SystemProxySettingsReceipt?
 
     private let supervisor: CoreSupervisor
+    private let coreFleet: CoreFleetSupervisor
     private let binaryLocator: CoreBinaryLocator
     private let secretStore: any CoreSecretProviding
     private let profileStore: ProfileStore?
     private let profileLayout: ProfileDirectoryLayout?
+    private let profileRuntimePlanStore: ProfileRuntimePlanStore?
     private let runtimeOverrideCoordinator: RuntimeOverrideActivationCoordinator?
     private let systemProxyPreferencesStore: SystemProxyPreferencesStore?
     private let networkCaptureConfigurationStore: NetworkCaptureConfigurationStore?
@@ -563,13 +581,22 @@ final class AppModel {
     private let profileBackupService = ProfileBackupService()
     private let notificationCenter = AppNotificationCenter()
     private var managedMixedPort: Int?
+    /// Exact Profile/port pairs verified through that Core's authenticated
+    /// controller during this host process. A raw TCP bind can remain
+    /// unavailable after shutdown because of TIME_WAIT, but ownership must
+    /// never transfer between Profiles or unverified launch attempts.
+    private var verifiedMClashMixedPorts: [ProfileID: Set<Int>] = [:]
     private var networkExtensionMihomoListener: NetworkExtensionMihomoListenerConfiguration?
+    private var networkExtensionProfileListeners:
+        [ProfileID: NetworkExtensionMihomoListenerConfiguration] = [:]
+    private var auxiliaryLaunchConfigurations: [ProfileID: CoreLaunchConfiguration] = [:]
     private var rulesUseGlobalProxy = false
     private var connectionsUseGlobalProxy = false
     private var apiClient: MihomoAPIClient?
     private var activeControllerEndpoint: URL?
     private var controllerSetupOperation: (id: UUID, endpoint: URL, task: Task<Void, Never>)?
     private var eventTask: Task<Void, Never>?
+    private var coreFleetEventTask: Task<Void, Never>?
     private var trafficTask: Task<Void, Never>?
     private var connectionsTask: Task<Void, Never>?
     private var connectionStreamIntervalMilliseconds: Int?
@@ -606,6 +633,7 @@ final class AppModel {
     private var prepared = false
     private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
     private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
+    private var networkCaptureDeactivationOperation: (id: UUID, task: Task<Bool, Never>)?
     private var appRoutingActivityTask: Task<Void, Never>?
     private var appRoutingMonitorGeneration: UInt64 = 0
     private var dnsProxyRuntimeTask: Task<Void, Never>?
@@ -640,6 +668,7 @@ final class AppModel {
         networkEnvironmentMonitor: (any NetworkEnvironmentMonitoring)? = nil
     ) {
         self.supervisor = supervisor
+        coreFleet = CoreFleetSupervisor()
         self.binaryLocator = binaryLocator
         self.secretStore = secretStore
         self.systemProxyManager = systemProxyManager
@@ -666,6 +695,16 @@ final class AppModel {
         } else {
             autoConnectOnLaunch = preferenceDefaults.bool(forKey: Self.autoConnectOnLaunchKey)
         }
+        if preferenceDefaults.object(forKey: Self.connectionDesiredOnLaunchKey) == nil {
+            // Preserve the pre-1.3 startup behavior on upgrade. Subsequent
+            // explicit Connect/Disconnect actions make this an exact last
+            // user intent instead of an unconditional reconnect.
+            connectionDesiredOnLaunch = true
+        } else {
+            connectionDesiredOnLaunch = preferenceDefaults.bool(
+                forKey: Self.connectionDesiredOnLaunchKey
+            )
+        }
         if preferenceDefaults.object(forKey: Self.autoEnableSystemProxyKey) == nil {
             autoEnableSystemProxy = true
         } else {
@@ -686,6 +725,14 @@ final class AppModel {
             )
         }
         notificationsEnabled = preferenceDefaults.bool(forKey: Self.notificationsEnabledKey)
+        if preferenceDefaults.object(forKey: Self.openAtLoginSilentlyKey) == nil {
+            openAtLoginSilently = true
+        } else {
+            openAtLoginSilently = preferenceDefaults.bool(
+                forKey: Self.openAtLoginSilentlyKey
+            )
+        }
+        lightweightMode = preferenceDefaults.bool(forKey: Self.lightweightModeKey)
         let loginItemManager = LoginItemManager()
         launchAtLogin = loginItemManager.isEnabled
         launchAtLoginRequiresApproval = loginItemManager.requiresApproval
@@ -712,6 +759,19 @@ final class AppModel {
 
         profileLayout = layout
         if let layout {
+            do {
+                profileRuntimePlanStore = try ProfileRuntimePlanStore(layout: layout)
+            } catch {
+                profileRuntimePlanStore = nil
+                initializationFailures.append(
+                    StorageInitializationFailure(
+                        component: .applicationState,
+                        occurredAt: Date(),
+                        reason: error.localizedDescription,
+                        recoverySuggestion: "Restore read and write access to the MClash State folder, then relaunch MClash."
+                    )
+                )
+            }
             if let profileStoreOverride {
                 profileStore = profileStoreOverride
             } else {
@@ -780,6 +840,7 @@ final class AppModel {
             }
         } else {
             profileStore = nil
+            profileRuntimePlanStore = nil
             runtimeOverrideCoordinator = nil
             systemProxyPreferencesStore = nil
             networkCaptureConfigurationStore = nil
@@ -787,6 +848,12 @@ final class AppModel {
         storageInitializationFailures = initializationFailures
 
         eventTask = Task { [weak self, events = supervisor.events] in
+            for await event in events {
+                guard !Task.isCancelled else { break }
+                self?.receive(event)
+            }
+        }
+        coreFleetEventTask = Task { [weak self, events = coreFleet.events] in
             for await event in events {
                 guard !Task.isCancelled else { break }
                 self?.receive(event)
@@ -872,11 +939,6 @@ final class AppModel {
                         )
                         throw error
                     }
-                    if networkCapturePreferences.enabled {
-                        networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener(
-                            for: networkCapturePreferences.snapshot.rules
-                        )
-                    }
                 }
                 do {
                     profiles = try await profileStore.profiles()
@@ -890,7 +952,23 @@ final class AppModel {
                     )
                     throw error
                 }
+                if activeProfileID != nil {
+                    // A restarted host has no trustworthy in-memory provider
+                    // state, including when the last host process crashed
+                    // between persisting "disabled" and stopping the provider.
+                    // Quiesce persisted managers before allocating new core
+                    // ports or listener credentials.
+                    try await networkExtensionControl.disable()
+                    networkCaptureState = .off
+                }
                 await refreshActiveProfileListenerPorts()
+                try await loadProfileRuntimePlan()
+                try await prepareProfileRoutingSessions(
+                    for: networkCapturePreferences.enabled
+                        ? networkCapturePreferences.snapshot.rules
+                        : [],
+                    startAuxiliary: false
+                )
                 if let activeProfileID {
                     if runtimeOverrideCoordinator != nil {
                         let activation = try await activateStoredProfile(
@@ -910,6 +988,7 @@ final class AppModel {
                 let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
                 if FileManager.default.fileExists(atPath: snapshotURL.path) {
                     guard await performDisableSystemProxy() else {
+                        await cleanupFailedConnectionAttempt()
                         // The restore operation already published the precise backend
                         // failure. Keep it visible and do not retry automatically in
                         // this launch, which could create an authorization loop.
@@ -936,8 +1015,10 @@ final class AppModel {
             startSubscriptionUpdateScheduler()
             startNetworkEnvironmentMonitoring()
         } catch is CancellationError {
+            await cleanupFailedConnectionAttempt()
             return
         } catch {
+            await cleanupFailedConnectionAttempt()
             let message = error.localizedDescription
             startupPreparationErrorMessage = message
             errorMessage = message
@@ -947,6 +1028,7 @@ final class AppModel {
 
     private func connectActiveProfileAtLaunchIfAvailable() async {
         guard autoConnectOnLaunch,
+              connectionDesiredOnLaunch,
               let activeProfileID,
               profiles.contains(where: { $0.id == activeProfileID }),
               let activeConfigURL,
@@ -1019,7 +1101,7 @@ final class AppModel {
             menuBarContentVisible: menuBarContentIsVisible,
             destination: selection,
             appRoutingActivityVisible: appRoutingActivityViewIsVisible,
-            menuBarStatusVisible: menuBarDisplayStyle == .proxyStatus
+            menuBarStatusVisible: !lightweightMode && menuBarDisplayStyle == .proxyStatus
         )
     }
 
@@ -1090,40 +1172,28 @@ final class AppModel {
     }
 
     var localListenerEndpoints: [LocalListenerEndpoint] {
-        [
-            listenerEndpoint(
-                kind: .http,
-                port: localHTTPListenerPort,
-                isOverridden: runtimeOverrides.ports.port != nil
-            ),
-            listenerEndpoint(
-                kind: .socks5,
-                port: localSOCKSListenerPort,
-                isOverridden: runtimeOverrides.ports.socksPort != nil
-            ),
-            localMixedListenerPort.map {
-                LocalListenerEndpoint(
-                    kind: .mixed,
-                    host: "127.0.0.1",
-                    port: $0,
-                    source: managedMixedPort == nil ? mixedListenerConfiguredSource : .managedFallback
-                )
-            },
+        guard let port = localMixedListenerPort else { return [] }
+        return [
+            LocalListenerEndpoint(
+                kind: .mixed,
+                host: "127.0.0.1",
+                port: port,
+                source: managedMixedPort == nil ? mixedListenerConfiguredSource : .managedFallback
+            )
         ]
-        .compactMap { $0 }
     }
 
     /// Effective HTTP endpoint used when configuring macOS. A mixed listener
     /// is a protocol-compatible fallback, while a managed mixed listener takes
     /// precedence because it was created after configured listeners failed.
     var localHTTPProxyPort: Int? {
-        managedMixedPort ?? localHTTPListenerPort ?? localMixedListenerPort
+        localMixedListenerPort
     }
 
     /// Effective SOCKS endpoint used when configuring macOS. See
     /// `localHTTPProxyPort` for the fallback semantics.
     var localSOCKSProxyPort: Int? {
-        managedMixedPort ?? localSOCKSListenerPort ?? localMixedListenerPort
+        localMixedListenerPort
     }
 
     var localHTTPProxyAddress: String? {
@@ -1327,21 +1397,87 @@ final class AppModel {
             throw activationError
         }
         do {
-            if activeProfileID == createdProfileID {
+            if try await profileStore.activeProfileID() == createdProfileID {
                 try await profileStore.setActiveProfile(previousProfileID)
+            }
+            if activeProfileID == createdProfileID {
                 activeProfileID = previousProfileID
-                activeConfigURL = previousProfileID.map {
-                    profileLayout.configurationURL(for: $0)
+                activeConfigURL = previousProfileID.map { _ in
+                    profileLayout.runtimeConfigurationURL
                 }
                 await refreshActiveProfileListenerPorts()
             }
-            try await profileStore.removeProfile(createdProfileID)
-            profiles = try await profileStore.profiles()
+            try await removeStoredProfileAndRuntimeState(
+                createdProfileID,
+                nextPrimaryProfileID: previousProfileID,
+                profileStore: profileStore,
+                profileLayout: profileLayout
+            )
         } catch {
             let message = "\(activationError.localizedDescription) Rolling back the newly created profile failed: \(error.localizedDescription)"
             throw AppModelError.profileActivationFailed(message)
         }
         throw activationError
+    }
+
+    /// Removes every durable and live reference before deleting profile
+    /// storage. This ordering prevents a failed activation from leaving an
+    /// enabled Fleet entry whose configuration directory no longer exists.
+    private func removeStoredProfileAndRuntimeState(
+        _ profileID: ProfileID,
+        nextPrimaryProfileID: ProfileID?,
+        profileStore: ProfileStore,
+        profileLayout: ProfileDirectoryLayout
+    ) async throws {
+        guard let profileRuntimePlanStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        guard await coreFleet.stop(profileID: profileID) else {
+            throw AppModelError.profileActivationFailed(
+                "\(profileDisplayName(profileID)) could not be stopped before removal."
+            )
+        }
+        auxiliaryCoreStates = await coreFleet.states()
+
+        let previousPlan = profileRuntimePlan
+        var candidate = previousPlan
+        candidate.sessions.removeAll { $0.profileID == profileID }
+        if candidate.primaryProfileID == profileID {
+            candidate.primaryProfileID = nextPrimaryProfileID
+        }
+        try ProfileRuntimePlanValidator().validate(candidate)
+        try await profileRuntimePlanStore.save(candidate)
+        profileRuntimePlan = candidate
+
+        do {
+            let fileManager = FileManager.default
+            for directory in [
+                profileLayout.runtimeSessionDirectory(for: profileID),
+                profileLayout.coreHomeDirectory(for: profileID),
+            ] where fileManager.fileExists(atPath: directory.path) {
+                try fileManager.removeItem(at: directory)
+            }
+            try await profileStore.removeProfile(profileID)
+            profiles = try await profileStore.profiles()
+        } catch {
+            var restorationFailure: Error?
+            do {
+                try await profileRuntimePlanStore.save(previousPlan)
+                profileRuntimePlan = previousPlan
+            } catch {
+                restorationFailure = error
+            }
+            if let restorationFailure {
+                throw AppModelError.profileActivationFailed(
+                    "\(error.localizedDescription) Restoring the previous profile runtime plan also failed: \(restorationFailure.localizedDescription)"
+                )
+            }
+            throw error
+        }
+
+        auxiliaryLaunchConfigurations[profileID] = nil
+        auxiliaryCoreStates[profileID] = nil
+        verifiedMClashMixedPorts[profileID] = nil
     }
 
     func updateProfile(
@@ -1502,49 +1638,148 @@ final class AppModel {
         let shouldRestoreSystemProxy = systemProxyEnabled
         if shouldReconnect, !(await performDisconnect()) { return false }
 
+        var restoreTransaction: ProfileBackupRestoreTransaction?
         do {
-            _ = try await profileBackupService.restoreBackup(
+            let transaction = try await profileBackupService.beginRestoreBackup(
                 from: backupURL,
                 to: profileLayout
             )
-            if let runtimeOverrideCoordinator {
-                runtimeOverrides = try await runtimeOverrideCoordinator.overrides()
-            } else {
-                runtimeOverrides = .empty
-            }
-            if let systemProxyPreferencesStore {
-                systemProxyPreferences = try await systemProxyPreferencesStore.load()
-            } else {
-                systemProxyPreferences = .defaults
-            }
-            profiles = try await profileStore.profiles()
-            activeProfileID = try await profileStore.activeProfileID()
-            await refreshActiveProfileListenerPorts()
-            activeConfigURL = nil
-            if let activeProfileID {
-                let activation = try await activateStoredProfile(
-                    activeProfileID,
-                    validator: try makeProfileValidator()
-                )
-                activeConfigURL = activation.configurationURL
-            }
-            if shouldReconnect, activeConfigURL != nil {
-                let connected = await performConnect()
-                if connected, shouldRestoreSystemProxy {
-                    await performEnableSystemProxy()
-                }
-            }
+            restoreTransaction = transaction
+            try await reloadBackupManagedState(from: profileStore)
+            try await reconnectAfterBackupStateChange(
+                shouldReconnect: shouldReconnect,
+                shouldRestoreSystemProxy: shouldRestoreSystemProxy
+            )
+            await profileBackupService.commitRestoreBackup(transaction)
+            restoreTransaction = nil
             errorMessage = nil
             return true
         } catch {
-            recordOperationFailure(error, context: "Backup restore")
-            if shouldReconnect, activeConfigURL != nil {
-                _ = await performConnect()
-                if isConnected, shouldRestoreSystemProxy {
-                    await performEnableSystemProxy()
+            let updateReason = error.localizedDescription
+            var rollbackFailures: [String] = []
+            var rollbackSucceeded = true
+
+            if let restoreTransaction {
+                if isConnected || isBusy || networkCaptureIsActive {
+                    if !(await performDisconnect()) {
+                        rollbackFailures.append(
+                            "the restored runtime could not be fully stopped"
+                        )
+                    }
+                }
+                do {
+                    try await profileBackupService.rollbackRestoreBackup(
+                        restoreTransaction
+                    )
+                } catch {
+                    rollbackSucceeded = false
+                    rollbackFailures.append(error.localizedDescription)
                 }
             }
+
+            if restoreTransaction == nil || rollbackSucceeded {
+                do {
+                    try await reloadBackupManagedState(from: profileStore)
+                    try await reconnectAfterBackupStateChange(
+                        shouldReconnect: shouldReconnect,
+                        shouldRestoreSystemProxy: shouldRestoreSystemProxy
+                    )
+                } catch {
+                    rollbackFailures.append(error.localizedDescription)
+                }
+            }
+
+            if rollbackFailures.isEmpty {
+                recordOperationFailure(
+                    error,
+                    context: restoreTransaction == nil
+                        ? "Backup restore"
+                        : "Backup restore (previous state restored)"
+                )
+            } else {
+                recordOperationFailure(
+                    BackupRestoreTransactionFailure(
+                        updateReason: updateReason,
+                        rollbackReason: rollbackFailures.joined(separator: "; ")
+                    ),
+                    context: "Backup restore"
+                )
+            }
             return false
+        }
+    }
+
+    private func reloadBackupManagedState(
+        from profileStore: ProfileStore
+    ) async throws {
+        if let runtimeOverrideCoordinator {
+            runtimeOverrides = try await runtimeOverrideCoordinator.overrides()
+        } else {
+            runtimeOverrides = .empty
+        }
+        if let systemProxyPreferencesStore {
+            systemProxyPreferences = try await systemProxyPreferencesStore.load()
+        } else {
+            systemProxyPreferences = .defaults
+        }
+        if let networkCaptureConfigurationStore {
+            networkCapturePreferences = try await networkCaptureConfigurationStore.load()
+        } else {
+            networkCapturePreferences = .defaults()
+        }
+        profiles = try await profileStore.profiles()
+        activeProfileID = try await profileStore.activeProfileID()
+        await refreshActiveProfileListenerPorts()
+        try await loadProfileRuntimePlan()
+        try await prepareProfileRoutingSessions(
+            for: networkCapturePreferences.enabled
+                ? networkCapturePreferences.snapshot.rules
+                : [],
+            startAuxiliary: false
+        )
+        activeConfigURL = nil
+        if let activeProfileID {
+            let activation = try await activateStoredProfile(
+                activeProfileID,
+                validator: try makeProfileValidator()
+            )
+            activeConfigURL = activation.configurationURL
+        }
+    }
+
+    private func reconnectAfterBackupStateChange(
+        shouldReconnect: Bool,
+        shouldRestoreSystemProxy: Bool
+    ) async throws {
+        guard shouldReconnect else { return }
+        guard activeConfigURL != nil else {
+            throw AppModelError.profileActivationFailed(
+                "The restored backup does not contain an active profile to reconnect."
+            )
+        }
+        guard await performConnect() else {
+            throw AppModelError.profileActivationFailed(
+                "The restored profile runtime could not be started."
+            )
+        }
+        if networkCapturePreferences.enabled {
+            switch networkCaptureState {
+            case let .on(revision)
+                where revision == networkCapturePreferences.snapshot.revision:
+                break
+            case .requiresReboot:
+                break
+            case .on, .off, .waitingForConnection, .enabling,
+                 .awaitingUserApproval, .disabling, .failed:
+                throw AppModelError.profileActivationFailed(
+                    "The restored App Routing configuration could not be activated."
+                )
+            }
+        } else if shouldRestoreSystemProxy {
+            await performEnableSystemProxy()
+            guard systemProxyState == .on else {
+                throw AppModelError.systemProxyRestoreFailed
+            }
         }
     }
 
@@ -1574,13 +1809,29 @@ final class AppModel {
         }
 
         let previousProfileID = activeProfileID
+        activeProfileID = id
+        await refreshActiveProfileListenerPorts()
         let activation: RuntimeConfigurationActivation
         do {
+            try await prepareProfileRoutingSessions(
+                for: networkCapturePreferences.enabled
+                    ? networkCapturePreferences.snapshot.rules
+                    : [],
+                startAuxiliary: false
+            )
             activation = try await activateStoredProfile(
                 id,
                 validator: validator
             )
         } catch {
+            activeProfileID = previousProfileID
+            await refreshActiveProfileListenerPorts()
+            try? await prepareProfileRoutingSessions(
+                for: networkCapturePreferences.enabled
+                    ? networkCapturePreferences.snapshot.rules
+                    : [],
+                startAuxiliary: false
+            )
             if shouldReconnect {
                 _ = await performConnect()
                 if isConnected, shouldRestoreSystemProxy {
@@ -1622,6 +1873,14 @@ final class AppModel {
                             configurationData: rollbackSnapshot.configurationData
                         )
                     }
+                    activeProfileID = previousProfileID
+                    await refreshActiveProfileListenerPorts()
+                    try await prepareProfileRoutingSessions(
+                        for: networkCapturePreferences.enabled
+                            ? networkCapturePreferences.snapshot.rules
+                            : [],
+                        startAuxiliary: false
+                    )
                     let rollback = try await activateStoredProfile(
                         previousProfileID,
                         validator: try makeProfileValidator()
@@ -1659,6 +1918,7 @@ final class AppModel {
         if let runtimeOverrideCoordinator {
             return try await runtimeOverrideCoordinator.activateProfile(
                 id,
+                overrides: effectiveRuntimeOverrides(for: id),
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
                 in: profileStore,
                 validator: validator
@@ -1675,9 +1935,15 @@ final class AppModel {
         guard let profileStore, let runtimeOverrideCoordinator else {
             throw AppModelError.profileStoreUnavailable
         }
+        var profileOverrides = overrides
+        profileOverrides.ports.port = 0
+        profileOverrides.ports.socksPort = 0
+        if let mixedPort = profileSessionSpec(for: id)?.mixedPort {
+            profileOverrides.ports.mixedPort = mixedPort
+        }
         return try await runtimeOverrideCoordinator.activateProfile(
             id,
-            overrides: overrides,
+            overrides: profileOverrides,
             networkExtensionListener: activeNetworkExtensionMihomoListener,
             in: profileStore,
             validator: validator
@@ -1693,11 +1959,20 @@ final class AppModel {
         }
         defer { end(.changeRuntimeSettings) }
 
+        var overrides = overrides
+        // Keep the in-memory model byte-for-byte equivalent to the durable
+        // mixed-only document written by the coordinator. Otherwise a later
+        // failure appears to roll back in memory while a restart loads the
+        // normalized port/socks-port zeros from disk.
+        overrides.ports.port = 0
+        overrides.ports.socksPort = 0
+
         guard let runtimeOverrideCoordinator, let profileStore else {
             throw AppModelError.profileStoreUnavailable
         }
 
         let previousOverrides = runtimeOverrides
+        let previousRuntimePlan = profileRuntimePlan
         guard overrides != previousOverrides else {
             let outcome = RuntimeSettingsApplyOutcome.unchanged
             runtimeSettingsApplyState = .completed(outcome)
@@ -1719,18 +1994,85 @@ final class AppModel {
             }
         }
 
+        var candidate = profileRuntimePlan
+        let otherPorts = Set(candidate.sessions.compactMap {
+            $0.profileID == activeProfileID ? nil : $0.mixedPort
+        })
+        let currentMixedPort = candidate.sessions.first {
+            $0.profileID == activeProfileID
+        }?.mixedPort
+        let requestedMixedPort: Int
+        if let override = overrides.ports.mixedPort {
+            requestedMixedPort = override
+        } else if let sourceData = try? await profileStore.configurationData(
+            for: activeProfileID
+        ),
+            let sourcePorts = try? RuntimeConfigurationComposer().listenerPorts(
+                in: sourceData
+            ),
+            let sourceMixedPort = sourcePorts.mixedPort,
+            (1...65_535).contains(sourceMixedPort) {
+            requestedMixedPort = sourceMixedPort
+        } else if let currentMixedPort {
+            // Profiles without a source Mixed listener keep their managed
+            // MClash port when the user selects “Use Profile”.
+            requestedMixedPort = currentMixedPort
+        } else {
+            requestedMixedPort = try await preferredMixedPort(
+                for: activeProfileID,
+                excluding: otherPorts
+            )
+        }
+        if otherPorts.contains(requestedMixedPort) {
+            let error = ProfileRuntimePlanValidationError.duplicateMixedPort(
+                requestedMixedPort
+            )
+            runtimeSettingsApplyState = .failed(error.localizedDescription)
+            throw error
+        }
+        if requestedMixedPort != currentMixedPort,
+           !mixedPortIsAvailableForStart(
+               requestedMixedPort,
+               profileID: activeProfileID
+           ) {
+            let error = AppModelError.profileMixedPortUnavailable(
+                profileDisplayName(activeProfileID),
+                requestedMixedPort
+            )
+            runtimeSettingsApplyState = .failed(error.localizedDescription)
+            throw error
+        }
+        if let index = candidate.sessions.firstIndex(where: {
+            $0.profileID == activeProfileID
+        }) {
+            candidate.sessions[index].mixedPort = requestedMixedPort
+        } else {
+            candidate.sessions.append(ProfileSessionSpec(
+                profileID: activeProfileID,
+                mixedPort: requestedMixedPort
+            ))
+        }
+        candidate.primaryProfileID = activeProfileID
+        try ProfileRuntimePlanValidator().validate(candidate)
+        profileRuntimePlan = candidate
+
         let validator: any ProfileValidating
         do {
             runtimeSettingsApplyState = .validating
             validator = try makeProfileValidator()
+            var validationOverrides = overrides
+            validationOverrides.ports.port = 0
+            validationOverrides.ports.socksPort = 0
+            validationOverrides.ports.mixedPort = requestedMixedPort
             try await runtimeOverrideCoordinator.validateProfile(
                 activeProfileID,
-                overrides: overrides,
+                overrides: validationOverrides,
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
                 in: profileStore,
                 validator: validator
             )
         } catch {
+            profileRuntimePlan = previousRuntimePlan
             runtimeSettingsApplyState = .failed(error.localizedDescription)
             throw error
         }
@@ -1740,6 +2082,7 @@ final class AppModel {
         if shouldRestart {
             runtimeSettingsApplyState = .restarting
             guard await performDisconnect() else {
+                profileRuntimePlan = previousRuntimePlan
                 let error = AppModelError.systemProxyRestoreFailed
                 runtimeSettingsApplyState = .failed(error.localizedDescription)
                 throw error
@@ -1768,6 +2111,9 @@ final class AppModel {
 
             runtimeSettingsApplyState = .saving
             try await runtimeOverrideCoordinator.save(overrides)
+            if profileRuntimePlan != previousRuntimePlan {
+                try await profileRuntimePlanStore?.save(profileRuntimePlan)
+            }
 
             if shouldRestart, shouldRestoreSystemProxy {
                 await performEnableSystemProxy()
@@ -1790,11 +2136,13 @@ final class AppModel {
             )
             return outcome
         } catch {
+            profileRuntimePlan = previousRuntimePlan
             let primaryMessage = error.localizedDescription
             let restorationFailures = await Task { @MainActor [weak self] in
                 guard let self else { return ["MClash closed before rollback completed."] }
                 return await self.rollbackRuntimeOverrides(
                     previousOverrides,
+                    previousRuntimePlan: previousRuntimePlan,
                     activeProfileID: activeProfileID,
                     shouldReconnect: shouldRestart,
                     shouldRestoreSystemProxy: shouldRestoreSystemProxy
@@ -1819,6 +2167,7 @@ final class AppModel {
 
     private func rollbackRuntimeOverrides(
         _ previousOverrides: RuntimeOverrides,
+        previousRuntimePlan: ProfileRuntimePlan,
         activeProfileID: ProfileID,
         shouldReconnect: Bool,
         shouldRestoreSystemProxy: Bool
@@ -1834,6 +2183,14 @@ final class AppModel {
             failures.append("The previous override document could not be saved: \(error.localizedDescription)")
         }
         runtimeOverrides = previousOverrides
+        profileRuntimePlan = previousRuntimePlan
+        do {
+            try await profileRuntimePlanStore?.save(previousRuntimePlan)
+        } catch {
+            failures.append(
+                "The previous profile runtime plan could not be saved: \(error.localizedDescription)"
+            )
+        }
 
         if isConnected || isBusy || hasSystemProxySnapshot {
             let disconnected = await performDisconnect()
@@ -1944,7 +2301,12 @@ final class AppModel {
             return remote.url
         }
         let rollbackSnapshot: StoredProfileSnapshot?
-        if activeProfileID == id {
+        let refreshAffectsRunningSession = activeProfileID == id
+            || (
+                profileSessionSpec(for: id)?.enabled == true
+                    && (isConnected || isBusy)
+            )
+        if refreshAffectsRunningSession {
             do {
                 rollbackSnapshot = StoredProfileSnapshot(
                     metadata: try await profileStore.metadata(for: id),
@@ -1972,6 +2334,15 @@ final class AppModel {
                     force: true,
                     rollbackSnapshot: rollbackSnapshot
                 )
+            } else if case .updated = result,
+                      profileSessionSpec(for: id)?.enabled == true,
+                      isConnected || isBusy {
+                try await prepareProfileRoutingSessions(
+                    for: networkCapturePreferences.enabled
+                        ? networkCapturePreferences.snapshot.rules
+                        : [],
+                    startAuxiliary: true
+                )
             }
             return switch result {
             case .updated: .updated
@@ -1985,6 +2356,16 @@ final class AppModel {
                         configurationData: rollbackSnapshot.configurationData
                     )
                     profiles = try await profileStore.profiles()
+                    if activeProfileID != id,
+                       profileSessionSpec(for: id)?.enabled == true,
+                       isConnected || isBusy {
+                        try await prepareProfileRoutingSessions(
+                            for: networkCapturePreferences.enabled
+                                ? networkCapturePreferences.snapshot.rules
+                                : [],
+                            startAuxiliary: true
+                        )
+                    }
                 } catch {
                     appendSupervisorLog(
                         "Subscription rollback failed: \(error.localizedDescription)"
@@ -2045,14 +2426,39 @@ final class AppModel {
         guard begin(.removeProfile(id)) else { return }
         defer { end(.removeProfile(id)) }
 
-        guard let profileStore else { return }
+        guard let profileStore, let profileLayout else { return }
         do {
-            try await profileStore.removeProfile(id)
-            profiles = try await profileStore.profiles()
+            if let reason = profileRemovalBlockReason(for: id) {
+                throw AppModelError.profileActivationFailed(reason)
+            }
+            try await removeStoredProfileAndRuntimeState(
+                id,
+                nextPrimaryProfileID: activeProfileID,
+                profileStore: profileStore,
+                profileLayout: profileLayout
+            )
             errorMessage = nil
         } catch {
             recordOperationFailure(error, context: "Profile removal")
         }
+    }
+
+    func profileRemovalBlockReason(for profileID: ProfileID) -> String? {
+        if profileID == activeProfileID {
+            return "Activate another default profile before deleting this one."
+        }
+        if networkCapturePreferences.snapshot.rules.contains(where: { rule in
+            guard rule.enabled,
+                  case let .mihomo(route) = rule.action,
+                  let target = route.routingProfileID else { return false }
+            return target.uuid == profileID.rawValue
+        }) {
+            return "Change or disable the App Routing rules that use this profile before deleting it."
+        }
+        if profileSessionSpec(for: profileID)?.enabled == true {
+            return "Turn off this profile's App Routing session before deleting it."
+        }
+        return nil
     }
 
     func toggleConnection() async {
@@ -2061,9 +2467,14 @@ final class AppModel {
 
         if isConnected || isBusy {
             setNetworkEnvironmentRecoveryArmed(false)
-            _ = await performDisconnect()
+            if await performDisconnect() {
+                setConnectionDesiredOnLaunch(false)
+            }
         } else {
             let connected = await performConnect()
+            if connected {
+                setConnectionDesiredOnLaunch(true)
+            }
             if connected, autoEnableSystemProxy {
                 await enableSystemProxyAfterConnect()
             }
@@ -2074,6 +2485,9 @@ final class AppModel {
         guard begin(.connection) else { return }
         defer { end(.connection) }
         let connected = await performConnect()
+        if connected {
+            setConnectionDesiredOnLaunch(true)
+        }
         if connected, autoEnableSystemProxy {
             await enableSystemProxyAfterConnect()
         }
@@ -2083,7 +2497,9 @@ final class AppModel {
         guard begin(.connection) else { return }
         defer { end(.connection) }
         setNetworkEnvironmentRecoveryArmed(false)
-        _ = await performDisconnect()
+        if await performDisconnect() {
+            setConnectionDesiredOnLaunch(false)
+        }
     }
 
     func restartConnection() async {
@@ -2100,7 +2516,11 @@ final class AppModel {
 
     @discardableResult
     private func performConnect() async -> Bool {
-        guard let activeConfigURL else {
+        guard !shutdownInProgress else { return false }
+        if isConnected, controllerIsReady {
+            return true
+        }
+        guard activeConfigURL != nil else {
             selection = .profiles
             errorMessage = "Add or select a profile before connecting."
             return false
@@ -2108,11 +2528,59 @@ final class AppModel {
 
         do {
             errorMessage = nil
+            try await prepareProfileRoutingSessions(
+                for: networkCapturePreferences.enabled
+                    ? networkCapturePreferences.snapshot.rules
+                    : [],
+                startAuxiliary: false
+            )
+            if let activeProfileID, runtimeOverrideCoordinator != nil {
+                let activation = try await activateStoredProfile(
+                    activeProfileID,
+                    validator: try makeProfileValidator()
+                )
+                activeConfigURL = activation.configurationURL
+            }
+            guard let activeConfigURL, let activeProfileID else {
+                throw AppModelError.profileStoreUnavailable
+            }
+            let primaryConfigurationData = try Data(
+                contentsOf: activeConfigURL,
+                options: .mappedIfSafe
+            )
+            let primaryBoundPorts = try RuntimeConfigurationComposer()
+                .boundListenerPorts(in: primaryConfigurationData)
+            let primarySourceBoundPorts = try await primarySourceBoundListenerPorts(
+                profileID: activeProfileID
+            )
+            let managedNonPrimaryPorts = Set(
+                profileRuntimePlan.enabledSessions.compactMap {
+                    $0.profileID == activeProfileID ? nil : $0.mixedPort
+                }
+                + networkExtensionProfileListeners.flatMap { _, listener in
+                    listener.routeListeners.map { Int($0.port) }
+                }
+            )
+            let conflictingPorts = primarySourceBoundPorts.intersection(
+                managedNonPrimaryPorts
+            )
+            guard conflictingPorts.isEmpty else {
+                throw AppModelError.primaryListenerPortConflict(
+                    conflictingPorts.sorted()
+                )
+            }
             let binaryURL = try binaryLocator.locate()
             let secret = try secretStore.loadOrCreate()
             let homeDirectory = try coreHomeDirectory()
             try geoDataInstaller.installIfNeeded(into: homeDirectory)
-            let controllerPort = try localPortProbe.availableTCPPort()
+            let controllerPort = try availableTCPPort(
+                excluding: Set(
+                    profileRuntimePlan.enabledSessions.map(\.mixedPort)
+                        + networkExtensionProfileListeners.values.flatMap {
+                            $0.routeListeners.map { Int($0.port) }
+                        }
+                ).union(primaryBoundPorts)
+            )
             let configuration = CoreLaunchConfiguration(
                 binaryURL: binaryURL,
                 homeDirectory: homeDirectory,
@@ -2120,26 +2588,68 @@ final class AppModel {
                 controllerPort: UInt16(controllerPort),
                 secret: secret
             )
+            guard !shutdownInProgress else { throw CancellationError() }
             try await supervisor.start(configuration)
             let state = await supervisor.state()
             coreState = state
             if case let .running(session) = state {
                 await controllerDidStart(session)
             }
+            guard isConnected, controllerIsReady else {
+                await cleanupFailedConnectionAttempt()
+                return false
+            }
+            guard !shutdownInProgress else { throw CancellationError() }
+            try await prepareProfileRoutingSessions(
+                for: networkCapturePreferences.enabled
+                    ? networkCapturePreferences.snapshot.rules
+                    : [],
+                startAuxiliary: true
+            )
             if isConnected, controllerIsReady, networkCapturePreferences.enabled {
                 await performNetworkCaptureActivation()
             }
             let connected = isConnected && controllerIsReady
             if connected {
+                if let port = localMixedListenerPort {
+                    verifiedMClashMixedPorts[
+                        activeProfileID,
+                        default: []
+                    ].insert(port)
+                }
                 setNetworkEnvironmentRecoveryArmed(true)
+                return true
             }
-            return connected
+            await cleanupFailedConnectionAttempt()
+            return false
         } catch is CancellationError {
+            await cleanupFailedConnectionAttempt()
             return false
         } catch {
+            await cleanupFailedConnectionAttempt()
             errorMessage = error.localizedDescription
             appendSupervisorLog("Connection failed: \(error.localizedDescription)")
             return false
+        }
+    }
+
+    private func cleanupFailedConnectionAttempt() async {
+        let auxiliaryStops = await coreFleet.stopAll()
+        auxiliaryCoreStates = await coreFleet.states()
+        if !auxiliaryStops.values.allSatisfy({ $0 }) {
+            appendSupervisorLog(
+                "Connection cleanup could not confirm every auxiliary profile core stopped."
+            )
+        }
+
+        let primaryStopped = await supervisor.stop()
+        coreState = await supervisor.state()
+        if primaryStopped {
+            stopControllerStreams()
+        } else {
+            appendSupervisorLog(
+                "Connection cleanup could not confirm the primary core stopped."
+            )
         }
     }
 
@@ -2151,6 +2661,12 @@ final class AppModel {
         }
         if systemProxyEnabled || hasSystemProxySnapshot {
             guard await performDisableSystemProxy() else { return false }
+        }
+        let auxiliaryStops = await coreFleet.stopAll()
+        auxiliaryCoreStates = await coreFleet.states()
+        guard auxiliaryStops.values.allSatisfy({ $0 }) else {
+            errorMessage = "One or more auxiliary profile cores could not be confirmed stopped."
+            return false
         }
         return await stopCore()
     }
@@ -2616,12 +3132,15 @@ final class AppModel {
 
         let previous = networkCapturePreferences
         let previousListener = networkExtensionMihomoListener
+        let previousProfileListeners = networkExtensionProfileListeners
+        let previousRuntimePlan = profileRuntimePlan
         let wasConnected = isConnected || isBusy
         do {
             if enabled {
-                networkExtensionMihomoListener = try makeNetworkExtensionMihomoListener(
+                try await prepareProfileRoutingSessions(
                     for: rules,
-                    reusing: previous.enabled ? previousListener : nil
+                    captureEnabled: true,
+                    startAuxiliary: wasConnected || enabled
                 )
             }
             let candidate = try await store.replaceRules(
@@ -2664,8 +3183,10 @@ final class AppModel {
                wasConnected,
                isConnected,
                controllerIsReady,
+               !candidate.dnsEnabled,
                candidate.dnsEnabled == previous.dnsEnabled,
                networkExtensionMihomoListener == previousListener,
+               networkExtensionProfileListeners == previousProfileListeners,
                case let .on(activeRevision) = networkCaptureState,
                activeRevision == previous.snapshot.revision,
                let listener = networkExtensionMihomoListener {
@@ -2674,7 +3195,8 @@ final class AppModel {
                 )
                 let configuration = try NetworkExtensionRuntimeConfiguration(
                     preferences: candidate,
-                    mihomoListener: listener
+                    mihomoListener: listener,
+                    routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints()
                 )
                 let updateOutcome = try await networkExtensionControl
                     .updateRuntimeConfiguration(configuration)
@@ -2707,6 +3229,13 @@ final class AppModel {
                 guard await performDisconnect() else {
                     throw AppModelError.networkCaptureDisableFailed
                 }
+            }
+            if !enabled {
+                try await prepareProfileRoutingSessions(
+                    for: [],
+                    captureEnabled: false,
+                    startAuxiliary: wasConnected
+                )
             }
 
             let activation = try await activateStoredProfile(
@@ -2770,6 +3299,11 @@ final class AppModel {
 
             do {
                 networkExtensionMihomoListener = previous.enabled ? previousListener : nil
+                networkExtensionProfileListeners = previous.enabled
+                    ? previousProfileListeners
+                    : [:]
+                profileRuntimePlan = previousRuntimePlan
+                try? await profileRuntimePlanStore?.save(previousRuntimePlan)
                 networkCapturePreferences = try await store.replaceRules(
                     previous.snapshot.rules,
                     enabled: previous.enabled,
@@ -2792,6 +3326,11 @@ final class AppModel {
             }
 
             do {
+                try await prepareProfileRoutingSessions(
+                    for: previous.enabled ? previous.snapshot.rules : [],
+                    captureEnabled: previous.enabled,
+                    startAuxiliary: wasConnected
+                )
                 let rollback = try await activateStoredProfile(
                     activeProfileID,
                     validator: try makeProfileValidator()
@@ -2896,6 +3435,7 @@ final class AppModel {
     }
 
     private func performNetworkCaptureActivation() async {
+        guard !shutdownInProgress else { return }
         guard networkCapturePreferences.enabled else {
             networkCaptureState = .off
             return
@@ -2907,6 +3447,9 @@ final class AppModel {
         if let networkCaptureActivationOperation {
             await networkCaptureActivationOperation.task.value
             return
+        }
+        if let networkCaptureDeactivationOperation {
+            _ = await networkCaptureDeactivationOperation.task.value
         }
 
         let id = UUID()
@@ -2922,6 +3465,7 @@ final class AppModel {
     }
 
     private func runNetworkCaptureActivation() async {
+        guard !shutdownInProgress else { return }
         guard networkCapturePreferences.enabled else {
             networkCaptureState = .off
             return
@@ -2935,12 +3479,17 @@ final class AppModel {
         dnsProxyRuntimeError = nil
         dnsProxyAutomaticallyDisabled = false
         do {
-            try await localPortProbe.waitUntilListening(ports: [Int(listener.port)])
+            let routeProxyEndpoints = try activeNetworkExtensionRouteProxyEndpoints()
+            try await localPortProbe.waitUntilListening(
+                ports: Set(routeProxyEndpoints.map { Int($0.port) })
+            )
             let configuration = try NetworkExtensionRuntimeConfiguration(
                 preferences: networkCapturePreferences,
-                mihomoListener: listener
+                mihomoListener: listener,
+                routeProxyEndpoints: routeProxyEndpoints
             )
-            switch try await networkExtensionControl.enable(
+            guard !shutdownInProgress else { throw CancellationError() }
+            let outcome = try await networkExtensionControl.enable(
                 configuration,
                 progress: { [weak self] progress in
                     Task { @MainActor in
@@ -2951,7 +3500,13 @@ final class AppModel {
                         self.networkCaptureState = .awaitingUserApproval
                     }
                 }
-            ) {
+            )
+            guard !shutdownInProgress else {
+                try? await networkExtensionControl.disable()
+                networkCaptureState = .off
+                return
+            }
+            switch outcome {
             case .running:
                 networkCaptureState = .on(revision: configuration.revision)
                 dnsProxyAutomaticallyDisabled = false
@@ -2967,6 +3522,10 @@ final class AppModel {
                 )
             }
         } catch {
+            guard !shutdownInProgress else {
+                networkCaptureState = .off
+                return
+            }
             let message = error.localizedDescription
             reportNetworkCaptureFailure(message)
         }
@@ -2985,6 +3544,28 @@ final class AppModel {
 
     @discardableResult
     private func performNetworkCaptureDeactivation() async -> Bool {
+        if let networkCaptureActivationOperation {
+            await networkCaptureActivationOperation.task.value
+        }
+        if let networkCaptureDeactivationOperation {
+            return await networkCaptureDeactivationOperation.task.value
+        }
+
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return true }
+            return await self.runNetworkCaptureDeactivation()
+        }
+        networkCaptureDeactivationOperation = (id, task)
+        let result = await task.value
+        if networkCaptureDeactivationOperation?.id == id {
+            networkCaptureDeactivationOperation = nil
+        }
+        return result
+    }
+
+    @discardableResult
+    private func runNetworkCaptureDeactivation() async -> Bool {
         networkCaptureState = .disabling
         stopAppRoutingActivityMonitor()
         do {
@@ -3049,6 +3630,7 @@ final class AppModel {
     }
 
     private func performEnableSystemProxy() async {
+        guard !shutdownInProgress else { return }
         if let operation = systemProxyEnableOperation {
             await operation.task.value
             return
@@ -3067,6 +3649,7 @@ final class AppModel {
     }
 
     private func performSystemProxyActivation() async {
+        guard !shutdownInProgress else { return }
         if case .on = systemProxyState { return }
         if case .enabling = systemProxyState { return }
         guard !networkCapturePreferences.enabled else {
@@ -3109,7 +3692,9 @@ final class AppModel {
             ) else {
                 throw AppModelError.systemProxyGuardVerificationFailed
             }
-            guard generation == controllerGeneration, isConnected else {
+            guard !shutdownInProgress,
+                  generation == controllerGeneration,
+                  isConnected else {
                 _ = await performDisableSystemProxy()
                 return
             }
@@ -3201,16 +3786,19 @@ final class AppModel {
         systemProxyGuardTask?.cancel()
         systemProxyGuardTask = nil
         do {
+            guard !shutdownInProgress else { throw CancellationError() }
             try await systemProxyManager.apply(
                 endpoints: endpoints,
                 bypassDomains: updatedPreferences.effectiveBypassDomains
             )
+            guard !shutdownInProgress else { throw CancellationError() }
             guard try await systemProxyManager.configurationMatches(
                 endpoints: endpoints,
                 bypassDomains: updatedPreferences.effectiveBypassDomains
             ) else {
                 throw AppModelError.systemProxyGuardVerificationFailed
             }
+            guard !shutdownInProgress else { throw CancellationError() }
             try await systemProxyPreferencesStore.save(updatedPreferences)
             systemProxyPreferences = updatedPreferences
             systemProxyGuardFailure = nil
@@ -3223,12 +3811,19 @@ final class AppModel {
             startSystemProxyGuard(endpoints: endpoints)
         } catch {
             let updateError = error
+            guard !shutdownInProgress else {
+                systemProxyState = hasSystemProxySnapshot
+                    ? .failed("System proxy settings update was interrupted by shutdown.")
+                    : .off
+                throw CancellationError()
+            }
             var rollbackError: (any Error)?
             do {
                 try await systemProxyManager.apply(
                     endpoints: endpoints,
                     bypassDomains: previousPreferences.effectiveBypassDomains
                 )
+                guard !shutdownInProgress else { throw CancellationError() }
                 guard try await systemProxyManager.configurationMatches(
                     endpoints: endpoints,
                     bypassDomains: previousPreferences.effectiveBypassDomains
@@ -3368,25 +3963,25 @@ final class AppModel {
         endpoints: LocalSystemProxyEndpoints,
         bypassDomains: [String]
     ) async {
-        guard systemProxyGuardCanVerify else { return }
+        guard !shutdownInProgress, systemProxyGuardCanVerify else { return }
         do {
             let matches = try await systemProxyManager.configurationMatches(
                 endpoints: endpoints,
                 bypassDomains: bypassDomains
             )
-            guard systemProxyGuardCanVerify else { return }
+            guard !shutdownInProgress, systemProxyGuardCanVerify else { return }
             if !matches {
                 let detectedAt = Date()
                 try await systemProxyManager.apply(
                     endpoints: endpoints,
                     bypassDomains: bypassDomains
                 )
-                guard systemProxyGuardCanVerify else { return }
+                guard !shutdownInProgress, systemProxyGuardCanVerify else { return }
                 let repairedConfigurationMatches = try await systemProxyManager.configurationMatches(
                     endpoints: endpoints,
                     bypassDomains: bypassDomains
                 )
-                guard systemProxyGuardCanVerify else { return }
+                guard !shutdownInProgress, systemProxyGuardCanVerify else { return }
                 guard repairedConfigurationMatches else {
                     throw AppModelError.systemProxyGuardVerificationFailed
                 }
@@ -3479,7 +4074,26 @@ final class AppModel {
         subscriptionUpdateTask = nil
         systemProxyGuardTask?.cancel()
         systemProxyGuardTask = nil
-        await cancelStartupPreparation()
+        guard await cancelStartupPreparation(timeout: 30) else {
+            let message = "MClash is still finishing startup activation. Quit was cancelled so macOS network state cannot be abandoned mid-transaction."
+            errorMessage = message
+            appendSupervisorLog(message)
+            shutdownInProgress = false
+            resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
+                recoveryWasArmed: recoveryWasArmed
+            )
+            return false
+        }
+        guard await waitForNetworkOperationsToSettle() else {
+            let message = "MClash is still finishing a network settings transaction. Quit was cancelled so that transaction cannot restart a provider or core after cleanup."
+            errorMessage = message
+            appendSupervisorLog(message)
+            shutdownInProgress = false
+            resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
+                recoveryWasArmed: recoveryWasArmed
+            )
+            return false
+        }
         shouldReenableSystemProxyAfterCrash = false
         if let operation = systemProxyEnableOperation {
             await operation.task.value
@@ -3504,6 +4118,26 @@ final class AppModel {
                 return false
             }
         }
+        let auxiliaryStops = await coreFleet.stopAll()
+        auxiliaryCoreStates = await coreFleet.states()
+        guard auxiliaryStops.values.allSatisfy({ $0 }) else {
+            let failedProfiles = auxiliaryStops
+                .filter { !$0.value }
+                .keys
+                .map(profileDisplayName)
+                .sorted()
+                .joined(separator: ", ")
+            let message = failedProfiles.isEmpty
+                ? "One or more auxiliary profile sessions could not be stopped."
+                : "These auxiliary profile sessions could not be stopped: \(failedProfiles)."
+            errorMessage = message
+            appendSupervisorLog(message)
+            shutdownInProgress = false
+            resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
+                recoveryWasArmed: recoveryWasArmed
+            )
+            return false
+        }
         guard await stopCore() else {
             shutdownInProgress = false
             resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
@@ -3521,24 +4155,117 @@ final class AppModel {
         subscriptionUpdateTask = nil
         systemProxyGuardTask?.cancel()
         systemProxyGuardTask = nil
-        await cancelStartupPreparation()
+        _ = await cancelStartupPreparation(timeout: 2)
+        let operationsSettled = await waitForNetworkOperationsToSettle(
+            timeout: 2
+        )
+        if !operationsSettled {
+            appendSupervisorLog(
+                "Forced shutdown timed out waiting for a network settings transaction; final cleanup will proceed with all new activation paths disabled."
+            )
+        }
         shouldReenableSystemProxyAfterCrash = false
-        if let operation = systemProxyEnableOperation {
-            await operation.task.value
+        systemProxyEnableOperation?.task.cancel()
+        networkCaptureActivationOperation?.task.cancel()
+        networkCaptureDeactivationOperation?.task.cancel()
+
+        let extensionDisable = Task { [networkExtensionControl] in
+            do {
+                try await networkExtensionControl.disable()
+                return true
+            } catch {
+                return false
+            }
         }
-        if networkCaptureIsActive {
-            _ = await performNetworkCaptureDeactivation()
+        if await waitForTask(extensionDisable, timeout: 5) != true {
+            appendSupervisorLog(
+                "Forced shutdown could not confirm Network Extension cleanup before the hard deadline."
+            )
+        } else {
+            networkCaptureState = .off
         }
-        _ = await stopCore()
+
+        if systemProxyEnabled || hasSystemProxySnapshot
+            || systemProxyEnableOperation != nil {
+            let proxyRestore = Task { @MainActor [weak self] in
+                guard let self else { return false }
+                return await self.performDisableSystemProxy()
+            }
+            if await waitForTask(proxyRestore, timeout: 5) != true {
+                appendSupervisorLog(
+                    "Forced shutdown could not confirm macOS System Proxy restoration before the hard deadline."
+                )
+            }
+        }
+        let fleetStop = Task { [coreFleet] in
+            await coreFleet.forceStopAll()
+        }
+        if await waitForTask(fleetStop, timeout: 5) == nil {
+            appendSupervisorLog(
+                "Forced shutdown queued auxiliary core cleanup but did not wait past the hard deadline."
+            )
+        } else {
+            auxiliaryCoreStates = await coreFleet.states()
+        }
+        let primaryStop = Task { [supervisor] in
+            await supervisor.stop()
+        }
+        if await waitForTask(primaryStop, timeout: 5) != true {
+            appendSupervisorLog(
+                "Forced shutdown could not confirm primary core cleanup before the hard deadline."
+            )
+        } else {
+            coreState = await supervisor.state()
+        }
         stopControllerStreams()
     }
 
-    private func cancelStartupPreparation() async {
-        guard let operation = preparationOperation else { return }
+    private func cancelStartupPreparation(
+        timeout: TimeInterval
+    ) async -> Bool {
+        guard let operation = preparationOperation else { return true }
         operation.task.cancel()
-        await operation.task.value
+        guard await waitForTask(operation.task, timeout: timeout) != nil else {
+            return false
+        }
         if preparationOperation?.id == operation.id {
             preparationOperation = nil
+        }
+        return true
+    }
+
+    private func waitForNetworkOperationsToSettle(
+        timeout: TimeInterval = 30
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while operations.contains(where: {
+            $0.serializesNetworkState || $0.isCoreBound
+        }) {
+            guard Date() < deadline else { return false }
+            do {
+                try await Task.sleep(for: .milliseconds(25))
+            } catch {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func waitForTask<Value: Sendable>(
+        _ task: Task<Value, Never>,
+        timeout: TimeInterval
+    ) async -> Value? {
+        await withCheckedContinuation { continuation in
+            let gate = OneShotContinuation<Value?>(continuation)
+            Task { @MainActor in
+                let value = await task.value
+                await gate.resume(returning: value)
+            }
+            Task {
+                let milliseconds = max(1, Int(timeout * 1_000))
+                try? await Task.sleep(for: .milliseconds(milliseconds))
+                await gate.resume(returning: nil)
+            }
         }
     }
 
@@ -3792,8 +4519,34 @@ final class AppModel {
         }
     }
 
+    private func receive(_ event: CoreFleetEvent) {
+        switch event {
+        case let .stateChanged(profileID, state):
+            auxiliaryCoreStates[profileID] = state
+            if case let .failed(message) = state {
+                appendSupervisorLog(
+                    "Profile \(profileDisplayName(profileID)) core failed: \(message)"
+                )
+            }
+        case let .log(profileID, line):
+            guard !lightweightMode || presentationTelemetryPolicy.logs else { return }
+            appendCoreLog(CoreLogLine(
+                timestamp: line.timestamp,
+                stream: line.stream,
+                message: "[\(profileDisplayName(profileID))] \(line.message)"
+            ))
+        }
+    }
+
+    private func profileDisplayName(_ profileID: ProfileID) -> String {
+        profiles.first(where: { $0.id == profileID })?.name ?? profileID.description
+    }
+
     private func handleRunningSession(_ session: CoreSession) async {
         await controllerDidStart(session)
+        if let networkCaptureDeactivationOperation {
+            _ = await networkCaptureDeactivationOperation.task.value
+        }
         if controllerIsReady, isConnected {
             setNetworkEnvironmentRecoveryArmed(true)
         }
@@ -3848,6 +4601,10 @@ final class AppModel {
     }
 
     private func coreHomeDirectory() throws -> URL {
+        if let profileLayout, let activeProfileID {
+            try profileLayout.createRuntimeDirectories(for: activeProfileID)
+            return profileLayout.coreHomeDirectory(for: activeProfileID)
+        }
         let applicationRoot = profileLayout?.rootDirectory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appending(path: "MClash", directoryHint: .isDirectory)
@@ -3957,25 +4714,31 @@ final class AppModel {
         using client: MihomoAPIClient
     ) async throws -> MihomoConfig {
         managedMixedPort = nil
-        let requiresExactListeners = runtimeOverrides.ports.hasExplicitLocalProxyListener
-        if let ports = resolvedProxyPorts(in: initialConfig) {
-            let requiredPorts = try requiredProxyProtocolPorts(
-                effectiveHTTPPort: ports.http,
-                effectiveSOCKSPort: ports.socks,
-                config: initialConfig
-            )
+        let requestedMixedPort = activeProfileID
+            .flatMap { profileSessionSpec(for: $0)?.mixedPort }
+            ?? runtimeOverrides.ports.mixedPort
+        let requiresExactListeners = requestedMixedPort != nil
+        if let port = positivePort(initialConfig.mixedPort) {
             do {
                 try await localPortProbe.waitUntilProxyProtocols(
-                    httpPorts: requiredPorts.http,
-                    socksPorts: requiredPorts.socks
+                    httpPort: port,
+                    socksPort: port
                 )
+                if let requested = requestedMixedPort,
+                   requested != port {
+                    throw AppModelError.explicitLocalProxyListenerRejected(
+                        field: "Mixed",
+                        requested: requested,
+                        actual: initialConfig.mixedPort
+                    )
+                }
                 return initialConfig
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 if requiresExactListeners {
                     throw AppModelError.explicitLocalProxyListenersUnavailable(
-                        Set([ports.http, ports.socks]).sorted()
+                        [port]
                     )
                 }
                 appendSupervisorLog(
@@ -3987,7 +4750,7 @@ final class AppModel {
                 throw AppModelError.explicitLocalProxyListenersIncomplete
             }
             appendSupervisorLog(
-                "The profile has no complete local HTTP/SOCKS listener; applying a temporary MClash mixed port."
+                "The profile has no usable Mixed listener; applying a temporary MClash mixed port."
             )
         }
 
@@ -4015,59 +4778,6 @@ final class AppModel {
         }
 
         throw lastError ?? AppModelError.localProxyPortsUnavailable
-    }
-
-    private func resolvedProxyPorts(in config: MihomoConfig) -> (http: Int, socks: Int)? {
-        guard let http = positivePort(config.port) ?? positivePort(config.mixedPort),
-              let socks = positivePort(config.socksPort) ?? positivePort(config.mixedPort) else {
-            return nil
-        }
-        return (http, socks)
-    }
-
-    private func requiredProxyProtocolPorts(
-        effectiveHTTPPort: Int,
-        effectiveSOCKSPort: Int,
-        config: MihomoConfig
-    ) throws -> (http: Set<Int>, socks: Set<Int>) {
-        var httpPorts: Set<Int> = [effectiveHTTPPort]
-        var socksPorts: Set<Int> = [effectiveSOCKSPort]
-        let overrides = runtimeOverrides.ports
-
-        if let requested = overrides.port {
-            guard config.port == requested else {
-                throw AppModelError.explicitLocalProxyListenerRejected(
-                    field: "HTTP",
-                    requested: requested,
-                    actual: config.port
-                )
-            }
-            if let port = positivePort(config.port) { httpPorts.insert(port) }
-        }
-        if let requested = overrides.socksPort {
-            guard config.socksPort == requested else {
-                throw AppModelError.explicitLocalProxyListenerRejected(
-                    field: "SOCKS5",
-                    requested: requested,
-                    actual: config.socksPort
-                )
-            }
-            if let port = positivePort(config.socksPort) { socksPorts.insert(port) }
-        }
-        if let requested = overrides.mixedPort {
-            guard config.mixedPort == requested else {
-                throw AppModelError.explicitLocalProxyListenerRejected(
-                    field: "Mixed",
-                    requested: requested,
-                    actual: config.mixedPort
-                )
-            }
-            if let port = positivePort(config.mixedPort) {
-                httpPorts.insert(port)
-                socksPorts.insert(port)
-            }
-        }
-        return (httpPorts, socksPorts)
     }
 
     private func refreshProxyGroups(generation: Int) async {
@@ -4182,6 +4892,9 @@ final class AppModel {
     ) {
         let policy = presentationTelemetryPolicy
         supervisor.setProcessLogForwardingEnabled(policy.logs)
+        Task { [coreFleet] in
+            await coreFleet.setProcessLogForwardingEnabledForAll(policy.logs)
+        }
         guard isConnected,
               let client = providedClient ?? apiClient else {
             cancelControllerStreamTasks()
@@ -4207,11 +4920,10 @@ final class AppModel {
         }
         reconcileControllerStream(
             .connections,
-            // The connection feed is also the low-cost accounting source for
-            // completed session and persistent history. Keep it alive while
-            // the core runs, but skip presentation-only transforms below when
-            // no surface needs them.
-            shouldRun: true,
+            // Lightweight mode deliberately trades background traffic-history
+            // completeness for lower steady-state CPU and wakeups. Opening a
+            // surface that needs connection data immediately resumes the feed.
+            shouldRun: policy.connections || !lightweightMode,
             task: &connectionsTask
         ) {
             connectionStreamIntervalMilliseconds = connectionIntervalMilliseconds
@@ -4697,9 +5409,11 @@ final class AppModel {
                 httpPort: httpPort,
                 socksPort: socksPort
             )
-            if let listener = activeNetworkExtensionMihomoListener {
+            if activeNetworkExtensionMihomoListener != nil {
                 try await localPortProbe.waitUntilListening(
-                    ports: Set(listener.routeListeners.map { Int($0.port) })
+                    ports: Set(try activeNetworkExtensionRouteProxyEndpoints().map {
+                        Int($0.port)
+                    })
                 )
             }
             return true
@@ -5922,6 +6636,7 @@ final class AppModel {
 
     @discardableResult
     private func begin(_ operation: Operation) -> Bool {
+        guard !shutdownInProgress else { return false }
         guard canPerform(operation) else { return false }
         return operations.insert(operation).inserted
     }
@@ -5981,8 +6696,53 @@ final class AppModel {
         port > 0 ? port : nil
     }
 
+    private func mixedPortIsAvailableForStart(
+        _ port: Int,
+        profileID: ProfileID
+    ) -> Bool {
+        if localPortProbe.isAvailableTCPAndUDP(port: port) {
+            return true
+        }
+        guard verifiedMClashMixedPorts[profileID]?.contains(port) == true else {
+            return false
+        }
+        // A raw TCP bind can remain unavailable briefly after our listener
+        // stops. Reuse is safe only when no TCP listener answers on either
+        // loopback family and UDP is completely free. The authenticated
+        // controller check after launch remains authoritative.
+        return !localPortProbe.isListening(port: port)
+            && localPortProbe.isAvailableUDP(port: port)
+    }
+
     private var activeNetworkExtensionMihomoListener: NetworkExtensionMihomoListenerConfiguration? {
         networkCapturePreferences.enabled ? networkExtensionMihomoListener : nil
+    }
+
+    private func primarySourceBoundListenerPorts(
+        profileID: ProfileID
+    ) async throws -> Set<Int> {
+        guard let profileStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        let composer = RuntimeConfigurationComposer()
+        let sourceData = try await profileStore.configurationData(for: profileID)
+        let managedSourceData = try composer.sanitizingForManagedSession(sourceData)
+        let sourceCandidate = try composer.applying(
+            effectiveRuntimeOverrides(for: profileID),
+            to: managedSourceData,
+            networkExtensionListener: nil
+        )
+        return try composer.boundListenerPorts(in: sourceCandidate)
+    }
+
+    private func activeNetworkExtensionRouteProxyEndpoints() throws
+        -> [MihomoRouteProxyEndpoint]
+    {
+        let endpoints = try networkExtensionProfileListeners
+            .sorted { $0.key.description < $1.key.description }
+            .flatMap { try $0.value.routeProxyEndpoints() }
+        try MihomoRouteProxyCatalog.validate(endpoints)
+        return endpoints
     }
 
     private var networkCaptureIsActive: Bool {
@@ -5998,70 +6758,702 @@ final class AppModel {
         switch networkCaptureState {
         case let .on(revision):
             revision != networkCapturePreferences.snapshot.revision
-        case .off, .waitingForConnection, .enabling, .awaitingUserApproval:
+        case .off, .waitingForConnection, .enabling, .awaitingUserApproval, .failed:
             true
-        case .disabling, .requiresReboot, .failed:
+        case .disabling, .requiresReboot:
             false
         }
     }
 
-    private func makeNetworkExtensionMihomoListener(
+    private func loadProfileRuntimePlan() async throws {
+        guard let store = profileRuntimePlanStore else {
+            profileRuntimePlan = .empty
+            return
+        }
+
+        let recovery = try await store.loadRecoveringInvalidDocument()
+        var plan = recovery.plan
+        if let reason = recovery.recoveryReason,
+           let quarantinedURL = recovery.quarantinedURL {
+            recordStorageFailure(
+                component: .profileRuntimePlan,
+                error: AppModelError.profileActivationFailed(reason),
+                recoverySuggestion: "MClash preserved the invalid document at \(quarantinedURL.path) and regenerated a safe plan for the current default profile. Review the per-profile Mixed ports before re-enabling auxiliary sessions."
+            )
+            appendSupervisorLog(
+                "Invalid profile runtime plan was quarantined at \(quarantinedURL.path)."
+            )
+        } else {
+            clearStorageFailure(for: .profileRuntimePlan)
+        }
+        let knownProfileIDs = Set(profiles.map(\.id))
+        plan.sessions.removeAll { !knownProfileIDs.contains($0.profileID) }
+
+        if let activeProfileID {
+            if let index = plan.sessions.firstIndex(where: {
+                $0.profileID == activeProfileID
+            }) {
+                plan.sessions[index].enabled = true
+            } else {
+                let port = try await preferredMixedPort(
+                    for: activeProfileID,
+                    excluding: Set(plan.sessions.map(\.mixedPort))
+                )
+                plan.sessions.append(ProfileSessionSpec(
+                    profileID: activeProfileID,
+                    mixedPort: port
+                ))
+            }
+            plan.primaryProfileID = activeProfileID
+        } else {
+            plan.primaryProfileID = nil
+        }
+
+        try await store.save(plan)
+        profileRuntimePlan = plan
+    }
+
+    func profileSessionSpec(for profileID: ProfileID) -> ProfileSessionSpec? {
+        profileRuntimePlan.sessions.first { $0.profileID == profileID }
+    }
+
+    func updateProfileRuntime(
+        profileID: ProfileID,
+        enabled: Bool,
+        mixedPort: Int
+    ) async throws {
+        guard begin(.updateProfile(profileID)) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.updateProfile(profileID)) }
+        guard profiles.contains(where: { $0.id == profileID }),
+              let store = profileRuntimePlanStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        guard profileID != activeProfileID || enabled else {
+            throw AppModelError.primaryProfileCannotBeDisabled
+        }
+        if !enabled, networkCapturePreferences.snapshot.rules.contains(where: { rule in
+            guard rule.enabled,
+                  case let .mihomo(route) = rule.action,
+                  let target = route.routingProfileID else { return false }
+            return target.uuid == profileID.rawValue
+        }) {
+            throw AppModelError.profileRequiredByAppRouting(profileDisplayName(profileID))
+        }
+
+        let previousPlan = profileRuntimePlan
+        var candidate = profileRuntimePlan
+        if let index = candidate.sessions.firstIndex(where: {
+            $0.profileID == profileID
+        }) {
+            candidate.sessions[index].enabled = enabled
+            candidate.sessions[index].mixedPort = mixedPort
+        } else {
+            candidate.sessions.append(ProfileSessionSpec(
+                profileID: profileID,
+                enabled: enabled,
+                mixedPort: mixedPort
+            ))
+        }
+        candidate.primaryProfileID = activeProfileID
+        try ProfileRuntimePlanValidator().validate(candidate)
+        profileRuntimePlan = candidate
+
+        let wasConnected = isConnected || isBusy
+        let systemProxyWasOn = systemProxyEnabled
+        do {
+            if profileID == activeProfileID, wasConnected {
+                guard await performDisconnect() else {
+                    throw AppModelError.profileActivationFailed(
+                        "The active core could not stop before its Mixed port changed."
+                    )
+                }
+            }
+            try await prepareProfileRoutingSessions(
+                for: networkCapturePreferences.enabled
+                    ? networkCapturePreferences.snapshot.rules
+                    : [],
+                startAuxiliary: wasConnected
+            )
+            if profileID == activeProfileID {
+                let activation = try await activateStoredProfile(
+                    profileID,
+                    validator: try makeProfileValidator()
+                )
+                activeConfigURL = activation.configurationURL
+            }
+            if profileID == activeProfileID, wasConnected {
+                guard await performConnect() else {
+                    throw AppModelError.profileActivationFailed(
+                        "The active core could not restart on its new Mixed port."
+                    )
+                }
+                if systemProxyWasOn {
+                    await performEnableSystemProxy()
+                    guard systemProxyState == .on else {
+                        throw AppModelError.profileActivationFailed(
+                            errorMessage
+                                ?? "The macOS system proxy could not be restored after the port change."
+                        )
+                    }
+                }
+            }
+            try await store.save(candidate)
+        } catch let updateError {
+            var rollbackFailures: [String] = []
+            profileRuntimePlan = previousPlan
+            do {
+                try await store.save(previousPlan)
+            } catch {
+                rollbackFailures.append(
+                    "the previous profile runtime plan could not be saved: \(error.localizedDescription)"
+                )
+            }
+
+            if profileID == activeProfileID, isConnected || isBusy {
+                if !(await performDisconnect()) {
+                    rollbackFailures.append(
+                        "the candidate core could not be stopped before rollback"
+                    )
+                }
+            }
+            do {
+                try await prepareProfileRoutingSessions(
+                    for: networkCapturePreferences.enabled
+                        ? networkCapturePreferences.snapshot.rules
+                        : [],
+                    startAuxiliary: wasConnected
+                )
+                if profileID == activeProfileID {
+                    let rollback = try await activateStoredProfile(
+                        profileID,
+                        validator: try makeProfileValidator()
+                    )
+                    activeConfigURL = rollback.configurationURL
+                    if wasConnected, !(await performConnect()) {
+                        rollbackFailures.append(
+                            "the previous active profile could not be reconnected"
+                        )
+                    }
+                    if wasConnected, systemProxyWasOn {
+                        await performEnableSystemProxy()
+                        if systemProxyState != .on {
+                            rollbackFailures.append(
+                                "the previous macOS system proxy could not be restored"
+                            )
+                        }
+                    }
+                }
+            } catch {
+                rollbackFailures.append(
+                    "the previous profile runtime could not be restored: \(error.localizedDescription)"
+                )
+            }
+
+            guard rollbackFailures.isEmpty else {
+                throw NetworkCaptureTransactionFailure(
+                    updateReason: updateError.localizedDescription,
+                    rollbackReason: rollbackFailures.joined(separator: "; ")
+                )
+            }
+            throw updateError
+        }
+    }
+
+    private func preferredMixedPort(
+        for profileID: ProfileID,
+        excluding usedPorts: Set<Int>
+    ) async throws -> Int {
+        if profileID == activeProfileID,
+           let override = runtimeOverrides.ports.mixedPort,
+           (1...65_535).contains(override),
+           !usedPorts.contains(override) {
+            return override
+        }
+        if let profileStore,
+           let data = try? await profileStore.configurationData(for: profileID),
+           let configured = try? RuntimeConfigurationComposer().listenerPorts(in: data),
+           let mixedPort = configured.mixedPort,
+           (1...65_535).contains(mixedPort),
+           !usedPorts.contains(mixedPort),
+           localPortProbe.isAvailableTCPAndUDP(port: mixedPort) {
+            return mixedPort
+        }
+
+        for _ in 0..<64 {
+            let port = try localPortProbe.availableTCPAndUDPPorts(count: 1)[0]
+            if !usedPorts.contains(port) { return port }
+        }
+        throw AppModelError.localProxyPortsUnavailable
+    }
+
+    private func effectiveRuntimeOverrides(for profileID: ProfileID) -> RuntimeOverrides {
+        // Advanced runtime overrides belong to the active profile. Applying
+        // its DNS, rules, interface, or LAN policy to another airport would
+        // silently merge two otherwise independent profiles. Auxiliary
+        // sessions therefore inherit their own source configuration, with
+        // only MClash-owned listener isolation layered on top.
+        var overrides = profileID == activeProfileID
+            ? runtimeOverrides
+            : RuntimeOverrides(
+                ports: RuntimePortOverrides(
+                    port: 0,
+                    socksPort: 0,
+                    redirPort: 0,
+                    tproxyPort: 0
+                ),
+                allowLAN: false,
+                bindAddress: "127.0.0.1",
+                dns: RuntimeDNSOverrides(enable: false)
+            )
+        overrides.ports.port = 0
+        overrides.ports.socksPort = 0
+        overrides.ports.mixedPort = profileSessionSpec(for: profileID)?.mixedPort
+        return overrides
+    }
+
+    private func prepareProfileRoutingSessions(
         for rules: [CaptureRule],
-        reusing existing: NetworkExtensionMihomoListenerConfiguration? = nil
-    ) throws
-        -> NetworkExtensionMihomoListenerConfiguration
-    {
-        let requestedRoutes = Set<MihomoRoute>(rules.lazy.filter(\.enabled).compactMap { rule in
+        captureEnabled: Bool? = nil,
+        startAuxiliary: Bool = true
+    ) async throws {
+        guard !shutdownInProgress else { throw CancellationError() }
+        guard let activeProfileID,
+              let profileStore,
+              let profileLayout else {
+            networkExtensionMihomoListener = nil
+            networkExtensionProfileListeners = [:]
+            _ = await coreFleet.stopAll()
+            auxiliaryCoreStates = await coreFleet.states()
+            return
+        }
+
+        let shouldConfigureCapture = captureEnabled ?? networkCapturePreferences.enabled
+        try await ensureRuntimePlanCovers(
+            activeProfileID: activeProfileID,
+            rules: shouldConfigureCapture ? rules : []
+        )
+
+        var routesByProfile: [ProfileID: Set<MihomoRoute>] = [:]
+        if shouldConfigureCapture {
+            for rule in rules where rule.enabled {
+                guard case let .mihomo(route) = rule.action else { continue }
+                if let target = route.routingProfileID {
+                    let profileID = ProfileID(rawValue: target.uuid)
+                    routesByProfile[profileID, default: []].insert(route)
+                } else if route != .profileRules {
+                    routesByProfile[activeProfileID, default: []].insert(route)
+                }
+            }
+        }
+
+        var listeners: [ProfileID: NetworkExtensionMihomoListenerConfiguration] = [:]
+        if shouldConfigureCapture {
+            let primarySourcePorts = try await primarySourceBoundListenerPorts(
+                profileID: activeProfileID
+            )
+            var requests: [(
+                profileID: ProfileID,
+                routes: Set<MihomoRoute>,
+                includesLegacyProfileRules: Bool
+            )] = [(
+                profileID: activeProfileID,
+                routes: routesByProfile[activeProfileID] ?? [],
+                includesLegacyProfileRules: true
+            )]
+            requests += routesByProfile
+                .filter { $0.key != activeProfileID && !$0.value.isEmpty }
+                .map {
+                    (
+                        profileID: $0.key,
+                        routes: $0.value,
+                        includesLegacyProfileRules: false
+                    )
+                }
+            requests.sort { $0.profileID.description < $1.profileID.description }
+
+            var listenerPorts = Set(
+                profileRuntimePlan.enabledSessions.map(\.mixedPort)
+            ).union(primarySourcePorts)
+            var requestsNeedingPorts: [(
+                profileID: ProfileID,
+                routes: Set<MihomoRoute>,
+                includesLegacyProfileRules: Bool
+            )] = []
+            for request in requests {
+                if let existing = reusableNetworkExtensionMihomoListener(
+                    routes: request.routes,
+                    includesLegacyProfileRules: request.includesLegacyProfileRules,
+                    existing: networkExtensionProfileListeners[request.profileID],
+                    excluding: listenerPorts
+                ) {
+                    listeners[request.profileID] = existing
+                    listenerPorts.formUnion(
+                        existing.routeListeners.map { Int($0.port) }
+                    )
+                } else {
+                    requestsNeedingPorts.append(request)
+                }
+            }
+
+            let requiredPortCount = requestsNeedingPorts.reduce(into: 0) {
+                $0 += $1.routes.count + ($1.includesLegacyProfileRules ? 1 : 0)
+            }
+            var allocatedPorts: ArraySlice<Int> = requiredPortCount > 0
+                ? try localPortProbe.availableTCPAndUDPPorts(
+                    count: requiredPortCount,
+                    excluding: listenerPorts
+                )[...]
+                : []
+            for request in requestsNeedingPorts {
+                let count = request.routes.count
+                    + (request.includesLegacyProfileRules ? 1 : 0)
+                let ports = Array(allocatedPorts.prefix(count))
+                allocatedPorts = allocatedPorts.dropFirst(count)
+                let listener = try makeNetworkExtensionMihomoListener(
+                    routes: request.routes,
+                    includesLegacyProfileRules: request.includesLegacyProfileRules,
+                    ports: ports
+                )
+                listeners[request.profileID] = listener
+                listenerPorts.formUnion(listener.routeListeners.map { Int($0.port) })
+            }
+        }
+        networkExtensionProfileListeners = listeners
+        networkExtensionMihomoListener = listeners[activeProfileID]
+
+        let auxiliarySpecs = profileRuntimePlan.enabledSessions.filter {
+            $0.profileID != activeProfileID
+        }
+        let auxiliaryPlan = ProfileRuntimePlan(
+            sessions: startAuxiliary ? auxiliarySpecs : [],
+            primaryProfileID: nil
+        )
+        var launchConfigurations: [ProfileID: CoreLaunchConfiguration] = [:]
+        if startAuxiliary {
+            let binaryURL = try binaryLocator.locate()
+            var reservedControllerPorts = Set(
+                profileRuntimePlan.enabledSessions.map(\.mixedPort)
+                    + listeners.values.flatMap {
+                        $0.routeListeners.map { Int($0.port) }
+                    }
+                    + auxiliaryLaunchConfigurations.values.map {
+                        Int($0.controllerPort)
+                    }
+            )
+            for spec in auxiliarySpecs {
+                let fleetState = await coreFleet.state(for: spec.profileID)
+                let sessionOwnsPort: Bool
+                if case let .running(session)? = fleetState {
+                    do {
+                        let client = try MihomoAPIClient(
+                            baseURL: session.endpoint,
+                            secret: session.secret
+                        )
+                        sessionOwnsPort = try await client.fetchConfig().mixedPort
+                            == spec.mixedPort
+                    } catch {
+                        // A running state alone is not port ownership. If its
+                        // authenticated controller cannot prove the exact
+                        // requested listener, fall through to the full
+                        // IPv4/IPv6 TCP and UDP availability checks.
+                        sessionOwnsPort = false
+                    }
+                } else {
+                    sessionOwnsPort = false
+                }
+                if !sessionOwnsPort,
+                   !mixedPortIsAvailableForStart(
+                       spec.mixedPort,
+                       profileID: spec.profileID
+                   ) {
+                    throw AppModelError.profileMixedPortUnavailable(
+                        profileDisplayName(spec.profileID),
+                        spec.mixedPort
+                    )
+                }
+                let listener = listeners[spec.profileID]
+                let sourceData = try await profileStore.configurationData(for: spec.profileID)
+                let isolatedSourceData = try RuntimeConfigurationComposer()
+                    .sanitizingForManagedSession(sourceData)
+                let runtimeData = try RuntimeConfigurationComposer().applying(
+                    effectiveRuntimeOverrides(for: spec.profileID),
+                    to: isolatedSourceData,
+                    networkExtensionListener: listener
+                )
+                let configurationURL = profileLayout.runtimeConfigurationURL(
+                    for: spec.profileID
+                )
+                let changed = try await persistAuxiliaryRuntimeConfiguration(
+                    runtimeData,
+                    profileID: spec.profileID,
+                    destinationURL: configurationURL
+                )
+                if !changed,
+                   let existing = auxiliaryLaunchConfigurations[spec.profileID] {
+                    launchConfigurations[spec.profileID] = existing
+                    continue
+                }
+
+                try profileLayout.createRuntimeDirectories(for: spec.profileID)
+                let homeDirectory = profileLayout.coreHomeDirectory(for: spec.profileID)
+                try geoDataInstaller.installIfNeeded(into: homeDirectory)
+                let controllerPort = try availableTCPPort(
+                    excluding: reservedControllerPorts
+                )
+                reservedControllerPorts.insert(controllerPort)
+                let configuration = CoreLaunchConfiguration(
+                    binaryURL: binaryURL,
+                    homeDirectory: homeDirectory,
+                    configURL: configurationURL,
+                    controllerPort: UInt16(controllerPort),
+                    secret: try secureRandomString()
+                )
+                launchConfigurations[spec.profileID] = configuration
+            }
+        }
+
+        guard !shutdownInProgress else { throw CancellationError() }
+        let result = try await coreFleet.reconcile(
+            plan: auxiliaryPlan,
+            launchConfigurations: launchConfigurations
+        )
+        auxiliaryCoreStates = await coreFleet.states()
+        if !result.failures.isEmpty {
+            for profileID in result.failures.keys {
+                auxiliaryLaunchConfigurations[profileID] = nil
+            }
+            let detail = result.failures.sorted {
+                $0.key.description < $1.key.description
+            }.map {
+                "\(profileDisplayName($0.key)): \($0.value)"
+            }.joined(separator: "; ")
+            throw AppModelError.profileActivationFailed(
+                "One or more profile sessions could not start: \(detail)"
+            )
+        }
+
+        if startAuxiliary {
+            for spec in auxiliarySpecs {
+                do {
+                    guard case let .running(session)? = await coreFleet.state(
+                        for: spec.profileID
+                    ) else {
+                        throw AppModelError.profileActivationFailed(
+                            "\(profileDisplayName(spec.profileID)) did not reach a running state."
+                        )
+                    }
+                    let client = try MihomoAPIClient(
+                        baseURL: session.endpoint,
+                        secret: session.secret
+                    )
+                    let config = try await client.fetchConfig()
+                    guard config.mixedPort == spec.mixedPort else {
+                        throw AppModelError.explicitLocalProxyListenerRejected(
+                            field: "Mixed",
+                            requested: spec.mixedPort,
+                            actual: config.mixedPort
+                        )
+                    }
+                    try await localPortProbe.waitUntilProxyProtocols(
+                        httpPort: spec.mixedPort,
+                        socksPort: spec.mixedPort
+                    )
+                } catch {
+                    _ = await coreFleet.stop(profileID: spec.profileID)
+                    auxiliaryCoreStates = await coreFleet.states()
+                    auxiliaryLaunchConfigurations[spec.profileID] = nil
+                    throw error
+                }
+            }
+
+            // Cache only configurations whose exact listener was verified
+            // through that profile Core's authenticated controller.
+            let knownProfileIDs = Set(profiles.map(\.id))
+            auxiliaryLaunchConfigurations = auxiliaryLaunchConfigurations
+                .filter { knownProfileIDs.contains($0.key) }
+            auxiliaryLaunchConfigurations.merge(
+                launchConfigurations,
+                uniquingKeysWith: { _, replacement in replacement }
+            )
+            for spec in auxiliarySpecs {
+                verifiedMClashMixedPorts[
+                    spec.profileID,
+                    default: []
+                ].insert(spec.mixedPort)
+            }
+        }
+    }
+
+    private func ensureRuntimePlanCovers(
+        activeProfileID: ProfileID,
+        rules: [CaptureRule]
+    ) async throws {
+        guard let store = profileRuntimePlanStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        var candidate = profileRuntimePlan
+        var required = Set<ProfileID>([activeProfileID])
+        for rule in rules where rule.enabled {
             guard case let .mihomo(route) = rule.action,
-                  route != .profileRules else { return nil }
-            return route
-        })
+                  let routingProfileID = route.routingProfileID else { continue }
+            let profileID = ProfileID(rawValue: routingProfileID.uuid)
+            guard profiles.contains(where: { $0.id == profileID }) else {
+                throw AppModelError.appRoutingProfileUnavailable(
+                    routingProfileID.description
+                )
+            }
+            required.insert(profileID)
+        }
+
+        var usedPorts = Set(candidate.sessions.map(\.mixedPort))
+        for profileID in required {
+            if let index = candidate.sessions.firstIndex(where: {
+                $0.profileID == profileID
+            }) {
+                candidate.sessions[index].enabled = true
+            } else {
+                let port = try await preferredMixedPort(
+                    for: profileID,
+                    excluding: usedPorts
+                )
+                usedPorts.insert(port)
+                candidate.sessions.append(ProfileSessionSpec(
+                    profileID: profileID,
+                    mixedPort: port
+                ))
+            }
+        }
+        candidate.primaryProfileID = activeProfileID
+        try ProfileRuntimePlanValidator().validate(candidate)
+        if candidate != profileRuntimePlan {
+            try await store.save(candidate)
+            profileRuntimePlan = candidate
+        }
+    }
+
+    private func persistAuxiliaryRuntimeConfiguration(
+        _ data: Data,
+        profileID: ProfileID,
+        destinationURL: URL
+    ) async throws -> Bool {
+        if let existing = try? Data(contentsOf: destinationURL),
+           existing == data {
+            return false
+        }
+        guard let profileLayout else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        try profileLayout.createRuntimeDirectories(for: profileID)
+        let replacer = AtomicFileReplacer()
+        let stagedURL = try await replacer.stage(
+            data: data,
+            in: profileLayout.runtimeStagingDirectory(for: profileID),
+            preferredName: "config.yaml"
+        )
+        do {
+            try await makeProfileValidator().validate(configurationAt: stagedURL)
+            let receipt = try await replacer.replace(
+                destinationURL: destinationURL,
+                withStagedFile: stagedURL
+            )
+            try await replacer.commit(receipt)
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: stagedURL)
+            throw error
+        }
+    }
+
+    private func availableTCPPort(excluding ports: Set<Int>) throws -> Int {
+        for _ in 0..<64 {
+            let port = try localPortProbe.availableTCPPort()
+            if !ports.contains(port) { return port }
+        }
+        throw AppModelError.localProxyPortsUnavailable
+    }
+
+    private func secureRandomString() throws -> String {
+        var randomBytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(
+            kSecRandomDefault,
+            randomBytes.count,
+            &randomBytes
+        )
+        guard status == errSecSuccess else {
+            throw AppModelError.secureRandomGenerationFailed(status)
+        }
+        return Data(randomBytes).base64EncodedString()
+    }
+
+    private func reusableNetworkExtensionMihomoListener(
+        routes requestedRoutes: Set<MihomoRoute>,
+        includesLegacyProfileRules: Bool,
+        existing: NetworkExtensionMihomoListenerConfiguration?,
+        excluding excludedPorts: Set<Int>
+    ) -> NetworkExtensionMihomoListenerConfiguration? {
+        guard let existing else { return nil }
+        let existingPorts = existing.routeListeners.map { Int($0.port) }
+        guard Set(existingPorts).count == existingPorts.count,
+              existingPorts.allSatisfy({ !excludedPorts.contains($0) })
+        else { return nil }
+        let availableRoutes = Set(existing.routeListeners.map(\.route))
+        var requiredRoutes = requestedRoutes
+        if includesLegacyProfileRules {
+            requiredRoutes.insert(.profileRules)
+        }
+        guard existing.includesLegacyProfileRules == includesLegacyProfileRules,
+              requiredRoutes == availableRoutes else {
+            return nil
+        }
+        return existing
+    }
+
+    private func makeNetworkExtensionMihomoListener(
+        routes requestedRoutes: Set<MihomoRoute>,
+        includesLegacyProfileRules: Bool,
+        ports: [Int]
+    ) throws -> NetworkExtensionMihomoListenerConfiguration {
         guard requestedRoutes.count <= Self.maximumDedicatedMihomoRoutes else {
             throw AppModelError.tooManyNetworkCaptureRoutes(
                 actual: requestedRoutes.count,
                 maximum: Self.maximumDedicatedMihomoRoutes
             )
         }
-        if let existing {
-            let availableRoutes = Set(existing.routeListeners.map(\.route))
-            if requestedRoutes.isSubset(of: availableRoutes) {
-                return existing
-            }
+        let expectedPortCount = requestedRoutes.count
+            + (includesLegacyProfileRules ? 1 : 0)
+        guard ports.count == expectedPortCount,
+              Set(ports).count == ports.count,
+              ports.allSatisfy({ (1...65_535).contains($0) })
+        else {
+            throw AppModelError.localProxyPortsUnavailable
         }
 
-        var randomBytes = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
-        guard status == errSecSuccess else {
-            throw AppModelError.secureRandomGenerationFailed(status)
-        }
-        let password = Data(randomBytes).base64EncodedString()
         let authentication = try NetworkExtensionMihomoAuthentication(
             username: "mclash-network-extension",
-            password: password
+            password: try secureRandomString()
         )
         let sortedRoutes = requestedRoutes.sorted {
             Self.mihomoRouteSortKey($0) < Self.mihomoRouteSortKey($1)
         }
-        let ports = try localPortProbe.availableTCPAndUDPPorts(
-            count: sortedRoutes.count + 1
-        )
         var routePorts: [MihomoRoute: Int] = [:]
-        for (route, port) in zip(sortedRoutes, ports.dropFirst()) {
+        let routePortValues = includesLegacyProfileRules
+            ? ports.dropFirst()
+            : ports[...]
+        for (route, port) in zip(sortedRoutes, routePortValues) {
             routePorts[route] = port
         }
         return try NetworkExtensionMihomoListenerConfiguration(
             port: ports[0],
             authentication: authentication,
-            routePorts: routePorts
+            routePorts: routePorts,
+            includesLegacyProfileRules: includesLegacyProfileRules
         )
     }
 
     private static func mihomoRouteSortKey(_ route: MihomoRoute) -> String {
-        switch route {
-        case .profileRules: "0:profile"
-        case .global: "1:global"
-        case let .group(group): "2:group:\(group)"
-        }
+        route.stableSortKey
     }
 
     private func refreshActiveProfileListenerPorts() async {
@@ -6079,22 +7471,24 @@ final class AppModel {
     }
 
     private var mixedListenerConfiguredSource: LocalListenerSource {
-        runtimeOverrides.ports.mixedPort == nil ? .profile : .override
+        if runtimeOverrides.ports.mixedPort != nil {
+            return .override
+        }
+        guard let activeProfileID,
+              let plannedPort = profileSessionSpec(for: activeProfileID)?.mixedPort
+        else {
+            return .managedFallback
+        }
+        guard let profilePort = positivePort(activeProfileListenerPorts.mixedPort ?? 0) else {
+            return .managedFallback
+        }
+        return profilePort == plannedPort ? .profile : .override
     }
 
-    private func listenerEndpoint(
-        kind: LocalListenerKind,
-        port: Int?,
-        isOverridden: Bool
-    ) -> LocalListenerEndpoint? {
-        port.map {
-            LocalListenerEndpoint(
-                kind: kind,
-                host: "127.0.0.1",
-                port: $0,
-                source: isOverridden ? .override : .profile
-            )
-        }
+    private func setConnectionDesiredOnLaunch(_ desired: Bool) {
+        guard connectionDesiredOnLaunch != desired else { return }
+        connectionDesiredOnLaunch = desired
+        preferenceDefaults.set(desired, forKey: Self.connectionDesiredOnLaunchKey)
     }
 
     private var hasSystemProxySnapshot: Bool {
@@ -6105,12 +7499,15 @@ final class AppModel {
     }
 
     static let autoConnectOnLaunchKey = "network.autoConnectOnLaunch"
+    static let connectionDesiredOnLaunchKey = "network.connectionDesiredOnLaunch"
     static let autoEnableSystemProxyKey = "network.autoEnableSystemProxy"
     static let menuBarDisplayStyleKey = "application.menuBarDisplayStyle"
     static let pinnedQuickRouteNamesKey = "application.menuBarPinnedQuickRoutes"
     static let closeConnectionsOnRoutingChangeKey = "network.closeConnectionsOnRoutingChange"
     static let trafficHistoryPersistenceChoiceKey = "traffic.history.persistenceChoice"
     static let notificationsEnabledKey = "application.notificationsEnabled"
+    static let openAtLoginSilentlyKey = "application.openAtLoginSilently"
+    static let lightweightModeKey = "application.lightweightMode"
     static let systemProxyGuardFailureThreshold = 3
     static let appRoutingProviderFailureThreshold = 3
     static let appRoutingProviderStatusCheckInterval = 5
@@ -6119,6 +7516,20 @@ final class AppModel {
     nonisolated private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
         let (value, overflow) = lhs.addingReportingOverflow(rhs)
         return overflow ? .max : value
+    }
+}
+
+private actor OneShotContinuation<Value: Sendable> {
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: Value) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(returning: value)
     }
 }
 
@@ -6252,6 +7663,11 @@ private enum AppModelError: LocalizedError {
     case explicitLocalProxyListenerRejected(field: String, requested: Int, actual: Int)
     case systemProxyGuardVerificationFailed
     case tooManyNetworkCaptureRoutes(actual: Int, maximum: Int)
+    case primaryProfileCannotBeDisabled
+    case profileRequiredByAppRouting(String)
+    case appRoutingProfileUnavailable(String)
+    case profileMixedPortUnavailable(String, Int)
+    case primaryListenerPortConflict([Int])
 
     var errorDescription: String? {
         switch self {
@@ -6270,11 +7686,11 @@ private enum AppModelError: LocalizedError {
         case let .profileActivationFailed(message):
             message
         case .localProxyPortsUnavailable:
-            "The active profile does not expose both an HTTP and a SOCKS5 local proxy port. Add port/socks-port or mixed-port to the profile."
+            "The active profile does not expose a usable Mixed proxy port."
         case let .localProxyOverrideRejected(port):
             "mihomo did not accept MClash's temporary local proxy port \(port)."
         case .explicitLocalProxyListenersIncomplete:
-            "The HTTP, SOCKS5, and Mixed overrides do not provide both HTTP and SOCKS5 service. Configure a Mixed port or complete HTTP and SOCKS5 ports."
+            "The requested Mixed proxy port is missing from the runtime configuration."
         case let .explicitLocalProxyListenersUnavailable(ports):
             "The requested local proxy listener did not start on \(ports.map(String.init).joined(separator: ", ")). Choose available ports and try again."
         case let .explicitLocalProxyListenerRejected(field, requested, actual):
@@ -6283,6 +7699,16 @@ private enum AppModelError: LocalizedError {
             "The macOS system proxy still did not match MClash after reapplying it."
         case let .tooManyNetworkCaptureRoutes(actual, maximum):
             "App Routing requests \(actual) distinct Mihomo route targets; the safe maximum is \(maximum)."
+        case .primaryProfileCannotBeDisabled:
+            "The current default profile must remain enabled."
+        case let .profileRequiredByAppRouting(name):
+            "\(name) is still used by an enabled App Routing rule. Change or disable that rule first."
+        case let .appRoutingProfileUnavailable(identifier):
+            "App Routing targets profile \(identifier), but that profile is no longer available."
+        case let .profileMixedPortUnavailable(name, port):
+            "\(name) cannot start because Mixed port \(port) is already in use."
+        case let .primaryListenerPortConflict(ports):
+            "The default profile cannot start because its Redirect, TProxy, DNS, or custom listener conflicts with another Profile session on port \(ports.map(String.init).joined(separator: ", ")). Choose distinct ports and try again."
         }
     }
 }
@@ -6302,6 +7728,15 @@ private struct NetworkCaptureTransactionFailure: LocalizedError {
 
     var errorDescription: String? {
         "The App Routing change failed and MClash could not completely restore the previous network state. Update error: \(updateReason) Recovery error: \(rollbackReason)"
+    }
+}
+
+private struct BackupRestoreTransactionFailure: LocalizedError {
+    let updateReason: String
+    let rollbackReason: String
+
+    var errorDescription: String? {
+        "The backup could not be activated and MClash could not completely restore the previous runtime. Restore error: \(updateReason) Recovery error: \(rollbackReason)"
     }
 }
 

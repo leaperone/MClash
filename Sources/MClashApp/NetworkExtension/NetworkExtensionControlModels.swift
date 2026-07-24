@@ -37,6 +37,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     init(
         preferences: NetworkCapturePreferences,
         mihomoListener: NetworkExtensionMihomoListenerConfiguration,
+        routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
         activationIdentifier: UUID = UUID()
     ) throws {
         try preferences.snapshot.validate()
@@ -61,60 +62,19 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         failOpen = preferences.failOpen
         captureEnabled = preferences.enabled
         self.encodedCaptureSnapshot = encodedSnapshot
-        let routeProxyCatalog = try mihomoListener.encodedRouteProxyCatalog()
+        let endpoints = try routeProxyEndpoints ?? mihomoListener.routeProxyEndpoints()
+        let routeProxyCatalog = try MihomoRouteProxyCatalog.encode(endpoints)
         encodedMihomoRouteProxyCatalog = routeProxyCatalog
-        let endpoints = try MihomoRouteProxyCatalog.decode(routeProxyCatalog)
         guard let profileRulesProxy = endpoints.first(where: { $0.route == .profileRules }) else {
             throw NetworkExtensionRuntimeConfigurationError.missingProfileRulesProxy
         }
         encodedDNSProxyBootstrap = try DNSProxyBootstrapConfiguration(
             revision: revision,
             activationIdentifier: activationIdentifier,
-            profileRulesProxy: profileRulesProxy
+            profileRulesProxy: profileRulesProxy,
+            routeProxyEndpoints: endpoints,
+            encodedCaptureSnapshot: encodedSnapshot
         ).encoded()
-        self.mihomoListener = mihomoListener
-    }
-
-    /// Produces a rule-update configuration while keeping the already-running
-    /// DNS Provider's independently verified bootstrap identity. Capture rules
-    /// advance to the new revision, but DNS is not restarted for rule-only
-    /// changes and must continue using its original revision and activation.
-    func preservingDNSRuntimeIdentity(
-        from activeDNSConfiguration: NetworkExtensionRuntimeConfiguration
-    ) -> NetworkExtensionRuntimeConfiguration {
-        guard dnsEnabled, activeDNSConfiguration.dnsEnabled else { return self }
-        return NetworkExtensionRuntimeConfiguration(
-            revision: revision,
-            activationIdentifier: activeDNSConfiguration.activationIdentifier,
-            dnsEnabled: dnsEnabled,
-            failOpen: failOpen,
-            captureEnabled: captureEnabled,
-            encodedCaptureSnapshot: encodedCaptureSnapshot,
-            encodedMihomoRouteProxyCatalog: encodedMihomoRouteProxyCatalog,
-            encodedDNSProxyBootstrap: activeDNSConfiguration.encodedDNSProxyBootstrap,
-            mihomoListener: mihomoListener
-        )
-    }
-
-    private init(
-        revision: UInt64,
-        activationIdentifier: UUID,
-        dnsEnabled: Bool,
-        failOpen: Bool,
-        captureEnabled: Bool,
-        encodedCaptureSnapshot: Data?,
-        encodedMihomoRouteProxyCatalog: Data?,
-        encodedDNSProxyBootstrap: Data?,
-        mihomoListener: NetworkExtensionMihomoListenerConfiguration?
-    ) {
-        self.revision = revision
-        self.activationIdentifier = activationIdentifier
-        self.dnsEnabled = dnsEnabled
-        self.failOpen = failOpen
-        self.captureEnabled = captureEnabled
-        self.encodedCaptureSnapshot = encodedCaptureSnapshot
-        self.encodedMihomoRouteProxyCatalog = encodedMihomoRouteProxyCatalog
-        self.encodedDNSProxyBootstrap = encodedDNSProxyBootstrap
         self.mihomoListener = mihomoListener
     }
 

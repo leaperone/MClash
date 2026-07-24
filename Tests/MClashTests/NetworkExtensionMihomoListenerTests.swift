@@ -80,6 +80,62 @@ struct NetworkExtensionMihomoListenerTests {
         #expect(configuration.endpoint(for: .group("Auto Select"))?.port == 17_883)
     }
 
+    @Test("An auxiliary profile emits only its exact private routes")
+    func emitsAuxiliaryProfileListeners() throws {
+        let profileID = RoutingProfileID(
+            try #require(UUID(
+                uuidString: "0ae18464-82a2-4a9b-a402-ddb8d39e280b"
+            ))
+        )
+        let route = MihomoRoute.profile(profileID, target: .rules)
+        let configuration = try NetworkExtensionMihomoListenerConfiguration(
+            port: 17_884,
+            routePorts: [route: 17_884],
+            includesLegacyProfileRules: false
+        )
+
+        let result = try RuntimeConfigurationComposer().applying(
+            .empty,
+            to: Data("rules: []\n".utf8),
+            networkExtensionListener: configuration
+        )
+        let yaml = try #require(String(data: result, encoding: .utf8))
+
+        #expect(configuration.routeListeners.map(\.route) == [route])
+        #expect(yaml.components(separatedBy: "type: socks").count == 3)
+        #expect(!yaml.contains(NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName))
+        #expect(!yaml.contains("proxy:"))
+    }
+
+    @Test("Runtime configuration publishes a combined exact-profile catalog")
+    func publishesCombinedProfileCatalog() throws {
+        let profileID = RoutingProfileID(
+            try #require(UUID(
+                uuidString: "d111ee2e-da45-41fa-bb7b-c399e66defc2"
+            ))
+        )
+        let route = MihomoRoute.profile(profileID, target: .global)
+        let primary = try NetworkExtensionMihomoListenerConfiguration(port: 17_885)
+        let auxiliary = try NetworkExtensionMihomoListenerConfiguration(
+            port: 17_886,
+            routePorts: [route: 17_886],
+            includesLegacyProfileRules: false
+        )
+        let endpoints = try primary.routeProxyEndpoints()
+            + auxiliary.routeProxyEndpoints()
+
+        let runtime = try NetworkExtensionRuntimeConfiguration(
+            preferences: .defaults(),
+            mihomoListener: primary,
+            routeProxyEndpoints: endpoints
+        )
+        let encoded = try #require(runtime.encodedMihomoRouteProxyCatalog)
+        let catalog = try MihomoRouteProxyCatalog.decode(encoded)
+
+        #expect(catalog.map(\.route) == [.profileRules, route])
+        #expect(catalog.map(\.port) == [17_885, 17_886])
+    }
+
     @Test("Internal listener composes with scalar, DNS, and rule overrides")
     func coexistsWithRuntimeOverrides() throws {
         let profile = Data(
@@ -193,6 +249,98 @@ struct NetworkExtensionMihomoListenerTests {
         #expect(result == profile)
     }
 
+    @Test("Managed-session sanitizer removes profile-owned inbound surfaces")
+    func sanitizesManagedSessionListenerSurfaces() throws {
+        let source = Data(
+            """
+            mixed-port: 7890
+            tun:
+              enable: true
+              stack: system
+            listeners:
+              - name: public-http
+                type: http
+                port: 8080
+            tunnels:
+              - tcp,0.0.0.0:8081,example.com:443,DIRECT
+            ss-config: ss://2022-blake3-aes-256-gcm:secret@:8082
+            vmess-config: vmess://1:00000000-0000-0000-0000-000000000000@:8083
+            tuic-server:
+              enable: true
+              listen: 0.0.0.0:8084
+            external-controller: 0.0.0.0:9090
+            external-controller-tls: 0.0.0.0:9443
+            external-controller-unix: /tmp/profile-owned.sock
+            external-controller-pipe: profile-owned-pipe
+            rules:
+              - MATCH,DIRECT
+            """.utf8
+        )
+        let composer = RuntimeConfigurationComposer()
+        let sanitized = try composer.sanitizingForManagedSession(source)
+        let result = try composer.applying(
+            RuntimeOverrides(
+                ports: RuntimePortOverrides(
+                    port: 0,
+                    socksPort: 0,
+                    redirPort: 0,
+                    tproxyPort: 0,
+                    mixedPort: 18_080
+                ),
+                allowLAN: false,
+                bindAddress: "127.0.0.1",
+                dns: RuntimeDNSOverrides(enable: false)
+            ),
+            to: sanitized,
+            networkExtensionListener: try .init(port: 18_081)
+        )
+        let yaml = try #require(String(data: result, encoding: .utf8))
+
+        #expect(!yaml.contains("public-http"))
+        #expect(!yaml.contains("tunnels:"))
+        #expect(!yaml.contains("ss-config:"))
+        #expect(!yaml.contains("vmess-config:"))
+        #expect(!yaml.contains("tuic-server:"))
+        #expect(!yaml.contains("external-controller:"))
+        #expect(!yaml.contains("external-controller-tls:"))
+        #expect(!yaml.contains("external-controller-unix:"))
+        #expect(!yaml.contains("external-controller-pipe:"))
+        #expect(!yaml.contains("profile-owned"))
+        #expect(!yaml.contains("stack: system"))
+        #expect(!yaml.contains("enable: true"))
+        #expect(yaml.contains("rules:\n  - MATCH,DIRECT"))
+        #expect(yaml.contains("mixed-port: 18080"))
+        #expect(yaml.contains("redir-port: 0"))
+        #expect(yaml.contains("tproxy-port: 0"))
+        #expect(yaml.contains("allow-lan: false"))
+        #expect(yaml.contains("bind-address: \"127.0.0.1\""))
+        #expect(yaml.contains("mclash-network-extension-socks-ipv4"))
+        #expect(yaml.contains("mclash-network-extension-socks-ipv6"))
+    }
+
+    @Test("Managed-session sanitizer fails closed on root merges")
+    func managedSessionSanitizerRejectsRootMerge() {
+        let source = Data(
+            """
+            defaults: &defaults
+              listeners:
+                - name: hidden
+                  type: mixed
+                  port: 62030
+            <<: *defaults
+            rules: []
+            """.utf8
+        )
+
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("root mapping")
+        ) {
+            try RuntimeConfigurationComposer()
+                .sanitizingForManagedSession(source)
+        }
+    }
+
     @Test("Port and RFC 1929 credential byte limits are enforced")
     func validatesConfiguration() throws {
         #expect(throws: NetworkExtensionMihomoListenerValidationError.invalidPort(0)) {
@@ -274,7 +422,25 @@ struct NetworkExtensionMihomoListenerTests {
         let fixture = try ListenerFixture()
         defer { fixture.remove() }
         let profileStore = try ProfileStore(layout: fixture.profileLayout)
-        let source = Data("mixed-port: 7890\nrules: []\n".utf8)
+        let source = Data(
+            """
+            mixed-port: 7890
+            redir-port: 7891
+            dns:
+              enable: true
+              listen: 127.0.0.1:1053
+            tun:
+              enable: true
+            listeners:
+              - name: profile-owned
+                type: mixed
+                port: 62031
+            tunnels:
+              - tcp,127.0.0.1:62032,example.com:443,DIRECT
+            external-controller: 127.0.0.1:62033
+            rules: []
+            """.utf8
+        )
         let profile = try await profileStore.createLocalProfile(name: "Original", yaml: source)
         let validator = ListenerRecordingValidator()
         let coordinator = RuntimeOverrideActivationCoordinator(overrideStore: fixture.overrideStore)
@@ -295,6 +461,12 @@ struct NetworkExtensionMihomoListenerTests {
         #expect(yaml.contains("listen: \"127.0.0.1\""))
         #expect(yaml.contains("listen: \"::1\""))
         #expect(yaml.components(separatedBy: "udp: true").count == 3)
+        #expect(yaml.contains("redir-port: 7891"))
+        #expect(yaml.contains("listen: 127.0.0.1:1053"))
+        #expect(!yaml.contains("profile-owned"))
+        #expect(!yaml.contains("tunnels:"))
+        #expect(!yaml.contains("external-controller:"))
+        #expect(!yaml.contains("enable: true\nlisteners:"))
     }
 }
 

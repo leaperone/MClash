@@ -174,6 +174,35 @@ struct CaptureRuleDraftTests {
         #expect(try CaptureRuleDraft(rule: groupRule).makeRule() == groupRule)
     }
 
+    @Test("An App Routing rule preserves its exact Profile target")
+    func mapsExplicitProfileRoute() throws {
+        let profileID = ProfileID(
+            rawValue: try #require(UUID(
+                uuidString: "d7fd1a2f-c0e8-4bbc-8c6c-57b8e1746ce1"
+            ))
+        )
+        let route = MihomoRoute.profile(
+            RoutingProfileID(profileID.rawValue),
+            target: .group("Development")
+        )
+        let draft = CaptureRuleDraft(
+            identifier: "development-tools",
+            matchesTCP: true,
+            matchesUDP: false,
+            action: .mihomoGroup,
+            routingProfileID: profileID,
+            mihomoGroup: "Development"
+        )
+
+        let rule = try draft.makeRule()
+        #expect(rule.action == .mihomo(route))
+
+        let roundTrip = try CaptureRuleDraft(rule: rule)
+        #expect(roundTrip.routingProfileID == profileID)
+        #expect(roundTrip.mihomoGroup == "Development")
+        #expect(try roundTrip.makeRule() == rule)
+    }
+
     @Test("Candidate selection is stable by ID and can populate its executable")
     func selectsApplicationCandidate() {
         let first = makeCandidate(id: "/Applications/First.app", name: "First")

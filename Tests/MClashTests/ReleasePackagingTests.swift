@@ -200,6 +200,21 @@ struct ReleasePackagingTests {
         #expect(deltaScript.contains("\"${binary_delta}\" apply"))
         #expect(deltaScript.contains("codesign --verify --deep --strict"))
         #expect(deltaScript.contains("The full Sparkle update remains available"))
+        #expect(
+            deltaScript.contains(
+                "target_bundle_version=\"${MCLASH_BUNDLE_VERSION:-${target_version%%[-+]*}}\""
+            )
+        )
+        #expect(
+            deltaScript.contains(
+                "\"${actual_target_version}\" != \"${target_bundle_version}\""
+            )
+        )
+        #expect(
+            !deltaScript.contains(
+                "\"${actual_target_version}\" != \"${target_version}\""
+            )
+        )
         #expect(appcastScript.contains("attach-appcast-deltas.py"))
         #expect(releaseScript.contains("xattr -cr \"${app}\""))
         #expect(releaseScript.contains("generate-delta-updates.sh"))

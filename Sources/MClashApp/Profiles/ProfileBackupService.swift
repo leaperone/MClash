@@ -1,27 +1,64 @@
 import Foundation
 
 public struct MClashBackupManifest: Codable, Equatable, Sendable {
-    public static let currentFormatVersion = 1
+    public static let currentFormatVersion = 2
 
     public let formatVersion: Int
     public let createdAt: Date
     public let hasSettings: Bool
     public let hasActiveProfileState: Bool
+    public let hasProfileRuntimePlan: Bool
 
     public init(
         createdAt: Date = Date(),
         hasSettings: Bool,
-        hasActiveProfileState: Bool
+        hasActiveProfileState: Bool,
+        hasProfileRuntimePlan: Bool = false
     ) {
         formatVersion = Self.currentFormatVersion
         self.createdAt = createdAt
         self.hasSettings = hasSettings
         self.hasActiveProfileState = hasActiveProfileState
+        self.hasProfileRuntimePlan = hasProfileRuntimePlan
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case formatVersion
+        case createdAt
+        case hasSettings
+        case hasActiveProfileState
+        case hasProfileRuntimePlan
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        formatVersion = try container.decode(Int.self, forKey: .formatVersion)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        hasSettings = try container.decode(Bool.self, forKey: .hasSettings)
+        hasActiveProfileState = try container.decode(
+            Bool.self,
+            forKey: .hasActiveProfileState
+        )
+        hasProfileRuntimePlan = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .hasProfileRuntimePlan
+        ) ?? false
+    }
+}
+
+public struct ProfileBackupRestoreTransaction: Equatable, Sendable {
+    public let manifest: MClashBackupManifest
+    fileprivate let id: UUID
+
+    fileprivate init(id: UUID, manifest: MClashBackupManifest) {
+        self.id = id
+        self.manifest = manifest
     }
 }
 
 public actor ProfileBackupService {
     private let fileManager: FileManager
+    private var pendingRestores: [UUID: PendingRestore] = [:]
 
     public init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -61,19 +98,32 @@ public actor ProfileBackupService {
         }
         let activeState = layout.activeProfileStateURL
         let hasActiveState = fileManager.fileExists(atPath: activeState.path)
-        if hasActiveState {
+        let runtimePlan = layout.profileRuntimePlanURL
+        let hasRuntimePlan = fileManager.fileExists(atPath: runtimePlan.path)
+        if hasActiveState || hasRuntimePlan {
             let stateDirectory = staging.appendingPathComponent("State", isDirectory: true)
             try createPrivateDirectory(stateDirectory)
-            try fileManager.copyItem(
-                at: activeState,
-                to: stateDirectory.appendingPathComponent("active-profile.json")
-            )
+            if hasActiveState {
+                try fileManager.copyItem(
+                    at: activeState,
+                    to: stateDirectory.appendingPathComponent("active-profile.json")
+                )
+            }
+            if hasRuntimePlan {
+                try fileManager.copyItem(
+                    at: runtimePlan,
+                    to: stateDirectory.appendingPathComponent(
+                        "profile-runtime-plan.json"
+                    )
+                )
+            }
         }
 
         let manifest = MClashBackupManifest(
             createdAt: date,
             hasSettings: hasSettings,
-            hasActiveProfileState: hasActiveState
+            hasActiveProfileState: hasActiveState,
+            hasProfileRuntimePlan: hasRuntimePlan
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -94,6 +144,18 @@ public actor ProfileBackupService {
         from backupURL: URL,
         to layout: ProfileDirectoryLayout
     ) throws -> MClashBackupManifest {
+        let transaction = try beginRestoreBackup(from: backupURL, to: layout)
+        commitRestoreBackup(transaction)
+        return transaction.manifest
+    }
+
+    public func beginRestoreBackup(
+        from backupURL: URL,
+        to layout: ProfileDirectoryLayout
+    ) throws -> ProfileBackupRestoreTransaction {
+        guard pendingRestores.isEmpty else {
+            throw ProfileBackupError.restoreAlreadyPending
+        }
         let backup = backupURL.standardizedFileURL
         try validateBackupTree(backup)
         let decoder = JSONDecoder()
@@ -102,7 +164,8 @@ public actor ProfileBackupService {
             MClashBackupManifest.self,
             from: Data(contentsOf: backup.appendingPathComponent("manifest.json"))
         )
-        guard manifest.formatVersion == MClashBackupManifest.currentFormatVersion else {
+        guard (1...MClashBackupManifest.currentFormatVersion)
+            .contains(manifest.formatVersion) else {
             throw ProfileBackupError.unsupportedFormat(manifest.formatVersion)
         }
         let backupProfiles = backup.appendingPathComponent("Profiles", isDirectory: true)
@@ -117,9 +180,14 @@ public actor ProfileBackupService {
             .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
         let incoming = transactionRoot.appendingPathComponent("Incoming", isDirectory: true)
         let previous = transactionRoot.appendingPathComponent("Previous", isDirectory: true)
+        var preserveTransaction = false
         try createPrivateDirectory(incoming)
         try createPrivateDirectory(previous)
-        defer { try? fileManager.removeItem(at: transactionRoot) }
+        defer {
+            if !preserveTransaction {
+                try? fileManager.removeItem(at: transactionRoot)
+            }
+        }
 
         try fileManager.copyItem(
             at: backupProfiles,
@@ -147,6 +215,27 @@ public actor ProfileBackupService {
             try fileManager.copyItem(
                 at: backupActive,
                 to: incomingState.appendingPathComponent("active-profile.json")
+            )
+        }
+        if manifest.hasProfileRuntimePlan {
+            let backupPlan = backup
+                .appendingPathComponent("State", isDirectory: true)
+                .appendingPathComponent("profile-runtime-plan.json")
+            guard fileManager.fileExists(atPath: backupPlan.path) else {
+                throw ProfileBackupError.incompleteBackup(
+                    "State/profile-runtime-plan.json"
+                )
+            }
+            let incomingState = incoming.appendingPathComponent(
+                "State",
+                isDirectory: true
+            )
+            try createPrivateDirectory(incomingState)
+            try fileManager.copyItem(
+                at: backupPlan,
+                to: incomingState.appendingPathComponent(
+                    "profile-runtime-plan.json"
+                )
             )
         }
 
@@ -180,13 +269,72 @@ public actor ProfileBackupService {
             }
             throw error
         }
-        return manifest
+        let id = UUID()
+        pendingRestores[id] = PendingRestore(
+            transactionRoot: transactionRoot,
+            completedTargets: completed
+        )
+        preserveTransaction = true
+        return ProfileBackupRestoreTransaction(id: id, manifest: manifest)
+    }
+
+    public func commitRestoreBackup(
+        _ transaction: ProfileBackupRestoreTransaction
+    ) {
+        guard let pending = pendingRestores.removeValue(forKey: transaction.id) else {
+            return
+        }
+        try? fileManager.removeItem(at: pending.transactionRoot)
+    }
+
+    public func rollbackRestoreBackup(
+        _ transaction: ProfileBackupRestoreTransaction
+    ) throws {
+        guard let pending = pendingRestores[transaction.id] else {
+            throw ProfileBackupError.restoreTransactionUnavailable
+        }
+
+        var failures: [String] = []
+        for target in pending.completedTargets.reversed() {
+            do {
+                if fileManager.fileExists(atPath: target.destination.path) {
+                    try fileManager.removeItem(at: target.destination)
+                }
+                if fileManager.fileExists(atPath: target.previous.path) {
+                    try fileManager.createDirectory(
+                        at: target.destination.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    try fileManager.moveItem(
+                        at: target.previous,
+                        to: target.destination
+                    )
+                }
+            } catch {
+                failures.append(
+                    "\(target.destination.lastPathComponent): \(error.localizedDescription)"
+                )
+            }
+        }
+
+        guard failures.isEmpty else {
+            throw ProfileBackupError.restoreRollbackFailed(
+                failures.joined(separator: "; ")
+            )
+        }
+        pendingRestores.removeValue(forKey: transaction.id)
+        try? fileManager.removeItem(at: pending.transactionRoot)
     }
 
     private struct RestoreTarget {
         let incoming: URL?
         let destination: URL
         let previous: URL
+    }
+
+    private struct PendingRestore {
+        let transactionRoot: URL
+        let completedTargets: [RestoreTarget]
     }
 
     private func restoreTargets(
@@ -215,6 +363,17 @@ public actor ProfileBackupService {
                     : nil,
                 destination: layout.activeProfileStateURL,
                 previous: previous.appendingPathComponent("active-profile.json")
+            ),
+            RestoreTarget(
+                incoming: manifest.hasProfileRuntimePlan
+                    ? incoming.appendingPathComponent(
+                        "State/profile-runtime-plan.json"
+                    )
+                    : nil,
+                destination: layout.profileRuntimePlanURL,
+                previous: previous.appendingPathComponent(
+                    "profile-runtime-plan.json"
+                )
             ),
         ]
     }
@@ -269,6 +428,9 @@ public enum ProfileBackupError: Error, Equatable, LocalizedError, Sendable {
     case incompleteBackup(String)
     case symbolicLinksUnsupported
     case backupTooLarge
+    case restoreAlreadyPending
+    case restoreTransactionUnavailable
+    case restoreRollbackFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -286,6 +448,12 @@ public enum ProfileBackupError: Error, Equatable, LocalizedError, Sendable {
             "Backup packages containing symbolic links are not supported."
         case .backupTooLarge:
             "The backup is larger than the 512 MB safety limit."
+        case .restoreAlreadyPending:
+            "Another backup restore transaction is still pending."
+        case .restoreTransactionUnavailable:
+            "The backup restore transaction is no longer available."
+        case let .restoreRollbackFailed(detail):
+            "MClash could not completely roll back the backup restore: \(detail)"
         }
     }
 }

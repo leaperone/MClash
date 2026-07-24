@@ -93,6 +93,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
     var matchesUDP: Bool
     var portRange: String
     var action: CaptureRuleDraftAction
+    var routingProfileID: ProfileID?
     var mihomoGroup: String
     var unavailableFallback: UnavailableFallback
 
@@ -116,6 +117,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         matchesUDP: Bool = true,
         portRange: String = "",
         action: CaptureRuleDraftAction = .mihomoProfileRules,
+        routingProfileID: ProfileID? = nil,
         mihomoGroup: String = "",
         unavailableFallback: UnavailableFallback = .direct
     ) {
@@ -141,6 +143,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         self.matchesUDP = matchesUDP
         self.portRange = portRange
         self.action = action
+        self.routingProfileID = routingProfileID
         self.mihomoGroup = mihomoGroup
         self.unavailableFallback = unavailableFallback
     }
@@ -161,8 +164,13 @@ struct CaptureRuleDraft: Equatable, Sendable {
             action: try Self.draftAction(rule.action),
             unavailableFallback: rule.unavailableFallback
         )
-        if case let .mihomo(.group(group)) = rule.action {
-            mihomoGroup = group
+        if case let .mihomo(route) = rule.action {
+            if let routingProfileID = route.routingProfileID {
+                self.routingProfileID = ProfileID(rawValue: routingProfileID.uuid)
+            }
+            if case let .group(group) = route.profileRoute {
+                mihomoGroup = group
+            }
         }
 
         var applicationMatchers: [ApplicationSourceMatcher] = []
@@ -402,15 +410,47 @@ struct CaptureRuleDraft: Equatable, Sendable {
     }
 
     private func captureAction() throws -> CaptureAction {
+        let profileRoute: MihomoProfileRoute
         switch action {
         case .direct: return .direct
         case .reject: return .reject
-        case .mihomoProfileRules: return .mihomo(.profileRules)
-        case .mihomoGlobal: return .mihomo(.global)
+        case .mihomoProfileRules:
+            profileRoute = .rules
+        case .mihomoGlobal:
+            profileRoute = .global
         case .mihomoGroup:
             let group = mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !group.isEmpty else { throw CaptureRuleDraftError.missingMihomoGroup }
-            return .mihomo(.group(group))
+            profileRoute = .group(group)
+        }
+
+        if let routingProfileID {
+            return .mihomo(.profile(
+                RoutingProfileID(routingProfileID.rawValue),
+                target: profileRoute
+            ))
+        }
+        let legacyRoute: MihomoRoute
+        switch profileRoute {
+        case .rules: legacyRoute = .profileRules
+        case .global: legacyRoute = .global
+        case let .group(group): legacyRoute = .group(group)
+        }
+        return .mihomo(legacyRoute)
+    }
+
+    private static func draftAction(_ action: CaptureAction) throws -> CaptureRuleDraftAction {
+        switch action {
+        case .direct:
+            .direct
+        case .reject:
+            .reject
+        case let .mihomo(route):
+            switch route.profileRoute {
+            case .rules: .mihomoProfileRules
+            case .global: .mihomoGlobal
+            case .group: .mihomoGroup
+            }
         }
     }
 
@@ -658,16 +698,6 @@ struct CaptureRuleDraft: Equatable, Sendable {
             }
         }
         return result
-    }
-
-    private static func draftAction(_ action: CaptureAction) throws -> CaptureRuleDraftAction {
-        switch action {
-        case .direct: .direct
-        case .reject: .reject
-        case .mihomo(.profileRules): .mihomoProfileRules
-        case .mihomo(.global): .mihomoGlobal
-        case .mihomo(.group): .mihomoGroup
-        }
     }
 
     private static func placeholderCandidate(

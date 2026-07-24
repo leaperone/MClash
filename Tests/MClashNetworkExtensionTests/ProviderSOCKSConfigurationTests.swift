@@ -1,3 +1,4 @@
+import Foundation
 import MClashNetworkShared
 import Testing
 @testable import MClashNetworkExtension
@@ -71,5 +72,118 @@ struct ProviderSOCKSConfigurationTests {
 
         #expect(destinations.original == destinations.mihomo)
         #expect(destinations.mihomo.address.ipAddress?.presentation == "198.51.100.9")
+    }
+
+    @Test("Profile A and B decode to distinct provider endpoints")
+    func profileCatalogSelectsExactEndpoint() throws {
+        let (routeA, routeB, data) = try profileCatalog()
+        let catalog = try #require(ProviderSOCKSConfiguration.routeCatalog(
+            providerConfiguration: [
+                ProviderConfigurationKey.mihomoRouteProxyCatalog: data
+            ]
+        ))
+
+        #expect(ProviderSOCKSConfiguration.proxy(for: routeA, in: catalog)?.port == 18_001)
+        #expect(ProviderSOCKSConfiguration.proxy(for: routeB, in: catalog)?.port == 18_002)
+        #expect(ProviderSOCKSConfiguration.proxy(
+            for: .profileRules,
+            in: catalog
+        )?.port == 18_000)
+    }
+
+    @Test("TCP plan uses the requested profile endpoint and does not alias a missing target")
+    func tcpProfilePlan() throws {
+        let (routeA, routeB, data) = try profileCatalog()
+        let catalog = try #require(ProviderSOCKSConfiguration.routeCatalog(
+            providerConfiguration: [
+                ProviderConfigurationKey.mihomoRouteProxyCatalog: data
+            ]
+        ))
+        let endpoint = FlowRemoteEndpoint(host: "203.0.113.10", port: 443)
+
+        let profileAPlan = try #require(try ProviderSOCKSConfiguration.flowPlan(
+            for: decision(routeA),
+            endpoint: endpoint,
+            preferredHostname: "api.example.com",
+            routeCatalog: catalog
+        ))
+        let missingPlan = try #require(try ProviderSOCKSConfiguration.flowPlan(
+            for: decision(.profile(
+                routeA.routingProfileID!,
+                target: .global
+            )),
+            endpoint: endpoint,
+            preferredHostname: "api.example.com",
+            routeCatalog: catalog
+        ))
+
+        #expect(profileAPlan.proxy?.port == 18_001)
+        #expect(profileAPlan.destinations.mihomo.address.domain == "api.example.com")
+        #expect(missingPlan.proxy == nil)
+        #expect(ProviderSOCKSConfiguration.proxy(for: routeB, in: catalog)?.port == 18_002)
+    }
+
+    @Test("UDP plan independently selects Profile B for each datagram target")
+    func udpProfilePlan() throws {
+        let (_, routeB, data) = try profileCatalog()
+        let catalog = try #require(ProviderSOCKSConfiguration.routeCatalog(
+            providerConfiguration: [
+                ProviderConfigurationKey.mihomoRouteProxyCatalog: data
+            ]
+        ))
+
+        let plan = try #require(try ProviderSOCKSConfiguration.flowPlan(
+            for: decision(routeB),
+            endpoint: FlowRemoteEndpoint(host: "198.51.100.53", port: 53),
+            preferredHostname: nil,
+            routeCatalog: catalog
+        ))
+
+        #expect(plan.proxy?.port == 18_002)
+        #expect(plan.destinations.original == plan.destinations.mihomo)
+        #expect(plan.destinations.mihomo.port == 53)
+    }
+
+    private func decision(_ route: MihomoRoute) -> FlowTrafficDecision {
+        FlowTrafficDecision(
+            disposition: .mihomo(route),
+            reason: .rule(.matchedRule("test"))
+        )
+    }
+
+    private func profileCatalog() throws -> (
+        routeA: MihomoRoute,
+        routeB: MihomoRoute,
+        data: Data
+    ) {
+        let profileA = RoutingProfileID(
+            UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        )
+        let profileB = RoutingProfileID(
+            UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+        )
+        let routeA = MihomoRoute.profile(profileA, target: .rules)
+        let routeB = MihomoRoute.profile(profileB, target: .rules)
+        return (
+            routeA,
+            routeB,
+            try MihomoRouteProxyCatalog.encode([
+                try MihomoRouteProxyEndpoint(
+                    route: .profileRules,
+                    host: "127.0.0.1",
+                    port: 18_000
+                ),
+                try MihomoRouteProxyEndpoint(
+                    route: routeA,
+                    host: "127.0.0.1",
+                    port: 18_001
+                ),
+                try MihomoRouteProxyEndpoint(
+                    route: routeB,
+                    host: "127.0.0.1",
+                    port: 18_002
+                ),
+            ])
+        )
     }
 }

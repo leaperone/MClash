@@ -188,7 +188,12 @@ swiftc \
   -Xlinker "${sparkle_framework_dir}" \
   -o "${build_dir}/MClashPackageTests"
 
-"${build_dir}/MClashPackageTests"
+# Several AppModel suites intentionally exercise process-wide Apple manager
+# singletons. The Command Line Tools Testing runtime can otherwise race while
+# formatting those opaque Objective-C values after a test completes, producing
+# a false null-pointer abort before the remaining suites run.
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+  "${build_dir}/MClashPackageTests"
 
 swiftc \
   -parse-as-library \

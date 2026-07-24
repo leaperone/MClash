@@ -16,11 +16,11 @@ public actor RuntimeOverrideActivationCoordinator {
     }
 
     public func overrides() async throws -> RuntimeOverrides {
-        try await overrideStore.load()
+        mixedOnly(try await overrideStore.load())
     }
 
     public func save(_ overrides: RuntimeOverrides) async throws {
-        try await overrideStore.save(overrides)
+        try await overrideStore.save(mixedOnly(overrides))
     }
 
     @discardableResult
@@ -30,7 +30,7 @@ public actor RuntimeOverrideActivationCoordinator {
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
-        let currentOverrides = try await overrideStore.load()
+        let currentOverrides = mixedOnly(try await overrideStore.load())
         return try await activateProfile(
             id,
             overrides: currentOverrides,
@@ -120,15 +120,23 @@ public actor RuntimeOverrideActivationCoordinator {
         in profileStore: ProfileStore
     ) async throws -> URL {
         let sourceData = try await profileStore.configurationData(for: id)
+        let managedSourceData = try composer.sanitizingForManagedSession(sourceData)
         let runtimeData = try composer.applying(
-            overrides,
-            to: sourceData,
+            mixedOnly(overrides),
+            to: managedSourceData,
             networkExtensionListener: networkExtensionListener
         )
         return try await profileStore.stageRuntimeConfiguration(
             data: runtimeData,
             preferredName: "config.yaml"
         )
+    }
+
+    private func mixedOnly(_ overrides: RuntimeOverrides) -> RuntimeOverrides {
+        var normalized = overrides
+        normalized.ports.port = 0
+        normalized.ports.socksPort = 0
+        return normalized
     }
 }
 

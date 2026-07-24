@@ -26,9 +26,16 @@ before testing failure scenarios.
 
 ## 2. Core and connection lifecycle
 
-- Connect with a subscription that does not define `port`, `socks-port`, or
-  `mixed-port`. Confirm MClash creates a temporary local listener and displays
-  usable HTTP and SOCKS5 addresses without changing the stored subscription.
+- In Settings, enable **Open at Login**, **Open quietly at login**, and
+  **Lightweight mode**. Restart the Mac. Confirm MClash starts without opening
+  or focusing its main window, does not appear twice, and remains usable from
+  the menu bar.
+- Explicitly disconnect, relaunch MClash, and confirm it stays disconnected.
+  Explicitly connect, relaunch again, and confirm it restores the connected
+  session only when **Restore the last connected session** is enabled.
+- Connect with a subscription that does not define `mixed-port`. Confirm MClash
+  assigns a temporary Mixed listener that accepts both HTTP and SOCKS5 without
+  changing the stored subscription.
 - Confirm Connect does not display a Keychain, login key, or account-password
   authorization prompt. A macOS network-settings prompt, if the OS requires one
   for system proxy changes, must be clearly attributable to that operation.
@@ -80,24 +87,32 @@ before testing failure scenarios.
 
 ## 4. Local proxy ports and restart safety
 
-- In Settings, confirm **Local Proxy** presents HTTP, SOCKS5, and Mixed as
-  independent listeners and identifies whether each value comes from the
-  profile, a custom override, or MClash's temporary fallback.
-- Open **Edit Ports & Restart…**. For each listener, verify **Profile**,
-  **Custom**, and **Off** have explicit meanings. Custom ports must accept only
-  `1...65535`; duplicate enabled ports must be rejected beside the fields.
-- Set HTTP, SOCKS5, and Mixed to three different free ports. Apply while
-  connected and confirm progress advances through validation and restart,
-  MClash reconnects automatically, and an enabled macOS System Proxy is
-  restored only after the new listeners answer their respective protocols.
+- In Settings and Overview, confirm **Local Proxy** presents exactly one Mixed
+  listener. No separate HTTP or SOCKS listener setting may be visible.
+- Open **Edit Ports & Restart…**. Verify **Use Profile** and **Custom** have
+  explicit meanings and custom ports accept only `1...65535`.
+- Set a free Mixed port. Apply while connected and confirm progress advances
+  through validation and restart, MClash reconnects automatically, and an
+  enabled macOS System Proxy is restored only after the same Mixed port answers
+  both HTTP and SOCKS5 handshakes.
 - Apply the same values again. Confirm MClash reports no change and does not
   restart the core.
 - Occupy one requested port with another local process, then apply. Confirm the
   old configuration, core session, and System Proxy state are all restored and
   the failed values are not persisted.
-- Confirm Overview, Proxies, Settings, and the menu bar all show the same three
-  listener identities. Click every visible address and confirm it copies the
+- Confirm Overview, Profiles, Settings, and the menu bar show the same Mixed
+  listener identity. Click every visible address and confirm it copies the
   complete `127.0.0.1:port` value with immediate visual feedback.
+- Enable a second Profile session and assign a different Mixed port. Confirm a
+  duplicate port is rejected before either healthy session is replaced.
+- Verify each profile's Mixed port using both
+  `curl --proxy http://127.0.0.1:<port>` and
+  `curl --proxy socks5h://127.0.0.1:<port>`.
+- Import a profile that declares its own HTTP/SOCKS/Mixed/custom listener, TUN,
+  tunnel, server shortcut, or external controller. Confirm none of those
+  profile-owned inbound surfaces starts in a managed session and only the
+  assigned Mixed/App Routing ports listen. On the default profile, separately
+  confirm valid advanced Redirect, TProxy, and DNS settings are preserved.
 
 ## 5. Daily menu bar workflow
 
@@ -155,10 +170,24 @@ before testing failure scenarios.
   requirement.
 - App Routing: duplicate, edit, disable, delete, and move rules up/down. Confirm
   the table order is the evaluation order and the first matching rule wins.
-  While an existing App Routing relay and an unrelated Mihomo connection are
-  active, edit only match criteria or priority and confirm both connections stay
-  online. Add a rule that needs a previously unavailable Mihomo group listener
-  and confirm the app uses the verified restart path instead.
+  With the advanced DNS opt-out enabled, keep an App Routing relay and an
+  unrelated Mihomo connection active, edit only match criteria or priority, and
+  confirm both connections stay online. Re-enable DNS Routing, repeat the edit,
+  and confirm MClash uses the verified provider restart path so DNS and
+  transparent capture receive the same rule revision. Add a rule that needs a
+  previously unavailable Mihomo group listener and confirm it also uses the
+  verified restart path.
+- App Routing: enable two Profile sessions with distinct Mixed ports. Route a
+  development tool to Profile A and a browser plus Telegram to Profile B.
+  Confirm the rule editor names the selected Profile, Activity reports the
+  exact Profile target, and TCP, QUIC/UDP, Telegram messages, media, and calls
+  do not cross to the other Profile.
+- Stop or crash only Profile A's Mihomo process. Confirm Profile B continues
+  without interruption, A follows its configured unavailable fallback while
+  restarting, and neither MClash nor either Mihomo process loops back through a
+  local Mixed listener.
+- Attempt to disable or delete a Profile still referenced by an enabled App
+  Routing rule. Confirm MClash blocks the change with an actionable message.
 - App Routing: keep Advanced Matching collapsed for the normal application →
   Mihomo path, then expand it and verify exact process, executable path, UID,
   IP, CIDR, domain, TCP/UDP, port range, and unavailable-route fallback inputs.
@@ -250,7 +279,7 @@ before testing failure scenarios.
 - Overview: verify the operational summary, capture coverage, concurrent
   Attention count, Core/System Proxy/App Routing rows, current rates, connection
   count, Mihomo session total, active App relays, Top Applications, Top Routes,
-  traffic chart, routing mode, current proxy, HTTP/SOCKS addresses, and core
+  traffic chart, routing mode, current proxy, Mixed address, and core
   version. At a normal wide window, Traffic and Configuration must appear side
   by side; at a narrow width they must return to one readable column.
 - Overview: interrupt traffic telemetry. Current rates and Mihomo session total

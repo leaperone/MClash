@@ -457,6 +457,7 @@ private extension AppModel.StorageInitializationFailure.Component {
         case .runtimeOverrides: "runtime-overrides"
         case .systemProxySettings: "system-proxy-settings"
         case .appRoutingSettings: "app-routing-settings"
+        case .profileRuntimePlan: "profile-runtime-plan"
         }
     }
 
@@ -467,6 +468,7 @@ private extension AppModel.StorageInitializationFailure.Component {
         case .runtimeOverrides: "Runtime settings storage is unavailable"
         case .systemProxySettings: "System proxy settings storage is unavailable"
         case .appRoutingSettings: "App Routing settings storage is unavailable"
+        case .profileRuntimePlan: "The multi-profile runtime plan was reset safely"
         }
     }
 
@@ -482,6 +484,8 @@ private extension AppModel.StorageInitializationFailure.Component {
             "System proxy preferences cannot be read or saved; MClash will not silently claim those settings are available."
         case .appRoutingSettings:
             "Saved App Routing rules cannot be read or changed, so per-application capture must not be trusted."
+        case .profileRuntimePlan:
+            "The invalid multi-profile session plan was preserved for recovery. MClash regenerated only the current default session; review auxiliary sessions and Mixed ports before using them again."
         }
     }
 }

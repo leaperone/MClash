@@ -68,7 +68,9 @@ enum NetworkExtensionControlReducer {
             next.phase = .running
 
         case .beginDisable:
-            guard state.phase == .running || state.phase == .failed else {
+            guard state.phase != .inactive,
+                  state.phase != .uninstalled,
+                  state.phase != .deactivatingSystemExtension else {
                 throw NetworkExtensionStateReductionError.invalidTransition(
                     phase: state.phase,
                     event: event

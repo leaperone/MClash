@@ -4,6 +4,18 @@ import Testing
 
 @Suite("Application lifecycle")
 struct ApplicationDelegateTests {
+    @Test("Login-item launches are quiet by default and remain configurable")
+    @MainActor
+    func loginItemQuietPreference() throws {
+        let suite = "ApplicationDelegateTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        #expect(ApplicationDelegate.opensQuietlyAtLogin(defaults: defaults))
+        defaults.set(false, forKey: AppModel.openAtLoginSilentlyKey)
+        #expect(!ApplicationDelegate.opensQuietlyAtLogin(defaults: defaults))
+    }
+
     @MainActor
     @Test("Closing the main window unloads its content without terminating the app")
     func closeMainWindowDeactivatesPresentation() {

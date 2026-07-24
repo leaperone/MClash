@@ -7,28 +7,37 @@ import Foundation
 /// single `Data` value avoids independently bridging heterogeneous NSNumber,
 /// NSString, and NSData fields in the provider entry point.
 public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
-    public static let maximumEncodedSize = 8 * 1_024
+    public static let currentSchemaVersion = 2
+    // The capture snapshot itself may be 8 MiB. JSON represents Data as
+    // base64, so the atomic DNS bootstrap needs headroom for that expansion,
+    // the route catalog, and schema metadata.
+    public static let maximumEncodedSize = 12 * 1_024 * 1_024
 
     public let schemaVersion: Int
     public let revision: UInt64
     public let activationIdentifier: UUID
     public let profileRulesProxy: MihomoRouteProxyEndpoint
+    public let routeProxyEndpoints: [MihomoRouteProxyEndpoint]?
+    public let encodedCaptureSnapshot: Data?
 
     public init(
         revision: UInt64,
         activationIdentifier: UUID,
-        profileRulesProxy: MihomoRouteProxyEndpoint
+        profileRulesProxy: MihomoRouteProxyEndpoint,
+        routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
+        encodedCaptureSnapshot: Data? = nil
     ) throws {
         schemaVersion = Self.currentSchemaVersion
         self.revision = revision
         self.activationIdentifier = activationIdentifier
         self.profileRulesProxy = profileRulesProxy
+        self.routeProxyEndpoints = routeProxyEndpoints
+        self.encodedCaptureSnapshot = encodedCaptureSnapshot
         try validate()
     }
 
     public func validate() throws {
-        guard schemaVersion == Self.currentSchemaVersion else {
+        guard schemaVersion == 1 || schemaVersion == Self.currentSchemaVersion else {
             throw DNSProxyBootstrapConfigurationError.unsupportedSchemaVersion(
                 schemaVersion
             )
@@ -40,7 +49,9 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
             throw DNSProxyBootstrapConfigurationError.invalidProfileRulesRoute
         }
         do {
-            try MihomoRouteProxyCatalog.validate([profileRulesProxy])
+            try MihomoRouteProxyCatalog.validate(
+                routeProxyEndpoints ?? [profileRulesProxy]
+            )
         } catch {
             throw DNSProxyBootstrapConfigurationError.invalidProfileRulesProxy
         }

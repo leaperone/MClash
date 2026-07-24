@@ -3,55 +3,32 @@ import Testing
 
 @Suite("Listener port settings")
 struct ListenerPortSettingsTests {
-    @Test("Profile, custom, and off modes produce explicit override semantics")
+    @Test("Mixed profile and custom modes disable separate listeners")
     func producesOverrideSemantics() {
         var draft = ListenerPortSettingsDraft(
             overrides: RuntimePortOverrides(),
-            profileHTTPPort: 7_890,
-            profileSOCKSPort: 7_891,
             profileMixedPort: nil
         )
 
-        draft.http.mode = .profile
-        draft.socks.mode = .custom
-        draft.socks.customValue = "19081"
-        draft.mixed.mode = .off
+        draft.mixed.mode = .custom
+        draft.mixed.customValue = "19081"
 
         let applied = draft.applying(to: .empty)
-        #expect(applied.ports.port == nil)
-        #expect(applied.ports.socksPort == 19_081)
-        #expect(applied.ports.mixedPort == 0)
-    }
-
-    @Test("Duplicate enabled listener ports are rejected inline")
-    func rejectsDuplicatePorts() {
-        var draft = ListenerPortSettingsDraft(
-            overrides: RuntimePortOverrides(),
-            profileHTTPPort: nil,
-            profileSOCKSPort: nil,
-            profileMixedPort: nil
-        )
-        draft.http.mode = .custom
-        draft.http.customValue = "18080"
-        draft.socks.mode = .off
-        draft.mixed.mode = .custom
-        draft.mixed.customValue = "18080"
-
-        #expect(draft.validationMessage == "HTTP and Mixed cannot both use port 18080.")
+        #expect(applied.ports.port == 0)
+        #expect(applied.ports.socksPort == 0)
+        #expect(applied.ports.mixedPort == 19_081)
     }
 
     @Test("Invalid custom ports remain visible as field-specific errors")
     func rejectsInvalidCustomPorts() {
         var draft = ListenerPortSettingsDraft(
             overrides: RuntimePortOverrides(),
-            profileHTTPPort: nil,
-            profileSOCKSPort: nil,
             profileMixedPort: nil
         )
-        draft.http.mode = .custom
-        draft.http.customValue = "70000"
+        draft.mixed.mode = .custom
+        draft.mixed.customValue = "70000"
 
-        #expect(draft.validationMessage == "HTTP: Enter a port from 1 to 65535.")
+        #expect(draft.validationMessage == "Mixed: Enter a port from 1 to 65535.")
     }
 
     @Test("Editing common listeners preserves advanced runtime overrides")
@@ -66,8 +43,6 @@ struct ListenerPortSettingsTests {
         )
         var draft = ListenerPortSettingsDraft(
             overrides: original.ports,
-            profileHTTPPort: 7_890,
-            profileSOCKSPort: 7_891,
             profileMixedPort: nil
         )
         draft.mixed.mode = .custom
@@ -88,23 +63,19 @@ struct ListenerPortSettingsTests {
     func resetsToProfile() {
         var draft = ListenerPortSettingsDraft(
             overrides: RuntimePortOverrides(port: 18_080, socksPort: 18_081, mixedPort: 18_082),
-            profileHTTPPort: nil,
-            profileSOCKSPort: nil,
             profileMixedPort: nil
         )
 
         draft.useProfileForAll()
 
-        #expect(draft.http.mode == .profile)
-        #expect(draft.socks.mode == .profile)
         #expect(draft.mixed.mode == .profile)
         let applied = draft.applying(to: RuntimeOverrides(ports: RuntimePortOverrides(
             port: 18_080,
             socksPort: 18_081,
             mixedPort: 18_082
         )))
-        #expect(applied.ports.port == nil)
-        #expect(applied.ports.socksPort == nil)
+        #expect(applied.ports.port == 0)
+        #expect(applied.ports.socksPort == 0)
         #expect(applied.ports.mixedPort == nil)
     }
 

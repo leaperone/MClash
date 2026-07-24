@@ -67,6 +67,8 @@ struct NetworkExtensionControlTests {
         #expect(result == .running)
         var operations = await recorder.snapshot()
         #expect(operations == [
+            "dns.disable",
+            "transparent.stop",
             "system.activate",
             "transparent.configure",
             "transparent.reload",
@@ -99,6 +101,8 @@ struct NetworkExtensionControlTests {
 
         #expect(result == .running)
         #expect(await recorder.snapshot() == [
+            "dns.disable",
+            "transparent.stop",
             "system.activate",
             "transparent.configure",
             "transparent.reload",
@@ -153,7 +157,11 @@ struct NetworkExtensionControlTests {
         )
         #expect(result == .requiresReboot)
         let operations = await recorder.snapshot()
-        #expect(operations == ["system.activate"])
+        #expect(operations == [
+            "dns.disable",
+            "transparent.stop",
+            "system.activate",
+        ])
         let state = await service.currentState()
         #expect(state.phase == .requiresReboot)
     }
@@ -174,6 +182,74 @@ struct NetworkExtensionControlTests {
         )
 
         #expect(progressRecorder.snapshot() == [.awaitingSystemExtensionApproval])
+    }
+
+    @Test("Disable invalidates an activation waiting for System Extension approval")
+    func disableInvalidatesPendingSystemExtensionActivation() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let systemExtension = DeferredSystemExtensionController(recorder: recorder)
+        let service = NetworkExtensionControlService(
+            systemExtension: systemExtension,
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+
+        let activation = Task {
+            try await service.enable(
+                NetworkExtensionRuntimeConfiguration(revision: 11)
+            )
+        }
+        while !(await recorder.snapshot()).contains("system.activate") {
+            await Task.yield()
+        }
+
+        try await service.disable()
+        await systemExtension.completeActivation()
+
+        await #expect(throws: CancellationError.self) {
+            try await activation.value
+        }
+        let operations = await recorder.snapshot()
+        #expect(!operations.contains("transparent.configure"))
+        #expect(!operations.contains("transparent.start"))
+        #expect(await service.currentState().phase == .inactive)
+    }
+
+    @Test("Disable remains the final writer after a stale DNS activation returns")
+    func disableSerializesWithInFlightDNSActivation() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let dnsProxy = DeferredDNSProxyManager(recorder: recorder)
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: dnsProxy
+        )
+        let activation = Task {
+            try await service.enable(
+                NetworkExtensionRuntimeConfiguration(
+                    revision: 12,
+                    dnsEnabled: true
+                )
+            )
+        }
+        while !(await dnsProxy.configureHasStarted()) {
+            await Task.yield()
+        }
+
+        let disabling = Task {
+            try await service.disable()
+        }
+        while await service.currentState().phase != .disablingDNSProxy {
+            await Task.yield()
+        }
+        await dnsProxy.completeConfiguration()
+
+        try await disabling.value
+        await #expect(throws: CancellationError.self) {
+            try await activation.value
+        }
+        #expect(!(await dnsProxy.isEnabled()))
+        #expect(await service.currentState().phase == .inactive)
     }
 
     @Test("Control failures preserve the localized system error")
@@ -337,8 +413,8 @@ struct NetworkExtensionControlTests {
         #expect(await recorder.snapshot() == ["transparent.status"])
     }
 
-    @Test("Rule-only runtime update preserves providers and DNS identity")
-    func liveRuleUpdateDoesNotRestartProviders() async throws {
+    @Test("Rule updates restart DNS so both providers receive the new snapshot")
+    func ruleUpdateRestartsDNSProvider() async throws {
         let recorder = NetworkExtensionOperationRecorder()
         let service = NetworkExtensionControlService(
             systemExtension: MockSystemExtensionController(recorder: recorder),
@@ -364,26 +440,20 @@ struct NetworkExtensionControlTests {
         let result = try await service.updateRuntimeConfiguration(candidate)
 
         #expect(result == .running)
-        #expect(await recorder.snapshot() == [
-            "transparent.configure",
-            "transparent.reload",
-            "transparent.update",
-        ])
+        let operations = await recorder.snapshot()
+        #expect(operations.contains("dns.disable"))
+        #expect(operations.contains("transparent.stop"))
+        #expect(operations.contains("dns.configure"))
+        #expect(!operations.contains("transparent.update"))
         #expect(await service.currentState().revision == 31)
         let appliedConfigurations = await recorder.configurations()
-        #expect(appliedConfigurations.count == 2)
-        for applied in appliedConfigurations {
-            #expect(applied.revision == 31)
-            #expect(applied.activationIdentifier == initialActivation)
-            #expect(applied.encodedCaptureSnapshot == candidate.encodedCaptureSnapshot)
-            #expect(applied.encodedDNSProxyBootstrap == initial.encodedDNSProxyBootstrap)
-            let bootstrapData = try #require(applied.encodedDNSProxyBootstrap)
-            let bootstrap = try DNSProxyBootstrapConfiguration.decode(bootstrapData)
-            #expect(bootstrap.revision == 30)
-            #expect(bootstrap.activationIdentifier == initialActivation)
-        }
+        let applied = try #require(appliedConfigurations.last)
+        #expect(applied.revision == 31)
+        #expect(applied.activationIdentifier == candidate.activationIdentifier)
+        #expect(applied.encodedCaptureSnapshot == candidate.encodedCaptureSnapshot)
+        #expect(applied.encodedDNSProxyBootstrap == candidate.encodedDNSProxyBootstrap)
         let dnsStatus = try await service.dnsProviderRuntimeStatus()
-        #expect(dnsStatus?.revision == 30)
+        #expect(dnsStatus?.revision == 31)
     }
 
     private func runtimeConfiguration(
@@ -487,6 +557,95 @@ private struct MockSystemExtensionController: SystemExtensionControlling {
     ) async throws -> SystemExtensionRequestOutcome {
         await recorder.append("system.deactivate")
         return .completed
+    }
+}
+
+private actor DeferredSystemExtensionController: SystemExtensionControlling {
+    let recorder: NetworkExtensionOperationRecorder
+    private var activationContinuation:
+        CheckedContinuation<SystemExtensionRequestOutcome, Error>?
+
+    init(recorder: NetworkExtensionOperationRecorder) {
+        self.recorder = recorder
+    }
+
+    func activate(
+        progress: @escaping @Sendable (SystemExtensionRequestProgress) -> Void
+    ) async throws -> SystemExtensionRequestOutcome {
+        await recorder.append("system.activate")
+        progress(.awaitingUserApproval)
+        return try await withCheckedThrowingContinuation { continuation in
+            activationContinuation = continuation
+        }
+    }
+
+    func completeActivation() {
+        activationContinuation?.resume(returning: .completed)
+        activationContinuation = nil
+    }
+
+    func deactivate(
+        progress: @escaping @Sendable (SystemExtensionRequestProgress) -> Void
+    ) async throws -> SystemExtensionRequestOutcome {
+        await recorder.append("system.deactivate")
+        return .completed
+    }
+}
+
+private actor DeferredDNSProxyManager: DNSProxyManaging {
+    let recorder: NetworkExtensionOperationRecorder
+    private var configureStarted = false
+    private var enabled = false
+    private var configureContinuation: CheckedContinuation<Void, Never>?
+
+    init(recorder: NetworkExtensionOperationRecorder) {
+        self.recorder = recorder
+    }
+
+    func configureAndEnable(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws {
+        await recorder.append("dns.configure")
+        configureStarted = true
+        await withCheckedContinuation { continuation in
+            configureContinuation = continuation
+        }
+        enabled = true
+    }
+
+    func reload() async throws {
+        await recorder.append("dns.reload")
+    }
+
+    func runtimeStatus(
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> DNSProxyRuntimeStatus {
+        let now = Date()
+        return DNSProxyRuntimeStatus(
+            revision: configuration.revision,
+            activationIdentifier: configuration.activationIdentifier,
+            phase: enabled ? .running : .stopped,
+            backendReady: enabled,
+            startedAt: now
+        )
+    }
+
+    func disable() async throws {
+        await recorder.append("dns.disable")
+        enabled = false
+    }
+
+    func configureHasStarted() -> Bool {
+        configureStarted
+    }
+
+    func completeConfiguration() {
+        configureContinuation?.resume()
+        configureContinuation = nil
+    }
+
+    func isEnabled() -> Bool {
+        enabled
     }
 }
 

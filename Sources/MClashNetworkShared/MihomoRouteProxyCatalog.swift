@@ -39,6 +39,7 @@ public enum MihomoRouteProxyCatalogError: Error, Equatable, Sendable {
     case invalidPort(UInt16)
     case incompleteCredentials
     case duplicateRoute(MihomoRoute)
+    case duplicateEndpoint(host: String, port: UInt16)
     case missingProfileRules
     case encodedCatalogTooLarge(actual: Int, maximum: Int)
 }
@@ -54,6 +55,8 @@ extension MihomoRouteProxyCatalogError: LocalizedError {
             "A private App Routing listener must provide both username and password or neither."
         case let .duplicateRoute(route):
             "The private App Routing listener catalog contains duplicate route \(route)."
+        case let .duplicateEndpoint(host, port):
+            "The private App Routing listener catalog reuses \(host):\(port)."
         case .missingProfileRules:
             "The private App Routing listener catalog is missing the profile-rules route."
         case let .encodedCatalogTooLarge(actual, maximum):
@@ -67,6 +70,7 @@ public enum MihomoRouteProxyCatalog {
 
     public static func validate(_ endpoints: [MihomoRouteProxyEndpoint]) throws {
         var routes = Set<MihomoRoute>()
+        var listeners = Set<String>()
         for endpoint in endpoints {
             _ = try MihomoRouteProxyEndpoint(
                 route: endpoint.route,
@@ -77,6 +81,13 @@ public enum MihomoRouteProxyCatalog {
             )
             guard routes.insert(endpoint.route).inserted else {
                 throw MihomoRouteProxyCatalogError.duplicateRoute(endpoint.route)
+            }
+            let listener = "\(endpoint.host):\(endpoint.port)"
+            guard listeners.insert(listener).inserted else {
+                throw MihomoRouteProxyCatalogError.duplicateEndpoint(
+                    host: endpoint.host,
+                    port: endpoint.port
+                )
             }
         }
         guard routes.contains(.profileRules) else {
@@ -109,5 +120,16 @@ public enum MihomoRouteProxyCatalog {
         )
         try validate(endpoints)
         return endpoints
+    }
+
+    /// Returns only an endpoint whose complete route target matches. In
+    /// particular, an endpoint for Profile A never satisfies the same routing
+    /// mode requested for Profile B, and legacy routes do not alias an explicit
+    /// profile target.
+    public static func endpoint(
+        for route: MihomoRoute,
+        in endpoints: [MihomoRouteProxyEndpoint]
+    ) -> MihomoRouteProxyEndpoint? {
+        endpoints.first { $0.route == route }
     }
 }

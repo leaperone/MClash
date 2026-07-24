@@ -9,6 +9,7 @@ manifest="${4:-}"
 repository="${GITHUB_REPOSITORY:-leaperone/MClash}"
 release_tag="${MCLASH_RELEASE_TAG:-}"
 target_version="${MCLASH_VERSION:-}"
+target_bundle_version="${MCLASH_BUNDLE_VERSION:-${target_version%%[-+]*}}"
 target_build="${MCLASH_BUILD_NUMBER:-}"
 private_key="${SPARKLE_PRIVATE_KEY:-}"
 maximum_deltas="${MCLASH_MAX_DELTAS:-2}"
@@ -22,8 +23,9 @@ if [[ ! -d "${target_app}" || ! -f "${full_archive}" ]]; then
   exit 1
 fi
 if [[ -z "${release_tag}" || -z "${target_version}" || \
+      ! "${target_bundle_version}" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' || \
       ! "${target_build}" =~ '^[1-9][0-9]*$' || -z "${private_key}" ]]; then
-  print -u2 "Set MCLASH_RELEASE_TAG, MCLASH_VERSION, MCLASH_BUILD_NUMBER, and SPARKLE_PRIVATE_KEY."
+  print -u2 "Set valid MCLASH_RELEASE_TAG, MCLASH_VERSION, MCLASH_BUNDLE_VERSION, MCLASH_BUILD_NUMBER, and SPARKLE_PRIVATE_KEY."
   exit 2
 fi
 if [[ ! "${maximum_deltas}" =~ '^[0-9]+$' || "${maximum_deltas}" -gt 5 ]]; then
@@ -71,7 +73,7 @@ actual_target_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersion
   "${target_info}" 2>/dev/null || true)"
 actual_target_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
   "${target_info}" 2>/dev/null || true)"
-if [[ "${actual_target_version}" != "${target_version}" || \
+if [[ "${actual_target_version}" != "${target_bundle_version}" || \
       "${actual_target_build}" != "${target_build}" ]]; then
   print -u2 "The target app metadata does not match the requested release."
   exit 1

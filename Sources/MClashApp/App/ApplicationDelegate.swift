@@ -30,7 +30,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var applicationPreparationTask: Task<Void, Never>?
     private var skipNextQuitConfirmation = false
     private var shouldPresentInitialMainWindow = ApplicationDelegate.initialWindowShouldPresent(
-        arguments: CommandLine.arguments
+        arguments: CommandLine.arguments,
+        event: NSAppleEventManager.shared().currentAppleEvent
     )
 
     override init() {
@@ -53,8 +54,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         "one.leaper.mclash.activate-existing-instance"
     )
 
-    static func initialWindowShouldPresent(arguments: [String]) -> Bool {
-        !arguments.contains("--mclash-background")
+    static func initialWindowShouldPresent(
+        arguments: [String],
+        event: NSAppleEventDescriptor? = nil,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard !arguments.contains("--mclash-background") else { return false }
+        return !isLoginItemLaunch(event: event)
+            || !opensQuietlyAtLogin(defaults: defaults)
     }
 
     static func isLoginItemLaunch(event: NSAppleEventDescriptor?) -> Bool {
@@ -66,7 +73,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         if Self.isLoginItemLaunch(
             event: NSAppleEventManager.shared().currentAppleEvent
-        ) {
+        ), Self.opensQuietlyAtLogin() {
             shouldPresentInitialMainWindow = false
         }
 
@@ -269,6 +276,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             || reason == kAEShutDown
             || reason == kAERestart
             || reason == kAEReallyLogOut
+    }
+
+    static func opensQuietlyAtLogin(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: AppModel.openAtLoginSilentlyKey) == nil {
+            return true
+        }
+        return defaults.bool(forKey: AppModel.openAtLoginSilentlyKey)
     }
 
     func prepareForUpdaterRelaunch() {

@@ -218,6 +218,24 @@ private struct ProfileRow: View {
                     profileActions
                 }
             }
+
+            if let session = model.profileSessionSpec(for: profile.id) {
+                HStack(spacing: 7) {
+                    Label(
+                        AppLocalization.format("Mixed %d", session.mixedPort),
+                        systemImage: "arrow.triangle.branch"
+                    )
+                    if session.enabled {
+                        Text("•")
+                            .accessibilityHidden(true)
+                        Text(profile.id == model.activeProfileID
+                            ? "Default session"
+                            : "App Routing session")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(session.enabled ? Color.accentColor : .secondary)
+            }
         }
         .padding(.vertical, compact ? 9 : 7)
         .accessibilityElement(children: .contain)
@@ -371,8 +389,9 @@ private struct ProfileRow: View {
                     confirmingDelete = true
                 }
                 .buttonStyle(.borderless)
-                .disabled(isActive || !model.canPerform(.removeProfile(profile.id)))
-                .help(isActive ? "Activate another profile before deleting this one" : "Delete \(profile.name)")
+                .disabled(removalBlockReason != nil
+                    || !model.canPerform(.removeProfile(profile.id)))
+                .help(removalBlockReason ?? "Delete \(profile.name)")
             }
             .controlSize(.small)
         }
@@ -422,7 +441,8 @@ private struct ProfileRow: View {
             Button("Delete", systemImage: "trash", role: .destructive) {
                 confirmingDelete = true
             }
-            .disabled(isActive || !model.canPerform(.removeProfile(profile.id)))
+            .disabled(removalBlockReason != nil
+                || !model.canPerform(.removeProfile(profile.id)))
         } label: {
             Label("More", systemImage: "ellipsis.circle")
                 .labelStyle(.iconOnly)
@@ -446,6 +466,10 @@ private struct ProfileRow: View {
     private var isRemote: Bool {
         if case .remote = profile.origin { return true }
         return false
+    }
+
+    private var removalBlockReason: String? {
+        model.profileRemovalBlockReason(for: profile.id)
     }
 
     private var originTitle: String {
@@ -592,6 +616,8 @@ private struct EditProfileView: View {
     @State private var automaticUpdatesEnabled: Bool
     @State private var overridesUpdateInterval: Bool
     @State private var updateIntervalHours: Int
+    @State private var runtimeEnabled: Bool
+    @State private var mixedPort: Int
     @State private var submissionError: String?
     @State private var submissionTask: Task<Void, Never>?
     @State private var attemptedSubmission = false
@@ -602,6 +628,11 @@ private struct EditProfileView: View {
         self.profile = profile
         _isPresented = isPresented
         _name = State(initialValue: profile.name)
+        let runtime = model.profileSessionSpec(for: profile.id)
+        _runtimeEnabled = State(
+            initialValue: profile.id == model.activeProfileID || runtime?.enabled == true
+        )
+        _mixedPort = State(initialValue: runtime?.mixedPort ?? 7_890)
         if case let .remote(remote) = profile.origin {
             _address = State(initialValue: remote.url.absoluteString)
             _automaticUpdatesEnabled = State(initialValue: remote.automaticUpdatesEnabled)
@@ -653,6 +684,32 @@ private struct EditProfileView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                Section("Profile Session") {
+                    Toggle("Run for App Routing", isOn: $runtimeEnabled)
+                        .disabled(isSubmitting || profile.id == model.activeProfileID)
+
+                    LabeledContent("Mixed port") {
+                        TextField(
+                            "Port",
+                            value: $mixedPort,
+                            format: .number.grouping(.never)
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .monospacedDigit()
+                        .frame(width: 92)
+                        .disabled(isSubmitting)
+                    }
+
+                    Text(
+                        profile.id == model.activeProfileID
+                            ? "The default profile always runs when MClash is connected. HTTP, HTTPS proxy, and SOCKS5 all share this Mixed port."
+                            : "Enable this session to keep the profile available as an App Routing target. It runs in its own Mihomo process and uses this Mixed port for HTTP and SOCKS5."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -719,6 +776,9 @@ private struct EditProfileView: View {
     private var validationMessage: String? {
         if normalizedName.isEmpty { return "Enter a profile name." }
         if isRemote, validatedURL == nil { return "Use a complete HTTP or HTTPS subscription address." }
+        if !(1...65_535).contains(mixedPort) {
+            return "Use a Mixed port from 1 to 65535."
+        }
         return nil
     }
 
@@ -733,6 +793,11 @@ private struct EditProfileView: View {
 
         submissionTask = Task {
             do {
+                try await model.updateProfileRuntime(
+                    profileID: profile.id,
+                    enabled: runtimeEnabled || profile.id == model.activeProfileID,
+                    mixedPort: mixedPort
+                )
                 try await model.updateProfile(
                     profile.id,
                     name: normalizedName,

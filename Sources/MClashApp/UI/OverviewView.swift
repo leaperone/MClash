@@ -1077,24 +1077,6 @@ private struct OverviewSessionDetailsSection: View {
 
                 detailDivider
 
-                OverviewDetailRow(title: "HTTP Proxy", presentation: presentation) {
-                    addressValue(
-                        model.localHTTPListenerAddress,
-                        accessibilityName: "HTTP proxy address"
-                    )
-                }
-
-                detailDivider
-
-                OverviewDetailRow(title: "SOCKS5 Proxy", presentation: presentation) {
-                    addressValue(
-                        model.localSOCKSListenerAddress,
-                        accessibilityName: "SOCKS5 proxy address"
-                    )
-                }
-
-                detailDivider
-
                 OverviewDetailRow(title: "Mixed Proxy", presentation: presentation) {
                     addressValue(
                         model.localMixedListenerAddress,

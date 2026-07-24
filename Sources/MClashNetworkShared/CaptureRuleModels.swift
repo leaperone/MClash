@@ -324,10 +324,67 @@ public enum DestinationMatcher: Codable, Hashable, Sendable {
     case hostPattern(HostPatternMatcher)
 }
 
+/// The routing mode requested within one explicitly identified profile.
+public enum MihomoProfileRoute: Codable, Hashable, Sendable {
+    case rules
+    case global
+    case group(String)
+}
+
 public enum MihomoRoute: Codable, Hashable, Sendable {
+    /// Legacy targets resolve against the app's active/default profile.
     case profileRules
     case global
     case group(String)
+    /// A complete multi-profile target. Both the profile and its routing mode
+    /// participate in equality and hashing, so listener lookup is exact.
+    case profile(RoutingProfileID, target: MihomoProfileRoute)
+
+    public var routingProfileID: RoutingProfileID? {
+        guard case let .profile(profileID, _) = self else { return nil }
+        return profileID
+    }
+
+    public var profileRoute: MihomoProfileRoute {
+        switch self {
+        case .profileRules:
+            .rules
+        case .global:
+            .global
+        case let .group(name):
+            .group(name)
+        case let .profile(_, route):
+            route
+        }
+    }
+
+    /// Stable ordering for listener construction and diagnostics. Legacy
+    /// routes remain first in their historical rules/global/group order.
+    public var stableSortKey: String {
+        switch self {
+        case .profileRules:
+            "0:legacy:0:rules"
+        case .global:
+            "0:legacy:1:global"
+        case let .group(name):
+            "0:legacy:2:group:\(name)"
+        case let .profile(profileID, route):
+            "1:\(profileID.rawValue):\(route.stableSortKey)"
+        }
+    }
+}
+
+private extension MihomoProfileRoute {
+    var stableSortKey: String {
+        switch self {
+        case .rules:
+            "0:rules"
+        case .global:
+            "1:global"
+        case let .group(name):
+            "2:group:\(name)"
+        }
+    }
 }
 
 public enum CaptureAction: Codable, Hashable, Sendable {
@@ -418,9 +475,19 @@ public struct CaptureRule: Codable, Hashable, Identifiable, Sendable {
                 break
             }
         }
-        if case let .mihomo(.group(group)) = action,
-           group.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw NetworkRuleValidationError.invalidMihomoGroup(group)
+        if case let .mihomo(route) = action {
+            let group: String? = switch route {
+            case let .group(value):
+                value
+            case let .profile(_, target: .group(value)):
+                value
+            case .profileRules, .global, .profile:
+                nil
+            }
+            if let group,
+               group.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw NetworkRuleValidationError.invalidMihomoGroup(group)
+            }
         }
     }
 

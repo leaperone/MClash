@@ -8,7 +8,10 @@ struct MClashApp: App {
     @State private var automationServer = AutomationSocketServer()
     @AppStorage(AppLanguage.storageKey) private var appLanguageRawValue = AppLanguage.system.rawValue
     @State private var mainWindowContentIsActive = ApplicationDelegate
-        .initialWindowShouldPresent(arguments: CommandLine.arguments)
+        .initialWindowShouldPresent(
+            arguments: CommandLine.arguments,
+            event: NSAppleEventManager.shared().currentAppleEvent
+        )
 
     var body: some Scene {
         Window("MClash", id: "main") {
@@ -229,26 +232,34 @@ private struct MenuBarStatusLabel: View {
                 .frame(width: 16, height: 16)
                 .accessibilityLabel(accessibilityLabel)
         case .proxyStatus:
-            HStack(spacing: 3) {
-                menuBarMetric(
-                    symbol: "arrow.down",
-                    value: menuBarRate(model.traffic.download),
-                    valueWidth: 27
-                )
-                menuBarMetric(
-                    symbol: "arrow.up",
-                    value: menuBarRate(model.traffic.upload),
-                    valueWidth: 27
-                )
-                menuBarMetric(
-                    symbol: "arrow.left.arrow.right",
-                    value: menuBarConnectionCount,
-                    valueWidth: 24
-                )
+            if model.lightweightMode {
+                Image(systemName: symbol)
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 16, height: 16)
+                    .accessibilityLabel(accessibilityLabel)
+            } else {
+                HStack(spacing: 3) {
+                    menuBarMetric(
+                        symbol: "arrow.down",
+                        value: menuBarRate(model.traffic.download),
+                        valueWidth: 27
+                    )
+                    menuBarMetric(
+                        symbol: "arrow.up",
+                        value: menuBarRate(model.traffic.upload),
+                        valueWidth: 27
+                    )
+                    menuBarMetric(
+                        symbol: "arrow.left.arrow.right",
+                        value: menuBarConnectionCount,
+                        valueWidth: 24
+                    )
+                }
+                .frame(width: 114, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(accessibilityLabel)
             }
-            .frame(width: 114, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(accessibilityLabel)
         }
     }
 

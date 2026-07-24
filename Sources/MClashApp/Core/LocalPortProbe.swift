@@ -40,10 +40,76 @@ struct LocalPortProbe: Sendable {
         return port
     }
 
+    func isAvailableTCPAndUDP(port: Int) -> Bool {
+        guard (1...65_535).contains(port) else { return false }
+
+        let tcp = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard tcp >= 0 else { return false }
+        defer { Darwin.close(tcp) }
+        var tcpAddress = loopbackAddress(port: port)
+        let tcpBind = withUnsafePointer(to: &tcpAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(tcp, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard tcpBind == 0 else { return false }
+
+        let udp = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
+        guard udp >= 0 else { return false }
+        defer { Darwin.close(udp) }
+        var udpAddress = loopbackAddress(port: port)
+        let udpBind = withUnsafePointer(to: &udpAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(udp, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard udpBind == 0 else { return false }
+
+        let tcp6 = Darwin.socket(AF_INET6, SOCK_STREAM, 0)
+        guard tcp6 >= 0 else { return false }
+        defer { Darwin.close(tcp6) }
+        guard configureIPv6Only(tcp6),
+              bindIPv6(tcp6, port: port) else { return false }
+
+        let udp6 = Darwin.socket(AF_INET6, SOCK_DGRAM, 0)
+        guard udp6 >= 0 else { return false }
+        defer { Darwin.close(udp6) }
+        return configureIPv6Only(udp6) && bindIPv6(udp6, port: port)
+    }
+
+    /// UDP has no TIME_WAIT state. This narrower probe distinguishes a
+    /// recently stopped TCP listener from a port another process still owns.
+    func isAvailableUDP(port: Int) -> Bool {
+        guard (1...65_535).contains(port) else { return false }
+
+        let udp = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
+        guard udp >= 0 else { return false }
+        defer { Darwin.close(udp) }
+        var udpAddress = loopbackAddress(port: port)
+        let udpBind = withUnsafePointer(to: &udpAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(
+                    udp,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        }
+        guard udpBind == 0 else { return false }
+
+        let udp6 = Darwin.socket(AF_INET6, SOCK_DGRAM, 0)
+        guard udp6 >= 0 else { return false }
+        defer { Darwin.close(udp6) }
+        return configureIPv6Only(udp6) && bindIPv6(udp6, port: port)
+    }
+
     /// Reserves distinct loopback ports for listeners that must bind both TCP
     /// and UDP. All descriptors stay open until the complete set is selected,
     /// preventing duplicate ephemeral-port results within one allocation.
-    func availableTCPAndUDPPorts(count: Int) throws -> [Int] {
+    func availableTCPAndUDPPorts(
+        count: Int,
+        excluding excludedPorts: Set<Int> = []
+    ) throws -> [Int] {
         guard count > 0 else { throw LocalPortProbeError.noPorts }
 
         var descriptors: [Int32] = []
@@ -90,6 +156,10 @@ struct LocalPortProbe: Sendable {
                 Darwin.close(tcp)
                 throw LocalPortProbeError.invalidPort(port)
             }
+            if excludedPorts.contains(port) {
+                Darwin.close(tcp)
+                continue
+            }
 
             let udp = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
             guard udp >= 0 else {
@@ -113,8 +183,40 @@ struct LocalPortProbe: Sendable {
                 continue
             }
 
+            let tcp6 = Darwin.socket(AF_INET6, SOCK_STREAM, 0)
+            guard tcp6 >= 0 else {
+                Darwin.close(tcp)
+                Darwin.close(udp)
+                throw LocalPortProbeError.socketCreationFailed(errno)
+            }
+            guard configureIPv6Only(tcp6),
+                  bindIPv6(tcp6, port: port) else {
+                Darwin.close(tcp)
+                Darwin.close(udp)
+                Darwin.close(tcp6)
+                continue
+            }
+
+            let udp6 = Darwin.socket(AF_INET6, SOCK_DGRAM, 0)
+            guard udp6 >= 0 else {
+                Darwin.close(tcp)
+                Darwin.close(udp)
+                Darwin.close(tcp6)
+                throw LocalPortProbeError.socketCreationFailed(errno)
+            }
+            guard configureIPv6Only(udp6),
+                  bindIPv6(udp6, port: port) else {
+                Darwin.close(tcp)
+                Darwin.close(udp)
+                Darwin.close(tcp6)
+                Darwin.close(udp6)
+                continue
+            }
+
             descriptors.append(tcp)
             descriptors.append(udp)
+            descriptors.append(tcp6)
+            descriptors.append(udp6)
             ports.append(port)
         }
 
@@ -132,7 +234,7 @@ struct LocalPortProbe: Sendable {
         defer { Darwin.close(descriptor) }
 
         var address = loopbackAddress(port: port)
-        let result = withUnsafePointer(to: &address) { pointer in
+        let ipv4Result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
                 Darwin.connect(
                     descriptor,
@@ -141,7 +243,26 @@ struct LocalPortProbe: Sendable {
                 )
             }
         }
-        return result == 0
+        if ipv4Result == 0 { return true }
+
+        let descriptor6 = Darwin.socket(AF_INET6, SOCK_STREAM, 0)
+        guard descriptor6 >= 0 else { return false }
+        defer { Darwin.close(descriptor6) }
+        guard configureIPv6Only(descriptor6) else { return false }
+        var address6 = sockaddr_in6()
+        address6.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address6.sin6_family = sa_family_t(AF_INET6)
+        address6.sin6_port = in_port_t(port).bigEndian
+        address6.sin6_addr = in6addr_loopback
+        return withUnsafePointer(to: &address6) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(
+                    descriptor6,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in6>.size)
+                )
+            }
+        } == 0
     }
 
     func waitUntilListening(ports: Set<Int>) async throws {
@@ -281,6 +402,36 @@ struct LocalPortProbe: Sendable {
         address.sin_port = in_port_t(port).bigEndian
         address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
         return address
+    }
+
+    private func configureIPv6Only(_ descriptor: Int32) -> Bool {
+        var enabled: Int32 = 1
+        return withUnsafePointer(to: &enabled) {
+            Darwin.setsockopt(
+                descriptor,
+                IPPROTO_IPV6,
+                IPV6_V6ONLY,
+                $0,
+                socklen_t(MemoryLayout<Int32>.size)
+            )
+        } == 0
+    }
+
+    private func bindIPv6(_ descriptor: Int32, port: Int) -> Bool {
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = in_port_t(port).bigEndian
+        address.sin6_addr = in6addr_loopback
+        return withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(
+                    descriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in6>.size)
+                )
+            }
+        } == 0
     }
 }
 

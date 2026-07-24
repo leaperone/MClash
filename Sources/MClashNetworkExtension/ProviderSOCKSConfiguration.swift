@@ -93,6 +93,37 @@ struct ProviderSOCKSConfiguration: Equatable, Sendable {
         return [.profileRules: profileRules]
     }
 
+    static func proxy(
+        for route: MihomoRoute,
+        in routeCatalog: [MihomoRoute: ProviderSOCKSConfiguration]
+    ) -> ProviderSOCKSConfiguration? {
+        routeCatalog[route]
+    }
+
+    /// Builds the route-specific portion shared by TCP and UDP Mihomo
+    /// interception plans. A decision receives a proxy only when its complete
+    /// route target exists in the catalog; no profile or legacy-route aliasing
+    /// is attempted.
+    static func flowPlan(
+        for decision: FlowTrafficDecision,
+        endpoint: FlowRemoteEndpoint,
+        preferredHostname: String?,
+        routeCatalog: [MihomoRoute: ProviderSOCKSConfiguration]
+    ) throws -> ProviderSOCKSFlowPlan? {
+        switch decision.disposition {
+        case .direct, .reject, .failOpen:
+            return nil
+        case let .mihomo(route):
+            return ProviderSOCKSFlowPlan(
+                destinations: try destinations(
+                    for: endpoint,
+                    preferredHostname: preferredHostname
+                ),
+                proxy: proxy(for: route, in: routeCatalog)
+            )
+        }
+    }
+
     var networkHost: NWEndpoint.Host { NWEndpoint.Host(host) }
 
     var networkPort: NWEndpoint.Port {
@@ -171,4 +202,9 @@ struct ProviderSOCKSConfiguration: Equatable, Sendable {
 struct ProviderSOCKSDestinations: Equatable, Sendable {
     let original: SOCKS5Endpoint
     let mihomo: SOCKS5Endpoint
+}
+
+struct ProviderSOCKSFlowPlan: Equatable, Sendable {
+    let destinations: ProviderSOCKSDestinations
+    let proxy: ProviderSOCKSConfiguration?
 }

@@ -53,14 +53,15 @@ end users do not download or select a core.
 
 1. Open **Profiles** and choose **Import & Activate** for a local YAML file, or
    **Add Subscription** for an HTTP/HTTPS subscription.
-2. Select the profile and connect the mihomo core.
+2. Select the default profile, optionally enable additional Profile sessions,
+   and connect. Each enabled Profile has its own Mihomo process and Mixed port.
 3. Choose how macOS traffic should enter MClash:
 
    - Enable **Use macOS System Proxy** for ordinary proxy-aware applications.
    - Open **App Routing** to send selected applications or destinations through
      Mihomo while leaving other applications direct.
-   - Leave both off when you only need the local HTTP/SOCKS listeners shown by
-     MClash.
+   - Leave both off when you only need the local Mixed listeners shown by
+     MClash. Each Mixed port accepts HTTP, HTTPS proxy, and SOCKS5 clients.
 
 4. Select Rule, Global, or Direct mode and, when applicable, choose the desired
    policy-group route.
@@ -68,9 +69,13 @@ end users do not download or select a core.
 Choose **Settings → Appearance → Language** to override the macOS language, or
 leave **System Default** selected.
 
-MClash validates a profile with `mihomo -t` before activation. If a profile does
-not define a usable HTTP, SOCKS, or mixed listener, MClash supplies a temporary
-loopback listener without rewriting the stored profile.
+MClash validates the generated runtime configuration with `mihomo -t` before
+activation without rewriting the stored profile. For predictable multi-profile
+isolation, each managed session exposes only its MClash-assigned Mixed port and
+private App Routing listeners. Profile-owned HTTP/SOCKS/Mixed/custom listeners,
+TUN, tunnels, server shortcuts, and external controllers are not launched;
+advanced Redirect, TProxy, and DNS settings remain available on the default
+profile.
 
 ## App Routing
 
@@ -87,12 +92,12 @@ A rule can match:
   CIDR networks; and
 - TCP, UDP, and destination port ranges.
 
-A match can go Direct, be rejected, follow the active profile rules, use Mihomo
-GLOBAL, or enter a specific Mihomo policy group. Each rule also defines what to
-do if its requested Mihomo route is unavailable. Rules can be reordered,
-disabled, duplicated, and updated transactionally. Existing Proxifier `.ppx`
-routing rules can be previewed and selectively imported; proxy servers,
-credentials, and chains are not imported.
+A match can go Direct, be rejected, follow a selected Profile's rules, use that
+Profile's Mihomo GLOBAL route, or enter a specific policy group on the default
+Profile. Each rule also defines what to do if its requested Profile or route is
+unavailable. Rules can be reordered, disabled, duplicated, and updated
+transactionally. Existing Proxifier `.ppx` routing rules can be previewed and
+selectively imported; proxy servers, credentials, and chains are not imported.
 
 For predictable rules, prefer a selected signed application over a broad name
 pattern, keep one application or intent per rule, enable UDP when the application

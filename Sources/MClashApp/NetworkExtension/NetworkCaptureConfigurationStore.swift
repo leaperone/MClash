@@ -24,7 +24,10 @@ struct NetworkCapturePreferences: Codable, Equatable, Sendable {
         // The empty, current-schema snapshot is structurally infallible. Keeping
         // the fallback here makes App Routing opt-out for a new installation;
         // Direct remains the fail-open result until the user adds routing rules.
-        let snapshot = try! CaptureConfigurationSnapshot(revision: 0, rules: [])
+        // Runtime provider configurations reject revision zero. Starting the
+        // product default at one makes a fresh install immediately activatable
+        // before the user has edited a rule.
+        let snapshot = try! CaptureConfigurationSnapshot(revision: 1, rules: [])
         return try! NetworkCapturePreferences(
             enabled: true,
             dnsEnabled: true,

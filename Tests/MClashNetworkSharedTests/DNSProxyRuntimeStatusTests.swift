@@ -9,16 +9,29 @@ struct DNSProxyRuntimeStatusTests {
         let activationIdentifier = UUID(
             uuidString: "11111111-2222-3333-4444-555555555555"
         )!
+        let profileRulesEndpoint = try MihomoRouteProxyEndpoint(
+            route: .profileRules,
+            host: "127.0.0.1",
+            port: 17_891,
+            username: "provider",
+            password: "private-secret"
+        )
+        let routingProfileID = RoutingProfileID(
+            UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+        )
+        let profileEndpoint = try MihomoRouteProxyEndpoint(
+            route: .profile(routingProfileID, target: .rules),
+            host: "127.0.0.1",
+            port: 17_892,
+            username: "provider",
+            password: "private-secret"
+        )
         let bootstrap = try DNSProxyBootstrapConfiguration(
             revision: 42,
             activationIdentifier: activationIdentifier,
-            profileRulesProxy: MihomoRouteProxyEndpoint(
-                route: .profileRules,
-                host: "127.0.0.1",
-                port: 17_891,
-                username: "provider",
-                password: "private-secret"
-            )
+            profileRulesProxy: profileRulesEndpoint,
+            routeProxyEndpoints: [profileRulesEndpoint, profileEndpoint],
+            encodedCaptureSnapshot: Data("snapshot".utf8)
         )
         let encoded = try bootstrap.encoded()
         let propertyList = try PropertyListSerialization.data(
@@ -36,6 +49,8 @@ struct DNSProxyRuntimeStatusTests {
         let bridgedData = try #require(bridged["dnsProxyBootstrap"] as? Data)
 
         #expect(try DNSProxyBootstrapConfiguration.decode(bridgedData) == bootstrap)
+        #expect(bootstrap.routeProxyEndpoints?.last?.route == profileEndpoint.route)
+        #expect(bootstrap.encodedCaptureSnapshot == Data("snapshot".utf8))
     }
 
     @Test("Bootstrap rejects invalid identity, route, schema, and size")
@@ -98,6 +113,29 @@ struct DNSProxyRuntimeStatusTests {
         ) {
             _ = try DNSProxyBootstrapConfiguration.decode(oversized)
         }
+    }
+
+    @Test("Bootstrap capacity includes a full capture snapshot after base64 expansion")
+    func bootstrapCarriesLargeCaptureSnapshot() throws {
+        let profileEndpoint = try MihomoRouteProxyEndpoint(
+            route: .profileRules,
+            host: "127.0.0.1",
+            port: 17_891
+        )
+        let snapshot = Data(repeating: 0x5a, count: 512 * 1_024)
+        let bootstrap = try DNSProxyBootstrapConfiguration(
+            revision: 1,
+            activationIdentifier: UUID(),
+            profileRulesProxy: profileEndpoint,
+            encodedCaptureSnapshot: snapshot
+        )
+
+        let encoded = try bootstrap.encoded()
+        #expect(encoded.count > 512 * 1_024)
+        #expect(
+            try DNSProxyBootstrapConfiguration.decode(encoded)
+                .encodedCaptureSnapshot == snapshot
+        )
     }
 
     @Test("Host-staged bootstrap is authoritative across every delivery combination")

@@ -566,6 +566,31 @@ actor CoreSupervisor {
             try await start(configuration, validatesConfiguration: false)
         } catch {
             emitLog("Automatic restart failed: \(error.localizedDescription)", stream: .supervisor)
+            let now = Date()
+            crashTimestamps = crashTimestamps.filter {
+                now.timeIntervalSince($0) < crashWindow
+            }
+            crashTimestamps.append(now)
+            guard crashTimestamps.count <= maximumCrashRestarts else {
+                emitLog(
+                    "Automatic restart paused after repeated failures.",
+                    stream: .supervisor
+                )
+                return
+            }
+            let retryToken = UUID()
+            pendingRestartToken = retryToken
+            let delay = min(
+                pow(2.0, Double(crashTimestamps.count - 1)),
+                8
+            )
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                await self?.restartAfterCrash(
+                    configuration,
+                    token: retryToken
+                )
+            }
         }
     }
 
