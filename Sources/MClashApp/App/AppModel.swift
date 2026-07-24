@@ -4507,7 +4507,11 @@ final class AppModel {
                         _ = await self?.performNetworkCaptureDeactivation()
                     }
                 }
-                if systemProxyEnabled || hasSystemProxySnapshot {
+                // A failed restore deliberately leaves the snapshot in place
+                // for a user-initiated retry. The cleanup stop event must not
+                // turn that durable recovery state into an authorization loop.
+                if !systemProxyRecoveryRequired,
+                   systemProxyEnabled || hasSystemProxySnapshot {
                     Task { [weak self] in await self?.performDisableSystemProxy() }
                 }
             }

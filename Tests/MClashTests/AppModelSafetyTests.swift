@@ -290,6 +290,10 @@ struct AppModelSafetyTests {
 
         await fixture.model.prepare()
         await fixture.model.prepare()
+        // Give the supervisor's stopped event time to reach AppModel. A
+        // failed restore must remain user-recoverable instead of scheduling
+        // another automatic restore from that event.
+        try await Task.sleep(for: .milliseconds(50))
 
         #expect(fixture.backend.applyCount == 1)
         #expect(fixture.model.systemProxyRecoveryRequired)
