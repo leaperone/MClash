@@ -13,7 +13,13 @@ run_release_script_tests() {
 # whose PackageDescription dylib can be out of sync with its Swift interface.
 if [[ "${CI:-}" == "true" ]]; then
   cd "${repo_root}"
-  swift test --configuration debug
+  # Several suites exercise process-wide Apple manager singletons. Running
+  # them concurrently can make Swift Testing reflect a temporarily null
+  # Objective-C singleton after another test tears it down. Keep the CI path
+  # aligned with the direct runner below so this framework race cannot mask
+  # product test results.
+  SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+    swift test --configuration debug
   run_release_script_tests
   exit 0
 fi
