@@ -64,7 +64,7 @@ struct ApplicationLifecycleTests {
         }
         let layout = ProfileDirectoryLayout(rootDirectory: root)
 
-        let first = AppModel(
+        let first = makeTestAppModel(
             profileDirectoryLayout: layout,
             preferenceDefaults: defaults
         )
@@ -73,7 +73,7 @@ struct ApplicationLifecycleTests {
         first.openAtLoginSilently = false
         first.lightweightMode = true
 
-        let restored = AppModel(
+        let restored = makeTestAppModel(
             profileDirectoryLayout: layout,
             preferenceDefaults: defaults
         )

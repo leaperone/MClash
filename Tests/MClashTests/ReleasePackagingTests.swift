@@ -22,6 +22,38 @@ struct ReleasePackagingTests {
         )
     }
 
+    @Test("AppModel tests never construct live Network Extension managers")
+    func appModelTestsUseInertDependencies() throws {
+        let testsDirectory = repositoryRoot.appendingPathComponent(
+            "Tests/MClashTests",
+            isDirectory: true
+        )
+        let enumerator = try #require(
+            FileManager.default.enumerator(
+                at: testsDirectory,
+                includingPropertiesForKeys: nil
+            )
+        )
+        let rawInitializer = "App" + "Model("
+        var violations: [String] = []
+        for case let fileURL as URL in enumerator
+        where fileURL.pathExtension == "swift"
+            && fileURL.lastPathComponent != "AppModelTestSupport.swift" {
+            let source = try String(contentsOf: fileURL, encoding: .utf8)
+            let sourceWithoutFactoryCalls = source.replacingOccurrences(
+                of: "makeTest" + rawInitializer,
+                with: ""
+            )
+            if sourceWithoutFactoryCalls.contains(rawInitializer) {
+                violations.append(fileURL.lastPathComponent)
+            }
+        }
+        #expect(
+            violations.isEmpty,
+            "Use makeTestAppModel so command-line tests never construct live Apple managers: \(violations)"
+        )
+    }
+
     @Test("Mach service is a child of the shared macOS App Group")
     func machServiceUsesSharedAppGroupPrefix() throws {
         let hostEntitlements = try plist(

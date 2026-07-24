@@ -19,7 +19,7 @@ struct AutomationSocketServerTests {
         let layout = ProfileDirectoryLayout(
             rootDirectory: root.appendingPathComponent("application", isDirectory: true)
         )
-        let model = AppModel(profileDirectoryLayout: layout)
+        let model = makeTestAppModel(profileDirectoryLayout: layout)
         let updater = ApplicationUpdater(startingUpdater: false)
         let server = AutomationSocketServer(
             socketBaseDirectory: socketDirectory,
@@ -67,7 +67,7 @@ struct AutomationSocketServerTests {
             discoveryDirectory: root.appendingPathComponent("discovery"),
             authorizationStorage: .ephemeral
         )
-        let model = AppModel(
+        let model = makeTestAppModel(
             profileDirectoryLayout: ProfileDirectoryLayout(
                 rootDirectory: root.appendingPathComponent("application")
             )
@@ -163,7 +163,7 @@ struct AutomationSocketServerTests {
             authorizationStorage: .ephemeral,
             ioTimeoutNanoseconds: 100 * NSEC_PER_MSEC
         )
-        let model = AppModel(
+        let model = makeTestAppModel(
             profileDirectoryLayout: ProfileDirectoryLayout(
                 rootDirectory: root.appendingPathComponent("application")
             )

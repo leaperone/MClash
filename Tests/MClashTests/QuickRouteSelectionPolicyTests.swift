@@ -55,7 +55,7 @@ struct QuickRouteSelectionPolicyTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let layout = ProfileDirectoryLayout(rootDirectory: root)
 
-        let model = AppModel(
+        let model = makeTestAppModel(
             profileDirectoryLayout: layout,
             preferenceDefaults: defaults
         )
@@ -71,7 +71,7 @@ struct QuickRouteSelectionPolicyTests {
         )
 
         #expect(model.pinnedQuickRouteNames == ["Work", "Media"])
-        let reloaded = AppModel(
+        let reloaded = makeTestAppModel(
             profileDirectoryLayout: layout,
             preferenceDefaults: defaults
         )

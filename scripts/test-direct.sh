@@ -8,21 +8,18 @@ run_release_script_tests() {
 }
 
 # GitHub-hosted runners provide a complete Xcode toolchain, where SwiftPM is
-# the stable way to locate Swift Testing and binary-target dependencies. The
-# direct path below remains the fallback for standalone Command Line Tools,
-# whose PackageDescription dylib can be out of sync with its Swift interface.
+# the stable way to locate Swift Testing and binary-target dependencies. App
+# tests inject inert Network Extension managers, and the explicit flag keeps
+# the remaining process-wide Apple test doubles serialized.
 if [[ "${CI:-}" == "true" ]]; then
   cd "${repo_root}"
-  # Several suites exercise process-wide Apple manager singletons. Swift
-  # Testing otherwise runs them concurrently in the same process and can
-  # reflect a temporarily null Objective-C singleton after another test tears
-  # it down. Pass the explicit SwiftPM flag because the experimental runtime
-  # width variable used by the direct runner is not forwarded by `swift test`.
   swift test --configuration debug --no-parallel
   run_release_script_tests
   exit 0
 fi
 
+# The direct path remains the fallback for standalone Command Line Tools,
+# whose PackageDescription dylib can be out of sync with its Swift interface.
 build_dir="${repo_root}/.build/direct-tests"
 sparkle_framework_dir="${SPARKLE_FRAMEWORK_DIR:-$("${repo_root}/scripts/fetch-sparkle-tools.sh")}"
 developer_dir="${DEVELOPER_DIR:-$(xcode-select -p)}"

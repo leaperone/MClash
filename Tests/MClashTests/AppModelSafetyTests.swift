@@ -15,7 +15,7 @@ struct AppModelSafetyTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let layout = ProfileDirectoryLayout(rootDirectory: root)
         try layout.createDirectories()
-        let model = AppModel(profileDirectoryLayout: layout)
+        let model = makeTestAppModel(profileDirectoryLayout: layout)
 
         #expect(model.networkCapturePreferences.enabled)
         await model.setNetworkCaptureEnabled(false)
@@ -37,7 +37,7 @@ struct AppModelSafetyTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try Data("not a directory".utf8).write(to: root)
 
-        let model = AppModel(
+        let model = makeTestAppModel(
             profileDirectoryLayout: ProfileDirectoryLayout(rootDirectory: root)
         )
 
@@ -76,7 +76,7 @@ struct AppModelSafetyTests {
         )
         try Data(#"{"schemaVersion":999,"overrides":{}}"#.utf8)
             .write(to: storageLayout.overridesURL)
-        let model = AppModel(profileDirectoryLayout: layout)
+        let model = makeTestAppModel(profileDirectoryLayout: layout)
 
         await model.prepare()
 
@@ -102,7 +102,7 @@ struct AppModelSafetyTests {
             endpoints: endpoints,
             failedReads: AppModel.systemProxyGuardFailureThreshold
         )
-        let model = AppModel(
+        let model = makeTestAppModel(
             systemProxyManager: SystemProxyManager(backend: backend)
         )
         model.systemProxyState = .on
@@ -154,7 +154,7 @@ struct AppModelSafetyTests {
             socks: SystemProxyEndpoint(port: 7_891)
         )
         let backend = PreferenceTransactionBackend()
-        let model = AppModel(
+        let model = makeTestAppModel(
             systemProxyManager: SystemProxyManager(backend: backend),
             profileDirectoryLayout: layout,
             preferenceDefaults: UserDefaults(
@@ -217,7 +217,7 @@ struct AppModelSafetyTests {
         let control = AppRoutingRuntimeStatusControl(
             statuses: [mismatched, mismatched, healthy, mismatched, mismatched, mismatched]
         )
-        let model = AppModel(networkExtensionControl: control)
+        let model = makeTestAppModel(networkExtensionControl: control)
 
         #expect(!(await model.verifyAppRoutingProviderRuntime(expectedRevision: revision)))
         #expect(!(await model.verifyAppRoutingProviderRuntime(expectedRevision: revision)))
@@ -254,7 +254,7 @@ struct AppModelSafetyTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let layout = ProfileDirectoryLayout(rootDirectory: root)
         try layout.createDirectories()
-        let model = AppModel(
+        let model = makeTestAppModel(
             systemProxyManager: SystemProxyManager(backend: RestoreBackend(failsRestore: false)),
             profileDirectoryLayout: layout
         )
@@ -346,7 +346,7 @@ struct AppModelSafetyTests {
         let coreFixture = try StubbornCoreFixture()
         defer { coreFixture.cleanup() }
         try await coreFixture.start()
-        let model = AppModel(supervisor: coreFixture.supervisor)
+        let model = makeTestAppModel(supervisor: coreFixture.supervisor)
 
         await model.disconnect()
 
@@ -412,7 +412,7 @@ struct AppModelSafetyTests {
                 proxies: [Node]
             """.utf8
         ).write(to: layout.runtimeConfigurationURL)
-        let model = AppModel(profileDirectoryLayout: layout)
+        let model = makeTestAppModel(profileDirectoryLayout: layout)
         model.activeConfigURL = layout.runtimeConfigurationURL
         let collection = try JSONDecoder().decode(
             MihomoProxyCollection.self,
@@ -455,7 +455,7 @@ struct AppModelSafetyTests {
     @MainActor
     @Test("Connection snapshots feed bounded observed route traffic")
     func connectionSnapshotsFeedTrafficAttribution() throws {
-        let model = AppModel()
+        let model = makeTestAppModel()
         model.setMainWindowVisible(true)
         model.applyConnectionSnapshot(
             try connectionSnapshot(upload: 10, download: 20),
@@ -492,7 +492,7 @@ struct AppModelSafetyTests {
         let layout = ProfileDirectoryLayout(rootDirectory: root.appending(path: "data"))
         let downloader = DeepLinkSubscriptionDownloader()
         let store = try ProfileStore(layout: layout, downloader: downloader)
-        let model = AppModel(
+        let model = makeTestAppModel(
             binaryLocator: CoreBinaryLocator(bundledBinaryURLs: [validator]),
             profileDirectoryLayout: layout,
             profileStoreOverride: store
@@ -523,7 +523,7 @@ struct AppModelSafetyTests {
     @MainActor
     @Test("Group-specific delay histories never leak across test URLs")
     func groupSpecificDelaysStayIsolated() throws {
-        let model = AppModel()
+        let model = makeTestAppModel()
         let collection = try JSONDecoder().decode(
             MihomoProxyCollection.self,
             from: Data(
@@ -578,7 +578,7 @@ struct AppModelSafetyTests {
     @MainActor
     @Test("Status-only proxy refreshes reuse the stable topology")
     func statusRefreshReusesTopology() throws {
-        let model = AppModel()
+        let model = makeTestAppModel()
         let initial = try makeProxyCollection([
             ProxyTestSpec(name: "Group", type: "Selector", all: ["Node"], now: "Node"),
             ProxyTestSpec(name: "Node", type: "Shadowsocks", alive: true),
@@ -681,7 +681,7 @@ private struct Fixture {
         try JSONEncoder().encode(SystemProxySnapshot(services: [state]))
             .write(to: snapshotURL, options: .atomic)
 
-        model = AppModel(
+        model = makeTestAppModel(
             supervisor: supervisor,
             systemProxyManager: manager,
             profileDirectoryLayout: layout

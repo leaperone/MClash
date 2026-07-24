@@ -297,7 +297,7 @@ struct AutomationCommandGatewayTests {
         defaults: UserDefaults? = nil
     ) throws -> Fixture {
         let root = temporaryRoot()
-        let model = AppModel(
+        let model = makeTestAppModel(
             profileDirectoryLayout: ProfileDirectoryLayout(
                 rootDirectory: root.appendingPathComponent("application")
             ),
