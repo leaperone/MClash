@@ -14,9 +14,9 @@ struct ProxiesView: View {
     @SceneStorage private var inspectorPresented: Bool
     @State private var inspectorPopoverPresented = false
     @State private var groupNavigatorPresented = false
-    @State private var showingListenerPortSettings = false
     @State private var measuredWorkspaceWidth: CGFloat = 0
     @State private var inspectorPresentation: ProxyInspectorPresentation = .popover
+    @State private var selectedProfileID: ProfileID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(model: AppModel) {
@@ -40,36 +40,55 @@ struct ProxiesView: View {
     }
 
     var body: some View {
-        let groups = ProxyGroupPartitionSnapshot(model: model, routingMode: routingMode)
+        let profileID = resolvedSelectedProfileID
+        let workspaceState = profileID.map {
+            model.profileProxyWorkspaceState(for: $0)
+        }
+        let snapshot = workspaceState?.snapshot
+        let groups = snapshot.map {
+            ProxyGroupPartitionSnapshot(
+                snapshot: $0,
+                routingMode: $0.runtimeConfig.mode
+            )
+        } ?? .empty
 
         Group {
-            if !model.isConnected {
-                DisconnectedUnavailableView(
-                    model: model,
-                    title: "Connect to view proxies",
-                    systemImage: "point.3.connected.trianglepath.dotted",
-                    description: "Proxy groups are read from the active Alpha core at runtime."
+            if model.profileProxyWorkspaceProfiles.isEmpty {
+                ContentUnavailableView(
+                    "No Profiles",
+                    systemImage: "doc.badge.plus",
+                    description: Text(
+                        "Import a Profile before configuring proxy groups."
+                    )
                 )
-            } else if model.controllerState == .loading || model.controllerState == .idle {
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Starting local proxy listeners…")
-                        .foregroundStyle(.secondary)
-                }
-            } else if case let .degraded(message) = model.controllerState {
-                ContentUnavailableView {
-                    Label("Proxy controls unavailable", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(message)
-                } actions: {
-                    Button("Reconnect") { Task { await model.restartConnection() } }
-                    Button("View Logs") { model.selection = .logs }
-                }
-            } else {
+            } else if profileID == nil {
+                ContentUnavailableView(
+                    "Choose a Profile",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text(
+                        "Select the Profile whose proxy groups you want to configure."
+                    )
+                )
+            } else if let profileID {
                 VStack(spacing: 0) {
                     routingControlsBar
+                    proxyCommandBar(group: selectedGroup(in: groups))
 
-                    if routingMode == "direct" {
+                    if snapshot == nil,
+                       workspaceState?.isLoadingOrIdle == true {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text("Loading this Profile’s proxy groups…")
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if snapshot == nil {
+                        unavailableProfileWorkspace(
+                            profileID: profileID,
+                            state: workspaceState
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if routingMode == "direct" {
                         ContentUnavailableView(
                             "Direct routing is active",
                             systemImage: "arrow.right",
@@ -97,26 +116,46 @@ struct ProxiesView: View {
         .mclashPageSurface()
         .searchable(text: searchBinding, prompt: "Search nodes in the current group")
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if model.controllerIsReady, !activeListenerEndpoints.isEmpty {
+            if let profileID = resolvedSelectedProfileID,
+               workspaceSnapshot != nil {
                 HStack(spacing: 14) {
-                    if usesCompactChrome {
-                        compactEndpointMenu
+                    if let port = selectedProfileMixedPort {
+                        CopyableValueButton(
+                            value: "127.0.0.1:\(port)",
+                            accessibilityName: "Profile Mixed proxy address",
+                            title: "Profile Mixed",
+                            systemImage: "point.3.connected.trianglepath.dotted",
+                            font: .caption,
+                            usesSecondaryStyle: true
+                        )
                     } else {
-                        localEndpointLabels
-                    }
-                    if case .completed(.savedAndRestarted) = model.runtimeSettingsApplyState {
-                        Label("Applied · Core restarted", systemImage: "checkmark.circle.fill")
+                        Label("Profile Mixed port closed", systemImage: "powerplug")
                             .font(.caption)
-                            .foregroundStyle(.green)
-                            .lineLimit(1)
+                            .foregroundStyle(.secondary)
+                    }
+                    if profileID == model.activeProfileID {
+                        Text("Default Source")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
-                    Button("Ports…") {
-                        showingListenerPortSettings = true
+                    Button(selectedProfileMixedPort == nil ? "Open Port" : "Close Port") {
+                        Task {
+                            do {
+                                try await model.setProfileMixedPortEnabled(
+                                    profileID: profileID,
+                                    enabled: selectedProfileMixedPort == nil
+                                )
+                                _ = await model.refreshProxyWorkspace(for: profileID)
+                            } catch {
+                                model.errorMessage = error.localizedDescription
+                            }
+                        }
                     }
                     .controlSize(.small)
-                    .disabled(!model.canPerform(.changeRuntimeSettings))
-                    .help(model.isConnected ? "Edit ports and restart the core" : "Edit local proxy ports")
+                    .disabled(!model.canPerform(.updateProfile(profileID)))
+                    Button("Manage…") { model.selection = .profiles }
+                        .controlSize(.small)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
@@ -124,23 +163,25 @@ struct ProxiesView: View {
                 .overlay(alignment: .top) { Divider() }
             }
         }
-        .sheet(isPresented: $showingListenerPortSettings) {
-            ListenerPortSettingsEditor(
-                model: model,
-                isPresented: $showingListenerPortSettings
-            )
-        }
         .onAppear {
+            normalizeSelectedProfile()
             restoreSearchStateIfNeeded()
             normalizeSelection(groups: groups)
+        }
+        .task(id: profileID) {
+            guard let profileID else { return }
+            _ = await model.refreshProxyWorkspace(for: profileID)
+        }
+        .onChange(of: model.profileProxyWorkspaceProfiles.map(\.id)) { _, _ in
+            normalizeSelectedProfile()
         }
         .onChange(of: searchTextByGroup) { _, searches in
             persistSearchState(searches)
         }
-        .onChange(of: model.proxyTopology.groupOrder) { _, _ in
+        .onChange(of: snapshot?.topology.groupOrder) { _, _ in
             normalizeSelection(groups: groups)
         }
-        .onChange(of: model.runtimeConfig?.mode) { _, _ in
+        .onChange(of: snapshot?.runtimeConfig.mode) { _, _ in
             normalizeSelection(groups: groups)
         }
         .onChange(of: workspaceMode) { _, _ in
@@ -152,33 +193,24 @@ struct ProxiesView: View {
             }
         }
         .onChange(of: selectedGroupName) { _, name in
-            guard let name, let group = model.proxiesByName[name] else { return }
+            guard let name, let group = snapshot?.proxiesByName[name] else { return }
             focusedNodeName = group.now ?? group.all.first
         }
-        .toolbar {
-            if model.controllerIsReady,
-               routingMode != "direct",
-                let group = selectedGroup(in: groups) {
-                ToolbarItemGroup {
-                    if inspectorPresentation == .popover {
-                        compactProxyActions(group: group)
-                    } else {
-                        workspacePicker(width: 154)
-                        if workspaceMode == .list {
-                            sortPicker(group: group, width: 108)
-                        }
-                        testAllButton(group: group, compact: true)
-                    }
-                    inspectorButton(group: group)
-                }
-            }
+        .onChange(of: profileID) { _, _ in
+            selectedGroupName = nil
+            focusedNodeName = nil
+            inspectorPopoverPresented = false
+            inspectorPresented = false
         }
     }
 
     private func proxyWorkspace(groups: ProxyGroupPartitionSnapshot) -> some View {
         VStack(spacing: 0) {
-            ProxyDataWarningBanner(model: model)
-            if !model.degradedStreams.isEmpty {
+            if resolvedSelectedProfileID == model.activeProfileID {
+                ProxyDataWarningBanner(model: model)
+            }
+            if resolvedSelectedProfileID == model.activeProfileID,
+               !model.degradedStreams.isEmpty {
                 Divider()
             }
 
@@ -285,7 +317,12 @@ struct ProxiesView: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .frame(width: width)
-        .disabled(!model.canPerform(.changeMode))
+        .disabled(
+            workspaceSnapshot == nil
+                || (resolvedSelectedProfileID.map {
+                    !model.canPerform(.changeProfileMode($0))
+                } ?? true)
+        )
     }
 
     private var routingControlsBar: some View {
@@ -312,13 +349,65 @@ struct ProxiesView: View {
         .overlay(alignment: .bottom) { Divider() }
     }
 
+    private func proxyCommandBar(group: MihomoProxy?) -> some View {
+        HStack(spacing: 10) {
+            if !usesCompactChrome {
+                Text("Profile")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            profilePicker(width: usesCompactChrome ? 150 : 210)
+
+            Spacer(minLength: 8)
+
+            workspacePicker(width: usesCompactChrome ? 138 : 154)
+
+            sortPicker(group: group, width: usesCompactChrome ? 44 : 108)
+                .disabled(
+                    workspaceMode != .list
+                        || group == nil
+                        || workspaceSnapshot == nil
+                )
+
+            testAllButton(group: group)
+                .frame(width: 30, height: 28)
+
+            inspectorButton(group: group)
+                .frame(width: 30, height: 28)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 46)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func profilePicker(width: CGFloat) -> some View {
+        Picker("Profile", selection: selectedProfileBinding) {
+            ForEach(model.profileProxyWorkspaceProfiles) { profile in
+                Text(
+                    profile.id == model.activeProfileID
+                        ? "\(profile.name) — Default Source"
+                        : profile.name
+                )
+                .tag(profile.id)
+            }
+        }
+        .labelsHidden()
+        .frame(width: width)
+        .help("Choose the Profile whose proxy groups you want to configure")
+    }
+
     private var routingModeControl: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 7) {
                 Text("Routing Mode")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if model.pendingMode != nil {
+                if let profileID = resolvedSelectedProfileID,
+                   model.isPerforming(.changeProfileMode(profileID)) {
                     ProgressView()
                         .controlSize(.small)
                     Text("Applying…")
@@ -351,76 +440,28 @@ struct ProxiesView: View {
         return model.systemProxyEnabled ? "macOS apps are routed through MClash" : "Core only; macOS routing is off"
     }
 
-    private var localEndpointLabels: some View {
-        HStack(spacing: 14) {
-            ForEach(activeListenerEndpoints) { endpoint in
-                CopyableValueButton(
-                    value: endpoint.address,
-                    accessibilityName: "\(endpoint.kind.presentationTitle) proxy address",
-                    title: endpoint.kind.presentationTitle,
-                    systemImage: endpoint.kind.presentationSystemImage,
-                    font: .caption,
-                    usesSecondaryStyle: true
-                )
-            }
-        }
-    }
-
-    private var compactEndpointMenu: some View {
-        Menu {
-            ForEach(activeListenerEndpoints) { endpoint in
-                CopyableValueButton(
-                    value: endpoint.address,
-                    accessibilityName: "\(endpoint.kind.presentationTitle) proxy address",
-                    title: endpoint.kind.presentationTitle,
-                    systemImage: endpoint.kind.presentationSystemImage,
-                    font: .callout
-                )
+    @ViewBuilder
+    private func inspectorButton(group: MihomoProxy?) -> some View {
+        Button {
+            guard group != nil else { return }
+            if inspectorPresentation == .popover {
+                inspectorPopoverPresented.toggle()
+            } else {
+                inspectorPresented.toggle()
             }
         } label: {
-            Label(compactEndpointTitle, systemImage: "network")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            Label("Inspector", systemImage: "sidebar.right")
+                .labelStyle(.iconOnly)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(endpointHelp)
-    }
-
-    private var compactEndpointTitle: String {
-        switch activeListenerEndpoints.count {
-        case 0:
-            "Local listeners unavailable"
-        case 1:
-            "\(activeListenerEndpoints[0].kind.presentationTitle) listener ready"
-        default:
-            "\(activeListenerEndpoints.count) local listeners ready"
-        }
-    }
-
-    private var endpointHelp: String {
-        activeListenerEndpoints
-            .map {
-                "\($0.kind.presentationTitle) \($0.address) · \($0.source.presentationTitle)"
-            }
-            .joined(separator: " · ")
-    }
-
-    private var activeListenerEndpoints: [AppModel.LocalListenerEndpoint] {
-        model.localListenerEndpoints
-    }
-
-    @ViewBuilder
-    private func inspectorButton(group: MihomoProxy) -> some View {
-        if inspectorPresentation == .popover {
-            Button {
-                inspectorPopoverPresented.toggle()
-            } label: {
-                Label("Inspector", systemImage: "sidebar.right")
-            }
-            .help(inspectorPopoverPresented ? "Hide Inspector" : "Show Inspector")
-            .popover(isPresented: $inspectorPopoverPresented, arrowEdge: .top) {
+        .buttonStyle(.borderless)
+        .disabled(
+            group == nil
+                || workspaceSnapshot == nil
+                || resolvedSelectedProfileID != model.activeProfileID
+        )
+        .help(inspectorHelp)
+        .popover(isPresented: $inspectorPopoverPresented, arrowEdge: .top) {
+            if let group {
                 ProxyInspectorView(
                     model: model,
                     group: group,
@@ -429,19 +470,25 @@ struct ProxiesView: View {
                 )
                 .frame(width: 360, height: 480)
             }
-        } else {
-            Button {
-                inspectorPresented.toggle()
-            } label: {
-                Label("Inspector", systemImage: "sidebar.right")
-            }
-            .help(inspectorPresented ? "Hide Inspector" : "Show Inspector")
+        }
+    }
+
+    private var inspectorHelp: String {
+        switch inspectorPresentation {
+        case .popover:
+            inspectorPopoverPresented ? "Hide Inspector" : "Show Inspector"
+        case .attached:
+            inspectorPresented ? "Hide Inspector" : "Show Inspector"
         }
     }
 
     private var attachedInspectorBinding: Binding<Bool> {
         Binding(
-            get: { inspectorPresented && inspectorPresentation == .attached },
+            get: {
+                inspectorPresented
+                    && inspectorPresentation == .attached
+                    && resolvedSelectedProfileID == model.activeProfileID
+            },
             set: { presented in
                 guard inspectorPresentation == .attached else { return }
                 inspectorPresented = presented
@@ -517,7 +564,7 @@ struct ProxiesView: View {
                 ForEach(groups.nested, id: \.name) { group in
                     ProxyGroupSidebarRow(
                         group: group,
-                        path: model.proxySelectionPaths[group.name]
+                        path: workspaceSnapshot?.selectionPaths[group.name]
                     )
                     .tag(group.name)
                 }
@@ -529,7 +576,7 @@ struct ProxiesView: View {
                 ForEach(groups.roots, id: \.name) { group in
                     ProxyGroupSidebarRow(
                         group: group,
-                        path: model.proxySelectionPaths[group.name]
+                        path: workspaceSnapshot?.selectionPaths[group.name]
                     )
                     .tag(group.name)
                 }
@@ -541,7 +588,7 @@ struct ProxiesView: View {
                 ForEach(groups.special, id: \.name) { group in
                     ProxyGroupSidebarRow(
                         group: group,
-                        path: model.proxySelectionPaths[group.name]
+                        path: workspaceSnapshot?.selectionPaths[group.name]
                     )
                     .tag(group.name)
                 }
@@ -583,11 +630,11 @@ struct ProxiesView: View {
             VStack(spacing: 0) {
                 groupDetailHeader(group)
                 ProxyTopologyCanvas(
-                    topology: model.proxyTopology,
+                    topology: workspaceSnapshot?.topology ?? .empty,
                     rootGroup: group.name,
-                    selectedPath: model.proxySelectionPaths[group.name],
-                    delays: model.proxyDelayMap(for: group.name),
-                    stateScope: stateScope,
+                    selectedPath: workspaceSnapshot?.selectionPaths[group.name],
+                    delays: workspaceSnapshot?.delays ?? [:],
+                    stateScope: selectedProfileStateScope,
                     focusedNodeName: $focusedNodeName,
                     openGroup: openGroup,
                     showGroupList: { name in
@@ -624,7 +671,7 @@ struct ProxiesView: View {
         VStack(alignment: .leading, spacing: 10) {
             groupTitle(group, stacked: true)
 
-            if let path = model.proxySelectionPaths[group.name] {
+            if let path = workspaceSnapshot?.selectionPaths[group.name] {
                 ProxyPathStrip(path: path)
             }
         }
@@ -672,8 +719,12 @@ struct ProxiesView: View {
         .frame(width: width)
     }
 
-    private func sortPicker(group: MihomoProxy, width: CGFloat) -> some View {
-        Picker("Node order", selection: sortBinding(for: group.name)) {
+    private func sortPicker(group: MihomoProxy?, width: CGFloat) -> some View {
+        Picker(
+            "Node order",
+            selection: group.map { sortBinding(for: $0.name) }
+                ?? .constant(ProxyNodeSortMode.profile)
+        ) {
             ForEach(ProxyNodeSortMode.allCases, id: \.rawValue) { mode in
                 Label(mode.title, systemImage: mode.symbol).tag(mode)
             }
@@ -682,58 +733,58 @@ struct ProxiesView: View {
         .frame(width: width)
     }
 
-    private func testAllButton(group: MihomoProxy, compact: Bool) -> some View {
+    private func testAllButton(group: MihomoProxy?) -> some View {
         Button {
-            Task { await model.measureGroupDelays(group: group.name) }
+            guard let group, let profileID = resolvedSelectedProfileID else {
+                return
+            }
+            Task {
+                await model.measureGroupDelays(
+                    profileID: profileID,
+                    group: group.name
+                )
+            }
         } label: {
-            if model.isPerforming(.measureGroupDelay(group.name)) {
+            if let group,
+               let profileID = resolvedSelectedProfileID,
+               model.isPerforming(.measureProfileGroupDelay(profileID, group.name)) {
                 ProgressView()
                     .controlSize(.small)
-            } else if compact {
-                Image(systemName: "speedometer")
             } else {
                 Label("Test All", systemImage: "speedometer")
+                    .labelStyle(.iconOnly)
             }
         }
-        .disabled(!model.canPerform(.measureGroupDelay(group.name)))
-        .help("Test every member in \(group.name)")
-    }
-
-    private func compactProxyActions(group: MihomoProxy) -> some View {
-        Menu {
-            Picker("View", selection: $workspaceMode) {
-                Label("List", systemImage: "list.bullet").tag(ProxyWorkspaceMode.list)
-                Label("Topology", systemImage: "point.3.connected.trianglepath.dotted")
-                    .tag(ProxyWorkspaceMode.topology)
-            }
-
-            if workspaceMode == .list {
-                Picker("Node Order", selection: sortBinding(for: group.name)) {
-                    ForEach(ProxyNodeSortMode.allCases, id: \.rawValue) { mode in
-                        Label(mode.title, systemImage: mode.symbol).tag(mode)
-                    }
+        .buttonStyle(.borderless)
+        .disabled(
+            group.flatMap { group in
+                resolvedSelectedProfileID.map {
+                    !model.canPerform(.measureProfileGroupDelay($0, group.name))
                 }
-            }
-
-            Divider()
-
-            Button("Test All", systemImage: "speedometer") {
-                Task { await model.measureGroupDelays(group: group.name) }
-            }
-            .disabled(!model.canPerform(.measureGroupDelay(group.name)))
-        } label: {
-            Label("Proxy View Actions", systemImage: "ellipsis.circle")
-        }
-        .help("Change proxy view, sorting, or test every node")
+            } ?? true
+        )
+        .help(group.map { "Test every member in \($0.name)" } ?? "Choose a proxy group first")
     }
 
     private func automaticOverrideBanner(group: MihomoProxy, fixed: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             automaticOverrideMessage(fixed: fixed)
             Button("Resume Automatic") {
-                Task { _ = await model.clearProxyOverride(group: group.name) }
+                guard let profileID = resolvedSelectedProfileID else { return }
+                Task {
+                    _ = await model.clearProxyOverride(
+                        profileID: profileID,
+                        group: group.name
+                    )
+                }
             }
-            .disabled(!model.canPerform(.clearProxyOverride(group.name)))
+            .disabled(
+                resolvedSelectedProfileID.map {
+                    !model.canPerform(
+                        .clearProfileProxyOverride($0, group.name)
+                    )
+                } ?? true
+            )
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -763,9 +814,12 @@ struct ProxiesView: View {
 
         if nodeNames.isEmpty {
             ContentUnavailableView.search(text: searchText(for: group.name))
-        } else {
+        } else if let profileID = resolvedSelectedProfileID,
+                  let snapshot = workspaceSnapshot {
             ProxyNodeListContent(
                 model: model,
+                profileID: profileID,
+                snapshot: snapshot,
                 group: group,
                 nodeNames: nodeNames,
                 focusedNodeName: $focusedNodeName,
@@ -776,17 +830,21 @@ struct ProxiesView: View {
 
     private func selectedGroup(in groups: ProxyGroupPartitionSnapshot) -> MihomoProxy? {
         guard let selectedGroupName else { return groups.available.first }
-        return model.proxiesByName[selectedGroupName] ?? groups.available.first
+        return workspaceSnapshot?.proxiesByName[selectedGroupName]
+            ?? groups.available.first
     }
 
     private var routingMode: String {
-        model.runtimeConfig?.mode.lowercased() ?? "rule"
+        workspaceSnapshot?.runtimeConfig.mode.lowercased() ?? "rule"
     }
 
     private var modeBinding: Binding<String> {
         Binding(
-            get: { model.pendingMode ?? routingMode },
-            set: { mode in Task { await model.setMode(mode) } }
+            get: { routingMode },
+            set: { mode in
+                guard let profileID = resolvedSelectedProfileID else { return }
+                Task { await model.setMode(mode, profileID: profileID) }
+            }
         )
     }
 
@@ -800,7 +858,11 @@ struct ProxiesView: View {
     private var searchBinding: Binding<String> {
         Binding(
             get: { searchText(for: selectedGroupName ?? routingMode) },
-            set: { searchTextByGroup[selectedGroupName ?? routingMode] = $0 }
+            set: {
+                searchTextByGroup[
+                    searchStateKey(for: selectedGroupName ?? routingMode)
+                ] = $0
+            }
         )
     }
 
@@ -820,7 +882,9 @@ struct ProxiesView: View {
             ? group.all
             : group.all.filter { name in
                 if name.localizedCaseInsensitiveContains(query) { return true }
-                guard let proxy = model.proxiesByName[name] else { return false }
+                guard let proxy = workspaceSnapshot?.proxiesByName[name] else {
+                    return false
+                }
                 return proxy.type.localizedCaseInsensitiveContains(query)
                     || proxy.providerName?.localizedCaseInsensitiveContains(query) == true
             }
@@ -831,14 +895,18 @@ struct ProxiesView: View {
         return ProxyNodeSorter().sortedNodeNames(
             filtered,
             in: group.name,
-            topology: model.proxyTopology,
-            delays: mode == .latency ? model.proxyDelayMap(for: group.name) : [:],
+            topology: workspaceSnapshot?.topology ?? .empty,
+            delays: mode == .latency ? workspaceSnapshot?.delays ?? [:] : [:],
             mode: mode
         )
     }
 
     private func searchText(for group: String) -> String {
-        searchTextByGroup[group] ?? ""
+        searchTextByGroup[searchStateKey(for: group)] ?? ""
+    }
+
+    private func searchStateKey(for group: String) -> String {
+        "\(selectedProfileStateScope)|\(group)"
     }
 
     private func restoreSearchStateIfNeeded() {
@@ -875,7 +943,7 @@ struct ProxiesView: View {
     }
 
     private func sortPreferenceKey(for group: String) -> String {
-        let profile = model.activeProfileID?.description ?? "runtime"
+        let profile = resolvedSelectedProfileID?.description ?? "runtime"
         return "proxies.sort.\(profile).\(group)"
     }
 
@@ -889,7 +957,9 @@ struct ProxiesView: View {
         if let selectedGroupName,
            let selectedGroup = groups.available.first(where: { $0.name == selectedGroupName }) {
             if focusedNodeName.map({ selectedGroup.all.contains($0) }) != true
-                || focusedNodeName.flatMap({ model.proxiesByName[$0] }) == nil {
+                || focusedNodeName.flatMap({
+                    workspaceSnapshot?.proxiesByName[$0]
+                }) == nil {
                 focusedNodeName = selectedGroup.now ?? selectedGroup.all.first
             }
             return
@@ -904,9 +974,178 @@ struct ProxiesView: View {
     }
 
     private func openGroup(_ name: String) {
-        guard model.proxyTopology.vertices[name]?.isGroup == true else { return }
+        guard workspaceSnapshot?.topology.vertices[name]?.isGroup == true else {
+            return
+        }
         selectedGroupName = name
-        focusedNodeName = model.proxiesByName[name]?.now
+        focusedNodeName = workspaceSnapshot?.proxiesByName[name]?.now
+    }
+
+    private var resolvedSelectedProfileID: ProfileID? {
+        if let selectedProfileID,
+           model.profileProxyWorkspaceProfiles.contains(where: {
+               $0.id == selectedProfileID
+           }) {
+            return selectedProfileID
+        }
+        if let activeProfileID = model.activeProfileID,
+           model.profileProxyWorkspaceProfiles.contains(where: {
+               $0.id == activeProfileID
+           }) {
+            return activeProfileID
+        }
+        return model.profileProxyWorkspaceProfiles.first?.id
+    }
+
+    private var selectedProfileBinding: Binding<ProfileID> {
+        Binding(
+            get: {
+                resolvedSelectedProfileID
+                    ?? model.profileProxyWorkspaceProfiles.first?.id
+                    ?? ProfileID()
+            },
+            set: { selectedProfileID = $0 }
+        )
+    }
+
+    private var workspaceSnapshot: ProfileProxyWorkspaceSnapshot? {
+        guard let profileID = resolvedSelectedProfileID else { return nil }
+        return model.profileProxyWorkspaceState(for: profileID).snapshot
+    }
+
+    private var selectedProfileMixedPort: Int? {
+        guard let profileID = resolvedSelectedProfileID,
+              let session = model.profileSessionSpec(for: profileID),
+              session.enabled else {
+            return nil
+        }
+        return session.mixedPort
+    }
+
+    private var selectedProfileStateScope: String {
+        resolvedSelectedProfileID?.description ?? stateScope
+    }
+
+    private func normalizeSelectedProfile() {
+        let resolved = resolvedSelectedProfileID
+        if selectedProfileID != resolved {
+            selectedProfileID = resolved
+        }
+    }
+
+    @ViewBuilder
+    private func unavailableProfileWorkspace(
+        profileID: ProfileID,
+        state: ProfileProxyWorkspaceState?
+    ) -> some View {
+        let presentation = unavailablePresentation(state)
+
+        ContentUnavailableView {
+            Label(presentation.title, systemImage: presentation.symbol)
+        } description: {
+            Text(presentation.message)
+        } actions: {
+            if case .unavailable(.dedicatedPortDisabled(port: _)) = state {
+                Button("Open Mixed Port") {
+                    Task {
+                        do {
+                            try await model.setProfileMixedPortEnabled(
+                                profileID: profileID,
+                                enabled: true
+                            )
+                            _ = await model.refreshProxyWorkspace(for: profileID)
+                        } catch {
+                            model.errorMessage = error.localizedDescription
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canPerform(.updateProfile(profileID)))
+            } else if state != .unavailable(.profileNotFound) {
+                Button(model.isConnected ? "Reconnect" : "Connect") {
+                    Task {
+                        if model.isConnected {
+                            await model.restartConnection()
+                        } else {
+                            await model.connect()
+                        }
+                        _ = await model.refreshProxyWorkspace(for: profileID)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canPerform(.connection))
+
+                Button("Retry") {
+                    Task {
+                        _ = await model.refreshProxyWorkspace(for: profileID)
+                    }
+                }
+                .disabled(
+                    !model.canPerform(.refreshProfileProxyWorkspace(profileID))
+                )
+            }
+
+            Button("View Logs") { model.selection = .logs }
+        }
+    }
+
+    private func unavailablePresentation(
+        _ state: ProfileProxyWorkspaceState?
+    ) -> (title: String, symbol: String, message: String) {
+        switch state {
+        case let .unavailable(.dedicatedPortDisabled(port)):
+            let portDescription = port.map {
+                " Its reserved Mixed port is \($0)."
+            } ?? ""
+            return (
+                "Profile Port Is Closed",
+                "powerplug",
+                "Open this Profile’s dedicated Mixed port to inspect and change its proxy groups."
+                    + portDescription
+            )
+        case .unavailable(.primaryControllerNotReady):
+            return (
+                "Default Source Is Not Connected",
+                "point.3.connected.trianglepath.dotted",
+                "Connect MClash to load this Profile’s live proxy groups."
+            )
+        case .unavailable(.controllerStopped):
+            return (
+                "Profile Core Is Stopped",
+                "stop.circle",
+                "Reconnect MClash to restore this Profile’s controller."
+            )
+        case .unavailable(.controllerTransitioning):
+            return (
+                "Profile Core Is Changing State",
+                "arrow.triangle.2.circlepath",
+                "Wait a moment, then retry loading this Profile."
+            )
+        case let .unavailable(.controllerFailed(message)):
+            return (
+                "Profile Controller Failed",
+                "exclamationmark.triangle",
+                message
+            )
+        case .unavailable(.profileNotFound):
+            return (
+                "Profile Not Found",
+                "doc.badge.questionmark",
+                "This Profile is no longer available."
+            )
+        case let .failed(message, _):
+            return (
+                "Proxy Groups Could Not Refresh",
+                "exclamationmark.arrow.triangle.2.circlepath",
+                message
+            )
+        case .idle, .loading, .ready, nil:
+            return (
+                "Proxy Controls Unavailable",
+                "exclamationmark.triangle",
+                "This Profile’s live controller data is not available."
+            )
+        }
     }
 
     private var usesCompactChrome: Bool {
@@ -996,7 +1235,25 @@ private enum ProxyWorkspaceMode: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+private extension ProfileProxyWorkspaceState {
+    var isLoadingOrIdle: Bool {
+        switch self {
+        case .idle, .loading:
+            true
+        case .ready, .unavailable, .failed:
+            false
+        }
+    }
+}
+
 struct ProxyGroupPartitionSnapshot {
+    static let empty = ProxyGroupPartitionSnapshot(
+        available: [],
+        roots: [],
+        nested: [],
+        special: []
+    )
+
     let available: [MihomoProxy]
     let roots: [MihomoProxy]
     let nested: [MihomoProxy]
@@ -1004,6 +1261,51 @@ struct ProxyGroupPartitionSnapshot {
 
     var orderedForPresentation: [MihomoProxy] {
         nested + roots + special
+    }
+
+    init(
+        available: [MihomoProxy],
+        roots: [MihomoProxy],
+        nested: [MihomoProxy],
+        special: [MihomoProxy]
+    ) {
+        self.available = available
+        self.roots = roots
+        self.nested = nested
+        self.special = special
+    }
+
+    init(
+        snapshot: ProfileProxyWorkspaceSnapshot,
+        routingMode: String
+    ) {
+        let available = snapshot.proxyGroups(forRoutingMode: routingMode)
+        self.available = available
+
+        if routingMode == "global" {
+            roots = available
+            nested = []
+            special = []
+            return
+        }
+
+        var nestedNames = Set<String>()
+        for edge in snapshot.topology.edges
+        where edge.kind == .member
+            && edge.source != "GLOBAL"
+            && snapshot.topology.vertices[edge.source]?.isGroup == true {
+            nestedNames.insert(edge.target)
+        }
+
+        roots = available.filter { group in
+            group.name != "GLOBAL" && !nestedNames.contains(group.name)
+        }
+        nested = available.filter { group in
+            group.name != "GLOBAL" && nestedNames.contains(group.name)
+        }
+        special = routingMode == "rule"
+            ? available.filter { $0.name == "GLOBAL" }
+            : []
     }
 
     @MainActor
@@ -1143,6 +1445,8 @@ private struct ProxyGroupSidebarRow: View {
 
 private struct ProxyNodeListContent: View {
     @Bindable var model: AppModel
+    let profileID: ProfileID
+    let snapshot: ProfileProxyWorkspaceSnapshot
     let group: MihomoProxy
     let nodeNames: [String]
     @Binding var focusedNodeName: String?
@@ -1151,28 +1455,43 @@ private struct ProxyNodeListContent: View {
     var body: some View {
         List(nodeNames, id: \.self, selection: $focusedNodeName) { nodeName in
             ProxyNodeListRow(
-                node: model.proxiesByName[nodeName],
+                node: snapshot.proxiesByName[nodeName],
                 nodeName: nodeName,
                 isSelected: group.now == nodeName,
                 isFixed: group.fixedOverride == nodeName,
-                isPending: model.pendingProxySelections[group.name] == nodeName,
-                isAlive: model.proxyAlive(for: nodeName, in: group.name),
-                delay: model.proxyDelay(for: nodeName, in: group.name),
+                isPending: model.pendingProxySelection(
+                    profileID: profileID,
+                    group: group.name
+                ) == nodeName,
+                isAlive: snapshot.proxiesByName[nodeName]?.alive,
+                delay: snapshot.delay(for: nodeName),
                 supportsSelection: group.groupBehavior?.supportsSelectionUpdate == true,
-                canSelect: model.canPerform(.selectProxy(group.name)),
-                selectionInProgress: model.isPerforming(.selectProxy(group.name)),
+                canSelect: model.canPerform(
+                    .selectProfileProxy(profileID, group.name)
+                ),
+                selectionInProgress: model.isPerforming(
+                    .selectProfileProxy(profileID, group.name)
+                ),
                 onSelect: {
                     focusedNodeName = nodeName
                     Task {
-                        _ = await model.selectProxy(group: group.name, proxy: nodeName)
+                        _ = await model.selectProxy(
+                            profileID: profileID,
+                            group: group.name,
+                            proxy: nodeName
+                        )
                     }
                 },
-                onOpenGroup: model.proxyTopology.vertices[nodeName]?.isGroup == true
+                onOpenGroup: snapshot.topology.vertices[nodeName]?.isGroup == true
                     ? { openGroup(nodeName) }
                     : nil,
                 onTest: {
                     Task {
-                        _ = await model.measureDelay(proxy: nodeName, group: group.name)
+                        _ = await model.measureDelay(
+                            profileID: profileID,
+                            proxy: nodeName,
+                            group: group.name
+                        )
                     }
                 }
             )

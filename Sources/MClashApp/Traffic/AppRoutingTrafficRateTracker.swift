@@ -37,6 +37,8 @@ struct AppRoutingTrafficRateSnapshot: Equatable, Sendable {
         byRule: [:],
         byApplication: [:],
         byPath: [:],
+        defaultProfile: AppRoutingByteRate(),
+        byProfile: [:],
         byFlow: [:]
     )
 
@@ -47,6 +49,8 @@ struct AppRoutingTrafficRateSnapshot: Equatable, Sendable {
     let byRule: [String: AppRoutingByteRate]
     let byApplication: [String: AppRoutingByteRate]
     let byPath: [AppRoutingTrafficPath: AppRoutingByteRate]
+    let defaultProfile: AppRoutingByteRate
+    let byProfile: [ProfileID: AppRoutingByteRate]
     /// Current delivered-byte rate for each live provider-owned flow.
     let byFlow: [UUID: AppRoutingByteRate]
 }
@@ -62,6 +66,7 @@ struct AppRoutingTrafficRateTracker: Sendable {
 
     mutating func ingest(
         _ activities: [AppRoutingActivity],
+        defaultProfileID: ProfileID? = nil,
         at sampledAt: Date = Date()
     ) -> AppRoutingTrafficRateSnapshot {
         let interval = previousSampleAt.map {
@@ -76,6 +81,8 @@ struct AppRoutingTrafficRateTracker: Sendable {
         var byRuleBytes: [String: AppRoutingByteRate] = [:]
         var byApplicationBytes: [String: AppRoutingByteRate] = [:]
         var byPathBytes: [AppRoutingTrafficPath: AppRoutingByteRate] = [:]
+        var defaultProfileBytes = AppRoutingByteRate()
+        var byProfileBytes: [ProfileID: AppRoutingByteRate] = [:]
         var byFlowBytes: [UUID: AppRoutingByteRate] = [:]
 
         for activity in activities where activity.payloadBytesAreMeasured == true {
@@ -112,6 +119,15 @@ struct AppRoutingTrafficRateTracker: Sendable {
                 .add(upload: upload, download: download)
             byPathBytes[Self.path(activity.effectiveAction), default: AppRoutingByteRate()]
                 .add(upload: upload, download: download)
+            switch activity.mclashTrafficTarget {
+            case .defaultProfile:
+                defaultProfileBytes.add(upload: upload, download: download)
+            case let .profile(profileID):
+                byProfileBytes[profileID, default: AppRoutingByteRate()]
+                    .add(upload: upload, download: download)
+            case .system:
+                break
+            }
             if activity.isLiveManagedFlow {
                 byFlowBytes[activity.flowIdentifier]?.add(
                     upload: upload,
@@ -130,6 +146,8 @@ struct AppRoutingTrafficRateTracker: Sendable {
             byRule: byRuleBytes.mapValues { Self.rate($0, interval: interval) },
             byApplication: byApplicationBytes.mapValues { Self.rate($0, interval: interval) },
             byPath: byPathBytes.mapValues { Self.rate($0, interval: interval) },
+            defaultProfile: Self.rate(defaultProfileBytes, interval: interval),
+            byProfile: byProfileBytes.mapValues { Self.rate($0, interval: interval) },
             byFlow: byFlowBytes.mapValues { Self.rate($0, interval: interval) }
         )
     }

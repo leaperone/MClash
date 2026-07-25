@@ -69,6 +69,61 @@ struct FlowLedgerTests {
         #expect(try #require(ledger.entries.first).captureOrigin == .appRouting)
     }
 
+    @Test("Profile scope is retained and never associates an auxiliary flow with the default Core")
+    func profileScopePreventsCrossCoreAssociation() throws {
+        let defaultProfileID = ProfileID(
+            rawValue: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        )
+        let auxiliaryProfileID = ProfileID(
+            rawValue: UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+        )
+        let activity = appActivity(
+            disposition: .mihomo(
+                .profile(
+                    RoutingProfileID(auxiliaryProfileID.rawValue),
+                    target: .rules
+                )
+            ),
+            relayLocalPort: 55_001,
+            startedAt: baseDate
+        )
+        let lookalikeDefaultConnection = try connection(
+            id: "default-lookalike",
+            sourcePort: 55_001,
+            start: baseDate
+        )
+
+        let ledger = FlowLedger(
+            activeConnections: [lookalikeDefaultConnection],
+            appRoutingActivities: [activity],
+            defaultProfileID: defaultProfileID
+        )
+        let auxiliaryEntry = try #require(
+            ledger.entries.first { $0.id == .appRouting(activity.id) }
+        )
+        let defaultEntry = try #require(
+            ledger.entries.first { $0.id == .mihomo("default-lookalike") }
+        )
+
+        #expect(auxiliaryEntry.profileID == auxiliaryProfileID)
+        #expect(auxiliaryEntry.trafficTarget == .profile(auxiliaryProfileID))
+        #expect(auxiliaryEntry.association == .none)
+        #expect(defaultEntry.profileID == defaultProfileID)
+        #expect(defaultEntry.trafficTarget == .defaultProfile)
+        #expect(ledger.entries(for: auxiliaryProfileID) == [auxiliaryEntry])
+        #expect(ledger.entries(for: defaultProfileID) == [defaultEntry])
+        #expect(
+            ledger.entries(for: ProfileTrafficTarget.defaultProfile)
+                == [defaultEntry]
+        )
+        #expect(
+            ledger.entries(for: ProfileTrafficTarget.profile(auxiliaryProfileID))
+                == [auxiliaryEntry]
+        )
+        #expect(ledger.applicationAggregates(for: auxiliaryProfileID).count == 1)
+        #expect(ledger.routeAggregates(for: defaultProfileID).count == 1)
+    }
+
     @Test("A claimed relay-port candidate falls back to destination matching")
     func claimedExactCandidateFallsBackToHeuristic() throws {
         let first = appActivity(

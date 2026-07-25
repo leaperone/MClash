@@ -3,6 +3,7 @@ import SwiftUI
 struct ProfilesView: View {
     @Bindable var model: AppModel
     @State private var showingSubscriptionSheet = false
+    @State private var showingDefaultPortSettings = false
     @State private var layout: ProfilesLayout = .wide
 
     var body: some View {
@@ -19,12 +20,47 @@ struct ProfilesView: View {
             } else if model.profiles.isEmpty {
                 emptyState
             } else {
-                List(model.profiles) { profile in
-                    ProfileRow(
-                        model: model,
-                        profile: profile,
-                        compact: layout == .compact
-                    )
+                List {
+                    Section("Default Profile") {
+                        HStack(spacing: 12) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .foregroundStyle(Color.accentColor)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Default Profile")
+                                    .fontWeight(.semibold)
+                                Text(defaultProfileDescription)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(
+                                AppLocalization.format(
+                                    "Mixed %d",
+                                    model.profileRuntimePlan.defaultMixedPort
+                                )
+                            )
+                            .font(.callout.monospacedDigit())
+                            Button("Port…") {
+                                showingDefaultPortSettings = true
+                            }
+                            .disabled(!model.canPerform(.changeRuntimeSettings))
+                        }
+                        .padding(.vertical, 5)
+                    }
+
+                    Section {
+                        ForEach(model.profiles) { profile in
+                            ProfileRow(
+                                model: model,
+                                profile: profile,
+                                compact: layout == .compact
+                            )
+                        }
+                    } header: {
+                        Text("Every real Profile has its own optional Mixed port. The star marks which configuration currently backs the virtual Default Profile.")
+                            .textCase(nil)
+                    }
                 }
                 .listStyle(.inset)
                 .mclashListSurface()
@@ -92,15 +128,15 @@ struct ProfilesView: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Label("Import & Activate", systemImage: "square.and.arrow.down")
+                        Label("Import", systemImage: "square.and.arrow.down")
                     }
                 }
                 .disabled(!model.canPerform(.importProfile))
-                .help("Import a local YAML profile and make it active")
+                .help("Import a local YAML profile")
                 .accessibilityLabel(
                     model.isPerforming(.importProfile)
-                        ? "Importing and activating YAML profile"
-                        : "Import and activate YAML profile"
+                        ? "Importing YAML profile"
+                        : "Import YAML profile"
                 )
 
                 Button {
@@ -115,6 +151,12 @@ struct ProfilesView: View {
         .sheet(isPresented: $showingSubscriptionSheet) {
             AddSubscriptionView(model: model, isPresented: $showingSubscriptionSheet)
         }
+        .sheet(isPresented: $showingDefaultPortSettings) {
+            ListenerPortSettingsEditor(
+                model: model,
+                isPresented: $showingDefaultPortSettings
+            )
+        }
     }
 
     private var profileStorageFailure: AppModel.StorageInitializationFailure? {
@@ -124,6 +166,15 @@ struct ProfilesView: View {
     private func updateLayout(_ width: CGFloat) {
         let next = ProfilesLayout(width: width)
         if layout != next { layout = next }
+    }
+
+    private var defaultProfileDescription: String {
+        guard let activeProfileID = model.activeProfileID,
+              let profile = model.profiles.first(where: { $0.id == activeProfileID })
+        else {
+            return "Choose a real Profile to back this stable entry point."
+        }
+        return "Currently uses \(profile.name). System Proxy and dynamic App Routing targets use this stable port."
     }
 
     private var emptyState: some View {
@@ -143,7 +194,7 @@ struct ProfilesView: View {
                             Text("Importing…")
                         }
                     } else {
-                        Label("Import & Activate…", systemImage: "square.and.arrow.down")
+                        Label("Import…", systemImage: "square.and.arrow.down")
                     }
                 }
                 .disabled(!model.canPerform(.importProfile))
@@ -219,23 +270,7 @@ private struct ProfileRow: View {
                 }
             }
 
-            if let session = model.profileSessionSpec(for: profile.id) {
-                HStack(spacing: 7) {
-                    Label(
-                        AppLocalization.format("Mixed %d", session.mixedPort),
-                        systemImage: "arrow.triangle.branch"
-                    )
-                    if session.enabled {
-                        Text("•")
-                            .accessibilityHidden(true)
-                        Text(profile.id == model.activeProfileID
-                            ? "Default session"
-                            : "App Routing session")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(session.enabled ? Color.accentColor : .secondary)
-            }
+            runtimeStatus
         }
         .padding(.vertical, compact ? 9 : 7)
         .accessibilityElement(children: .contain)
@@ -269,7 +304,7 @@ private struct ProfileRow: View {
             }
             .disabled(!model.canPerform(.updateProfile(profile.id)))
             if !isActive {
-                Button("Activate", systemImage: "checkmark.circle") { activate() }
+                Button("Make Default", systemImage: "checkmark.circle") { activate() }
                     .disabled(!model.canPerform(.activateProfile(profile.id)))
             }
             if isRemote {
@@ -400,19 +435,101 @@ private struct ProfileRow: View {
     @ViewBuilder
     private var primaryProfileAction: some View {
         if isActive {
-            Text("In Use")
+            Label("Default Source", systemImage: "checkmark.circle.fill")
                 .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 64)
-                .accessibilityLabel("\(profile.name) is the active profile")
+                .foregroundStyle(Color.accentColor)
+                .frame(minWidth: 104)
+                .accessibilityLabel("\(profile.name) backs the Default Profile")
         } else {
-            Button("Activate") {
+            Button("Make Default") {
                 activate()
             }
             .buttonStyle(.bordered)
             .disabled(!model.canPerform(.activateProfile(profile.id)))
-            .help("Activate \(profile.name)")
+            .help("Use \(profile.name) as the default profile")
         }
+    }
+
+    private var runtimeStatus: some View {
+        HStack(spacing: 10) {
+            Toggle("Mixed port", isOn: runtimeEnabled)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .disabled(
+                    model.isPerforming(.updateProfile(profile.id))
+                        || !model.canPerform(.updateProfile(profile.id))
+                )
+
+            if let session = model.profileSessionSpec(for: profile.id) {
+                Text(
+                    session.enabled
+                        ? AppLocalization.format("On · %d", session.mixedPort)
+                        : AppLocalization.format("Off · reserved %d", session.mixedPort)
+                )
+                .monospacedDigit()
+                .foregroundStyle(session.enabled ? Color.primary : .secondary)
+            } else {
+                Text("Off")
+                    .foregroundStyle(.secondary)
+            }
+
+            if isActive {
+                Text("· Backs Default Profile")
+                    .foregroundStyle(.secondary)
+            }
+            if isRuntimeRunning {
+                Label("Running", systemImage: "circle.fill")
+                    .foregroundStyle(.green)
+            }
+
+            Spacer(minLength: 8)
+
+            if let session = model.profileSessionSpec(for: profile.id) {
+                Button("Change Port…") {
+                    showingEditSheet = true
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(!session.enabled || !model.canPerform(.updateProfile(profile.id)))
+            }
+        }
+        .font(.caption)
+        .padding(.leading, compact ? 36 : 38)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var runtimeEnabled: Binding<Bool> {
+        Binding(
+            get: {
+                model.profileSessionSpec(for: profile.id)?.enabled == true
+            },
+            set: { enabled in
+                operationError = nil
+                Task {
+                    do {
+                        try await model.setProfileMixedPortEnabled(
+                            profileID: profile.id,
+                            enabled: enabled
+                        )
+                    } catch {
+                        let message = sanitizedError(error.localizedDescription)
+                        operationError = message
+                        model.errorMessage = message
+                    }
+                }
+            }
+        )
+    }
+
+    private var isRuntimeRunning: Bool {
+        if isActive {
+            return model.isConnected
+                && model.profileSessionSpec(for: profile.id)?.enabled == true
+        }
+        guard case .running? = model.auxiliaryCoreStates[profile.id] else {
+            return false
+        }
+        return true
     }
 
     private var profileMoreMenu: some View {
@@ -452,7 +569,7 @@ private struct ProfileRow: View {
     }
 
     private var activeIndicator: some View {
-        Image(systemName: isActive ? "checkmark.circle.fill" : originSymbol)
+        Image(systemName: isActive ? "star.circle.fill" : originSymbol)
             .font(.title3)
             .foregroundStyle(isActive ? Color.accentColor : .secondary)
             .frame(width: 24)
@@ -510,7 +627,7 @@ private struct ProfileRow: View {
         if model.isPerforming(.refreshAllProfiles) { return "Updating subscriptions…" }
         if model.isPerforming(.updateProfile(profile.id)) { return "Saving settings…" }
         if model.isPerforming(.refreshProfile(profile.id)) { return "Refreshing and validating…" }
-        if model.isPerforming(.activateProfile(profile.id)) { return "Activating and checking…" }
+        if model.isPerforming(.activateProfile(profile.id)) { return "Changing default profile…" }
         if model.isPerforming(.removeProfile(profile.id)) { return "Deleting…" }
         return nil
     }
@@ -630,7 +747,7 @@ private struct EditProfileView: View {
         _name = State(initialValue: profile.name)
         let runtime = model.profileSessionSpec(for: profile.id)
         _runtimeEnabled = State(
-            initialValue: profile.id == model.activeProfileID || runtime?.enabled == true
+            initialValue: runtime?.enabled == true
         )
         _mixedPort = State(initialValue: runtime?.mixedPort ?? 7_890)
         if case let .remote(remote) = profile.origin {
@@ -686,9 +803,9 @@ private struct EditProfileView: View {
                     }
                 }
 
-                Section("Profile Session") {
-                    Toggle("Run for App Routing", isOn: $runtimeEnabled)
-                        .disabled(isSubmitting || profile.id == model.activeProfileID)
+                Section("Mixed Port") {
+                    Toggle("Open Mixed port", isOn: $runtimeEnabled)
+                        .disabled(isSubmitting)
 
                     LabeledContent("Mixed port") {
                         TextField(
@@ -700,13 +817,13 @@ private struct EditProfileView: View {
                         .multilineTextAlignment(.trailing)
                         .monospacedDigit()
                         .frame(width: 92)
-                        .disabled(isSubmitting)
+                        .disabled(isSubmitting || !runtimeEnabled)
                     }
 
                     Text(
                         profile.id == model.activeProfileID
-                            ? "The default profile always runs when MClash is connected. HTTP, HTTPS proxy, and SOCKS5 all share this Mixed port."
-                            : "Enable this session to keep the profile available as an App Routing target. It runs in its own Mihomo process and uses this Mixed port for HTTP and SOCKS5."
+                            ? "This is the real Profile's own port and can be closed independently. The virtual Default Profile keeps its separate stable port."
+                            : "Opening this port makes the Profile available to App Routing and local tools. HTTP, HTTPS proxy, and SOCKS5 share the same Mixed port."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -793,11 +910,13 @@ private struct EditProfileView: View {
 
         submissionTask = Task {
             do {
-                try await model.updateProfileRuntime(
-                    profileID: profile.id,
-                    enabled: runtimeEnabled || profile.id == model.activeProfileID,
-                    mixedPort: mixedPort
-                )
+                if model.profileSessionSpec(for: profile.id) != nil || runtimeEnabled {
+                    try await model.updateProfileRuntime(
+                        profileID: profile.id,
+                        enabled: runtimeEnabled,
+                        mixedPort: mixedPort
+                    )
+                }
                 try await model.updateProfile(
                     profile.id,
                     name: normalizedName,
@@ -845,7 +964,7 @@ private struct AddSubscriptionView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Label("Add Subscription", systemImage: "link.badge.plus")
                     .font(.title2.weight(.semibold))
-                Text("MClash will download, validate, and activate the profile before adding it.")
+                Text("MClash will download and validate the profile before adding it. Your current default profile will not change.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -1011,7 +1130,11 @@ private struct AddSubscriptionView: View {
         focusedField = nil
         submissionTask = Task {
             do {
-                try await model.addRemoteProfile(name: normalizedName, url: url)
+                try await model.addRemoteProfile(
+                    name: normalizedName,
+                    url: url,
+                    activate: model.activeProfileID == nil
+                )
                 if !Task.isCancelled {
                     await MainActor.run {
                         isPresented = false

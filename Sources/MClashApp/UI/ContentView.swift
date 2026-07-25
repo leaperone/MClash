@@ -168,7 +168,6 @@ struct ContentView: View {
             OverviewView(model: model)
         case .proxies:
             ProxiesView(model: model)
-                .id(model.activeProfileID)
         case .appRouting:
             AppRoutingView(model: model)
         case .profiles:

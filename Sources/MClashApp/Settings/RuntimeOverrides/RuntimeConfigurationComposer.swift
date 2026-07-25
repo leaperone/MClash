@@ -12,10 +12,14 @@ public struct RuntimeConfigurationComposer: Sendable {
     public func applying(
         _ overrides: RuntimeOverrides,
         to profileData: Data,
-        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
+        profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil
     ) throws -> Data {
         try validator.validate(overrides)
-        guard !overrides.isEmpty || networkExtensionListener != nil else { return profileData }
+        guard !overrides.isEmpty
+                || networkExtensionListener != nil
+                || profileMixedListener != nil
+        else { return profileData }
         guard let yaml = String(data: profileData, encoding: .utf8) else {
             throw RuntimeConfigurationComposerError.profileIsNotUTF8
         }
@@ -32,9 +36,13 @@ public struct RuntimeConfigurationComposer: Sendable {
                 newline: newline
             )
         }
-        if let networkExtensionListener {
-            lines = try applyingNetworkExtensionListener(
-                networkExtensionListener,
+        let managedListeners = managedListenerRenderings(
+            networkExtensionListener: networkExtensionListener,
+            profileMixedListener: profileMixedListener
+        )
+        if !managedListeners.isEmpty {
+            lines = try applyingManagedListeners(
+                managedListeners,
                 to: lines,
                 newline: newline
             )
@@ -960,8 +968,50 @@ public struct RuntimeConfigurationComposer: Sendable {
         return nil
     }
 
-    private func applyingNetworkExtensionListener(
-        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+    private struct ManagedListenerRendering {
+        let name: String
+        let type: String
+        let host: String
+        let port: UInt16
+        let enablesUDP: Bool
+        let outboundProxy: String?
+        let authentication: NetworkExtensionMihomoAuthentication?
+    }
+
+    private func managedListenerRenderings(
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration?,
+        profileMixedListener: ManagedProfileMixedListenerConfiguration?
+    ) -> [ManagedListenerRendering] {
+        var renderings: [ManagedListenerRendering] = []
+        if let profileMixedListener {
+            renderings.append(ManagedListenerRendering(
+                name: ManagedProfileMixedListenerConfiguration.listenerName,
+                type: "mixed",
+                host: ManagedProfileMixedListenerConfiguration.host,
+                port: profileMixedListener.port,
+                enablesUDP: true,
+                outboundProxy: nil,
+                authentication: nil
+            ))
+        }
+        if let networkExtensionListener {
+            renderings.append(contentsOf: networkExtensionListener.listenerDescriptors.map {
+                ManagedListenerRendering(
+                    name: $0.name,
+                    type: "socks",
+                    host: $0.host,
+                    port: $0.port,
+                    enablesUDP: true,
+                    outboundProxy: $0.outboundProxy,
+                    authentication: networkExtensionListener.authentication
+                )
+            })
+        }
+        return renderings
+    }
+
+    private func applyingManagedListeners(
+        _ renderings: [ManagedListenerRendering],
         to lines: [YAMLLine],
         newline: String
     ) throws -> [YAMLLine] {
@@ -970,8 +1020,8 @@ public struct RuntimeConfigurationComposer: Sendable {
             throw RuntimeConfigurationComposerError.multipleListenersSectionsUnsupported
         }
         guard let listenersIndex = listenerIndices.first else {
-            return try insertingNetworkExtensionListeners(
-                configuration,
+            return try insertingManagedListeners(
+                renderings,
                 into: lines,
                 newline: newline
             )
@@ -990,23 +1040,23 @@ public struct RuntimeConfigurationComposer: Sendable {
         }
 
         let section = lines[listenersIndex ..< sectionEnd].map(\.raw).joined()
-        try rejectReservedListenerNameConflicts(
+        try rejectManagedListenerNameConflicts(
             in: section,
-            configuration: configuration
+            renderings: renderings
         )
 
         switch lines[listenersIndex].rootValueStyle {
         case .block:
-            return try appendingNetworkExtensionListenersToBlockSequence(
-                configuration,
+            return try appendingManagedListenersToBlockSequence(
+                renderings,
                 listenersIndex: listenersIndex,
                 sectionEnd: sectionEnd,
                 lines: lines,
                 newline: newline
             )
         case .flowSequence:
-            return try appendingNetworkExtensionListenersToFlowSequence(
-                configuration,
+            return try appendingManagedListenersToFlowSequence(
+                renderings,
                 listenersIndex: listenersIndex,
                 sectionEnd: sectionEnd,
                 lines: lines
@@ -1016,15 +1066,15 @@ public struct RuntimeConfigurationComposer: Sendable {
         }
     }
 
-    private func insertingNetworkExtensionListeners(
-        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+    private func insertingManagedListeners(
+        _ renderings: [ManagedListenerRendering],
         into lines: [YAMLLine],
         newline: String
     ) throws -> [YAMLLine] {
         let insertionIndex = lines.lastIndex(where: \.isRootDocumentEnd) ?? lines.endIndex
         var insertion = ["listeners:\(newline)"]
-        insertion.append(contentsOf: try encodedNetworkExtensionListenerBlocks(
-            configuration,
+        insertion.append(contentsOf: try encodedManagedListenerBlocks(
+            renderings,
             sequencePrefix: "  ",
             newline: newline
         ))
@@ -1039,8 +1089,8 @@ public struct RuntimeConfigurationComposer: Sendable {
         return YAMLLine.split(rendered.joined())
     }
 
-    private func appendingNetworkExtensionListenersToBlockSequence(
-        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+    private func appendingManagedListenersToBlockSequence(
+        _ renderings: [ManagedListenerRendering],
         listenersIndex: Int,
         sectionEnd: Int,
         lines: [YAMLLine],
@@ -1060,8 +1110,8 @@ public struct RuntimeConfigurationComposer: Sendable {
 
         var replacement = lines[listenersIndex ..< sectionEnd].map(\.raw)
         appendRawLines(
-            try encodedNetworkExtensionListenerBlocks(
-                configuration,
+            try encodedManagedListenerBlocks(
+                renderings,
                 sequencePrefix: sequencePrefix,
                 newline: newline
             ),
@@ -1074,8 +1124,8 @@ public struct RuntimeConfigurationComposer: Sendable {
         return YAMLLine.split(rendered.joined())
     }
 
-    private func appendingNetworkExtensionListenersToFlowSequence(
-        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+    private func appendingManagedListenersToFlowSequence(
+        _ renderings: [ManagedListenerRendering],
         listenersIndex: Int,
         sectionEnd: Int,
         lines: [YAMLLine]
@@ -1090,7 +1140,7 @@ public struct RuntimeConfigurationComposer: Sendable {
 
         let bodyStart = section.index(after: opening)
         var body = String(section[bodyStart ..< closing])
-        let generated = try encodedNetworkExtensionListenerFlowMappings(configuration)
+        let generated = try encodedManagedListenerFlowMappings(renderings)
             .joined(separator: ", ")
         if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             body = generated
@@ -1106,26 +1156,28 @@ public struct RuntimeConfigurationComposer: Sendable {
         return YAMLLine.split(rendered.joined())
     }
 
-    private func encodedNetworkExtensionListenerBlocks(
-        _ configuration: NetworkExtensionMihomoListenerConfiguration,
+    private func encodedManagedListenerBlocks(
+        _ renderings: [ManagedListenerRendering],
         sequencePrefix: String,
         newline: String
     ) throws -> [String] {
-        try configuration.listenerDescriptors.flatMap { descriptor in
+        try renderings.flatMap { descriptor in
             let fieldPrefix = sequencePrefix + "  "
             var output = [
                 "\(sequencePrefix)- name: \(try yamlQuoted(descriptor.name))\(newline)",
-                "\(fieldPrefix)type: socks\(newline)",
+                "\(fieldPrefix)type: \(descriptor.type)\(newline)",
                 "\(fieldPrefix)port: \(descriptor.port)\(newline)",
                 "\(fieldPrefix)listen: \(try yamlQuoted(descriptor.host))\(newline)",
-                "\(fieldPrefix)udp: true\(newline)",
             ]
+            if descriptor.enablesUDP {
+                output.append("\(fieldPrefix)udp: true\(newline)")
+            }
             if let outboundProxy = descriptor.outboundProxy {
                 output.append(
                     "\(fieldPrefix)proxy: \(try yamlQuoted(outboundProxy))\(newline)"
                 )
             }
-            if let authentication = configuration.authentication {
+            if let authentication = descriptor.authentication {
                 output.append("\(fieldPrefix)users:\(newline)")
                 output.append(
                     "\(fieldPrefix)  - username: \(try yamlQuoted(authentication.username))\(newline)"
@@ -1142,12 +1194,12 @@ public struct RuntimeConfigurationComposer: Sendable {
         }
     }
 
-    private func encodedNetworkExtensionListenerFlowMappings(
-        _ configuration: NetworkExtensionMihomoListenerConfiguration
+    private func encodedManagedListenerFlowMappings(
+        _ renderings: [ManagedListenerRendering]
     ) throws -> [String] {
-        try configuration.listenerDescriptors.map { descriptor in
+        try renderings.map { descriptor in
             let users: String
-            if let authentication = configuration.authentication {
+            if let authentication = descriptor.authentication {
                 users = "[{\"username\": \(try yamlQuoted(authentication.username)), "
                     + "\"password\": \(try yamlQuoted(authentication.password))}]"
             } else {
@@ -1156,17 +1208,18 @@ public struct RuntimeConfigurationComposer: Sendable {
             let proxy = try descriptor.outboundProxy.map {
                 ", \"proxy\": \(try yamlQuoted($0))"
             } ?? ""
-            return "{\"name\": \(try yamlQuoted(descriptor.name)), \"type\": \"socks\", "
+            let udp = descriptor.enablesUDP ? ", \"udp\": true" : ""
+            return "{\"name\": \(try yamlQuoted(descriptor.name)), \"type\": \"\(descriptor.type)\", "
                 + "\"port\": \(descriptor.port), \"listen\": \(try yamlQuoted(descriptor.host)), "
-                + "\"udp\": true\(proxy), \"users\": \(users)}"
+                + "\"users\": \(users)\(udp)\(proxy)}"
         }
     }
 
-    private func rejectReservedListenerNameConflicts(
+    private func rejectManagedListenerNameConflicts(
         in section: String,
-        configuration: NetworkExtensionMihomoListenerConfiguration
+        renderings: [ManagedListenerRendering]
     ) throws {
-        for name in configuration.listenerDescriptors.map(\.name)
+        for name in renderings.map(\.name)
         where section.contains(name) {
             throw RuntimeConfigurationComposerError.reservedListenerNameConflict(name)
         }

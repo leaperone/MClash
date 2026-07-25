@@ -1,6 +1,26 @@
 import Foundation
 import MClashNetworkShared
 
+/// The real profile's public Mixed entry point when that same profile is also
+/// backing the virtual Default Profile in the primary core.
+///
+/// Auxiliary profiles use their root `mixed-port`. The primary core uses its
+/// root `mixed-port` for the stable virtual Default Profile and this managed
+/// loopback listener for the real profile's own identity.
+public struct ManagedProfileMixedListenerConfiguration: Equatable, Sendable {
+    public static let host = "127.0.0.1"
+    public static let listenerName = "mclash-profile-mixed"
+
+    public let port: UInt16
+
+    public init(port: Int) throws {
+        guard (1...Int(UInt16.max)).contains(port) else {
+            throw NetworkExtensionMihomoListenerValidationError.invalidPort(port)
+        }
+        self.port = UInt16(port)
+    }
+}
+
 /// Credentials used only by the private SOCKS5 listener that connects the
 /// Network Extension data plane to mihomo.
 ///

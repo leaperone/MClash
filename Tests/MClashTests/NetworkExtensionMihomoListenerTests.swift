@@ -167,6 +167,33 @@ struct NetworkExtensionMihomoListenerTests {
         #expect(yaml.contains("mclash-network-extension-socks-ipv6"))
     }
 
+    @Test("Virtual Default and real Profile Mixed ports compose in one primary core")
+    func composesDefaultAndProfileMixedPorts() throws {
+        let result = try RuntimeConfigurationComposer().applying(
+            RuntimeOverrides(
+                ports: RuntimePortOverrides(mixedPort: 17_890),
+                allowLAN: false,
+                bindAddress: "127.0.0.1"
+            ),
+            to: Data("rules: [\"MATCH,DIRECT\"]\n".utf8),
+            networkExtensionListener: try .init(port: 17_892),
+            profileMixedListener: try .init(port: 17_891)
+        )
+        let yaml = try #require(String(data: result, encoding: .utf8))
+        let boundPorts = try RuntimeConfigurationComposer()
+            .boundListenerPorts(in: result)
+
+        #expect(yaml.contains("mixed-port: 17890"))
+        #expect(yaml.contains("name: \"mclash-profile-mixed\""))
+        #expect(yaml.contains("type: mixed"))
+        #expect(yaml.contains("port: 17891"))
+        #expect(yaml.contains("listen: \"127.0.0.1\""))
+        #expect(yaml.contains("users: []"))
+        #expect(yaml.contains("mclash-network-extension-socks-ipv4"))
+        #expect(yaml.contains("mclash-network-extension-socks-ipv6"))
+        #expect(boundPorts.isSuperset(of: [17_890, 17_891, 17_892]))
+    }
+
     @Test("Optional authentication is scoped to both generated listeners and safely quoted")
     func emitsOptionalAuthentication() throws {
         let authentication = try NetworkExtensionMihomoAuthentication(

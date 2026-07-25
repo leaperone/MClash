@@ -19,7 +19,8 @@ func makeTestAppModel(
     networkExtensionControl: any NetworkExtensionControlling =
         InertAppModelNetworkExtensionControl(),
     networkEnvironmentMonitor: any NetworkEnvironmentMonitoring =
-        InertAppModelNetworkEnvironmentMonitor()
+        InertAppModelNetworkEnvironmentMonitor(),
+    profileProxyControllerResolver: ProfileProxyControllerResolver? = nil
 ) -> AppModel {
     AppModel(
         supervisor: supervisor,
@@ -32,7 +33,8 @@ func makeTestAppModel(
         geoDataInstaller: geoDataInstaller,
         preferenceDefaults: preferenceDefaults,
         networkExtensionControl: networkExtensionControl,
-        networkEnvironmentMonitor: networkEnvironmentMonitor
+        networkEnvironmentMonitor: networkEnvironmentMonitor,
+        profileProxyControllerResolver: profileProxyControllerResolver
     )
 }
 

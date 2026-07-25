@@ -32,6 +32,7 @@ struct FlowLedger: Sendable {
         recentlyClosedConnections: [FlowLedgerClosedConnection] = [],
         appRoutingActivities: [AppRoutingActivity] = [],
         mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
+        defaultProfileID: ProfileID? = nil,
         associationWindow: TimeInterval = defaultAssociationWindow
     ) {
         let activeRecords = activeConnections.map {
@@ -47,6 +48,7 @@ struct FlowLedger: Sendable {
             mihomoConnections: activeRecords + closedRecords,
             appRoutingActivities: appRoutingActivities,
             mihomoCaptureOrigins: mihomoCaptureOrigins,
+            defaultProfileID: defaultProfileID,
             associationWindow: associationWindow
         )
     }
@@ -55,6 +57,7 @@ struct FlowLedger: Sendable {
         mihomoConnections: [FlowLedgerMihomoConnectionRecord],
         appRoutingActivities: [AppRoutingActivity] = [],
         mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
+        defaultProfileID: ProfileID? = nil,
         associationWindow: TimeInterval = defaultAssociationWindow
     ) {
         entries = []
@@ -97,16 +100,35 @@ struct FlowLedger: Sendable {
 
         for activity in orderedActivities {
             guard !Task<Never, Never>.isCancelled else { return }
-            let match = Self.connectionMatch(
-                for: activity,
-                in: connectionIndex,
-                excluding: claimedConnectionIDs,
-                associationWindow: max(0, associationWindow)
-            )
+            // This ledger currently receives connection snapshots from the
+            // default Core. Never associate an auxiliary-profile activity
+            // with a lookalike connection from that different Core.
+            let canAssociateWithDefaultCore = switch activity.mclashTrafficTarget {
+            case .defaultProfile:
+                true
+            case let .profile(profileID):
+                profileID == defaultProfileID
+            case .system:
+                false
+            }
+            let match = canAssociateWithDefaultCore
+                ? Self.connectionMatch(
+                    for: activity,
+                    in: connectionIndex,
+                    excluding: claimedConnectionIDs,
+                    associationWindow: max(0, associationWindow)
+                )
+                : nil
             if let connectionID = match?.record.connection.id {
                 claimedConnectionIDs.insert(connectionID)
             }
-            builtEntries.append(Self.entry(activity: activity, match: match))
+            builtEntries.append(
+                Self.entry(
+                    activity: activity,
+                    match: match,
+                    defaultProfileID: defaultProfileID
+                )
+            )
         }
 
         for record in deduplicatedConnections
@@ -116,7 +138,8 @@ struct FlowLedger: Sendable {
                 Self.entry(
                     record: record,
                     startedAt: connectionStarts[record.connection.id],
-                    captureOrigin: mihomoCaptureOrigins[record.connection.id]
+                    captureOrigin: mihomoCaptureOrigins[record.connection.id],
+                    defaultProfileID: defaultProfileID
                 )
             )
         }
@@ -142,6 +165,58 @@ struct FlowLedger: Sendable {
             }
             .prefix(limit)
             .map { $0 }
+    }
+
+    func entries(for profileID: ProfileID?) -> [FlowLedgerEntry] {
+        guard let profileID else { return entries }
+        return entries.filter { $0.profileID == profileID }
+    }
+
+    func entries(for target: ProfileTrafficTarget?) -> [FlowLedgerEntry] {
+        guard let target else { return entries }
+        return entries.filter { $0.trafficTarget == target }
+    }
+
+    func applicationAggregates(for profileID: ProfileID?) -> [FlowLedgerApplicationAggregate] {
+        guard let profileID else { return applicationAggregates }
+        return Self.makeApplicationAggregates(
+            from: entries.filter { $0.profileID == profileID }
+        )
+    }
+
+    func applicationAggregates(
+        for target: ProfileTrafficTarget?
+    ) -> [FlowLedgerApplicationAggregate] {
+        guard let target else { return applicationAggregates }
+        return Self.makeApplicationAggregates(
+            from: entries.filter { $0.trafficTarget == target }
+        )
+    }
+
+    func routeAggregates(for profileID: ProfileID?) -> [FlowLedgerRouteAggregate] {
+        guard let profileID else { return routeAggregates }
+        return Self.makeRouteAggregates(
+            from: entries.filter { $0.profileID == profileID }
+        )
+    }
+
+    func routeAggregates(
+        for target: ProfileTrafficTarget?
+    ) -> [FlowLedgerRouteAggregate] {
+        guard let target else { return routeAggregates }
+        return Self.makeRouteAggregates(
+            from: entries.filter { $0.trafficTarget == target }
+        )
+    }
+
+    func completedEntries(for profileID: ProfileID?) -> [FlowLedgerEntry] {
+        guard let profileID else { return completedEntries }
+        return completedEntries.filter { $0.profileID == profileID }
+    }
+
+    func completedEntries(for target: ProfileTrafficTarget?) -> [FlowLedgerEntry] {
+        guard let target else { return completedEntries }
+        return completedEntries.filter { $0.trafficTarget == target }
     }
 
     private static func makeApplicationAggregates(
@@ -438,7 +513,8 @@ struct FlowLedger: Sendable {
 
     private static func entry(
         activity: AppRoutingActivity,
-        match: ConnectionMatch?
+        match: ConnectionMatch?,
+        defaultProfileID: ProfileID?
     ) -> FlowLedgerEntry {
         let outcome = outcome(activity)
         let state = state(activity)
@@ -459,6 +535,8 @@ struct FlowLedger: Sendable {
             destination: destination(activity.destination),
             appRoutingRule: nonEmpty(activity.matchedRuleIdentifier),
             mihomoRoute: matchedRoute,
+            trafficTarget: activity.mclashTrafficTarget,
+            profileID: activity.mclashProfileID(defaultProfileID: defaultProfileID),
             association: match?.association ?? .none,
             state: state,
             outcome: outcome,
@@ -472,7 +550,8 @@ struct FlowLedger: Sendable {
     private static func entry(
         record: FlowLedgerMihomoConnectionRecord,
         startedAt: Date?,
-        captureOrigin explicitOrigin: FlowLedgerCaptureOrigin?
+        captureOrigin explicitOrigin: FlowLedgerCaptureOrigin?,
+        defaultProfileID: ProfileID?
     ) -> FlowLedgerEntry {
         let connection = record.connection
         return FlowLedgerEntry(
@@ -482,6 +561,8 @@ struct FlowLedger: Sendable {
             destination: destination(connection.metadata),
             appRoutingRule: nil,
             mihomoRoute: route(connection),
+            trafficTarget: .defaultProfile,
+            profileID: defaultProfileID,
             association: .none,
             state: record.state.isActive ? .active : .completed,
             outcome: .viaMihomo,
@@ -708,6 +789,10 @@ struct FlowLedgerEntry: Hashable, Sendable, Identifiable {
     let destination: FlowLedgerDestination
     let appRoutingRule: String?
     let mihomoRoute: FlowLedgerMihomoRoute?
+    let trafficTarget: ProfileTrafficTarget
+    /// Compatibility projection for consumers which still need the real
+    /// Profile backing a virtual Default flow.
+    let profileID: ProfileID?
     let association: FlowLedgerAssociation
     let state: FlowLedgerState
     let outcome: FlowLedgerOutcome

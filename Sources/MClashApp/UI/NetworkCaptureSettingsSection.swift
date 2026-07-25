@@ -7,6 +7,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
     static let empty = AppRoutingActivityPresentationSnapshot(
         activities: [],
         flowEntries: [:],
+        target: nil,
         searchText: ""
     )
 
@@ -18,6 +19,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
     init(
         activities: [AppRoutingActivity],
         flowEntries: [UUID: FlowLedgerEntry],
+        target: ProfileTrafficTarget?,
         searchText: String
     ) {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -27,6 +29,8 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         for (index, activity) in activities.enumerated() {
             if index.isMultiple(of: 64), Task.isCancelled { break }
             guard activity.isLiveManagedFlow else { continue }
+            guard target == nil || activity.mclashTrafficTarget == target
+            else { continue }
             if query.isEmpty
                 || Self.searchText(for: activity, entry: flowEntries[activity.flowIdentifier])
                     .contains(query) {
@@ -36,9 +40,12 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         self.visibleActivities = visibleActivities
         visibleIdentifiers = Set(visibleActivities.map(\.flowIdentifier))
         activitiesByIdentifier = Task.isCancelled ? [:] : Dictionary(
-            uniqueKeysWithValues: activities.map { ($0.flowIdentifier, $0) }
+            uniqueKeysWithValues: visibleActivities.map { ($0.flowIdentifier, $0) }
         )
-        activeCount = activities.count { $0.isLiveManagedFlow }
+        activeCount = activities.count {
+            $0.isLiveManagedFlow
+                && (target == nil || $0.mclashTrafficTarget == target)
+        }
     }
 
     private static func searchText(
@@ -147,6 +154,22 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
 }
 
 struct AppRoutingView: View {
+    private enum ProfileScope: Hashable {
+        case all
+        case defaultProfile
+        case profile(ProfileID)
+        case system
+
+        var trafficTarget: ProfileTrafficTarget? {
+            switch self {
+            case .all: nil
+            case .defaultProfile: .defaultProfile
+            case let .profile(profileID): .profile(profileID)
+            case .system: .system
+            }
+        }
+    }
+
     private enum Workspace: String, CaseIterable, Identifiable {
         case rules = "Rules"
         case activity = "Activity"
@@ -195,6 +218,7 @@ struct AppRoutingView: View {
     @State private var showingProxifierImporter = false
     @State private var proxifierImportPlan: ProxifierRuleImportPlan?
     @State private var proxifierImportError: String?
+    @State private var profileScope: ProfileScope = .all
 
     var body: some View {
         GeometryReader { geometry in
@@ -275,13 +299,18 @@ struct AppRoutingView: View {
         .onChange(of: debouncedActivitySearchText) { _, _ in
             scheduleActivityPresentationRefresh()
         }
+        .onChange(of: profileScope) { _, _ in
+            selectedActivityID = nil
+            activityInspectorPresented = false
+            scheduleActivityPresentationRefresh()
+        }
         .sheet(isPresented: $showingEditor) {
             CaptureRuleEditorSheet(
+                model: model,
                 isPresented: $showingEditor,
                 draft: $draft,
                 applicationCandidates: applicationCandidates,
                 processCandidates: processCandidates,
-                routingProfiles: model.profiles,
                 mihomoGroupNames: model.proxyTopology.groupOrder,
                 existingRuleIDs: Set(rules.map(\.id).filter { $0 != editingRuleID }),
                 appliesImmediately: model.networkCapturePreferences.enabled
@@ -354,6 +383,8 @@ struct AppRoutingView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 240)
 
+                profileScopePicker
+
                 HStack(spacing: 10) {
                     Menu {
                         Toggle("Include DNS with App Routing", isOn: dnsEnabled)
@@ -395,6 +426,20 @@ struct AppRoutingView: View {
             .frame(height: 37)
         }
         .padding(.horizontal, MClashLayout.pagePadding)
+    }
+
+    private var profileScopePicker: some View {
+        Picker("Profile scope", selection: $profileScope) {
+            Text("All Profiles").tag(ProfileScope.all)
+            Text("Default Profile").tag(ProfileScope.defaultProfile)
+            ForEach(model.profiles) { profile in
+                Text(profile.name)
+                    .tag(ProfileScope.profile(profile.id))
+            }
+            Text("Direct / System").tag(ProfileScope.system)
+        }
+        .frame(width: 170)
+        .help("Show all profiles together or focus on one profile")
     }
 
     private var compactStatusMessage: String {
@@ -865,10 +910,11 @@ struct AppRoutingView: View {
     }
 
     private var activitySummary: some View {
-        let recent = model.appRoutingActivities.filter {
+        let activities = scopedAppRoutingActivities
+        let recent = activities.filter {
             $0.startedAt >= Date().addingTimeInterval(-60)
         }
-        let active = model.appRoutingActivities.filter {
+        let active = activities.filter {
             $0.endedAt == nil
                 && $0.relayState != .completed
                 && $0.relayState != .failed
@@ -899,7 +945,7 @@ struct AppRoutingView: View {
                 .foregroundStyle(.secondary)
             HStack(spacing: 12) {
                 Label(
-                    "Measured now ↓ \(formattedActivityRate(model.appRoutingTrafficRates.measured.download)) ↑ \(formattedActivityRate(model.appRoutingTrafficRates.measured.upload))",
+                    "Measured now ↓ \(formattedActivityRate(scopedTrafficRate.download)) ↑ \(formattedActivityRate(scopedTrafficRate.upload))",
                     systemImage: "speedometer"
                 )
                 Label(
@@ -920,6 +966,7 @@ struct AppRoutingView: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
             let pathRates = model.appRoutingTrafficRates.byPath
+                .filter { pathBelongsToSelectedProfile($0.key) }
                 .filter { $0.value.total > 0 }
                 .sorted { $0.value.total > $1.value.total }
             if !pathRates.isEmpty {
@@ -1035,8 +1082,8 @@ struct AppRoutingView: View {
     }
 
     private var rulesTable: some View {
-        let statistics = model.appRoutingRuleStatistics
-        return Table(orderedRules, selection: $selectedRuleID) {
+        let statistics = scopedRuleStatistics
+        return Table(visibleRules, selection: $selectedRuleID) {
             TableColumn("") { rule in
                 Button {
                     setEnabled(!rule.enabled, for: rule)
@@ -1134,7 +1181,7 @@ struct AppRoutingView: View {
         }
         .contextMenu(forSelectionType: String.self) { selection in
             if let id = selection.first,
-               let rule = orderedRules.first(where: { $0.id == id }) {
+               let rule = visibleRules.first(where: { $0.id == id }) {
                 Button("Edit…") { edit(rule) }
                 Button("Duplicate") { clone(rule) }
                 Divider()
@@ -1142,7 +1189,7 @@ struct AppRoutingView: View {
             }
         } primaryAction: { selection in
             if let id = selection.first,
-               let rule = orderedRules.first(where: { $0.id == id }) {
+               let rule = visibleRules.first(where: { $0.id == id }) {
                 edit(rule)
             }
         }
@@ -1153,7 +1200,7 @@ struct AppRoutingView: View {
         VStack(spacing: 0) {
             effectivePolicyBar
             Divider()
-            if orderedRules.isEmpty {
+            if visibleRules.isEmpty {
                 emptyState
             } else {
                 rulesTable
@@ -1258,6 +1305,13 @@ struct AppRoutingView: View {
                 }
             }
             .width(min: 115, ideal: 165)
+
+            TableColumn("Profile") { activity in
+                Text(activityProfileTitle(activity))
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+            }
+            .width(min: 90, ideal: 125)
 
             TableColumn("State") { activity in
                 Label(
@@ -1518,6 +1572,7 @@ struct AppRoutingView: View {
         let generation = activityPresentationGeneration
         let activities = model.appRoutingActivities
         let flowEntries = model.appRoutingFlowEntries
+        let target = profileScope.trafficTarget
         let searchText = debouncedActivitySearchText
 
         activityPresentationTask = Task { @MainActor in
@@ -1525,6 +1580,7 @@ struct AppRoutingView: View {
                 AppRoutingActivityPresentationSnapshot(
                     activities: activities,
                     flowEntries: flowEntries,
+                    target: target,
                     searchText: searchText
                 )
             }
@@ -1606,6 +1662,103 @@ struct AppRoutingView: View {
                 $0.id.rawValue == profileID.uuid
             }?.name ?? AppLocalization.string("Unavailable profile")
             return "\(name) · \(target)"
+        }
+    }
+
+    private var scopedAppRoutingActivities: [AppRoutingActivity] {
+        guard let target = profileScope.trafficTarget else {
+            return model.appRoutingActivities
+        }
+        return model.appRoutingActivities.filter {
+            $0.mclashTrafficTarget == target
+        }
+    }
+
+    private var scopedRuleStatistics: [String: AppModel.AppRoutingRuleStatistics] {
+        guard profileScope != .all else {
+            return model.appRoutingRuleStatistics
+        }
+        return scopedAppRoutingActivities.reduce(into: [:]) { result, activity in
+            guard let identifier = activity.matchedRuleIdentifier else { return }
+            var value = result[identifier] ?? .zero
+            value.matchCount += 1
+            if activity.isLiveManagedFlow { value.activeCount += 1 }
+            if activity.relayState == .failed { value.failureCount += 1 }
+            value.lastMatchedAt = max(
+                value.lastMatchedAt ?? .distantPast,
+                activity.startedAt
+            )
+
+            let isMeasured: Bool = switch activity.effectiveAction {
+            case .mihomo, .reject: true
+            case .direct: activity.payloadBytesAreMeasured == true
+            case .failOpen: false
+            }
+            if isMeasured {
+                value.measuredBytes = addingWithoutOverflow(
+                    value.measuredBytes,
+                    activity.uploadBytes
+                )
+                value.measuredBytes = addingWithoutOverflow(
+                    value.measuredBytes,
+                    activity.downloadBytes
+                )
+            } else {
+                value.unmeasuredCount += 1
+            }
+            result[identifier] = value
+        }
+    }
+
+    private func addingWithoutOverflow(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? .max : sum
+    }
+
+    private var scopedTrafficRate: AppRoutingByteRate {
+        switch profileScope {
+        case .all:
+            return model.appRoutingTrafficRates.measured
+        case .defaultProfile:
+            return model.appRoutingTrafficRates.defaultProfile
+        case let .profile(profileID):
+            return model.appRoutingTrafficRates.byProfile[profileID]
+                ?? AppRoutingByteRate()
+        case .system:
+            return model.appRoutingTrafficRates.direct
+        }
+    }
+
+    private func pathBelongsToSelectedProfile(_ path: AppRoutingTrafficPath) -> Bool {
+        switch profileScope {
+        case .all:
+            true
+        case .defaultProfile:
+            if case let .mihomo(route) = path {
+                route.mclashTrafficTarget == .defaultProfile
+            } else {
+                false
+            }
+        case let .profile(profileID):
+            if case let .mihomo(route) = path {
+                route.mclashTrafficTarget == .profile(profileID)
+            } else {
+                false
+            }
+        case .system:
+            if case .mihomo = path { false } else { true }
+        }
+    }
+
+    private func activityProfileTitle(_ activity: AppRoutingActivity) -> String {
+        switch activity.mclashTrafficTarget {
+        case .defaultProfile:
+            "Default Profile"
+        case let .profile(profileID):
+            model.profiles.first(where: { $0.id == profileID })?.name
+                ?? "Unavailable"
+        case .system:
+            "Direct / System"
         }
     }
 
@@ -1800,8 +1953,15 @@ struct AppRoutingView: View {
         }.map(\.element)
     }
 
+    private var visibleRules: [CaptureRule] {
+        guard let target = profileScope.trafficTarget else { return orderedRules }
+        return orderedRules.filter {
+            $0.action.mclashTrafficTarget == target
+        }
+    }
+
     private var enabledRuleCount: Int {
-        orderedRules.lazy.filter(\.enabled).count
+        visibleRules.lazy.filter(\.enabled).count
     }
 
     private var dnsPolicyTitle: String {
@@ -1825,7 +1985,7 @@ struct AppRoutingView: View {
 
     private var selectedRule: CaptureRule? {
         guard let selectedRuleID else { return nil }
-        return orderedRules.first(where: { $0.id == selectedRuleID })
+        return visibleRules.first(where: { $0.id == selectedRuleID })
     }
 
     private var enabled: Binding<Bool> {
@@ -1932,7 +2092,13 @@ struct AppRoutingView: View {
         draft = CaptureRuleDraft(
             identifier: uniqueRuleName("New Rule"),
             priority: nextPriority,
-            routingProfileID: model.activeProfileID
+            action: profileScope == .system ? .direct : .mihomoProfileRules,
+            routingProfileID: {
+                guard case let .profile(profileID) = profileScope else {
+                    return nil
+                }
+                return profileID
+            }()
         )
         editorError = nil
         showingEditor = true
@@ -2018,6 +2184,7 @@ struct AppRoutingView: View {
     }
 
     private func canMoveSelectedRule(by offset: Int) -> Bool {
+        guard profileScope == .all else { return false }
         guard let selectedRuleID,
               let index = orderedRules.firstIndex(where: { $0.id == selectedRuleID }) else {
             return false
@@ -2026,6 +2193,7 @@ struct AppRoutingView: View {
     }
 
     private func moveSelectedRule(by offset: Int) {
+        guard profileScope == .all else { return }
         guard let selectedRuleID,
               let index = orderedRules.firstIndex(where: { $0.id == selectedRuleID }),
               orderedRules.indices.contains(index + offset) else {

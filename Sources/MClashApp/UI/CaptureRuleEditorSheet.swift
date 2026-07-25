@@ -4,11 +4,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CaptureRuleEditorSheet: View {
+    @Bindable private var model: AppModel
     @Binding private var isPresented: Bool
     @Binding private var draft: CaptureRuleDraft
     private let applicationCandidates: [ApplicationCaptureCandidate]
     private let processCandidates: [RunningProcessCaptureCandidate]
-    private let routingProfiles: [ProfileMetadata]
     private let mihomoGroupNames: [String]
     private let existingRuleIDs: Set<String>
     private let appliesImmediately: Bool
@@ -21,25 +21,26 @@ struct CaptureRuleEditorSheet: View {
     @State private var networkDestinationPage = 0
     @State private var applicationToAddID: String?
     @State private var processToAddID: String?
+    @State private var showingProfileManager = false
 
     private static let destinationPageSize = 50
 
     init(
+        model: AppModel,
         isPresented: Binding<Bool>,
         draft: Binding<CaptureRuleDraft>,
         applicationCandidates: [ApplicationCaptureCandidate],
         processCandidates: [RunningProcessCaptureCandidate],
-        routingProfiles: [ProfileMetadata] = [],
         mihomoGroupNames: [String] = [],
         existingRuleIDs: Set<String> = [],
         appliesImmediately: Bool = false,
         onCommit: @escaping @MainActor (CaptureRule) -> Void
     ) {
+        self.model = model
         _isPresented = isPresented
         _draft = draft
         self.applicationCandidates = applicationCandidates
         self.processCandidates = processCandidates
-        self.routingProfiles = routingProfiles
         self.mihomoGroupNames = mihomoGroupNames
         self.existingRuleIDs = existingRuleIDs
         self.appliesImmediately = appliesImmediately
@@ -375,24 +376,40 @@ struct CaptureRuleEditorSheet: View {
             }
 
             if routesThroughMihomo {
-                Picker("Profile", selection: $draft.routingProfileID) {
-                    Text("Current default profile").tag(nil as ProfileID?)
-                    ForEach(routingProfiles) { profile in
-                        Text(profile.name).tag(profile.id as ProfileID?)
-                    }
-                    if let selected = draft.routingProfileID,
-                       !routingProfiles.contains(where: { $0.id == selected }) {
-                        Text(
-                            AppLocalization.format(
-                                "Unavailable profile · %@",
-                                selected.description
+                LabeledContent("Profile") {
+                    HStack(spacing: 8) {
+                        Picker("Profile", selection: $draft.routingProfileID) {
+                            Text(defaultProfilePickerTitle)
+                                .tag(nil as ProfileID?)
+                            ForEach(selectableRoutingProfiles) { profile in
+                                Text(profilePickerTitle(profile))
+                                    .tag(profile.id as ProfileID?)
+                            }
+                            if let selected = draft.routingProfileID,
+                               !selectableRoutingProfiles.contains(where: {
+                                   $0.id == selected
+                               }) {
+                                Text(unavailableProfilePickerTitle(selected))
+                                    .tag(selected as ProfileID?)
+                            }
+                        }
+                        .labelsHidden()
+
+                        Button {
+                            showingProfileManager.toggle()
+                        } label: {
+                            Label("Manage Profiles…", systemImage: "slider.horizontal.3")
+                        }
+                        .popover(isPresented: $showingProfileManager, arrowEdge: .trailing) {
+                            AppRoutingProfileQuickManager(
+                                model: model,
+                                selectedProfileID: $draft.routingProfileID
                             )
-                        )
-                            .tag(selected as ProfileID?)
+                        }
                     }
                 }
 
-                Text("Each selected profile runs in its own Mihomo session with an independent Mixed port and private App Routing listener.")
+                Text("Default Profile is a stable virtual target. Real Profiles can be selected when their own Mixed port is open.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if draft.routingProfileID != nil {
@@ -673,12 +690,19 @@ struct CaptureRuleEditorSheet: View {
         if existingRuleIDs.contains(normalizedRuleName) {
             return "A rule named \(normalizedRuleName) already exists."
         }
+        if routesThroughMihomo,
+           let selected = draft.routingProfileID,
+           !selectableRoutingProfiles.contains(where: { $0.id == selected }) {
+            return "Open this profile's Mixed port or choose another profile."
+        }
         return submissionError ?? draft.validationMessage
     }
 
     private var actionHelp: String {
-        let profileName = routingProfiles.first(where: {
+        let profileName = model.profiles.first(where: {
             $0.id == draft.routingProfileID
+        })?.name ?? model.profiles.first(where: {
+            $0.id == model.activeProfileID
         })?.name ?? "the current default profile"
         return switch draft.action {
         case .mihomoProfileRules:
@@ -701,6 +725,34 @@ struct CaptureRuleEditorSheet: View {
         case .direct, .reject:
             false
         }
+    }
+
+    private var selectableRoutingProfiles: [ProfileMetadata] {
+        model.profiles.filter { profile in
+            model.profileSessionSpec(for: profile.id)?.enabled == true
+        }
+    }
+
+    private var defaultProfilePickerTitle: String {
+        guard let profile = model.profiles.first(where: {
+            $0.id == model.activeProfileID
+        }) else {
+            return "Default profile"
+        }
+        return "Default Profile — uses \(profile.name)"
+    }
+
+    private func profilePickerTitle(_ profile: ProfileMetadata) -> String {
+        guard let port = model.profileSessionSpec(for: profile.id)?.mixedPort else {
+            return profile.name
+        }
+        return "\(profile.name) — Mixed \(port)"
+    }
+
+    private func unavailableProfilePickerTitle(_ profileID: ProfileID) -> String {
+        let name = model.profiles.first(where: { $0.id == profileID })?.name
+            ?? profileID.description
+        return "\(name) — Mixed port off"
     }
 
     private var availableMihomoGroups: [String] {
@@ -887,6 +939,283 @@ struct CaptureRuleEditorSheet: View {
             || !draft.matchesUDP
             || !draft.portRange.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || draft.unavailableFallback != .direct
+    }
+}
+
+private struct AppRoutingProfileQuickManager: View {
+    @Bindable var model: AppModel
+    @Binding var selectedProfileID: ProfileID?
+    @State private var showingDefaultPortSettings = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Profiles")
+                    .font(.headline)
+                Text("Default Profile is always available on Mixed \(model.profileRuntimePlan.defaultMixedPort). Open a real Profile's own port to target it explicitly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.triangle.branch")
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Default Profile")
+                        .fontWeight(.medium)
+                    Text(defaultSourceTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("Mixed \(model.profileRuntimePlan.defaultMixedPort)")
+                    .font(.caption.monospacedDigit())
+                Button("Edit…") {
+                    showingDefaultPortSettings = true
+                }
+                .controlSize(.small)
+                .disabled(!model.canPerform(.changeRuntimeSettings))
+            }
+            .padding(12)
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(model.profiles) { profile in
+                        AppRoutingProfileQuickRow(
+                            model: model,
+                            profile: profile,
+                            isSelected: selectedProfileID == profile.id
+                        )
+                        if profile.id != model.profiles.last?.id {
+                            Divider()
+                                .padding(.leading, 42)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Text("Changes apply immediately; this rule draft stays open.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(12)
+        }
+        .frame(width: 460, height: min(520, CGFloat(model.profiles.count * 76 + 190)))
+        .sheet(isPresented: $showingDefaultPortSettings) {
+            ListenerPortSettingsEditor(
+                model: model,
+                isPresented: $showingDefaultPortSettings
+            )
+        }
+    }
+
+    private var defaultSourceTitle: String {
+        guard let activeProfileID = model.activeProfileID,
+              let profile = model.profiles.first(where: { $0.id == activeProfileID })
+        else { return "No backing Profile selected" }
+        return "Uses \(profile.name)"
+    }
+}
+
+private struct AppRoutingProfileQuickRow: View {
+    @Bindable var model: AppModel
+    let profile: ProfileMetadata
+    let isSelected: Bool
+
+    @State private var mixedPort: Int
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(model: AppModel, profile: ProfileMetadata, isSelected: Bool) {
+        self.model = model
+        self.profile = profile
+        self.isSelected = isSelected
+        _mixedPort = State(
+            initialValue: model.profileSessionSpec(for: profile.id)?.mixedPort ?? 7_890
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 9) {
+                Button {
+                    makeDefault()
+                } label: {
+                    Image(systemName: isDefault ? "star.circle.fill" : "circle")
+                        .foregroundStyle(isDefault ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(isDefault || isSaving || !model.canPerform(.activateProfile(profile.id)))
+                .help(isDefault ? "Default profile" : "Make \(profile.name) the default")
+                .accessibilityLabel(
+                    isDefault
+                        ? "\(profile.name), default profile"
+                        : "Make \(profile.name) the default profile"
+                )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(profile.name)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        if isSelected {
+                            Text("Selected")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(isDefault ? "Backs Default Profile · \(runtimeStatusTitle)" : runtimeStatusTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Toggle("Mixed port", isOn: runtimeEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .disabled(isSaving || !model.canPerform(.updateProfile(profile.id)))
+                    .help(isRuntimeEnabled ? "Close this Profile's Mixed port" : "Open this Profile's Mixed port")
+
+                TextField(
+                    "Port",
+                    value: $mixedPort,
+                    format: .number.grouping(.never)
+                )
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .frame(width: 74)
+                .disabled(!isRuntimeEnabled || isSaving)
+                .onSubmit { savePort() }
+
+                Button {
+                    savePort()
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "checkmark")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(!portNeedsSaving || portValidationMessage != nil || isSaving)
+                .help("Apply Mixed port")
+            }
+
+            if let message = errorMessage ?? portValidationMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .padding(.leading, 33)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .onChange(of: currentPort) { _, port in
+            if !portNeedsSaving, let port {
+                mixedPort = port
+            }
+        }
+    }
+
+    private var isDefault: Bool {
+        model.activeProfileID == profile.id
+    }
+
+    private var isRuntimeEnabled: Bool {
+        model.profileSessionSpec(for: profile.id)?.enabled == true
+    }
+
+    private var currentPort: Int? {
+        model.profileSessionSpec(for: profile.id)?.mixedPort
+    }
+
+    private var runtimeStatusTitle: String {
+        guard let session = model.profileSessionSpec(for: profile.id) else {
+            return "Mixed port off"
+        }
+        return session.enabled
+            ? "Mixed \(session.mixedPort) on"
+            : "Mixed port off · \(session.mixedPort) reserved"
+    }
+
+    private var runtimeEnabled: Binding<Bool> {
+        Binding(
+            get: { isRuntimeEnabled },
+            set: { enabled in
+                errorMessage = nil
+                isSaving = true
+                Task {
+                    do {
+                        try await model.setProfileMixedPortEnabled(
+                            profileID: profile.id,
+                            enabled: enabled
+                        )
+                        if let port = model.profileSessionSpec(for: profile.id)?.mixedPort {
+                            mixedPort = port
+                        }
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                    isSaving = false
+                }
+            }
+        )
+    }
+
+    private var portNeedsSaving: Bool {
+        guard let currentPort else { return false }
+        return currentPort != mixedPort
+    }
+
+    private var portValidationMessage: String? {
+        (1...65_535).contains(mixedPort)
+            ? nil
+            : "Use a port from 1 to 65535."
+    }
+
+    private func makeDefault() {
+        errorMessage = nil
+        isSaving = true
+        Task {
+            do {
+                try await model.activateProfile(profile.id)
+                if let port = model.profileSessionSpec(for: profile.id)?.mixedPort {
+                    mixedPort = port
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSaving = false
+        }
+    }
+
+    private func savePort() {
+        guard portValidationMessage == nil, isRuntimeEnabled else { return }
+        errorMessage = nil
+        isSaving = true
+        Task {
+            do {
+                try await model.updateProfileRuntime(
+                    profileID: profile.id,
+                    enabled: true,
+                    mixedPort: mixedPort
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSaving = false
+        }
     }
 }
 

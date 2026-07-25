@@ -10,6 +10,22 @@ struct ConnectionsView: View {
         var id: Self { self }
     }
 
+    private enum ProfileScope: Hashable {
+        case all
+        case defaultProfile
+        case profile(ProfileID)
+        case system
+
+        var trafficTarget: ProfileTrafficTarget? {
+            switch self {
+            case .all: nil
+            case .defaultProfile: .defaultProfile
+            case let .profile(profileID): .profile(profileID)
+            case .system: .system
+            }
+        }
+    }
+
     @ViewBuilder
     private func liveWorkspace(presentation: ConnectionPresentationSnapshot) -> some View {
         if !model.isConnected {
@@ -222,6 +238,13 @@ struct ConnectionsView: View {
                 }
                 .width(min: 120, ideal: 180)
 
+                TableColumn("Profile") { entry in
+                    Text(profileTitle(entry.trafficTarget))
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                }
+                .width(min: 90, ideal: 125)
+
                 TableColumn("Traffic") { entry in
                     Text(ledgerTrafficTitle(entry))
                         .monospacedDigit()
@@ -249,9 +272,9 @@ struct ConnectionsView: View {
         case .live:
             return ""
         case .apps:
-            return "\(formattedCount(model.flowLedger.applicationAggregates.count)) apps"
+            return "\(formattedCount(scopedApplicationAggregates.count)) apps"
         case .routes:
-            return "\(formattedCount(model.flowLedger.routeAggregates.count)) routes"
+            return "\(formattedCount(scopedRouteAggregates.count)) routes"
         case .history:
             return "\(formattedCount(historicalEntries.count)) records"
         }
@@ -259,8 +282,8 @@ struct ConnectionsView: View {
 
     private var filteredApplications: [FlowLedgerApplicationAggregate] {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return model.flowLedger.applicationAggregates }
-        return model.flowLedger.applicationAggregates.filter { aggregate in
+        guard !query.isEmpty else { return scopedApplicationAggregates }
+        return scopedApplicationAggregates.filter { aggregate in
             [
                 aggregate.application.displayName,
                 aggregate.application.bundleIdentifier,
@@ -274,15 +297,29 @@ struct ConnectionsView: View {
 
     private var filteredRoutes: [FlowLedgerRouteAggregate] {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return model.flowLedger.routeAggregates }
-        return model.flowLedger.routeAggregates.filter { aggregate in
+        guard !query.isEmpty else { return scopedRouteAggregates }
+        return scopedRouteAggregates.filter { aggregate in
             routeHelp(aggregate.route, traffic: aggregate.traffic)
                 .localizedCaseInsensitiveContains(query)
         }
     }
 
     private var historicalEntries: [FlowLedgerEntry] {
-        model.flowLedger.completedEntries
+        model.flowLedger.completedEntries(
+            for: selectedProfileScope.trafficTarget
+        )
+    }
+
+    private var scopedApplicationAggregates: [FlowLedgerApplicationAggregate] {
+        model.flowLedger.applicationAggregates(
+            for: selectedProfileScope.trafficTarget
+        )
+    }
+
+    private var scopedRouteAggregates: [FlowLedgerRouteAggregate] {
+        model.flowLedger.routeAggregates(
+            for: selectedProfileScope.trafficTarget
+        )
     }
 
     private func historyRuleTitle(_ entry: FlowLedgerEntry) -> String {
@@ -345,6 +382,7 @@ struct ConnectionsView: View {
     @State private var confirmingClearTrafficHistory = false
     @State private var persistentHistoryPeriod: TrafficHistoryPeriod = .today
     @SceneStorage("mclash.traffic.workspace") private var workspace: Workspace = .live
+    @State private var selectedProfileScope: ProfileScope = .all
 
     var body: some View {
         let presentation = presentation
@@ -507,6 +545,31 @@ struct ConnectionsView: View {
                 .help(trafficDataNotice ?? trafficHeaderSummary(presentation: presentation))
             }
 
+            if workspace == .live {
+                Text(defaultLiveProfileTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help("Live controller details currently come from the default profile. Apps, Routes, and History are merged across profiles.")
+            } else {
+                Picker("Profile scope", selection: $selectedProfileScope) {
+                    Text("All Profiles").tag(ProfileScope.all)
+                    Text("Default Profile").tag(ProfileScope.defaultProfile)
+                    ForEach(model.profiles) { profile in
+                        Text(
+                            profile.id == model.activeProfileID
+                                ? "\(profile.name) — Default Source"
+                                : profile.name
+                        )
+                        .tag(ProfileScope.profile(profile.id))
+                    }
+                    Divider()
+                    Text("Direct / System").tag(ProfileScope.system)
+                }
+                .frame(width: compact ? 130 : 170)
+                .help("Show merged traffic from every profile or focus on one profile")
+            }
+
             Spacer(minLength: 12)
 
             Group {
@@ -551,6 +614,25 @@ struct ConnectionsView: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .padding(.horizontal, MClashLayout.pagePadding)
+    }
+
+    private var defaultLiveProfileTitle: String {
+        let name = model.profiles.first(where: {
+            $0.id == model.activeProfileID
+        })?.name ?? "Default"
+        return "Default Profile · \(name)"
+    }
+
+    private func profileTitle(_ target: ProfileTrafficTarget) -> String {
+        switch target {
+        case .defaultProfile:
+            "Default Profile"
+        case let .profile(profileID):
+            model.profiles.first(where: { $0.id == profileID })?.name
+                ?? "Unavailable Profile"
+        case .system:
+            "Direct / System"
+        }
     }
 
     private func compactTrafficHeaderSummary(

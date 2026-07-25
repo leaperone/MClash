@@ -94,6 +94,57 @@ struct AppRoutingTrafficRateTrackerTests {
         #expect(sample.measured.total == 0)
     }
 
+    @Test("Profile rates remain separate while the measured total stays merged")
+    func derivesPerProfileRates() {
+        let firstID = ProfileID(
+            rawValue: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        )
+        let secondID = ProfileID(
+            rawValue: UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+        )
+        var first = activity(
+            id: UUID(uuidString: "aaaaaaaa-0000-0000-0000-000000000001")!,
+            action: .mihomo(
+                .profile(RoutingProfileID(firstID.rawValue), target: .rules)
+            ),
+            upload: 100,
+            download: 200
+        )
+        var second = activity(
+            id: UUID(uuidString: "bbbbbbbb-0000-0000-0000-000000000002")!,
+            action: .mihomo(
+                .profile(RoutingProfileID(secondID.rawValue), target: .global)
+            ),
+            upload: 500,
+            download: 800
+        )
+        var tracker = AppRoutingTrafficRateTracker()
+        let start = Date(timeIntervalSince1970: 4_000)
+        _ = tracker.ingest([first, second], at: start)
+        first.uploadBytes += 200
+        first.downloadBytes += 400
+        second.uploadBytes += 600
+        second.downloadBytes += 800
+
+        let sample = tracker.ingest(
+            [first, second],
+            at: start.addingTimeInterval(2)
+        )
+
+        #expect(sample.byProfile[firstID] == AppRoutingByteRate(
+            upload: 100,
+            download: 200
+        ))
+        #expect(sample.byProfile[secondID] == AppRoutingByteRate(
+            upload: 300,
+            download: 400
+        ))
+        #expect(sample.measured == AppRoutingByteRate(
+            upload: 400,
+            download: 600
+        ))
+    }
+
     private func activity(
         id: UUID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
         action: FlowTrafficDisposition = .mihomo(.profileRules),

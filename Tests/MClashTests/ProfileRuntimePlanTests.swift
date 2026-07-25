@@ -73,7 +73,7 @@ struct ProfileRuntimePlanTests {
         }
     }
 
-    @Test("Primary profile must exist and be enabled")
+    @Test("Primary profile must exist but its dedicated port may be closed")
     func validatesPrimaryProfile() {
         let enabled = ProfileID()
         let disabled = ProfileID()
@@ -97,15 +97,31 @@ struct ProfileRuntimePlanTests {
                 )
             )
         }
-        #expect(
-            throws: ProfileRuntimePlanValidationError.primaryProfileDisabled(disabled)
-        ) {
+        #expect(throws: Never.self) {
             try ProfileRuntimePlanValidator().validate(
                 ProfileRuntimePlan(
                     sessions: sessions,
                     primaryProfileID: disabled
                 )
             )
+        }
+    }
+
+    @Test("Virtual Default Profile port is distinct from every real profile")
+    func validatesVirtualDefaultPort() {
+        let profileID = ProfileID()
+        let plan = ProfileRuntimePlan(
+            defaultMixedPort: 7_890,
+            sessions: [
+                ProfileSessionSpec(profileID: profileID, mixedPort: 7_890),
+            ],
+            primaryProfileID: profileID
+        )
+
+        #expect(
+            throws: ProfileRuntimePlanValidationError.defaultMixedPortConflict(7_890)
+        ) {
+            try ProfileRuntimePlanValidator().validate(plan)
         }
     }
 
@@ -131,7 +147,8 @@ struct ProfileRuntimePlanTests {
         let persistedJSON = try #require(
             try JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
-        #expect(persistedJSON["schemaVersion"] as? Int == 1)
+        #expect(persistedJSON["schemaVersion"] as? Int == 2)
+        #expect(persistedJSON["defaultMixedPort"] != nil)
         #expect(persistedJSON["primaryProfileID"] != nil)
         #expect(persistedJSON["sessions"] != nil)
         #expect(try permissions(of: fixture.layout.rootDirectory) == 0o700)
@@ -150,6 +167,31 @@ struct ProfileRuntimePlanTests {
                 includingPropertiesForKeys: nil
             ).isEmpty
         )
+    }
+
+    @Test("Schema 1 migrates its primary port to the virtual Default Profile")
+    func migratesSchemaOne() throws {
+        let profileID = ProfileID()
+        let data = try JSONEncoder().encode(
+            LegacyRuntimePlan(
+                schemaVersion: 1,
+                sessions: [
+                    ProfileSessionSpec(
+                        profileID: profileID,
+                        mixedPort: 18_900
+                    ),
+                ],
+                primaryProfileID: profileID
+            )
+        )
+
+        let migrated = try JSONDecoder().decode(ProfileRuntimePlan.self, from: data)
+
+        #expect(migrated.schemaVersion == 2)
+        #expect(migrated.defaultMixedPort == 18_900)
+        #expect(migrated.sessions.first?.mixedPort != 18_900)
+        #expect(migrated.sessions.first?.enabled == false)
+        try ProfileRuntimePlanValidator().validate(migrated)
     }
 
     @Test("Rejected save leaves the previous durable plan intact")
@@ -273,6 +315,12 @@ private struct ProfileRuntimePlanFixture {
     func cleanup() {
         try? FileManager.default.removeItem(at: root)
     }
+}
+
+private struct LegacyRuntimePlan: Encodable {
+    let schemaVersion: Int
+    let sessions: [ProfileSessionSpec]
+    let primaryProfileID: ProfileID?
 }
 
 private func permissions(of url: URL) throws -> Int {

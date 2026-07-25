@@ -98,6 +98,7 @@ struct AppModelSmoke {
             }
 
             try verifyProxyProtocols(model: model)
+            let stableDefaultMixedPort = model.profileRuntimePlan.defaultMixedPort
 
             let auxiliaryMixedPort = try LocalPortProbe()
                 .availableTCPAndUDPPorts(count: 1)[0]
@@ -150,6 +151,37 @@ struct AppModelSmoke {
                 throw SmokeFailure.auxiliaryRuntimePortRollbackFailed
             }
             try verifyProxyProtocols(port: auxiliaryMixedPort)
+
+            try await model.updateProfileRuntime(
+                profileID: auxiliaryProfile.id,
+                enabled: false,
+                mixedPort: auxiliaryMixedPort
+            )
+            for _ in 0..<100 {
+                if case .running = model.auxiliaryCoreStates[auxiliaryProfile.id] {
+                    try await Task.sleep(for: .milliseconds(50))
+                } else {
+                    break
+                }
+            }
+            guard model.profileSessionSpec(for: auxiliaryProfile.id)?.enabled == false,
+                  !LocalPortProbe().isListening(port: auxiliaryMixedPort) else {
+                throw SmokeFailure.auxiliaryProfileDidNotStop
+            }
+
+            // A Profile whose dedicated port is closed can still become the
+            // source of the virtual Default Profile. The stable Default port
+            // stays open while that real Profile's own port remains closed.
+            try await model.activateProfile(auxiliaryProfile.id)
+            guard model.activeProfileID == auxiliaryProfile.id,
+                  model.profileRuntimePlan.primaryProfileID == auxiliaryProfile.id,
+                  model.profileSessionSpec(for: auxiliaryProfile.id)?.enabled == false,
+                  model.isConnected,
+                  model.localMixedListenerPort == stableDefaultMixedPort,
+                  !LocalPortProbe().isListening(port: auxiliaryMixedPort) else {
+                throw SmokeFailure.disabledProfileDidNotBecomeDefault
+            }
+            try verifyProxyProtocols(model: model)
 
             for _ in 0..<100 where !model.canPerform(.changeSystemProxy) {
                 try await Task.sleep(for: .milliseconds(50))
@@ -465,6 +497,8 @@ private enum SmokeFailure: Error {
     case coreTerminationFailed(Int32)
     case crashRecoveryDidNotRestoreSystemProxy(String)
     case auxiliaryProfileDidNotStart
+    case auxiliaryProfileDidNotStop
+    case disabledProfileDidNotBecomeDefault
     case occupiedAuxiliaryRuntimePortWasAccepted
     case auxiliaryRuntimePortRollbackFailed
     case profileRuntimeUpdateStayedBusy(String)

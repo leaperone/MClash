@@ -328,6 +328,12 @@ final class AppModel {
         case clearProxyOverride(String)
         case measureDelay(String)
         case measureGroupDelay(String)
+        case refreshProfileProxyWorkspace(ProfileID)
+        case changeProfileMode(ProfileID)
+        case selectProfileProxy(ProfileID, String)
+        case clearProfileProxyOverride(ProfileID, String)
+        case measureProfileProxyDelay(ProfileID, String)
+        case measureProfileGroupDelay(ProfileID, String)
         case refreshRules
         case refreshProviders
         case updateProxyProvider(String)
@@ -409,6 +415,12 @@ final class AppModel {
     var proxyTopology: ProxyTopology = .empty
     var proxySelectionPaths: [String: ProxySelectionPath] = [:]
     var proxyDelays: [String: Int] = [:]
+    /// Controller-backed Proxies workspaces keyed by the real Profile ID.
+    /// These never replace or alias the legacy app-wide proxy properties above.
+    private(set) var profileProxyWorkspaceStates:
+        [ProfileID: ProfileProxyWorkspaceState] = [:]
+    private(set) var pendingProfileProxySelections:
+        [ProfileProxySelectionKey: String] = [:]
     var rules: [MihomoRule] = [] {
         didSet {
             rulesUseGlobalProxy = rules.contains { $0.proxy == "GLOBAL" }
@@ -578,6 +590,8 @@ final class AppModel {
     private let localPortProbe: LocalPortProbe
     private let geoDataInstaller: BundledGeoDataInstaller
     private let preferenceDefaults: UserDefaults
+    private let profileProxyControllerResolverOverride:
+        ProfileProxyControllerResolver?
     private let profileBackupService = ProfileBackupService()
     private let notificationCenter = AppNotificationCenter()
     private var managedMixedPort: Int?
@@ -616,6 +630,8 @@ final class AppModel {
     private var shouldReenableSystemProxyAfterCrash = false
     private var contextualProxyDelays: [ProxyDelayContextKey: Int] = [:]
     private var proxyProfileStructure: ProfileStructure = .empty
+    private var profileProxyMeasuredDelays: [ProfileID: [String: Int]] = [:]
+    private var profileProxyWorkspaceRevisions: [ProfileID: UInt64] = [:]
     private var trafficAttribution = TrafficAttribution()
     private var persistentTrafficHistoryStore: TrafficHistoryStore?
     private var trafficHistoryPersistTask: Task<Void, Never>?
@@ -665,7 +681,8 @@ final class AppModel {
         geoDataInstaller: BundledGeoDataInstaller = .applicationBundle(),
         preferenceDefaults: UserDefaults = .standard,
         networkExtensionControl: any NetworkExtensionControlling = NetworkExtensionControlService.live(),
-        networkEnvironmentMonitor: (any NetworkEnvironmentMonitoring)? = nil
+        networkEnvironmentMonitor: (any NetworkEnvironmentMonitoring)? = nil,
+        profileProxyControllerResolver: ProfileProxyControllerResolver? = nil
     ) {
         self.supervisor = supervisor
         coreFleet = CoreFleetSupervisor()
@@ -675,6 +692,7 @@ final class AppModel {
         self.localPortProbe = localPortProbe
         self.geoDataInstaller = geoDataInstaller
         self.preferenceDefaults = preferenceDefaults
+        profileProxyControllerResolverOverride = profileProxyControllerResolver
         self.networkExtensionControl = networkExtensionControl
         if let networkEnvironmentMonitor {
             self.networkEnvironmentMonitor = networkEnvironmentMonitor
@@ -1258,7 +1276,9 @@ final class AppModel {
         do {
             let profile = try await profileStore.importProfile(from: url)
             profiles = try await profileStore.profiles()
-            try await performActivateProfile(profile.id)
+            if activeProfileID == nil {
+                try await performActivateProfile(profile.id)
+            }
         } catch {
             recordOperationFailure(error, context: "Profile import")
         }
@@ -1920,6 +1940,7 @@ final class AppModel {
                 id,
                 overrides: effectiveRuntimeOverrides(for: id),
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
+                profileMixedListener: activeProfileDedicatedMixedListener,
                 in: profileStore,
                 validator: validator
             )
@@ -1938,13 +1959,14 @@ final class AppModel {
         var profileOverrides = overrides
         profileOverrides.ports.port = 0
         profileOverrides.ports.socksPort = 0
-        if let mixedPort = profileSessionSpec(for: id)?.mixedPort {
-            profileOverrides.ports.mixedPort = mixedPort
-        }
+        profileOverrides.ports.mixedPort = id == activeProfileID
+            ? profileRuntimePlan.defaultMixedPort
+            : profileSessionSpec(for: id)?.mixedPort
         return try await runtimeOverrideCoordinator.activateProfile(
             id,
             overrides: profileOverrides,
             networkExtensionListener: activeNetworkExtensionMihomoListener,
+            profileMixedListener: activeProfileDedicatedMixedListener,
             in: profileStore,
             validator: validator
         )
@@ -1995,12 +2017,8 @@ final class AppModel {
         }
 
         var candidate = profileRuntimePlan
-        let otherPorts = Set(candidate.sessions.compactMap {
-            $0.profileID == activeProfileID ? nil : $0.mixedPort
-        })
-        let currentMixedPort = candidate.sessions.first {
-            $0.profileID == activeProfileID
-        }?.mixedPort
+        let otherPorts = Set(candidate.sessions.map(\.mixedPort))
+        let currentMixedPort = candidate.defaultMixedPort
         let requestedMixedPort: Int
         if let override = overrides.ports.mixedPort {
             requestedMixedPort = override
@@ -2011,17 +2029,13 @@ final class AppModel {
                 in: sourceData
             ),
             let sourceMixedPort = sourcePorts.mixedPort,
-            (1...65_535).contains(sourceMixedPort) {
+            (1...65_535).contains(sourceMixedPort),
+            !otherPorts.contains(sourceMixedPort) {
             requestedMixedPort = sourceMixedPort
-        } else if let currentMixedPort {
-            // Profiles without a source Mixed listener keep their managed
-            // MClash port when the user selects “Use Profile”.
-            requestedMixedPort = currentMixedPort
         } else {
-            requestedMixedPort = try await preferredMixedPort(
-                for: activeProfileID,
-                excluding: otherPorts
-            )
+            // “Use Profile” keeps the stable virtual Default Profile endpoint
+            // when the source profile has no conflict-free Mixed port.
+            requestedMixedPort = currentMixedPort
         }
         if otherPorts.contains(requestedMixedPort) {
             let error = ProfileRuntimePlanValidationError.duplicateMixedPort(
@@ -2042,16 +2056,7 @@ final class AppModel {
             runtimeSettingsApplyState = .failed(error.localizedDescription)
             throw error
         }
-        if let index = candidate.sessions.firstIndex(where: {
-            $0.profileID == activeProfileID
-        }) {
-            candidate.sessions[index].mixedPort = requestedMixedPort
-        } else {
-            candidate.sessions.append(ProfileSessionSpec(
-                profileID: activeProfileID,
-                mixedPort: requestedMixedPort
-            ))
-        }
+        candidate.defaultMixedPort = requestedMixedPort
         candidate.primaryProfileID = activeProfileID
         try ProfileRuntimePlanValidator().validate(candidate)
         profileRuntimePlan = candidate
@@ -2068,6 +2073,7 @@ final class AppModel {
                 activeProfileID,
                 overrides: validationOverrides,
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
+                profileMixedListener: activeProfileDedicatedMixedListener,
                 in: profileStore,
                 validator: validator
             )
@@ -2617,6 +2623,14 @@ final class AppModel {
                         default: []
                     ].insert(port)
                 }
+                if let dedicatedPort = activeProfileDedicatedMixedListener.map({
+                    Int($0.port)
+                }) {
+                    verifiedMClashMixedPorts[
+                        activeProfileID,
+                        default: []
+                    ].insert(dedicatedPort)
+                }
                 setNetworkEnvironmentRecoveryArmed(true)
                 return true
             }
@@ -2855,6 +2869,362 @@ final class AppModel {
         }
         if delays.isEmpty, !members.isEmpty {
             recordOperationFailure(MihomoAPIError.emptyResponse, context: "Group latency test")
+        }
+    }
+
+    /// Every imported real Profile is a selectable Proxies workspace,
+    /// regardless of whether its dedicated runtime is currently available.
+    var profileProxyWorkspaceProfiles: [ProfileMetadata] {
+        profiles
+    }
+
+    /// Returns cached controller data without starting or enabling a Profile.
+    /// Auxiliary Profiles whose dedicated port is closed are always surfaced
+    /// as unavailable, even if an older snapshot remains in memory.
+    func profileProxyWorkspaceState(
+        for profileID: ProfileID
+    ) -> ProfileProxyWorkspaceState {
+        guard profiles.contains(where: { $0.id == profileID }) else {
+            return .unavailable(.profileNotFound)
+        }
+        if profileProxyControllerResolverOverride == nil,
+           profileID != activeProfileID,
+           profileSessionSpec(for: profileID)?.enabled != true {
+            return .unavailable(.dedicatedPortDisabled(
+                port: profileSessionSpec(for: profileID)?.mixedPort
+            ))
+        }
+        return profileProxyWorkspaceStates[profileID] ?? .idle
+    }
+
+    func pendingProxySelection(
+        profileID: ProfileID,
+        group: String
+    ) -> String? {
+        pendingProfileProxySelections[
+            ProfileProxySelectionKey(profileID: profileID, group: group)
+        ]
+    }
+
+    /// Fetches a complete, Profile-scoped Proxies snapshot from an already
+    /// running controller. This method never starts a core or opens a port.
+    @discardableResult
+    func refreshProxyWorkspace(
+        for profileID: ProfileID
+    ) async -> ProfileProxyWorkspaceState {
+        let operation = Operation.refreshProfileProxyWorkspace(profileID)
+        guard begin(operation) else {
+            return profileProxyWorkspaceState(for: profileID)
+        }
+        defer { end(operation) }
+
+        let previous = profileProxyWorkspaceStates[profileID]?.snapshot
+        let revision = nextProfileProxyWorkspaceRevision(for: profileID)
+        profileProxyWorkspaceStates[profileID] = .loading(previous: previous)
+
+        switch await resolveProfileProxyController(for: profileID) {
+        case let .unavailable(reason):
+            guard profileProxyWorkspaceRevision(
+                for: profileID,
+                matches: revision
+            ) else {
+                return profileProxyWorkspaceState(for: profileID)
+            }
+            let state = ProfileProxyWorkspaceState.unavailable(reason)
+            profileProxyWorkspaceStates[profileID] = state
+            return state
+
+        case let .available(client):
+            do {
+                let profileStructure = await loadProxyProfileStructure(
+                    for: profileID
+                )
+                async let configRequest = client.fetchConfig()
+                async let proxiesRequest = client.fetchProxies()
+                let (config, collection) = try await (
+                    configRequest,
+                    proxiesRequest
+                )
+                try Task.checkCancellation()
+                guard profileProxyWorkspaceRevision(
+                    for: profileID,
+                    matches: revision
+                ) else {
+                    return profileProxyWorkspaceState(for: profileID)
+                }
+                let snapshot = ProfileProxyWorkspaceSnapshotBuilder().build(
+                    profileID: profileID,
+                    runtimeConfig: config,
+                    collection: collection,
+                    profileStructure: profileStructure,
+                    measuredDelays: profileProxyMeasuredDelays[profileID] ?? [:]
+                )
+                profileProxyWorkspaceStates[profileID] = .ready(snapshot)
+                synchronizeLegacyProxyStateIfNeeded(snapshot)
+                return .ready(snapshot)
+            } catch is CancellationError {
+                guard profileProxyWorkspaceRevision(
+                    for: profileID,
+                    matches: revision
+                ) else {
+                    return profileProxyWorkspaceState(for: profileID)
+                }
+                let state = ProfileProxyWorkspaceState.idle
+                profileProxyWorkspaceStates[profileID] = state
+                return state
+            } catch {
+                guard profileProxyWorkspaceRevision(
+                    for: profileID,
+                    matches: revision
+                ) else {
+                    return profileProxyWorkspaceState(for: profileID)
+                }
+                let state = ProfileProxyWorkspaceState.failed(
+                    message: error.localizedDescription,
+                    previous: previous
+                )
+                profileProxyWorkspaceStates[profileID] = state
+                recordOperationFailure(
+                    error,
+                    context: "Profile proxy refresh"
+                )
+                return state
+            }
+        }
+    }
+
+    /// Changes one Profile's runtime mode without changing another Profile's
+    /// controller or cached workspace.
+    @discardableResult
+    func setMode(_ mode: String, profileID: ProfileID) async -> Bool {
+        let operation = Operation.changeProfileMode(profileID)
+        guard begin(operation) else { return false }
+        defer { end(operation) }
+        guard case let .available(client) = await resolveProfileProxyController(
+            for: profileID
+        ) else {
+            await refreshProxyWorkspace(for: profileID)
+            return false
+        }
+        do {
+            try await client.patchConfig(MihomoConfigPatch(mode: mode))
+            await closeProfileConnectionsAfterRoutingChange(
+                using: client,
+                profileID: profileID
+            )
+            let state = await refreshProxyWorkspace(for: profileID)
+            return state.snapshot?.runtimeConfig.mode.caseInsensitiveCompare(mode)
+                == .orderedSame
+        } catch {
+            failProfileProxyWorkspace(
+                profileID,
+                error: error,
+                context: "Profile routing mode change"
+            )
+            return false
+        }
+    }
+
+    /// Selects a node in one Profile. The operation identity contains both
+    /// Profile and group, so same-named groups in other Profiles stay
+    /// independent.
+    @discardableResult
+    func selectProxy(
+        profileID: ProfileID,
+        group: String,
+        proxy: String
+    ) async -> Bool {
+        let operation = Operation.selectProfileProxy(profileID, group)
+        guard begin(operation) else { return false }
+        let pendingKey = ProfileProxySelectionKey(
+            profileID: profileID,
+            group: group
+        )
+        pendingProfileProxySelections[pendingKey] = proxy
+        defer {
+            pendingProfileProxySelections[pendingKey] = nil
+            end(operation)
+        }
+
+        guard let (client, snapshot) = await profileProxyOperationContext(
+            for: profileID
+        ),
+        let groupModel = snapshot.proxiesByName[group],
+        groupModel.groupBehavior?.supportsSelectionUpdate == true,
+        groupModel.all.contains(proxy) else {
+            errorMessage = "This proxy group cannot select that proxy."
+            return false
+        }
+        do {
+            try await client.selectProxy(group: group, proxy: proxy)
+            await closeProfileConnectionsAfterRoutingChange(
+                using: client,
+                profileID: profileID
+            )
+            let refreshed = await refreshProxyWorkspace(for: profileID)
+            return refreshed.snapshot?.proxiesByName[group]?.now == proxy
+                || refreshed.snapshot?.proxiesByName[group]?.fixedOverride == proxy
+        } catch {
+            failProfileProxyWorkspace(
+                profileID,
+                error: error,
+                context: "Profile proxy selection"
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    func clearProxyOverride(
+        profileID: ProfileID,
+        group: String
+    ) async -> Bool {
+        let operation = Operation.clearProfileProxyOverride(profileID, group)
+        guard begin(operation) else { return false }
+        defer { end(operation) }
+        guard let (client, snapshot) = await profileProxyOperationContext(
+            for: profileID
+        ),
+        snapshot.proxiesByName[group]?
+            .groupBehavior?.supportsClearingOverride == true else {
+            errorMessage = "This proxy group does not have an automatic override to clear."
+            return false
+        }
+        do {
+            try await client.clearProxyOverride(group: group)
+            await closeProfileConnectionsAfterRoutingChange(
+                using: client,
+                profileID: profileID
+            )
+            let refreshed = await refreshProxyWorkspace(for: profileID)
+            return refreshed.snapshot != nil
+        } catch {
+            failProfileProxyWorkspace(
+                profileID,
+                error: error,
+                context: "Restore Profile automatic proxy selection"
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    func measureDelay(
+        profileID: ProfileID,
+        proxy: String,
+        group: String? = nil
+    ) async -> Int? {
+        let operation = Operation.measureProfileProxyDelay(profileID, proxy)
+        guard begin(operation) else { return nil }
+        defer { end(operation) }
+        guard let (client, snapshot) = await profileProxyOperationContext(
+            for: profileID
+        ),
+        let target = delayTarget(
+            forProxy: proxy,
+            group: group,
+            snapshot: snapshot
+        ) else {
+            return nil
+        }
+        do {
+            let delay = try await client.measureDelay(
+                proxy: proxy,
+                targetURL: target,
+                expectedStatus: expectedDelayStatus(
+                    forProxy: proxy,
+                    group: group,
+                    snapshot: snapshot
+                )
+            )
+            profileProxyMeasuredDelays[profileID, default: [:]][proxy] = delay
+            updateProfileProxyWorkspaceDelays(
+                profileID: profileID,
+                snapshot: snapshot
+            )
+            if profileID == activeProfileID {
+                proxyDelays[proxy] = delay
+            }
+            return delay
+        } catch {
+            failProfileProxyWorkspace(
+                profileID,
+                error: error,
+                context: "Profile latency test"
+            )
+            return nil
+        }
+    }
+
+    func measureGroupDelays(
+        profileID: ProfileID,
+        group: String
+    ) async {
+        let operation = Operation.measureProfileGroupDelay(profileID, group)
+        guard begin(operation) else { return }
+        defer { end(operation) }
+        guard let (client, snapshot) = await profileProxyOperationContext(
+            for: profileID
+        ),
+        let groupModel = snapshot.proxiesByName[group] else {
+            return
+        }
+        let target = delayTarget(for: groupModel) ?? defaultDelayTarget
+        let expectedStatus = normalizedExpectedStatus(groupModel.expectedStatus)
+        var seen = Set<String>()
+        let members = groupModel.all.filter { seen.insert($0).inserted }
+        var delays: [String: Int] = [:]
+        let maximumConcurrentRequests = 8
+        for batchStart in stride(
+            from: 0,
+            to: members.count,
+            by: maximumConcurrentRequests
+        ) {
+            guard !Task.isCancelled else { return }
+            let batchEnd = min(
+                batchStart + maximumConcurrentRequests,
+                members.count
+            )
+            let batch = Array(members[batchStart..<batchEnd])
+            let batchDelays = await withTaskGroup(
+                of: (String, Int?).self,
+                returning: [String: Int].self
+            ) { taskGroup in
+                for proxy in batch {
+                    taskGroup.addTask {
+                        let delay = try? await client.measureDelay(
+                            proxy: proxy,
+                            targetURL: target,
+                            expectedStatus: expectedStatus
+                        )
+                        return (proxy, delay)
+                    }
+                }
+                var measured: [String: Int] = [:]
+                for await (proxy, delay) in taskGroup {
+                    if let delay { measured[proxy] = delay }
+                }
+                return measured
+            }
+            delays.merge(batchDelays) { _, new in new }
+        }
+
+        profileProxyMeasuredDelays[profileID, default: [:]]
+            .merge(delays) { _, new in new }
+        updateProfileProxyWorkspaceDelays(
+            profileID: profileID,
+            snapshot: snapshot
+        )
+        if profileID == activeProfileID {
+            proxyDelays.merge(delays) { _, new in new }
+        }
+        if delays.isEmpty, !members.isEmpty {
+            let error = MihomoAPIError.emptyResponse
+            failProfileProxyWorkspace(
+                profileID,
+                error: error,
+                context: "Profile group latency test"
+            )
         }
     }
 
@@ -4527,6 +4897,28 @@ final class AppModel {
         switch event {
         case let .stateChanged(profileID, state):
             auxiliaryCoreStates[profileID] = state
+            switch state {
+            case .running:
+                invalidateProfileProxyWorkspace(
+                    profileID,
+                    state: .idle
+                )
+            case .validating, .starting, .stopping:
+                invalidateProfileProxyWorkspace(
+                    profileID,
+                    state: .unavailable(.controllerTransitioning)
+                )
+            case .stopped:
+                invalidateProfileProxyWorkspace(
+                    profileID,
+                    state: .unavailable(.controllerStopped)
+                )
+            case let .failed(message):
+                invalidateProfileProxyWorkspace(
+                    profileID,
+                    state: .unavailable(.controllerFailed(message))
+                )
+            }
             if case let .failed(message) = state {
                 appendSupervisorLog(
                     "Profile \(profileDisplayName(profileID)) core failed: \(message)"
@@ -4718,9 +5110,9 @@ final class AppModel {
         using client: MihomoAPIClient
     ) async throws -> MihomoConfig {
         managedMixedPort = nil
-        let requestedMixedPort = activeProfileID
-            .flatMap { profileSessionSpec(for: $0)?.mixedPort }
-            ?? runtimeOverrides.ports.mixedPort
+        let requestedMixedPort = activeProfileID == nil
+            ? runtimeOverrides.ports.mixedPort
+            : profileRuntimePlan.defaultMixedPort
         let requiresExactListeners = requestedMixedPort != nil
         if let port = positivePort(initialConfig.mixedPort) {
             do {
@@ -4734,6 +5126,14 @@ final class AppModel {
                         field: "Mixed",
                         requested: requested,
                         actual: initialConfig.mixedPort
+                    )
+                }
+                if let dedicatedPort = activeProfileDedicatedMixedListener.map({
+                    Int($0.port)
+                }) {
+                    try await localPortProbe.waitUntilProxyProtocols(
+                        httpPort: dedicatedPort,
+                        socksPort: dedicatedPort
                     )
                 }
                 return initialConfig
@@ -4798,6 +5198,202 @@ final class AppModel {
                   revision == proxyRefreshRevision,
                   isConnected else { return }
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func resolveProfileProxyController(
+        for profileID: ProfileID
+    ) async -> ProfileProxyControllerResolution {
+        if let profileProxyControllerResolverOverride {
+            return await profileProxyControllerResolverOverride(profileID)
+        }
+        guard profiles.contains(where: { $0.id == profileID }) else {
+            return .unavailable(.profileNotFound)
+        }
+        if profileID == activeProfileID {
+            guard isConnected, controllerIsReady, let apiClient else {
+                return .unavailable(.primaryControllerNotReady)
+            }
+            return .available(apiClient)
+        }
+        guard let sessionSpec = profileSessionSpec(for: profileID),
+              sessionSpec.enabled else {
+            return .unavailable(.dedicatedPortDisabled(
+                port: profileSessionSpec(for: profileID)?.mixedPort
+            ))
+        }
+        switch await coreFleet.state(for: profileID) {
+        case let .running(session)?:
+            do {
+                return .available(try MihomoAPIClient(
+                    baseURL: session.endpoint,
+                    secret: session.secret
+                ))
+            } catch {
+                return .unavailable(.controllerFailed(
+                    error.localizedDescription
+                ))
+            }
+        case let .failed(message)?:
+            return .unavailable(.controllerFailed(message))
+        case .validating?, .starting?, .stopping?:
+            return .unavailable(.controllerTransitioning)
+        case .stopped?, nil:
+            return .unavailable(.controllerStopped)
+        }
+    }
+
+    private func profileProxyOperationContext(
+        for profileID: ProfileID
+    ) async -> (
+        client: MihomoAPIClient,
+        snapshot: ProfileProxyWorkspaceSnapshot
+    )? {
+        var snapshot = profileProxyWorkspaceState(for: profileID).snapshot
+        if snapshot == nil {
+            snapshot = await refreshProxyWorkspace(for: profileID).snapshot
+        }
+        guard let snapshot else { return nil }
+        guard case let .available(client) = await resolveProfileProxyController(
+            for: profileID
+        ) else {
+            _ = await refreshProxyWorkspace(for: profileID)
+            return nil
+        }
+        return (client, snapshot)
+    }
+
+    private func loadProxyProfileStructure(
+        for profileID: ProfileID
+    ) async -> ProfileStructure {
+        guard let profileStore,
+              let data = try? await profileStore.configurationData(
+                  for: profileID
+              ) else {
+            return .empty
+        }
+        return ProfileStructureReader().read(data: data)
+    }
+
+    private func nextProfileProxyWorkspaceRevision(
+        for profileID: ProfileID
+    ) -> UInt64 {
+        let revision = (profileProxyWorkspaceRevisions[profileID] ?? 0) &+ 1
+        profileProxyWorkspaceRevisions[profileID] = revision
+        return revision
+    }
+
+    private func invalidateProfileProxyWorkspace(
+        _ profileID: ProfileID,
+        state: ProfileProxyWorkspaceState
+    ) {
+        _ = nextProfileProxyWorkspaceRevision(for: profileID)
+        profileProxyWorkspaceStates[profileID] = state
+    }
+
+    private func profileProxyWorkspaceRevision(
+        for profileID: ProfileID,
+        matches revision: UInt64
+    ) -> Bool {
+        profileProxyWorkspaceRevisions[profileID] == revision
+    }
+
+    private func synchronizeLegacyProxyStateIfNeeded(
+        _ snapshot: ProfileProxyWorkspaceSnapshot
+    ) {
+        guard snapshot.profileID == activeProfileID else { return }
+        runtimeConfig = snapshot.runtimeConfig
+        applyProxyCollection(
+            MihomoProxyCollection(proxies: snapshot.proxiesByName),
+            profileStructure: snapshot.profileStructure
+        )
+    }
+
+    private func updateProfileProxyWorkspaceDelays(
+        profileID: ProfileID,
+        snapshot: ProfileProxyWorkspaceSnapshot
+    ) {
+        let refreshed = ProfileProxyWorkspaceSnapshotBuilder().build(
+            profileID: profileID,
+            runtimeConfig: snapshot.runtimeConfig,
+            collection: MihomoProxyCollection(
+                proxies: snapshot.proxiesByName
+            ),
+            profileStructure: snapshot.profileStructure,
+            measuredDelays: profileProxyMeasuredDelays[profileID] ?? [:]
+        )
+        profileProxyWorkspaceStates[profileID] = .ready(refreshed)
+    }
+
+    private func failProfileProxyWorkspace(
+        _ profileID: ProfileID,
+        error: any Error,
+        context: String
+    ) {
+        profileProxyWorkspaceStates[profileID] = .failed(
+            message: error.localizedDescription,
+            previous: profileProxyWorkspaceStates[profileID]?.snapshot
+        )
+        recordOperationFailure(error, context: context)
+    }
+
+    private func delayTarget(
+        forProxy proxy: String,
+        group groupName: String?,
+        snapshot: ProfileProxyWorkspaceSnapshot
+    ) -> URL? {
+        if let groupName,
+           let group = snapshot.proxiesByName[groupName],
+           let target = delayTarget(for: group) {
+            return target
+        }
+        if let proxyModel = snapshot.proxiesByName[proxy],
+           let target = delayTarget(for: proxyModel) {
+            return target
+        }
+        if let group = snapshot.proxyGroups.first(where: {
+            $0.all.contains(proxy)
+        }),
+        let target = delayTarget(for: group) {
+            return target
+        }
+        return defaultDelayTarget
+    }
+
+    private func expectedDelayStatus(
+        forProxy proxy: String,
+        group groupName: String?,
+        snapshot: ProfileProxyWorkspaceSnapshot
+    ) -> String? {
+        if let groupName,
+           let group = snapshot.proxiesByName[groupName],
+           let status = normalizedExpectedStatus(group.expectedStatus) {
+            return status
+        }
+        if let status = normalizedExpectedStatus(
+            snapshot.proxiesByName[proxy]?.expectedStatus
+        ) {
+            return status
+        }
+        let group = snapshot.proxyGroups.first { $0.all.contains(proxy) }
+        return normalizedExpectedStatus(group?.expectedStatus)
+    }
+
+    private func closeProfileConnectionsAfterRoutingChange(
+        using client: MihomoAPIClient,
+        profileID: ProfileID
+    ) async {
+        guard closeConnectionsOnRoutingChange else { return }
+        do {
+            try await client.closeAllConnections()
+            appendSupervisorLog(
+                "Closed existing \(profileDisplayName(profileID)) connections after the routing selection changed."
+            )
+        } catch {
+            let message =
+                "\(profileDisplayName(profileID)) routing changed, but existing connections could not be closed: \(error.localizedDescription)"
+            errorMessage = message
+            appendSupervisorLog(message)
         }
     }
 
@@ -5237,6 +5833,12 @@ final class AppModel {
         proxyDelays = [:]
         contextualProxyDelays = [:]
         proxyProfileStructure = .empty
+        if let activeProfileID {
+            invalidateProfileProxyWorkspace(
+                activeProfileID,
+                state: .unavailable(.primaryControllerNotReady)
+            )
+        }
         rules = []
         rulesLastLoadedAt = nil
         proxyProviders = []
@@ -5413,6 +6015,14 @@ final class AppModel {
                 httpPort: httpPort,
                 socksPort: socksPort
             )
+            if let dedicatedPort = activeProfileDedicatedMixedListener.map({
+                Int($0.port)
+            }) {
+                try await localPortProbe.waitUntilProxyProtocols(
+                    httpPort: dedicatedPort,
+                    socksPort: dedicatedPort
+                )
+            }
             if activeNetworkExtensionMihomoListener != nil {
                 try await localPortProbe.waitUntilListening(
                     ports: Set(try activeNetworkExtensionRouteProxyEndpoints().map {
@@ -5607,6 +6217,7 @@ final class AppModel {
                 let currentActivitiesByIdentifier = appRoutingActivitiesByIdentifier
                 let currentRuleStatistics = appRoutingRuleStatistics
                 let currentRateTracker = appRoutingTrafficRateTracker
+                let defaultProfileID = activeProfileID
                 let sampledAt = Date()
                 let worker = Task.detached(priority: .utility) {
                     Self.processAppRoutingActivities(
@@ -5615,6 +6226,7 @@ final class AppModel {
                         currentActivitiesByIdentifier: currentActivitiesByIdentifier,
                         currentRuleStatistics: currentRuleStatistics,
                         currentRateTracker: currentRateTracker,
+                        defaultProfileID: defaultProfileID,
                         sampledAt: sampledAt
                     )
                 }
@@ -5939,6 +6551,7 @@ final class AppModel {
         currentActivitiesByIdentifier: [UUID: AppRoutingActivity],
         currentRuleStatistics: [String: AppRoutingRuleStatistics],
         currentRateTracker: AppRoutingTrafficRateTracker,
+        defaultProfileID: ProfileID?,
         sampledAt: Date
     ) -> AppRoutingActivityProcessingResult {
         var activities = currentActivities
@@ -5978,6 +6591,7 @@ final class AppModel {
         var rateTracker = currentRateTracker
         let trafficRates = rateTracker.ingest(
             activities,
+            defaultProfileID: defaultProfileID,
             at: sampledAt
         )
         let activeCount = activities.count { $0.isLiveManagedFlow }
@@ -6105,11 +6719,13 @@ final class AppModel {
                 FlowLedgerClosedConnection(connection: $0.connection, closedAt: $0.closedAt)
             }
             let activities = appRoutingActivities
+            let defaultProfileID = activeProfileID
             let worker = Task.detached(priority: .utility) {
                 FlowLedger(
                     activeConnections: activeConnections,
                     recentlyClosedConnections: closedConnections,
-                    appRoutingActivities: activities
+                    appRoutingActivities: activities,
+                    defaultProfileID: defaultProfileID
                 )
             }
             let ledger = await withTaskCancellationHandler {
@@ -6434,6 +7050,16 @@ final class AppModel {
         if proxyGroups != nextProxyGroups {
             proxyGroups = nextProxyGroups
         }
+        if let activeProfileID, let runtimeConfig {
+            let snapshot = ProfileProxyWorkspaceSnapshotBuilder().build(
+                profileID: activeProfileID,
+                runtimeConfig: runtimeConfig,
+                collection: collection,
+                profileStructure: profileStructure,
+                measuredDelays: profileProxyMeasuredDelays[activeProfileID] ?? [:]
+            )
+            profileProxyWorkspaceStates[activeProfileID] = .ready(snapshot)
+        }
     }
 
     func proxyGroups(forRoutingMode rawMode: String) -> [MihomoProxy] {
@@ -6722,6 +7348,18 @@ final class AppModel {
         networkCapturePreferences.enabled ? networkExtensionMihomoListener : nil
     }
 
+    private var activeProfileDedicatedMixedListener:
+        ManagedProfileMixedListenerConfiguration?
+    {
+        guard let activeProfileID,
+              let session = profileSessionSpec(for: activeProfileID),
+              session.enabled
+        else { return nil }
+        return try? ManagedProfileMixedListenerConfiguration(
+            port: session.mixedPort
+        )
+    }
+
     private func primarySourceBoundListenerPorts(
         profileID: ProfileID
     ) async throws -> Set<Int> {
@@ -6734,7 +7372,8 @@ final class AppModel {
         let sourceCandidate = try composer.applying(
             effectiveRuntimeOverrides(for: profileID),
             to: managedSourceData,
-            networkExtensionListener: nil
+            networkExtensionListener: nil,
+            profileMixedListener: activeProfileDedicatedMixedListener
         )
         return try composer.boundListenerPorts(in: sourceCandidate)
     }
@@ -6794,17 +7433,33 @@ final class AppModel {
         plan.sessions.removeAll { !knownProfileIDs.contains($0.profileID) }
 
         if let activeProfileID {
-            if let index = plan.sessions.firstIndex(where: {
-                $0.profileID == activeProfileID
-            }) {
-                plan.sessions[index].enabled = true
-            } else {
+            // A fresh virtual Default Profile adopts the source Profile's
+            // existing Mixed port when it is safe. This preserves the address
+            // users and developer tools already configured, while the real
+            // Profile receives a separate dedicated port below.
+            if plan.sessions.isEmpty,
+               let profileStore,
+               let data = try? await profileStore.configurationData(
+                   for: activeProfileID
+               ),
+               let ports = try? RuntimeConfigurationComposer().listenerPorts(
+                   in: data
+               ),
+               let sourceMixedPort = ports.mixedPort,
+               (1...65_535).contains(sourceMixedPort),
+               localPortProbe.isAvailableTCPAndUDP(port: sourceMixedPort) {
+                plan.defaultMixedPort = sourceMixedPort
+            }
+            if !plan.sessions.contains(where: { $0.profileID == activeProfileID }) {
                 let port = try await preferredMixedPort(
                     for: activeProfileID,
-                    excluding: Set(plan.sessions.map(\.mixedPort))
+                    excluding: Set(
+                        plan.sessions.map(\.mixedPort) + [plan.defaultMixedPort]
+                    )
                 )
                 plan.sessions.append(ProfileSessionSpec(
                     profileID: activeProfileID,
+                    enabled: false,
                     mixedPort: port
                 ))
             }
@@ -6821,6 +7476,29 @@ final class AppModel {
         profileRuntimePlan.sessions.first { $0.profileID == profileID }
     }
 
+    func setProfileMixedPortEnabled(
+        profileID: ProfileID,
+        enabled: Bool
+    ) async throws {
+        let mixedPort: Int
+        if let session = profileSessionSpec(for: profileID) {
+            mixedPort = session.mixedPort
+        } else {
+            mixedPort = try await preferredMixedPort(
+                for: profileID,
+                excluding: Set(
+                    profileRuntimePlan.sessions.map(\.mixedPort)
+                        + [profileRuntimePlan.defaultMixedPort]
+                )
+            )
+        }
+        try await updateProfileRuntime(
+            profileID: profileID,
+            enabled: enabled,
+            mixedPort: mixedPort
+        )
+    }
+
     func updateProfileRuntime(
         profileID: ProfileID,
         enabled: Bool,
@@ -6833,9 +7511,6 @@ final class AppModel {
         guard profiles.contains(where: { $0.id == profileID }),
               let store = profileRuntimePlanStore else {
             throw AppModelError.profileStoreUnavailable
-        }
-        guard profileID != activeProfileID || enabled else {
-            throw AppModelError.primaryProfileCannotBeDisabled
         }
         if !enabled, networkCapturePreferences.snapshot.rules.contains(where: { rule in
             guard rule.enabled,
@@ -6969,12 +7644,6 @@ final class AppModel {
         for profileID: ProfileID,
         excluding usedPorts: Set<Int>
     ) async throws -> Int {
-        if profileID == activeProfileID,
-           let override = runtimeOverrides.ports.mixedPort,
-           (1...65_535).contains(override),
-           !usedPorts.contains(override) {
-            return override
-        }
         if let profileStore,
            let data = try? await profileStore.configurationData(for: profileID),
            let configured = try? RuntimeConfigurationComposer().listenerPorts(in: data),
@@ -7013,7 +7682,9 @@ final class AppModel {
             )
         overrides.ports.port = 0
         overrides.ports.socksPort = 0
-        overrides.ports.mixedPort = profileSessionSpec(for: profileID)?.mixedPort
+        overrides.ports.mixedPort = profileID == activeProfileID
+            ? profileRuntimePlan.defaultMixedPort
+            : profileSessionSpec(for: profileID)?.mixedPort
         return overrides
     }
 
@@ -7298,7 +7969,7 @@ final class AppModel {
             throw AppModelError.profileStoreUnavailable
         }
         var candidate = profileRuntimePlan
-        var required = Set<ProfileID>([activeProfileID])
+        var required = Set<ProfileID>()
         for rule in rules where rule.enabled {
             guard case let .mihomo(route) = rule.action,
                   let routingProfileID = route.routingProfileID else { continue }
@@ -7311,22 +7982,34 @@ final class AppModel {
             required.insert(profileID)
         }
 
-        var usedPorts = Set(candidate.sessions.map(\.mixedPort))
+        var usedPorts = Set(
+            candidate.sessions.map(\.mixedPort) + [candidate.defaultMixedPort]
+        )
+        if !candidate.sessions.contains(where: { $0.profileID == activeProfileID }) {
+            let port = try await preferredMixedPort(
+                for: activeProfileID,
+                excluding: usedPorts
+            )
+            usedPorts.insert(port)
+            candidate.sessions.append(ProfileSessionSpec(
+                profileID: activeProfileID,
+                enabled: false,
+                mixedPort: port
+            ))
+        }
         for profileID in required {
             if let index = candidate.sessions.firstIndex(where: {
                 $0.profileID == profileID
             }) {
-                candidate.sessions[index].enabled = true
+                if !candidate.sessions[index].enabled {
+                    throw AppModelError.profileMixedPortDisabled(
+                        profileDisplayName(profileID)
+                    )
+                }
             } else {
-                let port = try await preferredMixedPort(
-                    for: profileID,
-                    excluding: usedPorts
+                throw AppModelError.profileMixedPortDisabled(
+                    profileDisplayName(profileID)
                 )
-                usedPorts.insert(port)
-                candidate.sessions.append(ProfileSessionSpec(
-                    profileID: profileID,
-                    mixedPort: port
-                ))
             }
         }
         candidate.primaryProfileID = activeProfileID
@@ -7478,11 +8161,7 @@ final class AppModel {
         if runtimeOverrides.ports.mixedPort != nil {
             return .override
         }
-        guard let activeProfileID,
-              let plannedPort = profileSessionSpec(for: activeProfileID)?.mixedPort
-        else {
-            return .managedFallback
-        }
+        let plannedPort = profileRuntimePlan.defaultMixedPort
         guard let profilePort = positivePort(activeProfileListenerPorts.mixedPort ?? 0) else {
             return .managedFallback
         }
@@ -7562,6 +8241,12 @@ private extension AppModel.Operation {
              .clearProxyOverride,
              .measureDelay,
              .measureGroupDelay,
+             .refreshProfileProxyWorkspace,
+             .changeProfileMode,
+             .selectProfileProxy,
+             .clearProfileProxyOverride,
+             .measureProfileProxyDelay,
+             .measureProfileGroupDelay,
              .refreshRules,
              .refreshProviders,
              .updateProxyProvider,
@@ -7580,6 +8265,12 @@ private extension AppModel.Operation {
              .clearProxyOverride,
              .measureDelay,
              .measureGroupDelay,
+             .refreshProfileProxyWorkspace,
+             .changeProfileMode,
+             .selectProfileProxy,
+             .clearProfileProxyOverride,
+             .measureProfileProxyDelay,
+             .measureProfileGroupDelay,
              .refreshRules,
              .refreshProviders,
              .updateProxyProvider,
@@ -7670,6 +8361,7 @@ private enum AppModelError: LocalizedError {
     case primaryProfileCannotBeDisabled
     case profileRequiredByAppRouting(String)
     case appRoutingProfileUnavailable(String)
+    case profileMixedPortDisabled(String)
     case profileMixedPortUnavailable(String, Int)
     case primaryListenerPortConflict([Int])
 
@@ -7709,6 +8401,8 @@ private enum AppModelError: LocalizedError {
             "\(name) is still used by an enabled App Routing rule. Change or disable that rule first."
         case let .appRoutingProfileUnavailable(identifier):
             "App Routing targets profile \(identifier), but that profile is no longer available."
+        case let .profileMixedPortDisabled(name):
+            "\(name) is selected by App Routing, but its Mixed port is off. Open the Mixed port or choose another profile."
         case let .profileMixedPortUnavailable(name, port):
             "\(name) cannot start because Mixed port \(port) is already in use."
         case let .primaryListenerPortConflict(ports):
