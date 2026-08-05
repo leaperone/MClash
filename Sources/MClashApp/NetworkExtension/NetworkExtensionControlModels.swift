@@ -104,6 +104,39 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         }
         return configuration
     }
+
+    /// A live update may add private Mihomo routes, but it must never move or
+    /// re-key an endpoint that an existing Transparent/DNS relay already
+    /// captured. AppModel keeps removed routes as an idle listener superset
+    /// until the next cold start, so every live topology change is monotonic.
+    func preservesExistingRouteEndpoints(
+        from previous: NetworkExtensionRuntimeConfiguration
+    ) -> Bool {
+        switch (
+            previous.encodedMihomoRouteProxyCatalog,
+            encodedMihomoRouteProxyCatalog
+        ) {
+        case (nil, nil):
+            return true
+        case let (previousData?, candidateData?):
+            guard let previousEndpoints = try? MihomoRouteProxyCatalog.decode(
+                previousData
+            ),
+            let candidateEndpoints = try? MihomoRouteProxyCatalog.decode(
+                candidateData
+            ) else {
+                return false
+            }
+            let candidateByRoute = Dictionary(
+                uniqueKeysWithValues: candidateEndpoints.map { ($0.route, $0) }
+            )
+            return previousEndpoints.allSatisfy {
+                candidateByRoute[$0.route] == $0
+            }
+        default:
+            return false
+        }
+    }
 }
 
 enum NetworkExtensionRuntimeConfigurationError: Error, Equatable, LocalizedError, Sendable {

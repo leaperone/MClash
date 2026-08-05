@@ -202,11 +202,14 @@ struct SettingsView: View {
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(.quaternary, in: Capsule())
-                                if listener.enabled {
+                                if dedicatedPortIsLive(listener) {
                                     CopyableValueButton(
                                         value: "127.0.0.1:\(listener.port)",
                                         accessibilityName: "\(listener.name) proxy address"
                                     )
+                                } else if listener.enabled {
+                                    Text("Unavailable")
+                                        .foregroundStyle(.secondary)
                                 } else {
                                     Text("Disabled")
                                         .foregroundStyle(.secondary)
@@ -447,6 +450,17 @@ struct SettingsView: View {
         case let .proxyNode(name): "Proxy Node · \(name)"
         }
         return "\(profile) · \(route)"
+    }
+
+    private func dedicatedPortIsLive(
+        _ listener: ProfileRouteListenerSpec
+    ) -> Bool {
+        guard listener.enabled, model.isConnected else { return false }
+        if listener.profileID == model.activeProfileID { return true }
+        if case .running = model.auxiliaryCoreStates[listener.profileID] {
+            return true
+        }
+        return false
     }
 
     @ViewBuilder

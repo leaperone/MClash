@@ -3708,6 +3708,20 @@ final class AppModel {
         let previousProfileListeners = networkExtensionProfileListeners
         let previousRuntimePlan = profileRuntimePlan
         let wasConnected = isConnected || isBusy
+        let requestedDNSEnabled = dnsEnabled ?? previous.dnsEnabled
+        let canAttemptLiveUpdate: Bool = {
+            guard previous.enabled,
+                  enabled,
+                  wasConnected,
+                  isConnected,
+                  controllerIsReady,
+                  requestedDNSEnabled == previous.dnsEnabled,
+                  case let .on(activeRevision) = networkCaptureState,
+                  activeRevision == previous.snapshot.revision
+            else { return false }
+            return true
+        }()
+        let attemptedLiveUpdate = canAttemptLiveUpdate
         do {
             if enabled {
                 try await prepareProfileRoutingSessions(
@@ -3747,23 +3761,26 @@ final class AppModel {
                 return
             }
 
-            // Matcher, priority, and action edits can be committed directly to
-            // the running provider when the existing private Mihomo listeners
-            // already cover every requested route. Existing relays retain the
-            // plan they started with; new flows use the new revision.
-            if previous.enabled,
-               enabled,
-               wasConnected,
-               isConnected,
-               controllerIsReady,
+            // Matcher, priority, and action edits are committed directly to
+            // the running data plane. Missing private routes are appended to
+            // the affected Mihomo session through its controller; removed
+            // routes remain as an idle listener superset until a cold start.
+            // Existing relays retain the plan they started with, while new
+            // flows use the new revision.
+            if canAttemptLiveUpdate,
                candidate.dnsEnabled == previous.dnsEnabled,
-               networkExtensionMihomoListener == previousListener,
-               networkExtensionProfileListeners == previousProfileListeners,
                case let .on(activeRevision) = networkCaptureState,
                activeRevision == previous.snapshot.revision,
                let listener = networkExtensionMihomoListener {
+                try await hotReloadActiveProfileRoutingConfigurationIfNeeded(
+                    profileID: activeProfileID
+                )
                 try await localPortProbe.waitUntilListening(
-                    ports: Set(listener.routeListeners.map { Int($0.port) })
+                    ports: Set(
+                        try activeNetworkExtensionRouteProxyEndpoints().map {
+                            Int($0.port)
+                        }
+                    )
                 )
                 let configuration = try NetworkExtensionRuntimeConfiguration(
                     preferences: candidate,
@@ -3886,6 +3903,82 @@ final class AppModel {
                 rollbackFailures.append(
                     "saved App Routing settings: \(error.localizedDescription)"
                 )
+            }
+
+            if attemptedLiveUpdate {
+                guard rollbackFailures.isEmpty else {
+                    let transactionError = NetworkCaptureTransactionFailure(
+                        updateReason: primaryError.localizedDescription,
+                        rollbackReason: "The previous durable rules could not be restored without stopping Mihomo: \(rollbackFailures.joined(separator: "; "))"
+                    )
+                    networkCaptureRollbackFailure = transactionError.localizedDescription
+                    networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                        completedAt: Date(),
+                        duration: Date().timeIntervalSince(transactionStartedAt),
+                        outcome: .rollbackFailed(transactionError.localizedDescription)
+                    )
+                    appendSupervisorLog(
+                        "App Routing durable rollback failed; the running cores were intentionally left online. \(transactionError.localizedDescription)"
+                    )
+                    throw transactionError
+                }
+                do {
+                    try await prepareProfileRoutingSessions(
+                        for: previous.enabled ? previous.snapshot.rules : [],
+                        captureEnabled: previous.enabled,
+                        startAuxiliary: wasConnected
+                    )
+                    try await hotReloadActiveProfileRoutingConfigurationIfNeeded(
+                        profileID: activeProfileID
+                    )
+                    guard let listener = networkExtensionMihomoListener else {
+                        throw AppModelError.profileActivationFailed(
+                            "The previous private App Routing listener could not be restored."
+                        )
+                    }
+                    let rollbackConfiguration = try NetworkExtensionRuntimeConfiguration(
+                        preferences: networkCapturePreferences,
+                        mihomoListener: listener,
+                        routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints()
+                    )
+                    let rollbackOutcome = try await networkExtensionControl
+                        .updateRuntimeConfiguration(rollbackConfiguration)
+                    guard rollbackOutcome == .running else {
+                        throw AppModelError.profileActivationFailed(
+                            "The previous App Routing revision did not return to a running state."
+                        )
+                    }
+                    networkCaptureState = .on(
+                        revision: rollbackConfiguration.revision
+                    )
+                    networkCaptureRollbackFailure = nil
+                    networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                        completedAt: Date(),
+                        duration: Date().timeIntervalSince(transactionStartedAt),
+                        outcome: .rejectedAndRolledBack(
+                            primaryError.localizedDescription
+                        )
+                    )
+                    appendSupervisorLog(
+                        "The App Routing live update was rejected; the previous rules were restored without restarting Mihomo."
+                    )
+                } catch {
+                    let transactionError = NetworkCaptureTransactionFailure(
+                        updateReason: primaryError.localizedDescription,
+                        rollbackReason: "Live rollback failed without stopping Mihomo: \(error.localizedDescription)"
+                    )
+                    networkCaptureRollbackFailure = transactionError.localizedDescription
+                    networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
+                        completedAt: Date(),
+                        duration: Date().timeIntervalSince(transactionStartedAt),
+                        outcome: .rollbackFailed(transactionError.localizedDescription)
+                    )
+                    appendSupervisorLog(
+                        "App Routing live rollback failed; the running cores were intentionally left online. \(transactionError.localizedDescription)"
+                    )
+                    throw transactionError
+                }
+                throw primaryError
             }
 
             if isConnected || isBusy {
@@ -8030,6 +8123,19 @@ final class AppModel {
                         includesLegacyProfileRules: false
                     )
                 }
+            let requestedProfileIDs = Set(requests.map(\.profileID))
+            requests += networkExtensionProfileListeners.compactMap {
+                profileID, existing in
+                guard !requestedProfileIDs.contains(profileID),
+                      profiles.contains(where: { $0.id == profileID })
+                else { return nil }
+                return (
+                    profileID: profileID,
+                    routes: Set<MihomoRoute>(),
+                    includesLegacyProfileRules:
+                        existing.includesLegacyProfileRules
+                )
+            }
             requests.sort { $0.profileID.description < $1.profileID.description }
 
             var listenerPorts = Set(
@@ -8043,7 +8149,8 @@ final class AppModel {
             var requestsNeedingPorts: [(
                 profileID: ProfileID,
                 routes: Set<MihomoRoute>,
-                includesLegacyProfileRules: Bool
+                includesLegacyProfileRules: Bool,
+                existing: NetworkExtensionMihomoListenerConfiguration?
             )] = []
             for request in requests {
                 if let existing = reusableNetworkExtensionMihomoListener(
@@ -8057,12 +8164,29 @@ final class AppModel {
                         existing.routeListeners.map { Int($0.port) }
                     )
                 } else {
-                    requestsNeedingPorts.append(request)
+                    let expandable = compatibleNetworkExtensionMihomoListener(
+                        includesLegacyProfileRules: request.includesLegacyProfileRules,
+                        existing: networkExtensionProfileListeners[request.profileID],
+                        excluding: listenerPorts
+                    )
+                    requestsNeedingPorts.append((
+                        profileID: request.profileID,
+                        routes: request.routes,
+                        includesLegacyProfileRules: request.includesLegacyProfileRules,
+                        existing: expandable
+                    ))
                 }
             }
 
             let requiredPortCount = requestsNeedingPorts.reduce(into: 0) {
-                $0 += $1.routes.count + ($1.includesLegacyProfileRules ? 1 : 0)
+                var requiredRoutes = $1.routes
+                if $1.includesLegacyProfileRules {
+                    requiredRoutes.insert(.profileRules)
+                }
+                let existingRoutes = Set(
+                    $1.existing?.routeListeners.map(\.route) ?? []
+                )
+                $0 += requiredRoutes.subtracting(existingRoutes).count
             }
             var allocatedPorts: ArraySlice<Int> = requiredPortCount > 0
                 ? try localPortProbe.availableTCPAndUDPPorts(
@@ -8071,15 +8195,30 @@ final class AppModel {
                 )[...]
                 : []
             for request in requestsNeedingPorts {
-                let count = request.routes.count
-                    + (request.includesLegacyProfileRules ? 1 : 0)
+                var requiredRoutes = request.routes
+                if request.includesLegacyProfileRules {
+                    requiredRoutes.insert(.profileRules)
+                }
+                let existingRoutes = Set(
+                    request.existing?.routeListeners.map(\.route) ?? []
+                )
+                let count = requiredRoutes.subtracting(existingRoutes).count
                 let ports = Array(allocatedPorts.prefix(count))
                 allocatedPorts = allocatedPorts.dropFirst(count)
-                let listener = try makeNetworkExtensionMihomoListener(
-                    routes: request.routes,
-                    includesLegacyProfileRules: request.includesLegacyProfileRules,
-                    ports: ports
-                )
+                let listener = if let existing = request.existing {
+                    try expandNetworkExtensionMihomoListener(
+                        routes: request.routes,
+                        includesLegacyProfileRules: request.includesLegacyProfileRules,
+                        existing: existing,
+                        ports: ports
+                    )
+                } else {
+                    try makeNetworkExtensionMihomoListener(
+                        routes: request.routes,
+                        includesLegacyProfileRules: request.includesLegacyProfileRules,
+                        ports: ports
+                    )
+                }
                 listeners[request.profileID] = listener
                 listenerPorts.formUnion(listener.routeListeners.map { Int($0.port) })
             }
@@ -8095,6 +8234,7 @@ final class AppModel {
             primaryProfileID: nil
         )
         var launchConfigurations: [ProfileID: CoreLaunchConfiguration] = [:]
+        var preexistingRunningProfiles = Set<ProfileID>()
         if startAuxiliary {
             let binaryURL = try binaryLocator.locate()
             var reservedControllerPorts = Set(
@@ -8111,12 +8251,20 @@ final class AppModel {
             )
             for spec in auxiliarySpecs {
                 let fleetState = await coreFleet.state(for: spec.profileID)
+                let runningSession: CoreSession? = if case let .running(session)? = fleetState {
+                    session
+                } else {
+                    nil
+                }
+                if runningSession != nil {
+                    preexistingRunningProfiles.insert(spec.profileID)
+                }
                 let sessionOwnsPort: Bool
-                if case let .running(session)? = fleetState {
+                if let runningSession {
                     do {
                         let client = try MihomoAPIClient(
-                            baseURL: session.endpoint,
-                            secret: session.secret
+                            baseURL: runningSession.endpoint,
+                            secret: runningSession.secret
                         )
                         sessionOwnsPort = try await client.fetchConfig().mixedPort
                             == spec.mixedPort
@@ -8153,6 +8301,38 @@ final class AppModel {
                 let configurationURL = profileLayout.runtimeConfigurationURL(
                     for: spec.profileID
                 )
+                if let runningSession,
+                   let existing = auxiliaryLaunchConfigurations[spec.profileID] {
+                    let client = try MihomoAPIClient(
+                        baseURL: runningSession.endpoint,
+                        secret: runningSession.secret
+                    )
+                    _ = try await hotReloadRuntimeConfiguration(
+                        runtimeData,
+                        destinationURL: configurationURL,
+                        stagingDirectory: profileLayout.runtimeStagingDirectory(
+                            for: spec.profileID
+                        ),
+                        client: client,
+                        verification: {
+                            _ = try await client.fetchConfig()
+                            if let listener,
+                               let authentication = listener.authentication {
+                                try await self.localPortProbe
+                                    .waitUntilAuthenticatedSOCKS5Proxy(
+                                        ports: Set(
+                                            listener.routeListeners.map {
+                                                Int($0.port)
+                                            }
+                                        ),
+                                        authentication: authentication
+                                    )
+                            }
+                        }
+                    )
+                    launchConfigurations[spec.profileID] = existing
+                    continue
+                }
                 let changed = try await persistAuxiliaryRuntimeConfiguration(
                     runtimeData,
                     profileID: spec.profileID,
@@ -8237,9 +8417,11 @@ final class AppModel {
                         collection: proxies
                     )
                 } catch {
-                    _ = await coreFleet.stop(profileID: spec.profileID)
-                    auxiliaryCoreStates = await coreFleet.states()
-                    auxiliaryLaunchConfigurations[spec.profileID] = nil
+                    if !preexistingRunningProfiles.contains(spec.profileID) {
+                        _ = await coreFleet.stop(profileID: spec.profileID)
+                        auxiliaryCoreStates = await coreFleet.states()
+                        auxiliaryLaunchConfigurations[spec.profileID] = nil
+                    }
                     throw error
                 }
             }
@@ -8356,6 +8538,117 @@ final class AppModel {
         }
     }
 
+    /// Replaces a running Mihomo configuration through its authenticated
+    /// controller without stopping the process. The runtime file keeps an
+    /// uncommitted atomic backup until the controller accepts the payload; any
+    /// failure restores both disk and the previous in-process configuration.
+    private func hotReloadRuntimeConfiguration(
+        _ data: Data,
+        destinationURL: URL,
+        stagingDirectory: URL,
+        client: MihomoAPIClient,
+        verification: () async throws -> Void = {}
+    ) async throws -> Bool {
+        let previousData = try Data(contentsOf: destinationURL)
+        guard previousData != data else { return false }
+        guard let payload = String(data: data, encoding: .utf8),
+              let previousPayload = String(data: previousData, encoding: .utf8)
+        else {
+            throw AppModelError.profileActivationFailed(
+                "The generated Mihomo configuration is not valid UTF-8."
+            )
+        }
+
+        let replacer = AtomicFileReplacer()
+        let stagedURL = try await replacer.stage(
+            data: data,
+            in: stagingDirectory,
+            preferredName: "config.yaml"
+        )
+        do {
+            try await makeProfileValidator().validate(configurationAt: stagedURL)
+        } catch {
+            try? FileManager.default.removeItem(at: stagedURL)
+            throw error
+        }
+
+        let receipt = try await replacer.replace(
+            destinationURL: destinationURL,
+            withStagedFile: stagedURL
+        )
+        do {
+            try await client.reloadConfig(payload: payload, force: false)
+            try await verification()
+            try await replacer.commit(receipt)
+            return true
+        } catch {
+            let updateError = error
+            var rollbackFailures: [String] = []
+            do {
+                try await replacer.rollback(receipt)
+            } catch {
+                rollbackFailures.append(
+                    "runtime file: \(error.localizedDescription)"
+                )
+            }
+            do {
+                try await client.reloadConfig(
+                    payload: previousPayload,
+                    force: false
+                )
+                _ = try await client.fetchConfig()
+            } catch {
+                rollbackFailures.append(
+                    "Mihomo controller: \(error.localizedDescription)"
+                )
+            }
+            if !rollbackFailures.isEmpty {
+                throw NetworkCaptureTransactionFailure(
+                    updateReason: updateError.localizedDescription,
+                    rollbackReason: rollbackFailures.joined(separator: "; ")
+                )
+            }
+            throw updateError
+        }
+    }
+
+    private func hotReloadActiveProfileRoutingConfigurationIfNeeded(
+        profileID: ProfileID
+    ) async throws {
+        guard let profileStore, let apiClient else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        let composer = RuntimeConfigurationComposer()
+        let sourceData = try await profileStore.configurationData(for: profileID)
+        let managedSourceData = try composer.sanitizingForManagedSession(sourceData)
+        let runtimeData = try composer.applying(
+            effectiveRuntimeOverrides(for: profileID),
+            to: managedSourceData,
+            networkExtensionListener: activeNetworkExtensionMihomoListener,
+            profileMixedListener: activeProfileDedicatedMixedListener,
+            routeListeners: profileRouteListeners(for: profileID)
+        )
+        _ = try await hotReloadRuntimeConfiguration(
+            runtimeData,
+            destinationURL: profileStore.layout.runtimeConfigurationURL,
+            stagingDirectory: profileStore.layout.runtimeStagingDirectory,
+            client: apiClient,
+            verification: {
+                _ = try await apiClient.fetchConfig()
+                if let listener = self.activeNetworkExtensionMihomoListener,
+                   let authentication = listener.authentication {
+                    try await self.localPortProbe
+                        .waitUntilAuthenticatedSOCKS5Proxy(
+                            ports: Set(
+                                listener.routeListeners.map { Int($0.port) }
+                            ),
+                            authentication: authentication
+                        )
+                }
+            }
+        )
+    }
+
     private func availableTCPPort(excluding ports: Set<Int>) throws -> Int {
         for _ in 0..<64 {
             let port = try localPortProbe.availableTCPPort()
@@ -8383,21 +8676,80 @@ final class AppModel {
         existing: NetworkExtensionMihomoListenerConfiguration?,
         excluding excludedPorts: Set<Int>
     ) -> NetworkExtensionMihomoListenerConfiguration? {
-        guard let existing else { return nil }
-        let existingPorts = existing.routeListeners.map { Int($0.port) }
-        guard Set(existingPorts).count == existingPorts.count,
-              existingPorts.allSatisfy({ !excludedPorts.contains($0) })
-        else { return nil }
+        guard let existing = compatibleNetworkExtensionMihomoListener(
+            includesLegacyProfileRules: includesLegacyProfileRules,
+            existing: existing,
+            excluding: excludedPorts
+        ) else { return nil }
         let availableRoutes = Set(existing.routeListeners.map(\.route))
         var requiredRoutes = requestedRoutes
         if includesLegacyProfileRules {
             requiredRoutes.insert(.profileRules)
         }
-        guard existing.includesLegacyProfileRules == includesLegacyProfileRules,
-              requiredRoutes == availableRoutes else {
+        guard requiredRoutes.isSubset(of: availableRoutes) else {
             return nil
         }
         return existing
+    }
+
+    private func compatibleNetworkExtensionMihomoListener(
+        includesLegacyProfileRules: Bool,
+        existing: NetworkExtensionMihomoListenerConfiguration?,
+        excluding excludedPorts: Set<Int>
+    ) -> NetworkExtensionMihomoListenerConfiguration? {
+        guard let existing else { return nil }
+        let existingPorts = existing.routeListeners.map { Int($0.port) }
+        guard existing.includesLegacyProfileRules == includesLegacyProfileRules,
+              Set(existingPorts).count == existingPorts.count,
+              existingPorts.allSatisfy({ !excludedPorts.contains($0) })
+        else { return nil }
+        return existing
+    }
+
+    private func expandNetworkExtensionMihomoListener(
+        routes requestedRoutes: Set<MihomoRoute>,
+        includesLegacyProfileRules: Bool,
+        existing: NetworkExtensionMihomoListenerConfiguration,
+        ports: [Int]
+    ) throws -> NetworkExtensionMihomoListenerConfiguration {
+        var requiredRoutes = requestedRoutes
+        if includesLegacyProfileRules {
+            requiredRoutes.insert(.profileRules)
+        }
+        guard requiredRoutes.count <= Self.maximumDedicatedMihomoRoutes
+                + (includesLegacyProfileRules ? 1 : 0)
+        else {
+            throw AppModelError.tooManyNetworkCaptureRoutes(
+                actual: requestedRoutes.count,
+                maximum: Self.maximumDedicatedMihomoRoutes
+            )
+        }
+
+        var routePorts = Dictionary(
+            uniqueKeysWithValues: existing.routeListeners.map {
+                ($0.route, Int($0.port))
+            }
+        )
+        let missingRoutes = requiredRoutes
+            .subtracting(routePorts.keys)
+            .sorted {
+                Self.mihomoRouteSortKey($0) < Self.mihomoRouteSortKey($1)
+            }
+        guard missingRoutes.count == ports.count,
+              Set(ports).count == ports.count,
+              ports.allSatisfy({ (1...65_535).contains($0) })
+        else {
+            throw AppModelError.localProxyPortsUnavailable
+        }
+        for (route, port) in zip(missingRoutes, ports) {
+            routePorts[route] = port
+        }
+        return try NetworkExtensionMihomoListenerConfiguration(
+            port: Int(existing.port),
+            authentication: existing.authentication,
+            routePorts: routePorts,
+            includesLegacyProfileRules: includesLegacyProfileRules
+        )
     }
 
     private func makeNetworkExtensionMihomoListener(

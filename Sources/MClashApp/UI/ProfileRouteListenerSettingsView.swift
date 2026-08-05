@@ -442,6 +442,10 @@ struct ProfileRouteListenerSettingsEditor: View {
     private func loadCatalog(for profileID: ProfileID) async {
         guard !loadingCatalogs.contains(profileID) else { return }
         loadingCatalogs.insert(profileID)
+        if profileID == model.activeProfileID
+            || model.profileSessionSpec(for: profileID)?.enabled == true {
+            _ = await model.refreshProxyWorkspace(for: profileID)
+        }
         let catalog = await model.profileRouteTargetCatalog(for: profileID)
         catalogs[profileID] = catalog
         loadingCatalogs.remove(profileID)

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MClashNetworkShared
 
@@ -167,13 +168,13 @@ public struct NetworkExtensionMihomoListenerConfiguration: Equatable, Sendable {
     }
 
     var listenerDescriptors: [ListenerDescriptor] {
-        routeListeners.enumerated().flatMap { index, listener in
+        routeListeners.flatMap { listener in
             let names: [(String, String)]
             if listener.route == .profileRules {
                 names = [(Self.ipv4ListenerName, Self.ipv4Host),
                          (Self.ipv6ListenerName, Self.ipv6Host)]
             } else {
-                let suffix = index + 1
+                let suffix = Self.routeIdentitySuffix(listener.route)
                 names = [
                     ("\(Self.listenerNamePrefix)-route-\(suffix)-ipv4", Self.ipv4Host),
                     ("\(Self.listenerNamePrefix)-route-\(suffix)-ipv6", Self.ipv6Host),
@@ -193,6 +194,13 @@ public struct NetworkExtensionMihomoListenerConfiguration: Equatable, Sendable {
 
     private static func routeSortKey(_ route: MihomoRoute) -> String {
         route.stableSortKey
+    }
+
+    private static func routeIdentitySuffix(_ route: MihomoRoute) -> String {
+        SHA256.hash(data: Data(route.stableSortKey.utf8))
+            .prefix(8)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }
 

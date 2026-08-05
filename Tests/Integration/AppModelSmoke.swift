@@ -31,13 +31,48 @@ struct AppModelSmoke {
         defaults.set(false, forKey: AppModel.autoEnableSystemProxyKey)
         defer { defaults.removePersistentDomain(forName: preferencesSuiteName) }
 
+        let appRoutingFixtureURL = stateRoot.appending(
+            path: "app-routing-routes.yaml",
+            directoryHint: .notDirectory
+        )
+        try Data(
+            """
+            mixed-port: 17890
+            allow-lan: false
+            mode: rule
+            log-level: info
+            ipv6: false
+
+            proxies:
+              - name: Test Node
+                type: socks5
+                server: 127.0.0.1
+                port: 9
+            proxy-groups:
+              - name: Pinned Node
+                type: select
+                proxies:
+                  - Test Node
+                  - DIRECT
+              - name: Reject Group
+                type: select
+                proxies:
+                  - REJECT
+            sub-rules:
+              reject-entry:
+                - MATCH,REJECT
+            rules:
+              - MATCH,DIRECT
+            """.utf8
+        ).write(to: appRoutingFixtureURL, options: .atomic)
+
         let profileStore = try ProfileStore(layout: layout)
         let startupProfile = try await profileStore.importProfile(
-            from: repository.appending(path: "Tests/Fixtures/minimal.yaml"),
+            from: appRoutingFixtureURL,
             name: "Startup profile"
         )
         let auxiliaryProfile = try await profileStore.importProfile(
-            from: repository.appending(path: "Tests/Fixtures/minimal.yaml"),
+            from: appRoutingFixtureURL,
             name: "Auxiliary profile"
         )
         _ = try await profileStore.activateProfile(
@@ -53,6 +88,7 @@ struct AppModelSmoke {
         _ = try await NetworkCaptureConfigurationStore(
             profileLayout: layout
         ).replaceRules([], enabled: false, dnsEnabled: true)
+        let networkExtensionControl = InertNetworkExtensionControl()
         let model = AppModel(
             binaryLocator: locator,
             secretStore: StaticSecretProvider(),
@@ -60,7 +96,7 @@ struct AppModelSmoke {
             profileDirectoryLayout: layout,
             profileStoreOverride: profileStore,
             preferenceDefaults: defaults,
-            networkExtensionControl: InertNetworkExtensionControl(),
+            networkExtensionControl: networkExtensionControl,
             networkEnvironmentMonitor: InertNetworkEnvironmentMonitor()
         )
 
@@ -71,19 +107,20 @@ struct AppModelSmoke {
                 try await Task.sleep(for: .milliseconds(100))
             }
 
+            let initialMixedPort = model.profileRuntimePlan.defaultMixedPort
             guard model.isConnected,
                   model.runningSession?.version.hasPrefix("alpha-") == true,
-                  model.runtimeConfig?.mixedPort == 17_890,
+                  model.runtimeConfig?.mixedPort == initialMixedPort,
                   model.localHTTPListenerPort == nil,
                   model.localSOCKSListenerPort == nil,
-                  model.localMixedListenerPort == 17_890,
-                  model.localHTTPProxyPort == 17_890,
-                  model.localSOCKSProxyPort == 17_890,
+                  model.localMixedListenerPort == initialMixedPort,
+                  model.localHTTPProxyPort == initialMixedPort,
+                  model.localSOCKSProxyPort == initialMixedPort,
                   model.localListenerEndpoints == [
                       AppModel.LocalListenerEndpoint(
                           kind: .mixed,
                           host: "127.0.0.1",
-                          port: 17_890,
+                          port: initialMixedPort,
                           source: .profile
                       )
                   ],
@@ -101,7 +138,7 @@ struct AppModelSmoke {
             let stableDefaultMixedPort = model.profileRuntimePlan.defaultMixedPort
 
             let routePorts = try LocalPortProbe().availableTCPAndUDPPorts(
-                count: 3,
+                count: 6,
                 excluding: Set(
                     model.profileRuntimePlan.sessions.map(\.mixedPort)
                         + [model.profileRuntimePlan.defaultMixedPort]
@@ -129,6 +166,27 @@ struct AppModelSmoke {
                     port: routePorts[2],
                     target: .profileRules
                 ),
+                ProfileRouteListenerSpec(
+                    profileID: startupProfile.id,
+                    name: "Sub-rule Reject",
+                    protocolType: .http,
+                    port: routePorts[3],
+                    target: .subRule("reject-entry")
+                ),
+                ProfileRouteListenerSpec(
+                    profileID: startupProfile.id,
+                    name: "GLOBAL Reject",
+                    protocolType: .http,
+                    port: routePorts[4],
+                    target: .global
+                ),
+                ProfileRouteListenerSpec(
+                    profileID: startupProfile.id,
+                    name: "Policy Reject",
+                    protocolType: .http,
+                    port: routePorts[5],
+                    target: .policyGroup("Reject Group")
+                ),
             ]
             for _ in 0..<100 where !model.canPerform(.changeRuntimeSettings) {
                 try await Task.sleep(for: .milliseconds(50))
@@ -153,6 +211,62 @@ struct AppModelSmoke {
             try verifyHTTPProxy(port: routePorts[0])
             try verifySOCKSProxy(port: routePorts[1])
             try verifyProxyProtocols(port: routePorts[2])
+            try verifyHTTPProxyRejected(port: routePorts[3])
+            guard let runningSession = model.runningSession else {
+                throw SmokeFailure.appRoutingContinuitySetupFailed(
+                    "The primary controller disappeared before GLOBAL verification."
+                )
+            }
+            let primaryClient = try MihomoAPIClient(
+                baseURL: runningSession.endpoint,
+                secret: runningSession.secret
+            )
+            try await primaryClient.selectProxy(group: "GLOBAL", proxy: "REJECT")
+            try verifyHTTPProxyRejected(port: routePorts[4])
+            try verifyHTTPProxyRejected(port: routePorts[5])
+
+            let routePlanBeforeRejectedUpdate = model.profileRuntimePlan
+            let routeStartedAtBeforeRejectedUpdate = model.runningSession?.startedAt
+            let occupiedRoutePort = try OccupiedIPv6TCPPort()
+            var occupiedRouteListeners = routeListeners
+            occupiedRouteListeners[0].port = occupiedRoutePort.port
+            do {
+                _ = try await model.applyProfileRouteListeners(
+                    occupiedRouteListeners
+                )
+                throw SmokeFailure.occupiedRouteListenerPortWasAccepted
+            } catch let error as SmokeFailure {
+                throw error
+            } catch {
+                // The candidate must fail before the healthy route listeners
+                // or core session are replaced.
+            }
+            guard model.profileRuntimePlan == routePlanBeforeRejectedUpdate,
+                  model.runningSession?.startedAt
+                    == routeStartedAtBeforeRejectedUpdate else {
+                throw SmokeFailure.routeListenerRollbackFailed
+            }
+            try verifyHTTPProxy(port: routePorts[0])
+            try verifySOCKSProxy(port: routePorts[1])
+
+            var invalidTargetListeners = routeListeners
+            invalidTargetListeners[1].target = .proxyNode("Missing Provider Node")
+            do {
+                _ = try await model.applyProfileRouteListeners(
+                    invalidTargetListeners
+                )
+                throw SmokeFailure.invalidRouteListenerTargetWasAccepted
+            } catch let error as SmokeFailure {
+                throw error
+            } catch {
+                // Target validation must reject the candidate transaction.
+            }
+            guard model.profileRuntimePlan == routePlanBeforeRejectedUpdate,
+                  model.runningSession?.startedAt
+                    == routeStartedAtBeforeRejectedUpdate else {
+                throw SmokeFailure.routeListenerRollbackFailed
+            }
+            try verifySOCKSProxy(port: routePorts[1])
 
             let auxiliaryMixedPort = try LocalPortProbe()
                 .availableTCPAndUDPPorts(count: 1)[0]
@@ -180,6 +294,253 @@ struct AppModelSmoke {
                 throw SmokeFailure.auxiliaryProfileDidNotStart
             }
             try verifyProxyProtocols(port: auxiliaryMixedPort)
+
+            // App Routing rule mutations must not use the disconnect path as a
+            // configuration mechanism. A new route can require a listener
+            // update on one profile, but it must not stop the primary core or
+            // every unrelated auxiliary core. Deleting or disabling the last
+            // reference to a route can safely retain the private listener as a
+            // superset and should not stop any core at all.
+            let baselineRule = try CaptureRule(
+                id: "continuity-baseline",
+                priority: 10,
+                action: .mihomo(.profileRules)
+            )
+            try await model.applyNetworkCaptureRules(
+                [baselineRule],
+                enabled: true,
+                dnsEnabled: false
+            )
+            guard case .on = model.networkCaptureState,
+                  model.isConnected,
+                  model.controllerIsReady else {
+                throw SmokeFailure.appRoutingContinuitySetupFailed(
+                    model.errorMessage ?? "App Routing did not become ready."
+                )
+            }
+            guard let profileRulesEndpoint = await networkExtensionControl
+                .routeEndpoint(.profileRules),
+                let smokeURLString = ProcessInfo.processInfo.environment[
+                    "MCLASH_PROXY_SMOKE_URL"
+                ],
+                let smokeURL = URL(string: smokeURLString) else {
+                throw SmokeFailure.appRoutingContinuitySetupFailed(
+                    "The private profile-rules endpoint was not published."
+                )
+            }
+            let persistentRelay = try PersistentAuthenticatedSOCKSTunnel(
+                endpoint: profileRulesEndpoint,
+                target: smokeURL
+            )
+
+            var continuityFailures: [String] = []
+            let groupRule = try CaptureRule(
+                id: "continuity-first-node-group",
+                priority: 20,
+                action: .mihomo(.group("Pinned Node"))
+            )
+            let beforeFirstGroup = coreContinuitySnapshot(
+                model: model,
+                auxiliaryProfileID: auxiliaryProfile.id
+            )
+            try await model.applyNetworkCaptureRules(
+                [baselineRule, groupRule],
+                enabled: true,
+                dnsEnabled: false
+            )
+            recordUnexpectedCoreStops(
+                operation: "adding the first node-backed group route",
+                before: beforeFirstGroup,
+                after: coreContinuitySnapshot(
+                    model: model,
+                    auxiliaryProfileID: auxiliaryProfile.id
+                ),
+                requireAuxiliaryContinuity: true,
+                into: &continuityFailures
+            )
+            try persistentRelay.verifyHTTPResponse()
+
+            let beforeLastGroupDeletion = coreContinuitySnapshot(
+                model: model,
+                auxiliaryProfileID: auxiliaryProfile.id
+            )
+            try await model.applyNetworkCaptureRules(
+                [baselineRule],
+                enabled: true,
+                dnsEnabled: false
+            )
+            recordUnexpectedCoreStops(
+                operation: "deleting the last node-backed group route",
+                before: beforeLastGroupDeletion,
+                after: coreContinuitySnapshot(
+                    model: model,
+                    auxiliaryProfileID: auxiliaryProfile.id
+                ),
+                requireAuxiliaryContinuity: true,
+                into: &continuityFailures
+            )
+
+            // Re-add the route to establish the precondition for the distinct
+            // enabled -> disabled regression. Its own continuity is covered by
+            // the first-add assertion above.
+            try await model.applyNetworkCaptureRules(
+                [baselineRule, groupRule],
+                enabled: true,
+                dnsEnabled: false
+            )
+            let disabledGroupRule = try CaptureRule(
+                id: groupRule.id,
+                enabled: false,
+                priority: groupRule.priority,
+                sources: groupRule.sources,
+                destinations: groupRule.destinations,
+                protocols: groupRule.protocols,
+                portRanges: groupRule.portRanges,
+                action: groupRule.action,
+                unavailableFallback: groupRule.unavailableFallback
+            )
+            let beforeLastGroupDisable = coreContinuitySnapshot(
+                model: model,
+                auxiliaryProfileID: auxiliaryProfile.id
+            )
+            try await model.applyNetworkCaptureRules(
+                [baselineRule, disabledGroupRule],
+                enabled: true,
+                dnsEnabled: false
+            )
+            recordUnexpectedCoreStops(
+                operation: "disabling the last node-backed group route",
+                before: beforeLastGroupDisable,
+                after: coreContinuitySnapshot(
+                    model: model,
+                    auxiliaryProfileID: auxiliaryProfile.id
+                ),
+                requireAuxiliaryContinuity: true,
+                into: &continuityFailures
+            )
+
+            let failedLiveRule = try CaptureRule(
+                id: "continuity-failed-live-route",
+                priority: 25,
+                action: .mihomo(.global)
+            )
+            let rulesBeforeFailedLiveUpdate = model.networkCapturePreferences
+                .snapshot.rules
+            let beforeFailedLiveUpdate = coreContinuitySnapshot(
+                model: model,
+                auxiliaryProfileID: auxiliaryProfile.id
+            )
+            await networkExtensionControl.failNextRuntimeUpdate()
+            do {
+                try await model.applyNetworkCaptureRules(
+                    [baselineRule, disabledGroupRule, failedLiveRule],
+                    enabled: true,
+                    dnsEnabled: false
+                )
+                throw SmokeFailure.failedLiveRouteWasAccepted
+            } catch let error as SmokeFailure {
+                throw error
+            } catch {
+                // The provider rejects one candidate revision; AppModel must
+                // restore the previous rules through a newer live revision.
+            }
+            recordUnexpectedCoreStops(
+                operation: "rolling back a rejected live route update",
+                before: beforeFailedLiveUpdate,
+                after: coreContinuitySnapshot(
+                    model: model,
+                    auxiliaryProfileID: auxiliaryProfile.id
+                ),
+                requireAuxiliaryContinuity: true,
+                into: &continuityFailures
+            )
+            guard model.networkCapturePreferences.snapshot.rules
+                    == rulesBeforeFailedLiveUpdate,
+                  case .on = model.networkCaptureState else {
+                throw SmokeFailure.liveRouteRollbackFailed
+            }
+
+            let auxiliaryRoute = MihomoRoute.profile(
+                RoutingProfileID(auxiliaryProfile.id.rawValue),
+                target: .rules
+            )
+            let auxiliaryProfileRule = try CaptureRule(
+                id: "continuity-first-profile-route",
+                priority: 30,
+                action: .mihomo(auxiliaryRoute)
+            )
+            let beforeFirstProfileRoute = coreContinuitySnapshot(
+                model: model,
+                auxiliaryProfileID: auxiliaryProfile.id
+            )
+            try await model.applyNetworkCaptureRules(
+                [baselineRule, disabledGroupRule, auxiliaryProfileRule],
+                enabled: true,
+                dnsEnabled: false
+            )
+            recordUnexpectedCoreStops(
+                operation: "adding the first auxiliary-profile route",
+                before: beforeFirstProfileRoute,
+                after: coreContinuitySnapshot(
+                    model: model,
+                    auxiliaryProfileID: auxiliaryProfile.id
+                ),
+                // The affected auxiliary profile must reload its listener in
+                // place; neither it nor the primary core may restart.
+                requireAuxiliaryContinuity: true,
+                into: &continuityFailures
+            )
+            guard let auxiliaryRouteEndpoint = await networkExtensionControl
+                .routeEndpoint(auxiliaryRoute) else {
+                throw SmokeFailure.appRoutingContinuitySetupFailed(
+                    "The auxiliary private route endpoint was not published."
+                )
+            }
+            let persistentAuxiliaryRelay = try PersistentAuthenticatedSOCKSTunnel(
+                endpoint: auxiliaryRouteEndpoint,
+                target: smokeURL
+            )
+
+            let beforeLastAuxiliaryRouteDeletion = coreContinuitySnapshot(
+                model: model,
+                auxiliaryProfileID: auxiliaryProfile.id
+            )
+            try await model.applyNetworkCaptureRules(
+                [baselineRule],
+                enabled: true,
+                dnsEnabled: false
+            )
+            recordUnexpectedCoreStops(
+                operation: "deleting the last auxiliary-profile route",
+                before: beforeLastAuxiliaryRouteDeletion,
+                after: coreContinuitySnapshot(
+                    model: model,
+                    auxiliaryProfileID: auxiliaryProfile.id
+                ),
+                requireAuxiliaryContinuity: true,
+                into: &continuityFailures
+            )
+            try persistentAuxiliaryRelay.verifyHTTPResponse()
+            guard await networkExtensionControl.routeEndpoint(auxiliaryRoute)
+                    == auxiliaryRouteEndpoint else {
+                throw SmokeFailure.liveRouteRollbackFailed
+            }
+
+            try await model.applyNetworkCaptureRules(
+                [baselineRule],
+                enabled: false,
+                dnsEnabled: false
+            )
+            guard model.networkCaptureState == .off else {
+                throw SmokeFailure.appRoutingContinuitySetupFailed(
+                    "App Routing did not turn off after continuity checks."
+                )
+            }
+            if !continuityFailures.isEmpty {
+                throw SmokeFailure.appRoutingRuleChangeRestartedCores(
+                    continuityFailures.joined(separator: " | ")
+                )
+            }
 
             let occupiedAuxiliaryPort = try OccupiedIPv6TCPPort()
             let auxiliaryStateBeforeRejectedUpdate =
@@ -449,6 +810,25 @@ struct AppModelSmoke {
         ])
     }
 
+    private static func verifyHTTPProxyRejected(port: Int) throws {
+        guard let target = ProcessInfo.processInfo.environment["MCLASH_PROXY_SMOKE_URL"] else {
+            throw SmokeFailure.proxyTestConfigurationUnavailable
+        }
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/curl")
+        process.arguments = [
+            "--noproxy", "", "--fail", "--silent", "--show-error",
+            "--max-time", "5", "--proxy", "http://127.0.0.1:\(port)", target,
+        ]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus != 0 else {
+            throw SmokeFailure.proxyRequestWasNotRejected
+        }
+    }
+
     private static func verifyProxyProtocols(
         port: Int,
         socksPort: Int,
@@ -501,6 +881,233 @@ struct AppModelSmoke {
             .filter { $0 != getpid() }
         return values
     }
+
+    @MainActor
+    private static func coreContinuitySnapshot(
+        model: AppModel,
+        auxiliaryProfileID: ProfileID
+    ) -> CoreContinuitySnapshot {
+        CoreContinuitySnapshot(
+            primaryStartedAt: model.runningSession?.startedAt,
+            auxiliaryStartedAt: runningStartedAt(
+                model.auxiliaryCoreStates[auxiliaryProfileID]
+            )
+        )
+    }
+
+    private static func runningStartedAt(_ state: CoreRunState?) -> Date? {
+        guard case let .running(session)? = state else { return nil }
+        return session.startedAt
+    }
+
+    private static func recordUnexpectedCoreStops(
+        operation: String,
+        before: CoreContinuitySnapshot,
+        after: CoreContinuitySnapshot,
+        requireAuxiliaryContinuity: Bool,
+        into failures: inout [String]
+    ) {
+        if before.primaryStartedAt == nil
+            || after.primaryStartedAt != before.primaryStartedAt {
+            failures.append(
+                "\(operation) restarted or stopped the primary core "
+                    + "(before=\(before.primaryStartedAt?.description ?? "none"), "
+                    + "after=\(after.primaryStartedAt?.description ?? "none"))"
+            )
+        }
+        if requireAuxiliaryContinuity,
+           (before.auxiliaryStartedAt == nil
+                || after.auxiliaryStartedAt != before.auxiliaryStartedAt) {
+            failures.append(
+                "\(operation) restarted or stopped an unrelated auxiliary core "
+                    + "(before=\(before.auxiliaryStartedAt?.description ?? "none"), "
+                    + "after=\(after.auxiliaryStartedAt?.description ?? "none"))"
+            )
+        }
+    }
+}
+
+private final class PersistentAuthenticatedSOCKSTunnel {
+    private let descriptor: Int32
+    private let target: URL
+
+    init(endpoint: MihomoRouteProxyEndpoint, target: URL) throws {
+        guard endpoint.host == "127.0.0.1",
+              let username = endpoint.username,
+              let password = endpoint.password,
+              target.host == "127.0.0.1",
+              let targetPort = target.port,
+              (1...65_535).contains(targetPort)
+        else {
+            throw SmokeFailure.persistentAppRoutingRelayDisconnected
+        }
+        self.target = target
+
+        let socketDescriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard socketDescriptor >= 0 else {
+            throw SmokeFailure.persistentAppRoutingRelayDisconnected
+        }
+        descriptor = socketDescriptor
+        var noSignal: Int32 = 1
+        _ = withUnsafePointer(to: &noSignal) {
+            Darwin.setsockopt(
+                socketDescriptor,
+                SOL_SOCKET,
+                SO_NOSIGPIPE,
+                $0,
+                socklen_t(MemoryLayout<Int32>.size)
+            )
+        }
+        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        _ = withUnsafePointer(to: &timeout) {
+            Darwin.setsockopt(
+                socketDescriptor,
+                SOL_SOCKET,
+                SO_RCVTIMEO,
+                $0,
+                socklen_t(MemoryLayout<timeval>.size)
+            )
+        }
+        _ = withUnsafePointer(to: &timeout) {
+            Darwin.setsockopt(
+                socketDescriptor,
+                SOL_SOCKET,
+                SO_SNDTIMEO,
+                $0,
+                socklen_t(MemoryLayout<timeval>.size)
+            )
+        }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = endpoint.port.bigEndian
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(
+                    socketDescriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        } == 0
+        guard connected,
+              Self.send(Data([0x05, 0x01, 0x02]), to: socketDescriptor),
+              Self.receive(count: 2, from: socketDescriptor) == [0x05, 0x02]
+        else {
+            Darwin.close(socketDescriptor)
+            throw SmokeFailure.persistentAppRoutingRelayDisconnected
+        }
+
+        let usernameBytes = Array(username.utf8)
+        let passwordBytes = Array(password.utf8)
+        var authentication = Data([0x01, UInt8(usernameBytes.count)])
+        authentication.append(contentsOf: usernameBytes)
+        authentication.append(UInt8(passwordBytes.count))
+        authentication.append(contentsOf: passwordBytes)
+        guard Self.send(authentication, to: socketDescriptor),
+              Self.receive(count: 2, from: socketDescriptor) == [0x01, 0x00]
+        else {
+            Darwin.close(socketDescriptor)
+            throw SmokeFailure.persistentAppRoutingRelayDisconnected
+        }
+
+        let highPort = UInt8((targetPort >> 8) & 0xff)
+        let lowPort = UInt8(targetPort & 0xff)
+        let connectRequest = Data([
+            0x05, 0x01, 0x00, 0x01,
+            127, 0, 0, 1,
+            highPort, lowPort,
+        ])
+        guard Self.send(connectRequest, to: socketDescriptor),
+              let responsePrefix = Self.receive(count: 4, from: socketDescriptor),
+              responsePrefix[0] == 0x05,
+              responsePrefix[1] == 0x00,
+              let remainderCount = Self.socksAddressRemainderCount(
+                  addressType: responsePrefix[3],
+                  descriptor: socketDescriptor
+              ),
+              Self.receive(count: remainderCount, from: socketDescriptor) != nil
+        else {
+            Darwin.close(socketDescriptor)
+            throw SmokeFailure.persistentAppRoutingRelayDisconnected
+        }
+    }
+
+    deinit {
+        Darwin.close(descriptor)
+    }
+
+    func verifyHTTPResponse() throws {
+        let path = target.path.isEmpty ? "/" : target.path
+        let request = Data(
+            "GET \(path) HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".utf8
+        )
+        guard Self.send(request, to: descriptor) else {
+            throw SmokeFailure.persistentAppRoutingRelayDisconnected
+        }
+        var response = Data()
+        var buffer = [UInt8](repeating: 0, count: 4_096)
+        while response.count < 64 * 1_024 {
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.recv(descriptor, $0.baseAddress, $0.count, 0)
+            }
+            if count == 0 { break }
+            guard count > 0 else {
+                throw SmokeFailure.persistentAppRoutingRelayDisconnected
+            }
+            response.append(contentsOf: buffer.prefix(count))
+        }
+        let text = String(decoding: response, as: UTF8.self)
+        guard text.hasPrefix("HTTP/1.0 200")
+                || text.hasPrefix("HTTP/1.1 200") else {
+            throw SmokeFailure.persistentAppRoutingRelayDisconnected
+        }
+    }
+
+    private static func socksAddressRemainderCount(
+        addressType: UInt8,
+        descriptor: Int32
+    ) -> Int? {
+        switch addressType {
+        case 0x01: return 4 + 2
+        case 0x04: return 16 + 2
+        case 0x03:
+            guard let length = receive(count: 1, from: descriptor)?.first else {
+                return nil
+            }
+            return Int(length) + 2
+        default:
+            return nil
+        }
+    }
+
+    private static func send(_ data: Data, to descriptor: Int32) -> Bool {
+        data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return false }
+            return Darwin.send(descriptor, baseAddress, buffer.count, 0)
+                == buffer.count
+        }
+    }
+
+    private static func receive(count: Int, from descriptor: Int32) -> [UInt8]? {
+        var result: [UInt8] = []
+        while result.count < count {
+            var buffer = [UInt8](repeating: 0, count: count - result.count)
+            let received = buffer.withUnsafeMutableBytes {
+                Darwin.recv(descriptor, $0.baseAddress, $0.count, 0)
+            }
+            guard received > 0 else { return nil }
+            result.append(contentsOf: buffer.prefix(received))
+        }
+        return result
+    }
+}
+
+private struct CoreContinuitySnapshot {
+    let primaryStartedAt: Date?
+    let auxiliaryStartedAt: Date?
 }
 
 /// The command-line integration host is not an entitled container for the
@@ -508,13 +1115,39 @@ struct AppModelSmoke {
 /// cleanup call, while this inert boundary makes that cleanup deterministic
 /// instead of asking NetworkExtension.framework to load user preferences.
 private actor InertNetworkExtensionControl: NetworkExtensionControlling {
+    private var shouldFailNextRuntimeUpdate = false
+    private var latestConfiguration: NetworkExtensionRuntimeConfiguration?
+
     func enable(
         _ configuration: NetworkExtensionRuntimeConfiguration,
         progress reportProgress: @escaping @Sendable (
             NetworkExtensionEnableProgress
         ) -> Void
     ) async throws -> NetworkExtensionEnableOutcome {
-        .running
+        latestConfiguration = configuration
+        return .running
+    }
+
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> NetworkExtensionEnableOutcome {
+        if shouldFailNextRuntimeUpdate {
+            shouldFailNextRuntimeUpdate = false
+            throw URLError(.cannotConnectToHost)
+        }
+        latestConfiguration = configuration
+        return .running
+    }
+
+    func failNextRuntimeUpdate() {
+        shouldFailNextRuntimeUpdate = true
+    }
+
+    func routeEndpoint(_ route: MihomoRoute) -> MihomoRouteProxyEndpoint? {
+        guard let data = latestConfiguration?.encodedMihomoRouteProxyCatalog,
+              let endpoints = try? MihomoRouteProxyCatalog.decode(data)
+        else { return nil }
+        return MihomoRouteProxyCatalog.endpoint(for: route, in: endpoints)
     }
 
     func disable() async throws {}
@@ -580,6 +1213,15 @@ private enum SmokeFailure: Error {
     case auxiliaryRuntimePortRollbackFailed
     case profileRuntimeUpdateStayedBusy(String)
     case routeListenersDidNotRestart
+    case occupiedRouteListenerPortWasAccepted
+    case invalidRouteListenerTargetWasAccepted
+    case routeListenerRollbackFailed
+    case proxyRequestWasNotRejected
+    case failedLiveRouteWasAccepted
+    case liveRouteRollbackFailed
+    case persistentAppRoutingRelayDisconnected
+    case appRoutingContinuitySetupFailed(String)
+    case appRoutingRuleChangeRestartedCores(String)
     case gracefulShutdownFailed
     case gracefulShutdownLeftCoreProcesses
     case gracefulShutdownLeftPortsOccupied

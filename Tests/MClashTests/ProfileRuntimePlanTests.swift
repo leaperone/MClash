@@ -247,6 +247,20 @@ struct ProfileRuntimePlanTests {
                 port: 18_082,
                 target: .proxyNode("Tokyo 01")
             ),
+            ProfileRouteListenerSpec(
+                profileID: profileID,
+                name: "Global",
+                protocolType: .http,
+                port: 18_083,
+                target: .global
+            ),
+            ProfileRouteListenerSpec(
+                profileID: profileID,
+                name: "Policy",
+                protocolType: .mixed,
+                port: 18_084,
+                target: .policyGroup("Auto Select")
+            ),
         ]
         let plan = ProfileRuntimePlan(
             defaultMixedPort: 17_890,

@@ -461,6 +461,219 @@ struct NetworkExtensionControlTests {
         #expect(dnsStatus?.revision == 31)
     }
 
+    @Test("A rejected live update keeps providers running for a newer rollback revision")
+    func rejectedLiveUpdateDoesNotForceProviderRestart() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(
+                recorder: recorder,
+                updateError: NSError(
+                    domain: "LiveDNSUpdate",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "rejected"]
+                )
+            )
+        )
+        let initial = try runtimeConfiguration(
+            revision: 60,
+            activationIdentifier: UUID()
+        )
+        let rejected = try runtimeConfiguration(
+            revision: 61,
+            activationIdentifier: UUID()
+        )
+        let rollback = try runtimeConfiguration(
+            revision: 62,
+            activationIdentifier: UUID()
+        )
+        _ = try await service.enable(initial)
+        await recorder.removeAll()
+        await recorder.setDNSUpdateFailuresRemaining(1)
+
+        await #expect(throws: (any Error).self) {
+            try await service.updateRuntimeConfiguration(rejected)
+        }
+        var state = await service.currentState()
+        #expect(state.phase == .running)
+        #expect(state.revision == 60)
+        #expect(!(await recorder.snapshot()).contains("transparent.stop"))
+        #expect(!(await recorder.snapshot()).contains("dns.disable"))
+
+        await recorder.removeAll()
+        _ = try await service.updateRuntimeConfiguration(rollback)
+        state = await service.currentState()
+        #expect(state.phase == .running)
+        #expect(state.revision == 62)
+        #expect(!(await recorder.snapshot()).contains("transparent.stop"))
+        #expect(!(await recorder.snapshot()).contains("dns.disable"))
+    }
+
+    @Test("First group and profile route endpoints are added without stopping capture")
+    func firstRouteEndpointsUpdateLive() async throws {
+        let profileID = RoutingProfileID(
+            UUID(uuidString: "abababab-abab-abab-abab-abababababab")!
+        )
+        let routes: [MihomoRoute] = [
+            .group("Pinned Node"),
+            .profile(profileID, target: .rules),
+        ]
+
+        for (offset, route) in routes.enumerated() {
+            let recorder = NetworkExtensionOperationRecorder()
+            let service = NetworkExtensionControlService(
+                systemExtension: MockSystemExtensionController(recorder: recorder),
+                transparentProxy: MockTransparentProxyManager(recorder: recorder),
+                dnsProxy: MockDNSProxyManager(recorder: recorder)
+            )
+            let authentication = try NetworkExtensionMihomoAuthentication(
+                username: "route-update",
+                password: "stable-secret"
+            )
+            let initialListener = try NetworkExtensionMihomoListenerConfiguration(
+                port: 17_891,
+                authentication: authentication
+            )
+            let expandedListener = try NetworkExtensionMihomoListenerConfiguration(
+                port: 17_891,
+                authentication: authentication,
+                routePorts: [route: 17_892 + offset]
+            )
+            let initial = try routeRuntimeConfiguration(
+                revision: 40,
+                rules: [baselineRule()],
+                listener: initialListener
+            )
+            let candidate = try routeRuntimeConfiguration(
+                revision: 41,
+                rules: [baselineRule(), routeRule(id: "first-route", route: route)],
+                listener: expandedListener
+            )
+            _ = try await service.enable(initial)
+            await recorder.removeAll()
+
+            let outcome = try await service.updateRuntimeConfiguration(candidate)
+
+            #expect(outcome == .running)
+            let operations = await recorder.snapshot()
+            #expect(operations == [
+                "transparent.configure",
+                "transparent.reload",
+                "transparent.update",
+            ])
+            #expect(!operations.contains("transparent.stop"))
+            #expect(!operations.contains("dns.disable"))
+            #expect(!operations.contains("system.activate"))
+        }
+    }
+
+    @Test("Deleting or disabling the last route retains its listener without stopping capture")
+    func lastRouteRemovalUpdatesLive() async throws {
+        let route = MihomoRoute.group("Pinned Node")
+        let authentication = try NetworkExtensionMihomoAuthentication(
+            username: "route-removal",
+            password: "stable-secret"
+        )
+        let retainedListener = try NetworkExtensionMihomoListenerConfiguration(
+            port: 17_891,
+            authentication: authentication,
+            routePorts: [route: 17_892]
+        )
+        let enabledRoute = try routeRule(id: "last-route", route: route)
+        let disabledRoute = try CaptureRule(
+            id: enabledRoute.id,
+            enabled: false,
+            priority: enabledRoute.priority,
+            action: enabledRoute.action
+        )
+        let candidates: [(String, [CaptureRule])] = [
+            ("deleted", [try baselineRule()]),
+            ("disabled", [try baselineRule(), disabledRoute]),
+        ]
+
+        for (label, rules) in candidates {
+            let recorder = NetworkExtensionOperationRecorder()
+            let service = NetworkExtensionControlService(
+                systemExtension: MockSystemExtensionController(recorder: recorder),
+                transparentProxy: MockTransparentProxyManager(recorder: recorder),
+                dnsProxy: MockDNSProxyManager(recorder: recorder)
+            )
+            let initial = try routeRuntimeConfiguration(
+                revision: 50,
+                rules: [baselineRule(), enabledRoute],
+                listener: retainedListener
+            )
+            let candidate = try routeRuntimeConfiguration(
+                revision: 51,
+                rules: rules,
+                listener: retainedListener
+            )
+            _ = try await service.enable(initial)
+            await recorder.removeAll()
+
+            let outcome = try await service.updateRuntimeConfiguration(candidate)
+
+            #expect(outcome == .running, Comment(rawValue: label))
+            let operations = await recorder.snapshot()
+            #expect(
+                operations == [
+                    "transparent.configure",
+                    "transparent.reload",
+                    "transparent.update",
+                ],
+                Comment(rawValue: label)
+            )
+            #expect(!operations.contains("transparent.stop"), Comment(rawValue: label))
+            #expect(!operations.contains("dns.disable"), Comment(rawValue: label))
+            #expect(!operations.contains("system.activate"), Comment(rawValue: label))
+        }
+    }
+
+    @Test("Moving an existing route endpoint is rejected without stopping providers")
+    func movedRouteEndpointFailsNonDestructively() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        let route = MihomoRoute.group("Pinned Node")
+        let authentication = try NetworkExtensionMihomoAuthentication(
+            username: "stable-route",
+            password: "stable-secret"
+        )
+        let initial = try routeRuntimeConfiguration(
+            revision: 70,
+            rules: [baselineRule(), routeRule(id: "route", route: route)],
+            listener: try NetworkExtensionMihomoListenerConfiguration(
+                port: 17_891,
+                authentication: authentication,
+                routePorts: [route: 17_892]
+            )
+        )
+        let moved = try routeRuntimeConfiguration(
+            revision: 71,
+            rules: [baselineRule(), routeRule(id: "route", route: route)],
+            listener: try NetworkExtensionMihomoListenerConfiguration(
+                port: 17_891,
+                authentication: authentication,
+                routePorts: [route: 17_893]
+            )
+        )
+        _ = try await service.enable(initial)
+        await recorder.removeAll()
+
+        await #expect(throws: NetworkExtensionControlFailure.self) {
+            try await service.updateRuntimeConfiguration(moved)
+        }
+
+        #expect(await recorder.snapshot().isEmpty)
+        let state = await service.currentState()
+        #expect(state.phase == .running)
+        #expect(state.revision == 70)
+    }
+
     private func runtimeConfiguration(
         revision: UInt64,
         activationIdentifier: UUID
@@ -485,6 +698,47 @@ struct NetworkExtensionControlTests {
             activationIdentifier: activationIdentifier
         )
     }
+
+    private func routeRuntimeConfiguration(
+        revision: UInt64,
+        rules: [CaptureRule],
+        listener: NetworkExtensionMihomoListenerConfiguration
+    ) throws -> NetworkExtensionRuntimeConfiguration {
+        let snapshot = try CaptureConfigurationSnapshot(
+            revision: revision,
+            rules: rules
+        )
+        let preferences = try NetworkCapturePreferences(
+            enabled: true,
+            dnsEnabled: false,
+            failOpen: true,
+            snapshot: snapshot
+        )
+        return try NetworkExtensionRuntimeConfiguration(
+            preferences: preferences,
+            mihomoListener: listener,
+            activationIdentifier: UUID()
+        )
+    }
+
+    private func baselineRule() throws -> CaptureRule {
+        try CaptureRule(
+            id: "baseline",
+            priority: 10,
+            action: .mihomo(.profileRules)
+        )
+    }
+
+    private func routeRule(
+        id: String,
+        route: MihomoRoute
+    ) throws -> CaptureRule {
+        try CaptureRule(
+            id: id,
+            priority: 20,
+            action: .mihomo(route)
+        )
+    }
 }
 
 private final class NetworkExtensionProgressRecorder: @unchecked Sendable {
@@ -505,6 +759,7 @@ private actor NetworkExtensionOperationRecorder {
     private var configuredRevision: UInt64 = 0
     private var capturedConfigurations: [NetworkExtensionRuntimeConfiguration] = []
     private var providerStatuses: [TransparentProxyProviderStatus] = []
+    private var dnsUpdateFailuresRemaining = 0
 
     func append(_ operation: String) {
         operations.append(operation)
@@ -537,6 +792,16 @@ private actor NetworkExtensionOperationRecorder {
 
     func enqueueProviderStatuses(_ statuses: [TransparentProxyProviderStatus]) {
         providerStatuses.append(contentsOf: statuses)
+    }
+
+    func setDNSUpdateFailuresRemaining(_ count: Int) {
+        dnsUpdateFailuresRemaining = count
+    }
+
+    func consumeDNSUpdateFailure() -> Bool {
+        guard dnsUpdateFailuresRemaining > 0 else { return false }
+        dnsUpdateFailuresRemaining -= 1
+        return true
     }
 
     func nextProviderStatus() -> TransparentProxyProviderStatus? {
@@ -750,13 +1015,16 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
 private struct MockDNSProxyManager: DNSProxyManaging {
     let recorder: NetworkExtensionOperationRecorder
     var configureError: NSError?
+    var updateError: NSError?
 
     init(
         recorder: NetworkExtensionOperationRecorder,
-        configureError: NSError? = nil
+        configureError: NSError? = nil,
+        updateError: NSError? = nil
     ) {
         self.recorder = recorder
         self.configureError = configureError
+        self.updateError = updateError
     }
 
     func configureAndEnable(
@@ -770,6 +1038,9 @@ private struct MockDNSProxyManager: DNSProxyManaging {
         _ configuration: NetworkExtensionRuntimeConfiguration
     ) async throws {
         await recorder.append("dns.update")
+        if let updateError, await recorder.consumeDNSUpdateFailure() {
+            throw updateError
+        }
     }
 
     func reload() async throws {

@@ -80,6 +80,32 @@ struct NetworkExtensionMihomoListenerTests {
         #expect(configuration.endpoint(for: .group("Auto Select"))?.port == 17_883)
     }
 
+    @Test("Route listener names remain stable when an earlier route is appended")
+    func routeListenerNamesAreIdentityStable() throws {
+        let original = try NetworkExtensionMihomoListenerConfiguration(
+            port: 17_881,
+            routePorts: [.group("Pinned Node"): 17_883]
+        )
+        let expanded = try NetworkExtensionMihomoListenerConfiguration(
+            port: 17_881,
+            routePorts: [
+                .global: 17_882,
+                .group("Pinned Node"): 17_883,
+            ]
+        )
+
+        let originalNames = original.listenerDescriptors
+            .filter { $0.route == .group("Pinned Node") }
+            .map(\.name)
+        let expandedNames = expanded.listenerDescriptors
+            .filter { $0.route == .group("Pinned Node") }
+            .map(\.name)
+
+        #expect(originalNames == expandedNames)
+        #expect(Set(expanded.listenerDescriptors.map(\.name)).count
+            == expanded.listenerDescriptors.count)
+    }
+
     @Test("An auxiliary profile emits only its exact private routes")
     func emitsAuxiliaryProfileListeners() throws {
         let profileID = RoutingProfileID(

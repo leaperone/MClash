@@ -277,13 +277,21 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     func updateRuntimeConfiguration(
         _ configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> NetworkExtensionEnableOutcome {
+        if state.phase == .running,
+           let previous = activeConfiguration,
+           !configuration.preservesExistingRouteEndpoints(from: previous) {
+            throw NetworkExtensionControlFailure(
+                operation: .configureTransparentProxy,
+                message: "The live update would move or remove a private Mihomo route endpoint that an existing relay may still use"
+            )
+        }
         guard state.phase == .running,
               let previous = activeConfiguration,
               previous.captureEnabled,
               configuration.captureEnabled,
               configuration.revision > previous.revision,
               configuration.dnsEnabled == previous.dnsEnabled,
-              configuration.mihomoListener == previous.mihomoListener
+              configuration.preservesExistingRouteEndpoints(from: previous)
         else {
             return try await enable(configuration)
         }
@@ -338,7 +346,10 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                     operation: .configureTransparentProxy,
                     underlying: error
                 )
-            try? transition(.failed(failure))
+            // Keep the last committed activation eligible for a newer live
+            // rollback revision. AppModel owns that rollback transaction; a
+            // failed candidate must not force the next call through enable(),
+            // which would stop both providers and every existing relay.
             networkExtensionControlLogger.error(
                 "Live update failed revision=\(configuration.revision, privacy: .public) error=\(failure.localizedDescription, privacy: .public)"
             )

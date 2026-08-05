@@ -336,9 +336,130 @@ struct LocalPortProbe: Sendable {
         return count == 2 && response[0] == 0x05
     }
 
+    func waitUntilAuthenticatedSOCKS5Proxy(
+        ports: Set<Int>,
+        authentication: NetworkExtensionMihomoAuthentication
+    ) async throws {
+        // A successful TCP handshake alone is insufficient: Mihomo may keep
+        // the SOCKS listener alive after a UDP bind error. Verify both
+        // loopback TCP listeners with authentication and UDP ASSOCIATE, then
+        // prove the matching IPv4 and IPv6 UDP ports are actually owned.
+        guard !ports.isEmpty else { throw LocalPortProbeError.noPorts }
+        for _ in 0..<40 {
+            try Task.checkCancellation()
+            let ready = await Task.detached(priority: .utility) {
+                ports.allSatisfy { port in
+                    supportsAuthenticatedSOCKS5Proxy(
+                        port: port,
+                        authentication: authentication,
+                        ipv6: false
+                    ) && supportsAuthenticatedSOCKS5Proxy(
+                        port: port,
+                        authentication: authentication,
+                        ipv6: true
+                    ) && isUDPPortOwned(port: port, ipv6: false)
+                        && isUDPPortOwned(port: port, ipv6: true)
+                }
+            }.value
+            if ready { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw LocalPortProbeError.listenerUnavailable(ports.sorted())
+    }
+
+    private func supportsAuthenticatedSOCKS5Proxy(
+        port: Int,
+        authentication: NetworkExtensionMihomoAuthentication,
+        ipv6: Bool
+    ) -> Bool {
+        guard let descriptor = connectedSocket(port: port, ipv6: ipv6) else {
+            return false
+        }
+        defer { Darwin.close(descriptor) }
+
+        guard send(Data([0x05, 0x01, 0x02]), to: descriptor),
+              receive(count: 2, from: descriptor) == [0x05, 0x02]
+        else { return false }
+
+        let username = Array(authentication.username.utf8)
+        let password = Array(authentication.password.utf8)
+        var credentials = Data([0x01, UInt8(username.count)])
+        credentials.append(contentsOf: username)
+        credentials.append(UInt8(password.count))
+        credentials.append(contentsOf: password)
+        guard send(credentials, to: descriptor),
+              receive(count: 2, from: descriptor) == [0x01, 0x00]
+        else { return false }
+
+        let udpAssociate = Data([
+            0x05, 0x03, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ])
+        guard send(udpAssociate, to: descriptor),
+              let relayPort = receiveSOCKS5RelayPort(from: descriptor)
+        else { return false }
+        return relayPort > 0
+    }
+
+    private func isUDPPortOwned(port: Int, ipv6: Bool) -> Bool {
+        let family = ipv6 ? AF_INET6 : AF_INET
+        let descriptor = Darwin.socket(family, SOCK_DGRAM, 0)
+        guard descriptor >= 0 else { return false }
+        defer { Darwin.close(descriptor) }
+        if ipv6 {
+            guard configureIPv6Only(descriptor) else { return false }
+            let result = bindIPv6(descriptor, port: port)
+            return !result && errno == EADDRINUSE
+        }
+        var address = loopbackAddress(port: port)
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(
+                    descriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        }
+        return result != 0 && errno == EADDRINUSE
+    }
+
+    private func receiveSOCKS5RelayPort(from descriptor: Int32) -> Int? {
+        guard let prefix = receive(count: 4, from: descriptor),
+              prefix[0] == 0x05,
+              prefix[1] == 0x00 else { return nil }
+        let addressLength: Int
+        switch prefix[3] {
+        case 0x01:
+            addressLength = 4
+        case 0x04:
+            addressLength = 16
+        case 0x03:
+            guard let length = receive(count: 1, from: descriptor)?.first else {
+                return nil
+            }
+            addressLength = Int(length)
+        default:
+            return nil
+        }
+        guard let remainder = receive(
+            count: addressLength + 2,
+            from: descriptor
+        ) else { return nil }
+        let port = Int(remainder[addressLength]) << 8
+            | Int(remainder[addressLength + 1])
+        return (1...65_535).contains(port) ? port : nil
+    }
+
     private func connectedSocket(port: Int) -> Int32? {
+        connectedSocket(port: port, ipv6: false)
+    }
+
+    private func connectedSocket(port: Int, ipv6: Bool) -> Int32? {
         guard (1...65_535).contains(port) else { return nil }
-        let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        let family = ipv6 ? AF_INET6 : AF_INET
+        let descriptor = Darwin.socket(family, SOCK_STREAM, 0)
         guard descriptor >= 0 else { return nil }
 
         var noSignal: Int32 = 1
@@ -371,14 +492,32 @@ struct LocalPortProbe: Sendable {
             )
         }
 
-        var address = loopbackAddress(port: port)
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.connect(
-                    descriptor,
-                    socketAddress,
-                    socklen_t(MemoryLayout<sockaddr_in>.size)
-                )
+        let result: Int32
+        if ipv6 {
+            var address = sockaddr_in6()
+            address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            address.sin6_family = sa_family_t(AF_INET6)
+            address.sin6_port = in_port_t(port).bigEndian
+            address.sin6_addr = in6addr_loopback
+            result = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(
+                        descriptor,
+                        $0,
+                        socklen_t(MemoryLayout<sockaddr_in6>.size)
+                    )
+                }
+            }
+        } else {
+            var address = loopbackAddress(port: port)
+            result = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(
+                        descriptor,
+                        $0,
+                        socklen_t(MemoryLayout<sockaddr_in>.size)
+                    )
+                }
             }
         }
         guard result == 0 else {
@@ -386,6 +525,20 @@ struct LocalPortProbe: Sendable {
             return nil
         }
         return descriptor
+    }
+
+    private func receive(count: Int, from descriptor: Int32) -> [UInt8]? {
+        var result: [UInt8] = []
+        result.reserveCapacity(count)
+        while result.count < count {
+            var buffer = [UInt8](repeating: 0, count: count - result.count)
+            let received = buffer.withUnsafeMutableBytes {
+                Darwin.recv(descriptor, $0.baseAddress, $0.count, 0)
+            }
+            guard received > 0 else { return nil }
+            result.append(contentsOf: buffer.prefix(received))
+        }
+        return result
     }
 
     private func send(_ data: Data, to descriptor: Int32) -> Bool {
