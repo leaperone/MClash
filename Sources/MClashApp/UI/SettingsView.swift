@@ -7,6 +7,7 @@ struct SettingsView: View {
     @Bindable var applicationUpdater: ApplicationUpdater
     @State private var coreDetailsExpanded = false
     @State private var showingListenerPortSettings = false
+    @State private var showingProfileRouteListenerSettings = false
     @State private var showingRuntimeSettings = false
     @State private var showingSystemProxySettings = false
     @State private var applicationSettingsError: String?
@@ -187,6 +188,58 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Dedicated Proxy Ports") {
+                if model.profileRuntimePlan.routeListeners.isEmpty {
+                    Text("No dedicated ports are configured.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.profileRuntimePlan.routeListeners) { listener in
+                        LabeledContent {
+                            HStack(spacing: 8) {
+                                Text(listener.protocolType.title)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.quaternary, in: Capsule())
+                                if listener.enabled {
+                                    CopyableValueButton(
+                                        value: "127.0.0.1:\(listener.port)",
+                                        accessibilityName: "\(listener.name) proxy address"
+                                    )
+                                } else {
+                                    Text("Disabled")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(listener.name)
+                                Text(dedicatedPortRouteSummary(listener))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    model.isConnected
+                        ? "Manage Dedicated Ports & Restart…"
+                        : "Manage Dedicated Ports…"
+                ) {
+                    showingProfileRouteListenerSettings = true
+                }
+                .disabled(
+                    model.profiles.isEmpty
+                        || !model.canPerform(.changeRuntimeSettings)
+                )
+
+                Text("Each port is bound to one Profile and can follow its rules, start at a named sub-rule, or use a fixed policy group or node.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let applicationSettingsError {
                 Section {
                     Label(applicationSettingsError, systemImage: "exclamationmark.triangle.fill")
@@ -304,6 +357,12 @@ struct SettingsView: View {
                 isPresented: $showingListenerPortSettings
             )
         }
+        .sheet(isPresented: $showingProfileRouteListenerSettings) {
+            ProfileRouteListenerSettingsEditor(
+                model: model,
+                isPresented: $showingProfileRouteListenerSettings
+            )
+        }
         .sheet(isPresented: $showingSystemProxySettings) {
             SystemProxySettingsEditor(
                 model: model,
@@ -373,6 +432,21 @@ struct SettingsView: View {
                 )
             }
         }
+    }
+
+    private func dedicatedPortRouteSummary(
+        _ listener: ProfileRouteListenerSpec
+    ) -> String {
+        let profile = model.profiles.first(where: { $0.id == listener.profileID })?.name
+            ?? "Unavailable Profile"
+        let route: String = switch listener.target {
+        case .profileRules: "Profile Rules"
+        case let .subRule(name): "Sub-rule · \(name)"
+        case .global: "GLOBAL"
+        case let .policyGroup(name): "Policy Group · \(name)"
+        case let .proxyNode(name): "Proxy Node · \(name)"
+        }
+        return "\(profile) · \(route)"
     }
 
     @ViewBuilder

@@ -289,7 +289,7 @@ struct LocalPortProbe: Sendable {
         socksPorts: Set<Int>
     ) async throws {
         let ports = httpPorts.union(socksPorts)
-        guard !httpPorts.isEmpty, !socksPorts.isEmpty else {
+        guard !ports.isEmpty else {
             throw LocalPortProbeError.noPorts
         }
         guard ports.allSatisfy({ (1...65_535).contains($0) }) else {

@@ -4,6 +4,9 @@ import MClashNetworkShared
 
 protocol DNSProxyManaging: Sendable {
     func configureAndEnable(_ configuration: NetworkExtensionRuntimeConfiguration) async throws
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws
     func reload() async throws
     func runtimeStatus(
         for configuration: NetworkExtensionRuntimeConfiguration
@@ -185,6 +188,43 @@ actor AppleDNSProxyManager: DNSProxyManaging {
         try await waitForOperationalStatus(
             configuration: configuration
         )
+    }
+
+    /// Persists a new bootstrap for an already-running DNS Provider without
+    /// forcing the owned off→on transition used for cold recovery. The
+    /// transparent provider has already published the matching process-local
+    /// bootstrap before this method is called.
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws {
+        guard configuration.encodedDNSProxyBootstrap != nil else {
+            throw NetworkExtensionControlFailure(
+                operation: .configureDNSProxy,
+                message: "The DNS proxy update is missing its validated private Mihomo bootstrap payload"
+            )
+        }
+        let current = try await load(operation: .configureDNSProxy)
+        guard current.providerBundleIdentifier == providerBundleIdentifier,
+              current.isEnabled else {
+            throw NetworkExtensionControlFailure(
+                operation: .configureDNSProxy,
+                message: "The MClash DNS proxy is not running, so it cannot be updated live"
+            )
+        }
+        let desired = DNSProxyPreferenceSnapshot(
+            providerBundleIdentifier: providerBundleIdentifier,
+            providerConfiguration: configuration.providerConfiguration,
+            localizedDescription: Self.localizedDescription,
+            isEnabled: true
+        )
+        try await save(desired, operation: .configureDNSProxy)
+        let persisted = try await load(operation: .configureDNSProxy)
+        try validateEnabledPreferences(
+            persisted,
+            for: configuration,
+            operation: .configureDNSProxy
+        )
+        try await waitForOperationalStatus(configuration: configuration)
     }
 
     func reload() async throws {

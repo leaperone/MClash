@@ -13,12 +13,14 @@ public struct RuntimeConfigurationComposer: Sendable {
         _ overrides: RuntimeOverrides,
         to profileData: Data,
         networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
-        profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil
+        profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil,
+        routeListeners: [ProfileRouteListenerSpec] = []
     ) throws -> Data {
         try validator.validate(overrides)
         guard !overrides.isEmpty
                 || networkExtensionListener != nil
                 || profileMixedListener != nil
+                || routeListeners.contains(where: \.enabled)
         else { return profileData }
         guard let yaml = String(data: profileData, encoding: .utf8) else {
             throw RuntimeConfigurationComposerError.profileIsNotUTF8
@@ -38,7 +40,8 @@ public struct RuntimeConfigurationComposer: Sendable {
         }
         let managedListeners = managedListenerRenderings(
             networkExtensionListener: networkExtensionListener,
-            profileMixedListener: profileMixedListener
+            profileMixedListener: profileMixedListener,
+            routeListeners: routeListeners
         )
         if !managedListeners.isEmpty {
             lines = try applyingManagedListeners(
@@ -249,8 +252,8 @@ public struct RuntimeConfigurationComposer: Sendable {
     }
 
     /// Removes profile-owned listener surfaces that cannot safely coexist in
-    /// a multi-core process fleet. MClash adds back only its isolated Mixed
-    /// and authenticated App Routing listeners after this pass.
+    /// a multi-core process fleet. MClash adds back its isolated Mixed,
+    /// user-owned routing, and authenticated App Routing listeners afterward.
     public func sanitizingForManagedSession(_ profileData: Data) throws -> Data {
         try sanitizing(
             profileData,
@@ -974,15 +977,33 @@ public struct RuntimeConfigurationComposer: Sendable {
         let host: String
         let port: UInt16
         let enablesUDP: Bool
+        let specialRule: String?
         let outboundProxy: String?
         let authentication: NetworkExtensionMihomoAuthentication?
     }
 
     private func managedListenerRenderings(
         networkExtensionListener: NetworkExtensionMihomoListenerConfiguration?,
-        profileMixedListener: ManagedProfileMixedListenerConfiguration?
+        profileMixedListener: ManagedProfileMixedListenerConfiguration?,
+        routeListeners: [ProfileRouteListenerSpec]
     ) -> [ManagedListenerRendering] {
-        var renderings: [ManagedListenerRendering] = []
+        var renderings = routeListeners.filter(\.enabled).flatMap { listener in
+            [
+                (suffix: "ipv4", host: "127.0.0.1"),
+                (suffix: "ipv6", host: "::1"),
+            ].map { endpoint in
+                ManagedListenerRendering(
+                    name: "\(listener.mihomoListenerName)-\(endpoint.suffix)",
+                    type: listener.protocolType.rawValue,
+                    host: endpoint.host,
+                    port: UInt16(listener.port),
+                    enablesUDP: listener.protocolType != .http,
+                    specialRule: listener.target.subRuleName,
+                    outboundProxy: listener.target.outboundProxy,
+                    authentication: nil
+                )
+            }
+        }
         if let profileMixedListener {
             renderings.append(ManagedListenerRendering(
                 name: ManagedProfileMixedListenerConfiguration.listenerName,
@@ -990,6 +1011,7 @@ public struct RuntimeConfigurationComposer: Sendable {
                 host: ManagedProfileMixedListenerConfiguration.host,
                 port: profileMixedListener.port,
                 enablesUDP: true,
+                specialRule: nil,
                 outboundProxy: nil,
                 authentication: nil
             ))
@@ -1002,6 +1024,7 @@ public struct RuntimeConfigurationComposer: Sendable {
                     host: $0.host,
                     port: $0.port,
                     enablesUDP: true,
+                    specialRule: nil,
                     outboundProxy: $0.outboundProxy,
                     authentication: networkExtensionListener.authentication
                 )
@@ -1172,6 +1195,11 @@ public struct RuntimeConfigurationComposer: Sendable {
             if descriptor.enablesUDP {
                 output.append("\(fieldPrefix)udp: true\(newline)")
             }
+            if let specialRule = descriptor.specialRule {
+                output.append(
+                    "\(fieldPrefix)rule: \(try yamlQuoted(specialRule))\(newline)"
+                )
+            }
             if let outboundProxy = descriptor.outboundProxy {
                 output.append(
                     "\(fieldPrefix)proxy: \(try yamlQuoted(outboundProxy))\(newline)"
@@ -1208,10 +1236,13 @@ public struct RuntimeConfigurationComposer: Sendable {
             let proxy = try descriptor.outboundProxy.map {
                 ", \"proxy\": \(try yamlQuoted($0))"
             } ?? ""
+            let rule = try descriptor.specialRule.map {
+                ", \"rule\": \(try yamlQuoted($0))"
+            } ?? ""
             let udp = descriptor.enablesUDP ? ", \"udp\": true" : ""
             return "{\"name\": \(try yamlQuoted(descriptor.name)), \"type\": \"\(descriptor.type)\", "
                 + "\"port\": \(descriptor.port), \"listen\": \(try yamlQuoted(descriptor.host)), "
-                + "\"users\": \(users)\(udp)\(proxy)}"
+                + "\"users\": \(users)\(udp)\(rule)\(proxy)}"
         }
     }
 

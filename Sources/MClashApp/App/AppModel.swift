@@ -1462,6 +1462,7 @@ final class AppModel {
         let previousPlan = profileRuntimePlan
         var candidate = previousPlan
         candidate.sessions.removeAll { $0.profileID == profileID }
+        candidate.routeListeners.removeAll { $0.profileID == profileID }
         if candidate.primaryProfileID == profileID {
             candidate.primaryProfileID = nextPrimaryProfileID
         }
@@ -1932,6 +1933,9 @@ final class AppModel {
         _ id: ProfileID,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
+        try await validateProfileRouteListenerTargets(
+            profileRouteListeners(for: id)
+        )
         guard let profileStore else {
             throw AppModelError.profileStoreUnavailable
         }
@@ -1941,6 +1945,7 @@ final class AppModel {
                 overrides: effectiveRuntimeOverrides(for: id),
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
                 profileMixedListener: activeProfileDedicatedMixedListener,
+                routeListeners: profileRouteListeners(for: id),
                 in: profileStore,
                 validator: validator
             )
@@ -1953,6 +1958,9 @@ final class AppModel {
         overrides: RuntimeOverrides,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
+        try await validateProfileRouteListenerTargets(
+            profileRouteListeners(for: id)
+        )
         guard let profileStore, let runtimeOverrideCoordinator else {
             throw AppModelError.profileStoreUnavailable
         }
@@ -1967,6 +1975,7 @@ final class AppModel {
             overrides: profileOverrides,
             networkExtensionListener: activeNetworkExtensionMihomoListener,
             profileMixedListener: activeProfileDedicatedMixedListener,
+            routeListeners: profileRouteListeners(for: id),
             in: profileStore,
             validator: validator
         )
@@ -2074,6 +2083,7 @@ final class AppModel {
                 overrides: validationOverrides,
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
                 profileMixedListener: activeProfileDedicatedMixedListener,
+                routeListeners: profileRouteListeners(for: activeProfileID),
                 in: profileStore,
                 validator: validator
             )
@@ -2169,6 +2179,170 @@ final class AppModel {
     @discardableResult
     func resetRuntimeOverrides() async throws -> RuntimeSettingsApplyOutcome {
         try await applyRuntimeOverrides(.empty)
+    }
+
+    @discardableResult
+    func applyProfileRouteListeners(
+        _ listeners: [ProfileRouteListenerSpec]
+    ) async throws -> RuntimeSettingsApplyOutcome {
+        guard begin(.changeRuntimeSettings) else {
+            throw AppModelError.operationInProgress
+        }
+        defer { end(.changeRuntimeSettings) }
+        guard let activeProfileID,
+              let profileStore,
+              let runtimeOverrideCoordinator,
+              let profileRuntimePlanStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+
+        let previousPlan = profileRuntimePlan
+        var candidate = previousPlan
+        candidate.routeListeners = listeners
+        for profileID in Set(listeners.filter(\.enabled).map(\.profileID)) {
+            guard let index = candidate.sessions.firstIndex(where: {
+                $0.profileID == profileID
+            }) else {
+                throw ProfileRuntimePlanValidationError
+                    .routeListenerProfileMissing(profileID)
+            }
+            candidate.sessions[index].enabled = true
+        }
+        candidate.primaryProfileID = activeProfileID
+        try ProfileRuntimePlanValidator().validate(candidate)
+        guard candidate != previousPlan else {
+            let outcome = RuntimeSettingsApplyOutcome.unchanged
+            runtimeSettingsApplyState = .completed(outcome)
+            return outcome
+        }
+
+        try await validateProfileRouteListenerTargets(listeners)
+        let shouldRestart = isConnected || isBusy
+        let shouldRestoreSystemProxy = systemProxyEnabled
+        let currentlyOwnedPorts = shouldRestart
+            ? Set(previousPlan.routeListeners.filter(\.enabled).map(\.port))
+            : []
+        for listener in listeners where listener.enabled {
+            guard currentlyOwnedPorts.contains(listener.port)
+                    || localPortProbe.isAvailableTCPAndUDP(port: listener.port)
+            else {
+                throw AppModelError.routeListenerPortUnavailable(
+                    listener.name,
+                    listener.port
+                )
+            }
+        }
+
+        profileRuntimePlan = candidate
+        do {
+            runtimeSettingsApplyState = .validating
+            let validator = try makeProfileValidator()
+            try await runtimeOverrideCoordinator.validateProfile(
+                activeProfileID,
+                overrides: effectiveRuntimeOverrides(for: activeProfileID),
+                networkExtensionListener: activeNetworkExtensionMihomoListener,
+                profileMixedListener: activeProfileDedicatedMixedListener,
+                routeListeners: profileRouteListeners(for: activeProfileID),
+                in: profileStore,
+                validator: validator
+            )
+
+            if shouldRestart {
+                runtimeSettingsApplyState = .restarting
+                guard await performDisconnect() else {
+                    throw AppModelError.profileActivationFailed(
+                        "The running cores could not stop before the routing ports changed."
+                    )
+                }
+            }
+
+            let activation = try await activateStoredProfile(
+                activeProfileID,
+                validator: validator
+            )
+            activeConfigURL = activation.configurationURL
+            if shouldRestart {
+                guard await performConnect() else {
+                    throw AppModelError.profileActivationFailed(
+                        errorMessage ?? "The updated routing ports could not be started."
+                    )
+                }
+            }
+
+            runtimeSettingsApplyState = .saving
+            try await profileRuntimePlanStore.save(candidate)
+            if shouldRestart, shouldRestoreSystemProxy {
+                await performEnableSystemProxy()
+                guard systemProxyState == .on else {
+                    throw AppModelError.profileActivationFailed(
+                        errorMessage
+                            ?? "The macOS system proxy could not be restored after restarting the cores."
+                    )
+                }
+            }
+
+            errorMessage = nil
+            let outcome: RuntimeSettingsApplyOutcome = shouldRestart
+                ? .savedAndRestarted
+                : .saved
+            runtimeSettingsApplyState = .completed(outcome)
+            appendSupervisorLog(
+                shouldRestart
+                    ? "Routing ports saved and the cores restarted successfully."
+                    : "Routing ports saved."
+            )
+            return outcome
+        } catch {
+            profileRuntimePlan = previousPlan
+            let primaryMessage = error.localizedDescription
+            let failures = await rollbackRuntimeOverrides(
+                runtimeOverrides,
+                previousRuntimePlan: previousPlan,
+                activeProfileID: activeProfileID,
+                shouldReconnect: shouldRestart,
+                shouldRestoreSystemProxy: shouldRestoreSystemProxy
+            )
+            let recovery = failures.isEmpty
+                ? "The previous routing ports were restored."
+                : "Restoring the previous routing ports failed: "
+                    + failures.joined(separator: " ")
+            let message = "\(primaryMessage) \(recovery)"
+            errorMessage = message
+            runtimeSettingsApplyState = .failed(message)
+            appendSupervisorLog("Routing port update failed. \(message)")
+            throw AppModelError.profileActivationFailed(message)
+        }
+    }
+
+    private func validateProfileRouteListenerTargets(
+        _ listeners: [ProfileRouteListenerSpec]
+    ) async throws {
+        for (profileID, profileListeners) in Dictionary(
+            grouping: listeners.filter(\.enabled),
+            by: \.profileID
+        ) {
+            let catalog = await profileRouteTargetCatalog(for: profileID)
+            for listener in profileListeners {
+                let targetIsAvailable: Bool
+                switch listener.target {
+                case .profileRules, .global:
+                    targetIsAvailable = true
+                case let .subRule(name):
+                    targetIsAvailable = catalog.subRules.contains(name)
+                case let .policyGroup(name):
+                    targetIsAvailable = catalog.policyGroups.contains(name)
+                case let .proxyNode(name):
+                    targetIsAvailable = !catalog.isLive
+                        || catalog.proxyNodes.contains(name)
+                }
+                guard targetIsAvailable else {
+                    throw AppModelError.routeListenerTargetUnavailable(
+                        listener.name,
+                        listener.target.presentationName
+                    )
+                }
+            }
+        }
     }
 
     private func rollbackRuntimeOverrides(
@@ -2878,6 +3052,35 @@ final class AppModel {
         profiles
     }
 
+    func profileRouteTargetCatalog(
+        for profileID: ProfileID
+    ) async -> ProfileRouteTargetCatalog {
+        var catalog = ProfileRouteTargetCatalog.empty(profileID: profileID)
+        if let profileStore,
+           let data = try? await profileStore.configurationData(for: profileID) {
+            catalog = ProfileRouteTargetCatalogReader().read(
+                profileID: profileID,
+                data: data
+            )
+        }
+
+        let snapshot = profileProxyWorkspaceStates[profileID]?.snapshot
+        guard let snapshot else { return catalog }
+
+        let groups = snapshot.topology.groupOrder
+        let nodes = snapshot.topology.vertices.values.compactMap { vertex -> String? in
+            if case .endpoint = vertex.kind { return vertex.name }
+            return nil
+        }.sorted(by: proxyStableNameComesBefore)
+        return ProfileRouteTargetCatalog(
+            profileID: profileID,
+            subRules: catalog.subRules,
+            policyGroups: groups,
+            proxyNodes: nodes,
+            isLive: true
+        )
+    }
+
     /// Returns cached controller data without starting or enabling a Profile.
     /// Auxiliary Profiles whose dedicated port is closed are always surfaced
     /// as unavailable, even if an older snapshot remains in memory.
@@ -3553,7 +3756,6 @@ final class AppModel {
                wasConnected,
                isConnected,
                controllerIsReady,
-               !candidate.dnsEnabled,
                candidate.dnsEnabled == previous.dnsEnabled,
                networkExtensionMihomoListener == previousListener,
                networkExtensionProfileListeners == previousProfileListeners,
@@ -4938,6 +5140,61 @@ final class AppModel {
         profiles.first(where: { $0.id == profileID })?.name ?? profileID.description
     }
 
+    private func verifyProfileRouteListenerProtocols(
+        profileID: ProfileID
+    ) async throws {
+        let listeners = profileRouteListeners(for: profileID).filter(\.enabled)
+        let httpPorts = Set(listeners.compactMap { listener in
+            listener.protocolType == .http || listener.protocolType == .mixed
+                ? listener.port
+                : nil
+        })
+        let socksPorts = Set(listeners.compactMap { listener in
+            listener.protocolType == .socks || listener.protocolType == .mixed
+                ? listener.port
+                : nil
+        })
+        guard !httpPorts.isEmpty || !socksPorts.isEmpty else { return }
+        try await localPortProbe.waitUntilProxyProtocols(
+            httpPorts: httpPorts,
+            socksPorts: socksPorts
+        )
+    }
+
+    private func validateProfileRouteListenerProxyTargets(
+        profileID: ProfileID?,
+        collection: MihomoProxyCollection
+    ) throws {
+        guard let profileID else { return }
+        for listener in profileRouteListeners(for: profileID) where listener.enabled {
+            let isAvailable: Bool
+            switch listener.target {
+            case .profileRules, .subRule, .global:
+                isAvailable = true
+            case let .policyGroup(name):
+                if let proxy = collection.proxies[name] {
+                    isAvailable = !proxy.all.isEmpty
+                        || ProxyGroupKind(rawType: proxy.type).isKnownGroup
+                } else {
+                    isAvailable = false
+                }
+            case let .proxyNode(name):
+                if let proxy = collection.proxies[name] {
+                    isAvailable = proxy.all.isEmpty
+                        && !ProxyGroupKind(rawType: proxy.type).isKnownGroup
+                } else {
+                    isAvailable = false
+                }
+            }
+            guard isAvailable else {
+                throw AppModelError.routeListenerTargetUnavailable(
+                    listener.name,
+                    listener.target.presentationName
+                )
+            }
+        }
+    }
+
     private func handleRunningSession(_ session: CoreSession) async {
         await controllerDidStart(session)
         if let networkCaptureDeactivationOperation {
@@ -5082,6 +5339,10 @@ final class AppModel {
                 using: client
             )
             let proxies = try await client.fetchProxies()
+            try validateProfileRouteListenerProxyTargets(
+                profileID: activeProfileID,
+                collection: proxies
+            )
             guard generation == controllerGeneration,
                   activeControllerEndpoint == session.endpoint,
                   isConnected else { return }
@@ -5134,6 +5395,11 @@ final class AppModel {
                     try await localPortProbe.waitUntilProxyProtocols(
                         httpPort: dedicatedPort,
                         socksPort: dedicatedPort
+                    )
+                }
+                if let activeProfileID {
+                    try await verifyProfileRouteListenerProtocols(
+                        profileID: activeProfileID
                     )
                 }
                 return initialConfig
@@ -6021,6 +6287,11 @@ final class AppModel {
                 try await localPortProbe.waitUntilProxyProtocols(
                     httpPort: dedicatedPort,
                     socksPort: dedicatedPort
+                )
+            }
+            if let activeProfileID {
+                try await verifyProfileRouteListenerProtocols(
+                    profileID: activeProfileID
                 )
             }
             if activeNetworkExtensionMihomoListener != nil {
@@ -7373,7 +7644,8 @@ final class AppModel {
             effectiveRuntimeOverrides(for: profileID),
             to: managedSourceData,
             networkExtensionListener: nil,
-            profileMixedListener: activeProfileDedicatedMixedListener
+            profileMixedListener: activeProfileDedicatedMixedListener,
+            routeListeners: profileRouteListeners(for: profileID)
         )
         return try composer.boundListenerPorts(in: sourceCandidate)
     }
@@ -7431,6 +7703,7 @@ final class AppModel {
         }
         let knownProfileIDs = Set(profiles.map(\.id))
         plan.sessions.removeAll { !knownProfileIDs.contains($0.profileID) }
+        plan.routeListeners.removeAll { !knownProfileIDs.contains($0.profileID) }
 
         if let activeProfileID {
             // A fresh virtual Default Profile adopts the source Profile's
@@ -7455,6 +7728,7 @@ final class AppModel {
                     for: activeProfileID,
                     excluding: Set(
                         plan.sessions.map(\.mixedPort) + [plan.defaultMixedPort]
+                            + plan.routeListeners.map(\.port)
                     )
                 )
                 plan.sessions.append(ProfileSessionSpec(
@@ -7476,6 +7750,12 @@ final class AppModel {
         profileRuntimePlan.sessions.first { $0.profileID == profileID }
     }
 
+    func profileRouteListeners(
+        for profileID: ProfileID
+    ) -> [ProfileRouteListenerSpec] {
+        profileRuntimePlan.routeListeners.filter { $0.profileID == profileID }
+    }
+
     func setProfileMixedPortEnabled(
         profileID: ProfileID,
         enabled: Bool
@@ -7489,6 +7769,7 @@ final class AppModel {
                 excluding: Set(
                     profileRuntimePlan.sessions.map(\.mixedPort)
                         + [profileRuntimePlan.defaultMixedPort]
+                        + profileRuntimePlan.routeListeners.map(\.port)
                 )
             )
         }
@@ -7694,6 +7975,9 @@ final class AppModel {
         startAuxiliary: Bool = true
     ) async throws {
         guard !shutdownInProgress else { throw CancellationError() }
+        try await validateProfileRouteListenerTargets(
+            profileRuntimePlan.routeListeners
+        )
         guard let activeProfileID,
               let profileStore,
               let profileLayout else {
@@ -7751,6 +8035,11 @@ final class AppModel {
             var listenerPorts = Set(
                 profileRuntimePlan.enabledSessions.map(\.mixedPort)
             ).union(primarySourcePorts)
+                .union(
+                    profileRuntimePlan.routeListeners
+                        .filter(\.enabled)
+                        .map(\.port)
+                )
             var requestsNeedingPorts: [(
                 profileID: ProfileID,
                 routes: Set<MihomoRoute>,
@@ -7810,6 +8099,9 @@ final class AppModel {
             let binaryURL = try binaryLocator.locate()
             var reservedControllerPorts = Set(
                 profileRuntimePlan.enabledSessions.map(\.mixedPort)
+                    + profileRuntimePlan.routeListeners
+                        .filter(\.enabled)
+                        .map(\.port)
                     + listeners.values.flatMap {
                         $0.routeListeners.map { Int($0.port) }
                     }
@@ -7855,7 +8147,8 @@ final class AppModel {
                 let runtimeData = try RuntimeConfigurationComposer().applying(
                     effectiveRuntimeOverrides(for: spec.profileID),
                     to: isolatedSourceData,
-                    networkExtensionListener: listener
+                    networkExtensionListener: listener,
+                    routeListeners: profileRouteListeners(for: spec.profileID)
                 )
                 let configurationURL = profileLayout.runtimeConfigurationURL(
                     for: spec.profileID
@@ -7935,6 +8228,14 @@ final class AppModel {
                         httpPort: spec.mixedPort,
                         socksPort: spec.mixedPort
                     )
+                    try await verifyProfileRouteListenerProtocols(
+                        profileID: spec.profileID
+                    )
+                    let proxies = try await client.fetchProxies()
+                    try validateProfileRouteListenerProxyTargets(
+                        profileID: spec.profileID,
+                        collection: proxies
+                    )
                 } catch {
                     _ = await coreFleet.stop(profileID: spec.profileID)
                     auxiliaryCoreStates = await coreFleet.states()
@@ -7983,7 +8284,9 @@ final class AppModel {
         }
 
         var usedPorts = Set(
-            candidate.sessions.map(\.mixedPort) + [candidate.defaultMixedPort]
+            candidate.sessions.map(\.mixedPort)
+                + [candidate.defaultMixedPort]
+                + candidate.routeListeners.map(\.port)
         )
         if !candidate.sessions.contains(where: { $0.profileID == activeProfileID }) {
             let port = try await preferredMixedPort(
@@ -8364,6 +8667,8 @@ private enum AppModelError: LocalizedError {
     case profileMixedPortDisabled(String)
     case profileMixedPortUnavailable(String, Int)
     case primaryListenerPortConflict([Int])
+    case routeListenerPortUnavailable(String, Int)
+    case routeListenerTargetUnavailable(String, String)
 
     var errorDescription: String? {
         switch self {
@@ -8407,6 +8712,10 @@ private enum AppModelError: LocalizedError {
             "\(name) cannot start because Mixed port \(port) is already in use."
         case let .primaryListenerPortConflict(ports):
             "The default profile cannot start because its Redirect, TProxy, DNS, or custom listener conflicts with another Profile session on port \(ports.map(String.init).joined(separator: ", ")). Choose distinct ports and try again."
+        case let .routeListenerPortUnavailable(name, port):
+            "Routing port “\(name)” cannot start because port \(port) is already in use."
+        case let .routeListenerTargetUnavailable(name, target):
+            "Routing port “\(name)” points to “\(target)”, which is not available in its Profile."
         }
     }
 }

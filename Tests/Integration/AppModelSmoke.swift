@@ -100,6 +100,60 @@ struct AppModelSmoke {
             try verifyProxyProtocols(model: model)
             let stableDefaultMixedPort = model.profileRuntimePlan.defaultMixedPort
 
+            let routePorts = try LocalPortProbe().availableTCPAndUDPPorts(
+                count: 3,
+                excluding: Set(
+                    model.profileRuntimePlan.sessions.map(\.mixedPort)
+                        + [model.profileRuntimePlan.defaultMixedPort]
+                )
+            )
+            let routeListeners = [
+                ProfileRouteListenerSpec(
+                    profileID: startupProfile.id,
+                    name: "HTTP Rules",
+                    protocolType: .http,
+                    port: routePorts[0],
+                    target: .profileRules
+                ),
+                ProfileRouteListenerSpec(
+                    profileID: startupProfile.id,
+                    name: "SOCKS Direct",
+                    protocolType: .socks,
+                    port: routePorts[1],
+                    target: .proxyNode("DIRECT")
+                ),
+                ProfileRouteListenerSpec(
+                    profileID: startupProfile.id,
+                    name: "Mixed Rules",
+                    protocolType: .mixed,
+                    port: routePorts[2],
+                    target: .profileRules
+                ),
+            ]
+            for _ in 0..<100 where !model.canPerform(.changeRuntimeSettings) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            guard model.canPerform(.changeRuntimeSettings) else {
+                throw SmokeFailure.profileRuntimeUpdateStayedBusy(
+                    "\(model.operations)"
+                )
+            }
+            let routeApplyOutcome = try await model.applyProfileRouteListeners(
+                routeListeners
+            )
+            guard routeApplyOutcome == .savedAndRestarted,
+                  model.isConnected,
+                  model.controllerIsReady,
+                  model.profileRuntimePlan.routeListeners == routeListeners,
+                  model.profileSessionSpec(for: startupProfile.id)?.enabled == true,
+                  try await ProfileRuntimePlanStore(layout: layout).load()
+                    .routeListeners == routeListeners else {
+                throw SmokeFailure.routeListenersDidNotRestart
+            }
+            try verifyHTTPProxy(port: routePorts[0])
+            try verifySOCKSProxy(port: routePorts[1])
+            try verifyProxyProtocols(port: routePorts[2])
+
             let auxiliaryMixedPort = try LocalPortProbe()
                 .availableTCPAndUDPPorts(count: 1)[0]
             for _ in 0..<100
@@ -341,6 +395,9 @@ struct AppModelSmoke {
                 throw SmokeFailure.gracefulShutdownLeftCoreProcesses
             }
             guard !LocalPortProbe().isListening(port: auxiliaryMixedPort),
+                  routePorts.allSatisfy({
+                      !LocalPortProbe().isListening(port: $0)
+                  }),
                   finalMixedPort.map({
                       !LocalPortProbe().isListening(port: $0)
                   }) ?? true else {
@@ -370,6 +427,26 @@ struct AppModelSmoke {
             throw SmokeFailure.proxyTestConfigurationUnavailable
         }
         try verifyProxyProtocols(port: port, socksPort: port, target: target)
+    }
+
+    private static func verifyHTTPProxy(port: Int) throws {
+        guard let target = ProcessInfo.processInfo.environment["MCLASH_PROXY_SMOKE_URL"] else {
+            throw SmokeFailure.proxyTestConfigurationUnavailable
+        }
+        try runCurl([
+            "--noproxy", "", "--fail", "--silent", "--show-error", "--max-time", "10",
+            "--proxy", "http://127.0.0.1:\(port)", target
+        ])
+    }
+
+    private static func verifySOCKSProxy(port: Int) throws {
+        guard let target = ProcessInfo.processInfo.environment["MCLASH_PROXY_SMOKE_URL"] else {
+            throw SmokeFailure.proxyTestConfigurationUnavailable
+        }
+        try runCurl([
+            "--noproxy", "", "--fail", "--silent", "--show-error", "--max-time", "10",
+            "--socks5-hostname", "127.0.0.1:\(port)", target
+        ])
     }
 
     private static func verifyProxyProtocols(
@@ -502,6 +579,7 @@ private enum SmokeFailure: Error {
     case occupiedAuxiliaryRuntimePortWasAccepted
     case auxiliaryRuntimePortRollbackFailed
     case profileRuntimeUpdateStayedBusy(String)
+    case routeListenersDidNotRestart
     case gracefulShutdownFailed
     case gracefulShutdownLeftCoreProcesses
     case gracefulShutdownLeftPortsOccupied

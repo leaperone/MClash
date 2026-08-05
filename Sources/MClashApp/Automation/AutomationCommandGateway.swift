@@ -1256,6 +1256,25 @@ final class AutomationCommandGateway {
         case .ready: "ready"
         case .degraded: "degraded"
         }
+        var listeners = model.localListenerEndpoints.map { endpoint in
+            AutomationJSONValue.object([
+                "kind": .string(endpoint.kind.rawValue),
+                "address": .string(endpoint.address),
+                "managed": .bool(true),
+            ])
+        }
+        listeners.append(contentsOf: model.profileRuntimePlan.routeListeners.map { listener in
+            .object([
+                "id": .string(listener.id.uuidString.lowercased()),
+                "name": .string(listener.name),
+                "kind": .string(listener.protocolType.rawValue),
+                "address": .string("127.0.0.1:\(listener.port)"),
+                "profileID": .string(listener.profileID.description),
+                "enabled": .bool(listener.enabled),
+                "target": profileRouteListenerTargetJSON(listener.target),
+                "managed": .bool(true),
+            ])
+        })
         return .object([
             "state": .string(state),
             "connected": .bool(model.isConnected),
@@ -1263,13 +1282,25 @@ final class AutomationCommandGateway {
             "version": version,
             "startedAt": startedAt,
             "activeProfileID": model.activeProfileID.map { .string($0.description) } ?? .null,
-            "listeners": .array(model.localListenerEndpoints.map { endpoint in
-                return .object([
-                    "kind": .string(endpoint.kind.rawValue),
-                    "address": .string(endpoint.address),
-                ])
-            }),
+            "listeners": .array(listeners),
         ])
+    }
+
+    private func profileRouteListenerTargetJSON(
+        _ target: ProfileRouteListenerTarget
+    ) -> AutomationJSONValue {
+        switch target {
+        case .profileRules:
+            .object(["kind": .string("profileRules")])
+        case let .subRule(name):
+            .object(["kind": .string("subRule"), "name": .string(name)])
+        case .global:
+            .object(["kind": .string("global"), "name": .string("GLOBAL")])
+        case let .policyGroup(name):
+            .object(["kind": .string("policyGroup"), "name": .string(name)])
+        case let .proxyNode(name):
+            .object(["kind": .string("proxyNode"), "name": .string(name)])
+        }
     }
 
     private func profiles(request: AutomationRPCRequest) throws -> AutomationJSONValue {

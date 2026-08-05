@@ -147,10 +147,11 @@ struct ProfileRuntimePlanTests {
         let persistedJSON = try #require(
             try JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
-        #expect(persistedJSON["schemaVersion"] as? Int == 2)
+        #expect(persistedJSON["schemaVersion"] as? Int == 3)
         #expect(persistedJSON["defaultMixedPort"] != nil)
         #expect(persistedJSON["primaryProfileID"] != nil)
         #expect(persistedJSON["sessions"] != nil)
+        #expect(persistedJSON["routeListeners"] != nil)
         #expect(try permissions(of: fixture.layout.rootDirectory) == 0o700)
         #expect(try permissions(of: fixture.layout.stateDirectory) == 0o700)
         #expect(
@@ -187,11 +188,128 @@ struct ProfileRuntimePlanTests {
 
         let migrated = try JSONDecoder().decode(ProfileRuntimePlan.self, from: data)
 
-        #expect(migrated.schemaVersion == 2)
+        #expect(migrated.schemaVersion == 3)
         #expect(migrated.defaultMixedPort == 18_900)
         #expect(migrated.sessions.first?.mixedPort != 18_900)
         #expect(migrated.sessions.first?.enabled == false)
         try ProfileRuntimePlanValidator().validate(migrated)
+    }
+
+    @Test("Schema 2 migrates with an empty routing-port collection")
+    func migratesSchemaTwo() throws {
+        let profileID = ProfileID()
+        let data = Data(
+            """
+            {
+              "schemaVersion": 2,
+              "defaultMixedPort": 17890,
+              "sessions": [
+                {
+                  "profileID": { "rawValue": "\(profileID.rawValue.uuidString)" },
+                  "enabled": false,
+                  "mixedPort": 17891
+                }
+              ],
+              "primaryProfileID": { "rawValue": "\(profileID.rawValue.uuidString)" }
+            }
+            """.utf8
+        )
+
+        let migrated = try JSONDecoder().decode(ProfileRuntimePlan.self, from: data)
+
+        #expect(migrated.schemaVersion == 3)
+        #expect(migrated.routeListeners.isEmpty)
+        try ProfileRuntimePlanValidator().validate(migrated)
+    }
+
+    @Test("Routing ports round-trip every protocol and target kind")
+    func routeListenersRoundTrip() throws {
+        let profileID = ProfileID()
+        let listeners = [
+            ProfileRouteListenerSpec(
+                profileID: profileID,
+                name: "Rules",
+                protocolType: .mixed,
+                port: 18_080,
+                target: .profileRules
+            ),
+            ProfileRouteListenerSpec(
+                profileID: profileID,
+                name: "Sub-rule",
+                protocolType: .http,
+                port: 18_081,
+                target: .subRule("developer-tools")
+            ),
+            ProfileRouteListenerSpec(
+                profileID: profileID,
+                name: "Node",
+                protocolType: .socks,
+                port: 18_082,
+                target: .proxyNode("Tokyo 01")
+            ),
+        ]
+        let plan = ProfileRuntimePlan(
+            defaultMixedPort: 17_890,
+            sessions: [
+                ProfileSessionSpec(
+                    profileID: profileID,
+                    enabled: true,
+                    mixedPort: 17_891
+                ),
+            ],
+            primaryProfileID: profileID,
+            routeListeners: listeners
+        )
+
+        try ProfileRuntimePlanValidator().validate(plan)
+        let decoded = try JSONDecoder().decode(
+            ProfileRuntimePlan.self,
+            from: JSONEncoder().encode(plan)
+        )
+        #expect(decoded == plan)
+    }
+
+    @Test("Routing ports reserve ports globally and require an enabled Profile session")
+    func validatesRouteListenerAssignments() {
+        let profileID = ProfileID()
+        let disabledSession = ProfileSessionSpec(
+            profileID: profileID,
+            enabled: false,
+            mixedPort: 17_891
+        )
+        let listener = ProfileRouteListenerSpec(
+            profileID: profileID,
+            name: "Build",
+            port: 18_080
+        )
+
+        #expect(
+            throws: ProfileRuntimePlanValidationError
+                .routeListenerProfileDisabled(profileID)
+        ) {
+            try ProfileRuntimePlanValidator().validate(ProfileRuntimePlan(
+                defaultMixedPort: 17_890,
+                sessions: [disabledSession],
+                primaryProfileID: profileID,
+                routeListeners: [listener]
+            ))
+        }
+
+        var enabled = disabledSession
+        enabled.enabled = true
+        var conflicting = listener
+        conflicting.port = 17_890
+        #expect(
+            throws: ProfileRuntimePlanValidationError
+                .routeListenerPortConflict(17_890)
+        ) {
+            try ProfileRuntimePlanValidator().validate(ProfileRuntimePlan(
+                defaultMixedPort: 17_890,
+                sessions: [enabled],
+                primaryProfileID: profileID,
+                routeListeners: [conflicting]
+            ))
+        }
     }
 
     @Test("Rejected save leaves the previous durable plan intact")

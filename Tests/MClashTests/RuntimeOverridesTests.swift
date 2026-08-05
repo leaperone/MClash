@@ -201,6 +201,53 @@ struct RuntimeOverridesTests {
         #expect(result == profile)
     }
 
+    @Test("Composer emits dual-stack user routing ports with proxy and sub-rule targets")
+    func composerEmitsProfileRouteListeners() throws {
+        let profileID = ProfileID()
+        let socksID = UUID(uuidString: "B18D1C2D-749D-4A03-8BF4-BC55C2D321B5")!
+        let httpID = UUID(uuidString: "DDE10D31-128A-455B-B578-F89DE352864E")!
+        let listeners = [
+            ProfileRouteListenerSpec(
+                id: socksID,
+                profileID: profileID,
+                name: "Pinned SOCKS",
+                protocolType: .socks,
+                port: 18_080,
+                target: .proxyNode("Japan / Auto")
+            ),
+            ProfileRouteListenerSpec(
+                id: httpID,
+                profileID: profileID,
+                name: "Rule HTTP",
+                protocolType: .http,
+                port: 18_081,
+                target: .subRule("developer-tools")
+            ),
+        ]
+
+        let result = try RuntimeConfigurationComposer().applying(
+            .empty,
+            to: Data("mixed-port: 7890\nrules:\n  - MATCH,DIRECT\n".utf8),
+            routeListeners: listeners
+        )
+        let yaml = try #require(String(data: result, encoding: .utf8))
+
+        #expect(yaml.contains("name: \"mclash-route-\(socksID.uuidString.lowercased())-ipv4\""))
+        #expect(yaml.contains("name: \"mclash-route-\(socksID.uuidString.lowercased())-ipv6\""))
+        #expect(yaml.contains("listen: \"127.0.0.1\""))
+        #expect(yaml.contains("listen: \"::1\""))
+        #expect(yaml.contains("type: socks\n"))
+        #expect(yaml.contains("udp: true\n"))
+        #expect(yaml.contains("proxy: \"Japan / Auto\"\n"))
+        #expect(yaml.contains("type: http\n"))
+        #expect(yaml.contains("rule: \"developer-tools\"\n"))
+        #expect(!yaml.contains("rule: \"developer-tools\"\n    proxy:"))
+        #expect(
+            try RuntimeConfigurationComposer().boundListenerPorts(in: result)
+                .isSuperset(of: [18_080, 18_081])
+        )
+    }
+
     @Test("Profile listener ports are read before overrides")
     func readsProfileListenerPorts() throws {
         let profile = Data(

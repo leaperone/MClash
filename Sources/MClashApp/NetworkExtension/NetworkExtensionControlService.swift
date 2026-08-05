@@ -46,9 +46,9 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     private let transparentProxy: any TransparentProxyManaging
     private let dnsProxy: any DNSProxyManaging
     private var activeConfiguration: NetworkExtensionRuntimeConfiguration?
-    /// Tracks the independently verified DNS Provider activation. DNS has no
-    /// provider-message update channel, so any rule update while DNS Routing
-    /// is enabled uses a controlled full data-plane restart.
+    /// Tracks the independently verified DNS Provider activation. Live rule
+    /// updates reach it through the transparent provider's authenticated
+    /// message channel and the process-local DNS runtime registry.
     private var activeDNSConfiguration: NetworkExtensionRuntimeConfiguration?
     /// Every committed activation owns a generation. Cleanup invalidates it
     /// before touching either Provider, so a System Extension approval that
@@ -270,11 +270,10 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
         }
     }
 
-    /// Applies rule-only changes without stopping the transparent provider
-    /// when DNS Routing is disabled. With DNS enabled, the DNS Provider needs
-    /// the same snapshot and route catalog as transparent capture, and because
-    /// it has no provider-message update channel this method falls back to the
-    /// controlled full enable transaction.
+    /// Applies rule-only changes without stopping either provider. The
+    /// transparent provider publishes the matching DNS bootstrap through the
+    /// process-local registry, then the host persists and verifies the DNS
+    /// provider's new activation identity.
     func updateRuntimeConfiguration(
         _ configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> NetworkExtensionEnableOutcome {
@@ -283,7 +282,6 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
               previous.captureEnabled,
               configuration.captureEnabled,
               configuration.revision > previous.revision,
-              !configuration.dnsEnabled,
               configuration.dnsEnabled == previous.dnsEnabled,
               configuration.mihomoListener == previous.mihomoListener
         else {
@@ -316,12 +314,19 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
                     message: "The transparent proxy did not verify live revision \(liveConfiguration.revision)."
                 )
             }
+            if liveConfiguration.dnsEnabled {
+                try await dnsProxy.updateRuntimeConfiguration(liveConfiguration)
+                try ensureOperationCurrent(generation)
+            }
 
             activeConfiguration = liveConfiguration
+            activeDNSConfiguration = liveConfiguration.dnsEnabled
+                ? liveConfiguration
+                : nil
             state.revision = liveConfiguration.revision
             state.failure = nil
             networkExtensionControlLogger.notice(
-                "Live update committed revision=\(liveConfiguration.revision, privacy: .public); DNS Routing is disabled"
+                "Live update committed revision=\(liveConfiguration.revision, privacy: .public) dnsEnabled=\(liveConfiguration.dnsEnabled, privacy: .public)"
             )
             return .running
         } catch {

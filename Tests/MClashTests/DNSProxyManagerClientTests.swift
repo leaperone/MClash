@@ -63,6 +63,37 @@ struct DNSProxyManagerClientTests {
         #expect((await preferences.persistedSnapshot())?.isEnabled == true)
     }
 
+    @Test("Live update replaces the bootstrap without disabling the DNS provider")
+    func liveUpdateKeepsOwnedProviderEnabled() async throws {
+        let channel = StubDNSRuntimeChannel()
+        let previous = try Self.configuration(revision: 40)
+        let desired = try Self.configuration(revision: 41)
+        let preferences = StubDNSProxyPreferences(
+            initial: Self.preferenceSnapshot(previous, enabled: true),
+            runtimeChannel: channel
+        )
+        let manager = AppleDNSProxyManager(
+            preferences: preferences,
+            runtimeChannel: channel,
+            operationalStatusTimeout: .milliseconds(100),
+            operationalStatusPollInterval: .milliseconds(1)
+        )
+
+        try await manager.updateRuntimeConfiguration(desired)
+
+        #expect(await preferences.savedEnabledStates() == [true])
+        #expect(await preferences.loadCount() == 2)
+        #expect(await preferences.saveCount() == 1)
+        let persisted = try #require(await preferences.persistedSnapshot())
+        #expect(persisted.isEnabled)
+        let bootstrapData = try #require(
+            persisted.providerConfiguration?["dnsProxyBootstrap"] as? Data
+        )
+        let bootstrap = try DNSProxyBootstrapConfiguration.decode(bootstrapData)
+        #expect(bootstrap.revision == desired.revision)
+        #expect(bootstrap.activationIdentifier == desired.activationIdentifier)
+    }
+
     @Test("Enable rejects a system readback with a changed bootstrap")
     func enableRejectsMismatchedReadback() async throws {
         let channel = StubDNSRuntimeChannel()

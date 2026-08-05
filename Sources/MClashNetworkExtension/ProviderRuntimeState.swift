@@ -55,6 +55,20 @@ final class ProviderRuntimeState: @unchecked Sendable {
         }
     }
 
+    func replace(
+        revision: UInt64,
+        captureEnabled: Bool,
+        failOpen: Bool
+    ) {
+        withLock {
+            guard storage.running, revision > storage.revision else { return }
+            storage.revision = revision
+            storage.captureEnabled = captureEnabled
+            storage.failOpen = failOpen
+            storage.pendingRevision = nil
+        }
+    }
+
     func apply(_ request: ProviderControlRequest) -> ProviderControlResponse {
         withLock {
             guard request.protocolVersion == ProviderControlRequest.currentProtocolVersion else {

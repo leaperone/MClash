@@ -413,8 +413,8 @@ struct NetworkExtensionControlTests {
         #expect(await recorder.snapshot() == ["transparent.status"])
     }
 
-    @Test("Rule updates restart DNS so both providers receive the new snapshot")
-    func ruleUpdateRestartsDNSProvider() async throws {
+    @Test("Rule updates both providers live without stopping capture")
+    func ruleUpdateUpdatesBothProvidersLive() async throws {
         let recorder = NetworkExtensionOperationRecorder()
         let service = NetworkExtensionControlService(
             systemExtension: MockSystemExtensionController(recorder: recorder),
@@ -441,10 +441,15 @@ struct NetworkExtensionControlTests {
 
         #expect(result == .running)
         let operations = await recorder.snapshot()
-        #expect(operations.contains("dns.disable"))
-        #expect(operations.contains("transparent.stop"))
-        #expect(operations.contains("dns.configure"))
-        #expect(!operations.contains("transparent.update"))
+        #expect(operations == [
+            "transparent.configure",
+            "transparent.reload",
+            "transparent.update",
+            "dns.update",
+        ])
+        #expect(!operations.contains("dns.disable"))
+        #expect(!operations.contains("transparent.stop"))
+        #expect(!operations.contains("dns.configure"))
         #expect(await service.currentState().revision == 31)
         let appliedConfigurations = await recorder.configurations()
         let applied = try #require(appliedConfigurations.last)
@@ -613,6 +618,12 @@ private actor DeferredDNSProxyManager: DNSProxyManaging {
         enabled = true
     }
 
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws {
+        await recorder.append("dns.update")
+    }
+
     func reload() async throws {
         await recorder.append("dns.reload")
     }
@@ -753,6 +764,12 @@ private struct MockDNSProxyManager: DNSProxyManaging {
     ) async throws {
         await recorder.append("dns.configure")
         if let configureError { throw configureError }
+    }
+
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws {
+        await recorder.append("dns.update")
     }
 
     func reload() async throws {

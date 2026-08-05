@@ -89,6 +89,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private var backendProbeTimer: DispatchSourceTimer?
     private var activeBackendProbe: MihomoUDPAssociationProbe?
     private var pendingStartCompletion: DNSProxyStartCompletion?
+    private var liveUpdaterToken: UUID?
     private var backendProbeGeneration: UInt64 = 0
     private var consecutiveBackendProbeFailures = 0
     private var backendProbingSuspended = false
@@ -138,9 +139,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             )
             return
         }
-        guard let proxy = ProviderSOCKSConfiguration(
-            routeEndpoint: bootstrap.profileRulesProxy
-        ) else {
+        guard let dataPlane = Self.dataPlaneConfiguration(for: bootstrap) else {
             rejectBootstrap(
                 reason: .invalidPrivateRelay,
                 error: .invalidPrivateRelay,
@@ -149,45 +148,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             )
             return
         }
-        let routeEndpoints = bootstrap.routeProxyEndpoints
-            ?? [bootstrap.profileRulesProxy]
-        var proxyCatalog: [MihomoRoute: ProviderSOCKSConfiguration] = [:]
-        for endpoint in routeEndpoints {
-            guard let configuration = ProviderSOCKSConfiguration(
-                routeEndpoint: endpoint
-            ) else {
-                rejectBootstrap(
-                    reason: .invalidPrivateRelay,
-                    error: .invalidPrivateRelay,
-                    bootstrap: bootstrap,
-                    completionHandler: completionHandler
-                )
-                return
-            }
-            proxyCatalog[endpoint.route] = configuration
-        }
-        guard proxyCatalog[.profileRules] != nil else {
-            rejectBootstrap(
-                reason: .invalidPrivateRelay,
-                error: .invalidPrivateRelay,
-                bootstrap: bootstrap,
-                completionHandler: completionHandler
-            )
-            return
-        }
-        var routingConfiguration: [String: Any] = [
-            ProviderConfigurationKey.revision: NSNumber(value: bootstrap.revision),
-            ProviderConfigurationKey.captureEnabled: NSNumber(value: true),
-        ]
-        if let catalogData = try? MihomoRouteProxyCatalog.encode(routeEndpoints) {
-            routingConfiguration[ProviderConfigurationKey.mihomoRouteProxyCatalog] =
-                catalogData
-        }
-        if let snapshot = bootstrap.encodedCaptureSnapshot {
-            routingConfiguration[ProviderConfigurationKey.captureConfigurationSnapshot] =
-                snapshot
-        }
-        flowDecisionCoordinator.load(configuration: routingConfiguration)
+        flowDecisionCoordinator.load(configuration: dataPlane.routingConfiguration)
 
         do {
             let startCompletion = DNSProxyStartCompletion(completionHandler)
@@ -205,18 +166,22 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             }
             backendProbingSuspended = false
             self.reporter = reporter
-            self.proxy = proxy
-            self.proxyCatalog = proxyCatalog
+            self.proxy = dataPlane.proxy
+            self.proxyCatalog = dataPlane.proxyCatalog
             consecutiveBackendProbeFailures = 0
             activeBackendProbe = probe
             pendingStartCompletion = startCompletion
             reporter.startHeartbeat()
             runtime.start(configuration: options)
+            liveUpdaterToken = DNSProxyRuntimeRegistry.shared.registerLiveUpdater {
+                [weak self] bootstrap in
+                self?.applyLiveBootstrap(bootstrap) ?? false
+            }
             backendProbeLock.unlock()
             dnsProxyProviderLogger.notice(
                 "Accepted DNS bootstrap revision=\(bootstrap.revision, privacy: .public) schema=\(bootstrap.schemaVersion, privacy: .public) source=\(deliveredBootstrap == nil ? "provider-registry" : "provider-options", privacy: .public) payloadBytes=\(deliveredPayload?.count ?? 0, privacy: .public)"
             )
-            probe.start(proxy: proxy) { [weak self] error in
+            probe.start(proxy: dataPlane.proxy) { [weak self] error in
                 guard let self else { return }
                 self.backendProbeLock.lock()
                 let resultIsCurrent = self.activeBackendProbe === probe
@@ -308,6 +273,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         self.pendingStartCompletion = nil
         let reporter = reporter
         self.reporter = nil
+        let liveUpdaterToken = liveUpdaterToken
+        self.liveUpdaterToken = nil
         proxy = nil
         proxyCatalog = [:]
         flowDecisionCoordinator.quiesce()
@@ -319,6 +286,9 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         tcpRelays.cancelAll()
         udpSessions.cancelAll()
         reporter?.stop(category: .cancelled)
+        if let liveUpdaterToken {
+            DNSProxyRuntimeRegistry.shared.unregisterLiveUpdater(liveUpdaterToken)
+        }
         runtime.stop()
         completionHandler()
     }
@@ -721,6 +691,105 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let snapshot = (reporter, proxy, proxyCatalog)
         backendProbeLock.unlock()
         return snapshot
+    }
+
+    private func applyLiveBootstrap(
+        _ bootstrap: DNSProxyBootstrapConfiguration
+    ) -> Bool {
+        guard let dataPlane = Self.dataPlaneConfiguration(for: bootstrap) else {
+            return false
+        }
+        guard bootstrap.revision > runtime.snapshot().revision else {
+            return false
+        }
+        let newReporter: DNSProxyRuntimeReporter
+        do {
+            newReporter = try DNSProxyRuntimeReporter(
+                revision: bootstrap.revision,
+                activationIdentifier: bootstrap.activationIdentifier
+            )
+            newReporter.startHeartbeat()
+            try newReporter.markRunning()
+        } catch {
+            dnsProxyProviderLogger.error(
+                "DNS live update reporter failed revision=\(bootstrap.revision, privacy: .public)"
+            )
+            return false
+        }
+
+        backendProbeLock.lock()
+        guard reporter != nil, proxy != nil, !backendProbingSuspended else {
+            backendProbeLock.unlock()
+            newReporter.stop(category: .cancelled)
+            return false
+        }
+        // Keep the decision snapshot and route catalog replacement inside the
+        // same provider lifecycle critical section. New flows block while the
+        // data plane is replaced; existing relays retain the proxy and
+        // reporter captured when they started.
+        flowDecisionCoordinator.load(configuration: dataPlane.routingConfiguration)
+        backendProbeGeneration &+= 1
+        consecutiveBackendProbeFailures = 0
+        let previousReporter = reporter
+        let previousProbe = activeBackendProbe
+        activeBackendProbe = nil
+        reporter = newReporter
+        proxy = dataPlane.proxy
+        proxyCatalog = dataPlane.proxyCatalog
+        runtime.replace(
+            revision: bootstrap.revision,
+            captureEnabled: true,
+            failOpen: true
+        )
+        backendProbeLock.unlock()
+
+        previousProbe?.cancel()
+        previousReporter?.stop()
+        runBackendProbe()
+        dnsProxyProviderLogger.notice(
+            "DNS rules updated live revision=\(bootstrap.revision, privacy: .public)"
+        )
+        return true
+    }
+
+    private struct DataPlaneConfiguration {
+        let proxy: ProviderSOCKSConfiguration
+        let proxyCatalog: [MihomoRoute: ProviderSOCKSConfiguration]
+        let routingConfiguration: [String: Any]
+    }
+
+    private static func dataPlaneConfiguration(
+        for bootstrap: DNSProxyBootstrapConfiguration
+    ) -> DataPlaneConfiguration? {
+        guard let proxy = ProviderSOCKSConfiguration(
+            routeEndpoint: bootstrap.profileRulesProxy
+        ) else { return nil }
+        let routeEndpoints = bootstrap.routeProxyEndpoints
+            ?? [bootstrap.profileRulesProxy]
+        var proxyCatalog: [MihomoRoute: ProviderSOCKSConfiguration] = [:]
+        for endpoint in routeEndpoints {
+            guard let configuration = ProviderSOCKSConfiguration(
+                routeEndpoint: endpoint
+            ) else { return nil }
+            proxyCatalog[endpoint.route] = configuration
+        }
+        guard proxyCatalog[.profileRules] != nil,
+              let catalogData = try? MihomoRouteProxyCatalog.encode(routeEndpoints)
+        else { return nil }
+        var routingConfiguration: [String: Any] = [
+            ProviderConfigurationKey.revision: NSNumber(value: bootstrap.revision),
+            ProviderConfigurationKey.captureEnabled: NSNumber(value: true),
+            ProviderConfigurationKey.mihomoRouteProxyCatalog: catalogData,
+        ]
+        if let snapshot = bootstrap.encodedCaptureSnapshot {
+            routingConfiguration[ProviderConfigurationKey.captureConfigurationSnapshot] =
+                snapshot
+        }
+        return DataPlaneConfiguration(
+            proxy: proxy,
+            proxyCatalog: proxyCatalog,
+            routingConfiguration: routingConfiguration
+        )
     }
 
     private static func data(_ value: Any?) -> Data? {

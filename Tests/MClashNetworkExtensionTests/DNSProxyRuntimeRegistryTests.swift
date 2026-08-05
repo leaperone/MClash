@@ -5,6 +5,106 @@ import Testing
 
 @Suite("DNS runtime registry")
 struct DNSProxyRuntimeRegistryTests {
+    @Test("A changed bootstrap is delivered to the live updater exactly once")
+    func changedBootstrapTriggersLiveUpdater() throws {
+        let registry = DNSProxyRuntimeRegistry()
+        let first = try bootstrap(
+            revision: 30,
+            activationIdentifier: UUID(
+                uuidString: "11111111-1111-1111-1111-111111111111"
+            )!
+        )
+        let replacement = try bootstrap(
+            revision: 31,
+            activationIdentifier: UUID(
+                uuidString: "22222222-2222-2222-2222-222222222222"
+            )!,
+            routeProxyEndpoints: [
+                try endpoint(route: .profileRules, port: 17_892),
+                try endpoint(
+                    route: .profile(
+                        RoutingProfileID(
+                            UUID(
+                                uuidString: "33333333-3333-3333-3333-333333333333"
+                            )!
+                        ),
+                        target: .global
+                    ),
+                    port: 17_893
+                ),
+            ]
+        )
+        let recorder = BootstrapUpdateRecorder(result: true)
+
+        #expect(registry.prepare(first))
+        let token = registry.registerLiveUpdater { value in
+            recorder.apply(value)
+        }
+        defer { registry.unregisterLiveUpdater(token) }
+
+        #expect(registry.prepare(replacement))
+        #expect(registry.prepare(replacement))
+        #expect(recorder.values == [replacement])
+        #expect(registry.snapshot()?.expectedRevision == 31)
+    }
+
+    @Test("A rejected live update makes prepare fail")
+    func rejectedLiveUpdateFailsPrepare() throws {
+        let registry = DNSProxyRuntimeRegistry()
+        let first = try bootstrap(
+            revision: 30,
+            activationIdentifier: UUID(
+                uuidString: "11111111-1111-1111-1111-111111111111"
+            )!
+        )
+        let replacement = try bootstrap(
+            revision: 31,
+            activationIdentifier: UUID(
+                uuidString: "22222222-2222-2222-2222-222222222222"
+            )!
+        )
+        let recorder = BootstrapUpdateRecorder(result: false)
+
+        #expect(registry.prepare(first))
+        let token = registry.registerLiveUpdater { value in
+            recorder.apply(value)
+        }
+        defer { registry.unregisterLiveUpdater(token) }
+
+        #expect(!registry.prepare(replacement))
+        #expect(recorder.values == [replacement])
+    }
+
+    @Test("A rejected live update is not committed as the active bootstrap")
+    func rejectedLiveUpdateDoesNotCommitBootstrap() throws {
+        let registry = DNSProxyRuntimeRegistry()
+        let first = try bootstrap(
+            revision: 30,
+            activationIdentifier: UUID(
+                uuidString: "11111111-1111-1111-1111-111111111111"
+            )!
+        )
+        let replacement = try bootstrap(
+            revision: 31,
+            activationIdentifier: UUID(
+                uuidString: "22222222-2222-2222-2222-222222222222"
+            )!
+        )
+        let recorder = BootstrapUpdateRecorder(result: false)
+
+        #expect(registry.prepare(first))
+        let token = registry.registerLiveUpdater { value in
+            recorder.apply(value)
+        }
+        defer { registry.unregisterLiveUpdater(token) }
+
+        #expect(!registry.prepare(replacement))
+        #expect(!registry.prepare(replacement))
+        #expect(recorder.values == [replacement, replacement])
+        #expect(registry.snapshot()?.expectedRevision == first.revision)
+        #expect(try registry.resolveBootstrap(delivered: first) == first)
+    }
+
     @Test("Re-preparing the active bootstrap preserves its heartbeat")
     func repeatedPrepareIsIdempotent() throws {
         let registry = DNSProxyRuntimeRegistry()
@@ -45,16 +145,48 @@ struct DNSProxyRuntimeRegistryTests {
 
     private func bootstrap(
         revision: UInt64,
-        activationIdentifier: UUID
+        activationIdentifier: UUID,
+        routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil
     ) throws -> DNSProxyBootstrapConfiguration {
         try DNSProxyBootstrapConfiguration(
             revision: revision,
             activationIdentifier: activationIdentifier,
-            profileRulesProxy: MihomoRouteProxyEndpoint(
-                route: .profileRules,
-                host: "127.0.0.1",
-                port: 17_891
-            )
+            profileRulesProxy: endpoint(route: .profileRules, port: 17_891),
+            routeProxyEndpoints: routeProxyEndpoints
         )
+    }
+
+    private func endpoint(
+        route: MihomoRoute,
+        port: UInt16
+    ) throws -> MihomoRouteProxyEndpoint {
+        try MihomoRouteProxyEndpoint(
+            route: route,
+            host: "127.0.0.1",
+            port: port
+        )
+    }
+}
+
+private final class BootstrapUpdateRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private let result: Bool
+    private var storage: [DNSProxyBootstrapConfiguration] = []
+
+    init(result: Bool) {
+        self.result = result
+    }
+
+    var values: [DNSProxyBootstrapConfiguration] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func apply(_ value: DNSProxyBootstrapConfiguration) -> Bool {
+        lock.lock()
+        storage.append(value)
+        lock.unlock()
+        return result
     }
 }

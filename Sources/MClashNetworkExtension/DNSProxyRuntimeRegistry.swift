@@ -26,6 +26,8 @@ enum DNSProxyRuntimeRegistryError: Error, Equatable, LocalizedError, Sendable {
 /// app, so DNS status can cross the privilege boundary without a per-user App
 /// Group file or a world-readable root-owned artifact.
 final class DNSProxyRuntimeRegistry: @unchecked Sendable {
+    typealias LiveUpdater = @Sendable (DNSProxyBootstrapConfiguration) -> Bool
+
     static let shared = DNSProxyRuntimeRegistry()
 
     private let lock = NSLock()
@@ -34,6 +36,7 @@ final class DNSProxyRuntimeRegistry: @unchecked Sendable {
     private var bootstrap: DNSProxyBootstrapConfiguration?
     private var status: DNSProxyRuntimeStatus?
     private var startupFailure: DNSProxyStartupFailure?
+    private var liveUpdater: (id: UUID, apply: LiveUpdater)?
 
     init() {}
 
@@ -47,13 +50,54 @@ final class DNSProxyRuntimeRegistry: @unchecked Sendable {
             lock.unlock()
             return true
         }
+        let previousExpectedRevision = expectedRevision
+        let previousExpectedActivationIdentifier = expectedActivationIdentifier
+        let previousBootstrap = bootstrap
+        let previousStatus = status
+        let previousStartupFailure = startupFailure
         expectedRevision = value.revision
         expectedActivationIdentifier = value.activationIdentifier
         bootstrap = value
         status = nil
         startupFailure = nil
+        let updater = liveUpdater?.apply
         lock.unlock()
+        guard updater?(value) ?? true else {
+            lock.lock()
+            // The live updater publishes status through this registry, so the
+            // candidate identity must be staged before invoking it. If the
+            // provider rejects the candidate, restore the entire previous
+            // activation so an identical retry cannot hit the idempotent path
+            // while the provider is still running the old data plane.
+            if bootstrap == value,
+               expectedRevision == value.revision,
+               expectedActivationIdentifier == value.activationIdentifier {
+                expectedRevision = previousExpectedRevision
+                expectedActivationIdentifier = previousExpectedActivationIdentifier
+                bootstrap = previousBootstrap
+                status = previousStatus
+                startupFailure = previousStartupFailure
+            }
+            lock.unlock()
+            return false
+        }
         return true
+    }
+
+    func registerLiveUpdater(_ updater: @escaping LiveUpdater) -> UUID {
+        let id = UUID()
+        lock.lock()
+        liveUpdater = (id, updater)
+        lock.unlock()
+        return id
+    }
+
+    func unregisterLiveUpdater(_ id: UUID) {
+        lock.lock()
+        if liveUpdater?.id == id {
+            liveUpdater = nil
+        }
+        lock.unlock()
     }
 
     /// Resolves one start attempt without a read/replace race. A host-staged

@@ -28,6 +28,7 @@ public actor RuntimeOverrideActivationCoordinator {
         _ id: ProfileID,
         networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil,
+        routeListeners: [ProfileRouteListenerSpec] = [],
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
@@ -37,6 +38,7 @@ public actor RuntimeOverrideActivationCoordinator {
             overrides: currentOverrides,
             networkExtensionListener: networkExtensionListener,
             profileMixedListener: profileMixedListener,
+            routeListeners: routeListeners,
             in: profileStore,
             validator: validator
         )
@@ -51,6 +53,7 @@ public actor RuntimeOverrideActivationCoordinator {
         overrides: RuntimeOverrides,
         networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil,
+        routeListeners: [ProfileRouteListenerSpec] = [],
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws {
@@ -59,6 +62,7 @@ public actor RuntimeOverrideActivationCoordinator {
             overrides: overrides,
             networkExtensionListener: networkExtensionListener,
             profileMixedListener: profileMixedListener,
+            routeListeners: routeListeners,
             in: profileStore
         )
         defer { try? FileManager.default.removeItem(at: stagedURL) }
@@ -75,6 +79,7 @@ public actor RuntimeOverrideActivationCoordinator {
         overrides: RuntimeOverrides,
         networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil,
+        routeListeners: [ProfileRouteListenerSpec] = [],
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
@@ -84,6 +89,7 @@ public actor RuntimeOverrideActivationCoordinator {
             overrides: overrides,
             networkExtensionListener: networkExtensionListener,
             profileMixedListener: profileMixedListener,
+            routeListeners: routeListeners,
             in: profileStore
         )
 
@@ -124,6 +130,7 @@ public actor RuntimeOverrideActivationCoordinator {
         overrides: RuntimeOverrides,
         networkExtensionListener: NetworkExtensionMihomoListenerConfiguration?,
         profileMixedListener: ManagedProfileMixedListenerConfiguration?,
+        routeListeners: [ProfileRouteListenerSpec],
         in profileStore: ProfileStore
     ) async throws -> URL {
         let sourceData = try await profileStore.configurationData(for: id)
@@ -132,7 +139,8 @@ public actor RuntimeOverrideActivationCoordinator {
             mixedOnly(overrides),
             to: managedSourceData,
             networkExtensionListener: networkExtensionListener,
-            profileMixedListener: profileMixedListener
+            profileMixedListener: profileMixedListener,
+            routeListeners: routeListeners
         )
         return try await profileStore.stageRuntimeConfiguration(
             data: runtimeData,
