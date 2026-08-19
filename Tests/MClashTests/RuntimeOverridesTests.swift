@@ -330,6 +330,39 @@ struct RuntimeOverridesTests {
         )
     }
 
+    @Test("Bound-port scan accepts indentless sequences in root mappings")
+    func scansProfilesWithIndentlessSequences() throws {
+        let configuration = Data(
+            """
+            mixed-port: 7890
+            proxies:
+            - name: remote
+              type: socks5
+              server: example.com
+              port: 443
+            rules:
+            - MATCH,remote
+            """.utf8
+        )
+
+        #expect(
+            try RuntimeConfigurationComposer()
+                .boundListenerPorts(in: configuration) == [7890]
+        )
+    }
+
+    @Test("Bound-port scan still rejects a root sequence document")
+    func rejectsRootSequenceDocument() throws {
+        let configuration = Data("- mixed-port: 7890\n".utf8)
+
+        #expect(
+            throws: RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("root mapping")
+        ) {
+            try RuntimeConfigurationComposer().boundListenerPorts(in: configuration)
+        }
+    }
+
     @Test("Bound-port scan normalizes reverse listener ranges and rejects ephemeral ports")
     func validatesListenerPortSpecifications() throws {
         let reverseRange = Data(
