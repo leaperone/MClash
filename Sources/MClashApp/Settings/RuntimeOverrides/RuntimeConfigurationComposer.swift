@@ -588,14 +588,25 @@ public struct RuntimeConfigurationComposer: Sendable {
     private static func validateRootMappingStructure(
         _ lines: [YAMLLine]
     ) throws {
+        var permitsIndentlessSequence = false
         for line in lines where !line.isIndentedContent && !line.isRootTrivia {
-            guard line.isRootDocumentStart
-                    || line.isRootDocumentEnd
-                    || line.isRootDirective
-                    || line.rootMappingKey != nil else {
-                throw RuntimeConfigurationComposerError
-                    .unsupportedBoundListenerSyntax("root mapping")
+            if line.isRootDocumentStart || line.isRootDirective {
+                permitsIndentlessSequence = false
+                continue
             }
+            if line.isRootDocumentEnd {
+                permitsIndentlessSequence = false
+                continue
+            }
+            if line.rootMappingKey != nil {
+                permitsIndentlessSequence = line.rootValueStyle == .block
+                continue
+            }
+            if line.isRootSequenceItem && permitsIndentlessSequence {
+                continue
+            }
+            throw RuntimeConfigurationComposerError
+                .unsupportedBoundListenerSyntax("root mapping")
         }
     }
 
@@ -1441,6 +1452,14 @@ private struct YAMLLine {
 
     var isRootDirective: Bool {
         !isIndentedContent && markerContent.hasPrefix("%")
+    }
+
+    var isRootSequenceItem: Bool {
+        guard !isIndentedContent else { return false }
+        let content = raw.trimmingCharacters(in: .newlines)
+        let marker = content.drop(while: { $0 == " " || $0 == "\t" })
+        return marker == "-" || marker.first == "-"
+            && marker.dropFirst().first?.isWhitespace == true
     }
 
     var isRootTrivia: Bool {
