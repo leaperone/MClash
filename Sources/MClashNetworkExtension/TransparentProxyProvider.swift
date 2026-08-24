@@ -63,6 +63,10 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
     }
 
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
+        guard InitialFlowOwnershipPolicy.shouldEvaluate(
+            metadataSigningIdentifier: flow.metaData.sourceAppSigningIdentifier
+        ) else { return false }
+
         let decision: FlowTrafficDecision
         if let tcpFlow = flow as? NEAppProxyTCPFlow {
             let plan = flowDecisionCoordinator.planTCPFlow(tcpFlow)
@@ -123,6 +127,10 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         _ flow: NEAppProxyUDPFlow,
         initialRemoteEndpoint remoteEndpoint: NetworkExtension.__NWEndpoint
     ) -> Bool {
+        guard InitialFlowOwnershipPolicy.shouldEvaluate(
+            metadataSigningIdentifier: flow.metaData.sourceAppSigningIdentifier
+        ) else { return false }
+
         let parentFlowIdentifier = UUID()
         let plan = flowDecisionCoordinator.planLegacyUDPFlow(
             flow,
@@ -684,6 +692,10 @@ extension TransparentProxyProvider: NEAppProxyUDPFlowHandling {
         _ flow: NEAppProxyUDPFlow,
         initialRemoteFlowEndpoint remoteEndpoint: Network.NWEndpoint
     ) -> Bool {
+        guard InitialFlowOwnershipPolicy.shouldEvaluate(
+            metadataSigningIdentifier: flow.metaData.sourceAppSigningIdentifier
+        ) else { return false }
+
         let parentFlowIdentifier = UUID()
         let plan = flowDecisionCoordinator.planUDPFlow(
             flow,
