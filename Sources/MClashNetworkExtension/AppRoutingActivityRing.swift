@@ -68,8 +68,6 @@ final class AppRoutingRelayActivityReporter: @unchecked Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         switch limiter.decision(
             for: snapshot.state,
-            uploadBytes: snapshot.uploadBytes,
-            downloadBytes: snapshot.downloadBytes,
             nowNanoseconds: now
         ) {
         case .emit:
@@ -100,8 +98,6 @@ final class AppRoutingRelayActivityReporter: @unchecked Sendable {
         guard let latestSnapshot,
               latestSnapshot.state == .relaying,
               limiter.shouldEmitScheduledReport(
-                  uploadBytes: latestSnapshot.uploadBytes,
-                  downloadBytes: latestSnapshot.downloadBytes,
                   nowNanoseconds: DispatchTime.now().uptimeNanoseconds
               )
         else { return }

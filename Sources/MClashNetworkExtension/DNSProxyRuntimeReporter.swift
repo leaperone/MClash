@@ -29,9 +29,10 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
     init(
         revision: UInt64,
         activationIdentifier: UUID,
-        now: Date = Date()
+        now: Date = Date(),
+        registry: DNSProxyRuntimeRegistry = .shared
     ) throws {
-        registry = .shared
+        self.registry = registry
         status = DNSProxyRuntimeStatus(
             revision: revision,
             activationIdentifier: activationIdentifier,
@@ -42,18 +43,33 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
         try registry.publish(status)
     }
 
-    func startHeartbeat() {
+    func resumeHeartbeat() {
         lock.lock()
         guard heartbeat == nil, !stopped else {
             lock.unlock()
             return
         }
+        status.recordHeartbeat()
+        try? registry.publish(status)
         let timer = DispatchSource.makeTimerSource(queue: heartbeatQueue)
-        timer.schedule(deadline: .now() + .seconds(2), repeating: .seconds(2))
+        timer.schedule(
+            deadline: .now() + .seconds(2),
+            repeating: .seconds(2),
+            leeway: .milliseconds(500)
+        )
         timer.setEventHandler { [weak self] in self?.recordHeartbeat() }
         timer.resume()
         heartbeat = timer
         lock.unlock()
+    }
+
+    func pauseHeartbeat() {
+        lock.lock()
+        let timer = heartbeat
+        heartbeat = nil
+        lock.unlock()
+        timer?.setEventHandler {}
+        timer?.cancel()
     }
 
     func markRunning() throws {
@@ -203,6 +219,7 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
 
     func stop(category: DNSProxyFailureCategory? = nil) {
         lock.lock()
+        stopped = true
         let timer = heartbeat
         heartbeat = nil
         lock.unlock()
@@ -210,7 +227,6 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
         timer?.cancel()
 
         publishBestEffort { value, now in
-            self.stopped = true
             let active = value.activeFlows
             value.failedFlows = Self.add(value.failedFlows, active)
             value.activeTCPFlows = 0

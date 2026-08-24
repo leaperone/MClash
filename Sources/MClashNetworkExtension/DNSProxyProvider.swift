@@ -171,7 +171,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             consecutiveBackendProbeFailures = 0
             activeBackendProbe = probe
             pendingStartCompletion = startCompletion
-            reporter.startHeartbeat()
+            reporter.resumeHeartbeat()
             runtime.start(configuration: options)
             liveUpdaterToken = DNSProxyRuntimeRegistry.shared.registerLiveUpdater {
                 [weak self] bootstrap in
@@ -367,6 +367,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
 
     override func sleep(completionHandler: @escaping () -> Void) {
         suspendBackendProbing()
+        runtimeDataPlaneSnapshot().reporter?.pauseHeartbeat()
         tcpRelays.cancelAll()
         udpSessions.cancelAll()
         completionHandler()
@@ -374,7 +375,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
 
     override func wake() {
         backendProbeLock.lock()
-        guard reporter != nil, proxy != nil else {
+        guard backendProbingSuspended, let reporter, proxy != nil else {
             backendProbeLock.unlock()
             return
         }
@@ -382,6 +383,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         consecutiveBackendProbeFailures = 0
         backendProbeGeneration &+= 1
         backendProbeLock.unlock()
+        reporter.resumeHeartbeat()
         runBackendProbe()
         startPeriodicBackendProbe()
     }
@@ -393,7 +395,11 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             return
         }
         let timer = DispatchSource.makeTimerSource(queue: backendProbeQueue)
-        timer.schedule(deadline: .now() + .seconds(4), repeating: .seconds(4))
+        timer.schedule(
+            deadline: .now() + .seconds(30),
+            repeating: .seconds(30),
+            leeway: .seconds(5)
+        )
         timer.setEventHandler { [weak self] in self?.runBackendProbe() }
         timer.resume()
         backendProbeTimer = timer
@@ -708,7 +714,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 revision: bootstrap.revision,
                 activationIdentifier: bootstrap.activationIdentifier
             )
-            newReporter.startHeartbeat()
+            newReporter.resumeHeartbeat()
             try newReporter.markRunning()
         } catch {
             dnsProxyProviderLogger.error(

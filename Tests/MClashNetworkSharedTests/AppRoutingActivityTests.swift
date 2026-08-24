@@ -364,84 +364,56 @@ struct AppRoutingActivityTests {
 
     @Test("Report limiter coalesces bursts and flushes the latest trailing counters")
     func reportLimiterThrottlesAndFlushes() {
-        var limiter = AppRoutingRelayReportLimiter(
-            minimumIntervalNanoseconds: 250,
-            byteThreshold: 1_000
-        )
+        var limiter = AppRoutingRelayReportLimiter()
 
         #expect(limiter.decision(
             for: .ready,
-            uploadBytes: 0,
-            downloadBytes: 0,
             nowNanoseconds: 0
         ) == .emit)
         #expect(limiter.decision(
             for: .relaying,
-            uploadBytes: 100,
-            downloadBytes: 50,
-            nowNanoseconds: 10
+            nowNanoseconds: 0
         ) == .emit)
         #expect(limiter.decision(
             for: .relaying,
-            uploadBytes: 200,
-            downloadBytes: 100,
-            nowNanoseconds: 60
-        ) == .schedule(afterNanoseconds: 200))
+            nowNanoseconds: 50
+        ) == .schedule(afterNanoseconds: 249_999_950))
         #expect(limiter.decision(
             for: .relaying,
-            uploadBytes: 300,
-            downloadBytes: 200,
             nowNanoseconds: 100
         ) == .suppress)
         let earlyFlush = limiter.shouldEmitScheduledReport(
-            uploadBytes: 300,
-            downloadBytes: 200,
-            nowNanoseconds: 259
+            nowNanoseconds: 249_999_999
         )
         #expect(!earlyFlush)
         let dueFlush = limiter.shouldEmitScheduledReport(
-            uploadBytes: 300,
-            downloadBytes: 200,
-            nowNanoseconds: 260
+            nowNanoseconds: 250_000_000
         )
         #expect(dueFlush)
     }
 
-    @Test("Byte threshold bypasses time throttle and terminal states are immediate")
-    func reportLimiterByteThresholdAndFinalState() {
-        var limiter = AppRoutingRelayReportLimiter(
-            minimumIntervalNanoseconds: 1_000,
-            byteThreshold: 500
-        )
+    @Test("Terminal states are immediate and cancel a pending trailing report")
+    func reportLimiterFinalState() {
+        var limiter = AppRoutingRelayReportLimiter()
         #expect(limiter.decision(
             for: .relaying,
-            uploadBytes: 10,
-            downloadBytes: 10,
+            nowNanoseconds: 100
+        ) == .emit)
+        #expect(limiter.decision(
+            for: .relaying,
+            nowNanoseconds: 101
+        ) == .schedule(afterNanoseconds: 249_999_999))
+        #expect(limiter.decision(
+            for: .relaying,
             nowNanoseconds: 0
-        ) == .emit)
-        #expect(limiter.decision(
-            for: .relaying,
-            uploadBytes: 410,
-            downloadBytes: 110,
-            nowNanoseconds: 10
-        ) == .emit)
-        #expect(limiter.decision(
-            for: .relaying,
-            uploadBytes: 420,
-            downloadBytes: 120,
-            nowNanoseconds: 20
-        ) == .schedule(afterNanoseconds: 990))
+        ) == .suppress)
 
         #expect(limiter.decision(
             for: .failed,
-            uploadBytes: 777,
-            downloadBytes: 888,
-            nowNanoseconds: 21
+            nowNanoseconds: 102
         ) == .emit)
         let staleFlush = limiter.shouldEmitScheduledReport(
-            uploadBytes: 777,
-            downloadBytes: 888,
-            nowNanoseconds: 2_000
+            nowNanoseconds: 300_000_000
         )
         #expect(!staleFlush)
     }
