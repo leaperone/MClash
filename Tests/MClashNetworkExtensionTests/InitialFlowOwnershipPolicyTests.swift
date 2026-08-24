@@ -5,6 +5,22 @@ import Testing
 
 @Suite("Initial flow ownership policy")
 struct InitialFlowOwnershipPolicyTests {
+    @Test("Trusted data-plane flows skip evaluation")
+    func trustedDataPlaneSkipsEvaluation() {
+        #expect(!InitialFlowOwnershipPolicy.shouldEvaluate(
+            metadataSigningIdentifier: "mclash-mihomo"
+        ))
+        #expect(!InitialFlowOwnershipPolicy.shouldEvaluate(
+            metadataSigningIdentifier: "one.leaper.mclash.network-extension"
+        ))
+        #expect(InitialFlowOwnershipPolicy.shouldEvaluate(
+            metadataSigningIdentifier: "one.leaper.mclash"
+        ))
+        #expect(InitialFlowOwnershipPolicy.shouldEvaluate(
+            metadataSigningIdentifier: "com.example.browser"
+        ))
+    }
+
     @Test("Direct and fail-open stay on the original macOS path")
     func passThroughDispositions() {
         #expect(!InitialFlowOwnershipPolicy.owns(.direct))

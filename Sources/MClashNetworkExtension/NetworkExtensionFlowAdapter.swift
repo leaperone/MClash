@@ -4,6 +4,12 @@ import Network
 import NetworkExtension
 
 enum InitialFlowOwnershipPolicy {
+    static func shouldEvaluate(metadataSigningIdentifier: String) -> Bool {
+        !TrustedMClashComponentPolicy().contains(
+            metadataSigningIdentifier: metadataSigningIdentifier
+        )
+    }
+
     /// Returning `false` from an NE transparent provider preserves the original
     /// application connection. Direct must therefore never be owned merely for
     /// byte accounting; doing so adds a second socket and a user-space relay to

@@ -1,0 +1,8 @@
+base_branch = "main"
+require_planning = true
+
+[[scope]]
+prefix = ""
+name = "MClash"
+check = "./scripts/test-direct.sh"
+build = "./scripts/build-app.sh"

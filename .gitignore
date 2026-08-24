@@ -24,3 +24,6 @@ Sources/MClashApp/Resources/Core/mihomo-alpha-*
 # Local diagnostics and scratch files.
 .tmp-*/
 *.log
+
+# Local Git worktrees
+/.worktrees/
