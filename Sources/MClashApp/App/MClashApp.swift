@@ -45,6 +45,9 @@ struct MClashApp: App {
                     applicationDelegate.showMainWindow()
                     Task { await model.handleIncomingURL(url) }
                 }
+                .onChange(of: model.lightweightMode, initial: true) { _, isEnabled in
+                    applicationDelegate.setLightweightMode(isEnabled)
+                }
         }
         .environment(\.locale, selectedLanguage.locale)
         .defaultSize(width: 1_180, height: 760)
@@ -86,7 +89,24 @@ struct MClashApp: App {
             }
         }
 
-        MenuBarExtra {
+        MenuBarExtra(isInserted: lightweightMenuBarExtraIsInserted) {
+            Button("Open MClash") {
+                applicationDelegate.showMainWindow()
+            }
+
+            Divider()
+
+            Button("Quit") {
+                NSApplication.shared.terminate(nil)
+            }
+            .keyboardShortcut("q")
+        } label: {
+            MenuBarStatusLabel(model: model)
+        }
+        .environment(\.locale, selectedLanguage.locale)
+        .menuBarExtraStyle(.menu)
+
+        MenuBarExtra(isInserted: standardMenuBarExtraIsInserted) {
             MenuBarContent(model: model) { destination in
                 showMainWindow(destination: destination)
             }
@@ -95,11 +115,24 @@ struct MClashApp: App {
         }
         .environment(\.locale, selectedLanguage.locale)
         .menuBarExtraStyle(.window)
-
     }
 
     private var selectedLanguage: AppLanguage {
         AppLanguage(rawValue: appLanguageRawValue) ?? .system
+    }
+
+    private var lightweightMenuBarExtraIsInserted: Binding<Bool> {
+        Binding(
+            get: { model.lightweightMode },
+            set: { _ in }
+        )
+    }
+
+    private var standardMenuBarExtraIsInserted: Binding<Bool> {
+        Binding(
+            get: { !model.lightweightMode },
+            set: { _ in }
+        )
     }
 
     @MainActor

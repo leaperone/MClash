@@ -88,23 +88,25 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private let backendProbeLock = NSLock()
     private var backendProbeTimer: DispatchSourceTimer?
     private var activeBackendProbe: MihomoUDPAssociationProbe?
-    private var pendingStartCompletion: DNSProxyStartCompletion?
+    private var pendingStartCompletion: DNSProxyLifecycleCompletion?
     private var liveUpdaterToken: UUID?
     private var backendProbeGeneration: UInt64 = 0
     private var consecutiveBackendProbeFailures = 0
     private var backendProbingSuspended = false
 
     private static let backendProbeFailureThreshold = 3
+    private static let backendProbeConfirmationDelay: DispatchTimeInterval = .seconds(4)
 
     override func startProxy(
         options: [String: Any]? = nil,
         completionHandler: @escaping (Error?) -> Void
     ) {
+        let startCompletion = DNSProxyLifecycleCompletion(completionHandler)
         backendProbeLock.lock()
         backendProbeGeneration &+= 1
         let startGeneration = backendProbeGeneration
         backendProbingSuspended = true
-        backendProbeLock.unlock()
+        pendingStartCompletion = startCompletion
 
         let providerConfiguration = options
         let deliveredPayload = providerConfiguration.flatMap {
@@ -131,39 +133,31 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 reason = .invalidBootstrapPayload
                 bootstrapError = .invalidBootstrapPayload
             }
-            rejectBootstrap(
+            rejectBootstrapLocked(
                 reason: reason,
                 error: bootstrapError,
                 bootstrap: nil,
-                completionHandler: completionHandler
+                startCompletion: startCompletion
             )
             return
         }
         guard let dataPlane = Self.dataPlaneConfiguration(for: bootstrap) else {
-            rejectBootstrap(
+            rejectBootstrapLocked(
                 reason: .invalidPrivateRelay,
                 error: .invalidPrivateRelay,
                 bootstrap: bootstrap,
-                completionHandler: completionHandler
+                startCompletion: startCompletion
             )
             return
         }
         flowDecisionCoordinator.load(configuration: dataPlane.routingConfiguration)
 
         do {
-            let startCompletion = DNSProxyStartCompletion(completionHandler)
             let reporter = try DNSProxyRuntimeReporter(
                 revision: bootstrap.revision,
                 activationIdentifier: bootstrap.activationIdentifier
             )
             let probe = MihomoUDPAssociationProbe()
-            backendProbeLock.lock()
-            guard backendProbeGeneration == startGeneration else {
-                backendProbeLock.unlock()
-                reporter.stop(category: .cancelled)
-                startCompletion.call(DNSProxyBootstrapError.cancelledDuringStartup)
-                return
-            }
             backendProbingSuspended = false
             self.reporter = reporter
             self.proxy = dataPlane.proxy
@@ -171,7 +165,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             consecutiveBackendProbeFailures = 0
             activeBackendProbe = probe
             pendingStartCompletion = startCompletion
-            reporter.startHeartbeat()
+            reporter.resumeHeartbeat()
             runtime.start(configuration: options)
             liveUpdaterToken = DNSProxyRuntimeRegistry.shared.registerLiveUpdater {
                 [weak self] bootstrap in
@@ -181,86 +175,122 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             dnsProxyProviderLogger.notice(
                 "Accepted DNS bootstrap revision=\(bootstrap.revision, privacy: .public) schema=\(bootstrap.schemaVersion, privacy: .public) source=\(deliveredBootstrap == nil ? "provider-registry" : "provider-options", privacy: .public) payloadBytes=\(deliveredPayload?.count ?? 0, privacy: .public)"
             )
-            probe.start(proxy: dataPlane.proxy) { [weak self] error in
-                guard let self else { return }
-                self.backendProbeLock.lock()
-                let resultIsCurrent = self.activeBackendProbe === probe
-                    && self.backendProbeGeneration == startGeneration
-                    && !self.backendProbingSuspended
-                guard resultIsCurrent,
-                      self.pendingStartCompletion === startCompletion,
-                      let currentReporter = self.reporter else {
-                    self.backendProbeLock.unlock()
-                    return
-                }
-                if let error {
-                    self.activeBackendProbe = nil
-                    self.pendingStartCompletion = nil
-                    self.reporter = nil
-                    self.proxy = nil
-                    self.proxyCatalog = [:]
-                    self.backendProbingSuspended = true
-                    self.backendProbeGeneration &+= 1
-                    self.backendProbeLock.unlock()
-                    currentReporter.markStartupFailed(.backendUnavailable)
-                    self.runtime.stop()
-                    startCompletion.call(error)
-                    return
-                }
-                do {
-                    try currentReporter.markRunning()
-                    self.activeBackendProbe = nil
-                    self.pendingStartCompletion = nil
-                    self.backendProbeLock.unlock()
-                    self.startPeriodicBackendProbe()
-                    startCompletion.call(nil)
-                } catch {
-                    self.activeBackendProbe = nil
-                    self.pendingStartCompletion = nil
-                    self.reporter = nil
-                    self.proxy = nil
-                    self.proxyCatalog = [:]
-                    self.backendProbingSuspended = true
-                    self.backendProbeGeneration &+= 1
-                    self.backendProbeLock.unlock()
-                    currentReporter.markStartupFailed(.statusPersistenceFailed)
-                    self.runtime.stop()
-                    startCompletion.call(error)
-                }
-            }
-        } catch {
-            runtime.stop()
-            dnsProxyProviderLogger.error(
-                "DNS runtime reporter startup failed errorType=\(String(describing: type(of: error)), privacy: .public)"
+            startBackendStartupProbe(
+                probe,
+                proxy: dataPlane.proxy,
+                startCompletion: startCompletion,
+                generation: startGeneration
             )
-            completionHandler(error)
+        } catch {
+            pendingStartCompletion = nil
+            let runtime = runtime
+            backendProbeQueue.async {
+                runtime.stop()
+                dnsProxyProviderLogger.error(
+                    "DNS runtime reporter startup failed errorType=\(String(describing: type(of: error)), privacy: .public)"
+                )
+                startCompletion.call(error)
+            }
+            backendProbeLock.unlock()
         }
     }
 
-    private func rejectBootstrap(
+    private func startBackendStartupProbe(
+        _ probe: MihomoUDPAssociationProbe,
+        proxy: ProviderSOCKSConfiguration,
+        startCompletion: DNSProxyLifecycleCompletion,
+        generation: UInt64
+    ) {
+        probe.start(proxy: proxy) { [weak self] error in
+            guard let self else { return }
+            self.backendProbeLock.lock()
+            let resultIsCurrent = self.activeBackendProbe === probe
+                && self.backendProbeGeneration == generation
+                && !self.backendProbingSuspended
+            guard resultIsCurrent,
+                  self.pendingStartCompletion === startCompletion,
+                  let currentReporter = self.reporter else {
+                self.backendProbeLock.unlock()
+                return
+            }
+            if let error {
+                self.activeBackendProbe = nil
+                self.pendingStartCompletion = nil
+                self.reporter = nil
+                self.proxy = nil
+                self.proxyCatalog = [:]
+                self.backendProbingSuspended = true
+                self.backendProbeGeneration &+= 1
+                let runtime = self.runtime
+                self.backendProbeQueue.async {
+                    currentReporter.markStartupFailed(.backendUnavailable)
+                    runtime.stop()
+                    startCompletion.call(error)
+                }
+                self.backendProbeLock.unlock()
+                return
+            }
+            do {
+                try currentReporter.markRunning()
+                self.activeBackendProbe = nil
+                self.pendingStartCompletion = nil
+                self.backendProbeQueue.async { [weak self] in
+                    self?.startPeriodicBackendProbe()
+                    startCompletion.call(nil)
+                }
+                self.backendProbeLock.unlock()
+            } catch {
+                self.activeBackendProbe = nil
+                self.pendingStartCompletion = nil
+                self.reporter = nil
+                self.proxy = nil
+                self.proxyCatalog = [:]
+                self.backendProbingSuspended = true
+                self.backendProbeGeneration &+= 1
+                let runtime = self.runtime
+                self.backendProbeQueue.async {
+                    currentReporter.markStartupFailed(.statusPersistenceFailed)
+                    runtime.stop()
+                    startCompletion.call(error)
+                }
+                self.backendProbeLock.unlock()
+            }
+        }
+    }
+
+    /// Called only while `backendProbeLock` owns the startup lifecycle slot.
+    private func rejectBootstrapLocked(
         reason: DNSProxyStartupFailureReason,
         error: DNSProxyBootstrapError,
         bootstrap: DNSProxyBootstrapConfiguration?,
-        completionHandler: @escaping (Error?) -> Void
+        startCompletion: DNSProxyLifecycleCompletion
     ) {
-        if let bootstrap {
-            DNSProxyRuntimeRegistry.shared.publishStartupFailure(
-                reason,
-                for: bootstrap
+        pendingStartCompletion = nil
+        let runtime = runtime
+        backendProbeQueue.async {
+            if let bootstrap {
+                DNSProxyRuntimeRegistry.shared.publishStartupFailure(
+                    reason,
+                    for: bootstrap
+                )
+            }
+            runtime.start(configuration: nil)
+            runtime.stop()
+            dnsProxyProviderLogger.error(
+                "Rejected DNS bootstrap reason=\(reason.rawValue, privacy: .public)"
             )
+            startCompletion.call(error)
         }
-        runtime.start(configuration: nil)
-        runtime.stop()
-        dnsProxyProviderLogger.error(
-            "Rejected DNS bootstrap reason=\(reason.rawValue, privacy: .public)"
-        )
-        completionHandler(error)
+        backendProbeLock.unlock()
     }
 
     override func stopProxy(
         with reason: NEProviderStopReason,
         completionHandler: @escaping () -> Void
     ) {
+        let stopCompletion = DNSProxyLifecycleCompletion { _ in
+            completionHandler()
+        }
         backendProbeLock.lock()
         backendProbingSuspended = true
         backendProbeGeneration &+= 1
@@ -278,19 +308,21 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         proxy = nil
         proxyCatalog = [:]
         flowDecisionCoordinator.quiesce()
+        if let liveUpdaterToken {
+            DNSProxyRuntimeRegistry.shared.unregisterLiveUpdater(liveUpdaterToken)
+        }
         backendProbeLock.unlock()
         timer?.setEventHandler {}
         timer?.cancel()
         probe?.cancel()
-        pendingStartCompletion?.call(DNSProxyBootstrapError.cancelledDuringStartup)
-        tcpRelays.cancelAll()
-        udpSessions.cancelAll()
-        reporter?.stop(category: .cancelled)
-        if let liveUpdaterToken {
-            DNSProxyRuntimeRegistry.shared.unregisterLiveUpdater(liveUpdaterToken)
+        backendProbeQueue.async { [self] in
+            pendingStartCompletion?.call(DNSProxyBootstrapError.cancelledDuringStartup)
+            tcpRelays.cancelAll()
+            udpSessions.cancelAll()
+            reporter?.stop(category: .cancelled)
+            runtime.stop()
+            stopCompletion.call(nil)
         }
-        runtime.stop()
-        completionHandler()
     }
 
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
@@ -367,6 +399,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
 
     override func sleep(completionHandler: @escaping () -> Void) {
         suspendBackendProbing()
+        runtimeDataPlaneSnapshot().reporter?.pauseHeartbeat()
         tcpRelays.cancelAll()
         udpSessions.cancelAll()
         completionHandler()
@@ -374,14 +407,30 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
 
     override func wake() {
         backendProbeLock.lock()
-        guard reporter != nil, proxy != nil else {
+        guard backendProbingSuspended, let reporter, let proxy else {
             backendProbeLock.unlock()
             return
         }
         backendProbingSuspended = false
         consecutiveBackendProbeFailures = 0
         backendProbeGeneration &+= 1
+        let generation = backendProbeGeneration
+        let startCompletion = pendingStartCompletion
+        let startupProbe = startCompletion.map { _ in MihomoUDPAssociationProbe() }
+        if let startupProbe {
+            activeBackendProbe = startupProbe
+        }
         backendProbeLock.unlock()
+        reporter.resumeHeartbeat()
+        if let startCompletion, let startupProbe {
+            startBackendStartupProbe(
+                startupProbe,
+                proxy: proxy,
+                startCompletion: startCompletion,
+                generation: generation
+            )
+            return
+        }
         runBackendProbe()
         startPeriodicBackendProbe()
     }
@@ -393,8 +442,15 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             return
         }
         let timer = DispatchSource.makeTimerSource(queue: backendProbeQueue)
-        timer.schedule(deadline: .now() + .seconds(4), repeating: .seconds(4))
-        timer.setEventHandler { [weak self] in self?.runBackendProbe() }
+        let generation = backendProbeGeneration
+        timer.schedule(
+            deadline: .now() + .seconds(30),
+            repeating: .seconds(30),
+            leeway: .seconds(5)
+        )
+        timer.setEventHandler { [weak self] in
+            self?.runBackendProbe(expectedGeneration: generation)
+        }
         timer.resume()
         backendProbeTimer = timer
         backendProbeLock.unlock()
@@ -415,9 +471,10 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         probe?.cancel()
     }
 
-    private func runBackendProbe() {
+    private func runBackendProbe(expectedGeneration: UInt64? = nil) {
         backendProbeLock.lock()
-        guard activeBackendProbe == nil,
+        guard expectedGeneration == nil || expectedGeneration == backendProbeGeneration,
+              activeBackendProbe == nil,
               !backendProbingSuspended,
               let proxy,
               let reporter
@@ -447,6 +504,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             }
             let stableFailure = self.consecutiveBackendProbeFailures
                 >= Self.backendProbeFailureThreshold
+            let needsConfirmation = error != nil && !stableFailure
             let currentReporter = self.reporter === reporter ? reporter : nil
             self.backendProbeLock.unlock()
 
@@ -455,6 +513,17 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             } else if stableFailure {
                 currentReporter?.markBackendUnavailable(.backendUnavailable)
             }
+            if needsConfirmation {
+                self.scheduleBackendProbeConfirmation(generation: probeGeneration)
+            }
+        }
+    }
+
+    private func scheduleBackendProbeConfirmation(generation: UInt64) {
+        backendProbeQueue.asyncAfter(
+            deadline: .now() + Self.backendProbeConfirmationDelay
+        ) { [weak self] in
+            self?.runBackendProbe(expectedGeneration: generation)
         }
     }
 
@@ -708,7 +777,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 revision: bootstrap.revision,
                 activationIdentifier: bootstrap.activationIdentifier
             )
-            newReporter.startHeartbeat()
+            newReporter.resumeHeartbeat()
             try newReporter.markRunning()
         } catch {
             dnsProxyProviderLogger.error(
@@ -730,6 +799,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         flowDecisionCoordinator.load(configuration: dataPlane.routingConfiguration)
         backendProbeGeneration &+= 1
         consecutiveBackendProbeFailures = 0
+        let previousTimer = backendProbeTimer
+        backendProbeTimer = nil
         let previousReporter = reporter
         let previousProbe = activeBackendProbe
         activeBackendProbe = nil
@@ -743,9 +814,12 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         )
         backendProbeLock.unlock()
 
+        previousTimer?.setEventHandler {}
+        previousTimer?.cancel()
         previousProbe?.cancel()
         previousReporter?.stop()
         runBackendProbe()
+        startPeriodicBackendProbe()
         dnsProxyProviderLogger.notice(
             "DNS rules updated live revision=\(bootstrap.revision, privacy: .public)"
         )
@@ -801,7 +875,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     }
 }
 
-private final class DNSProxyStartCompletion: @unchecked Sendable {
+private final class DNSProxyLifecycleCompletion: @unchecked Sendable {
     private let lock = NSLock()
     private let completion: (Error?) -> Void
     private var completed = false

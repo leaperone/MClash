@@ -469,7 +469,7 @@
 "Open quietly at login" = "登入時靜默啟動";
 "Restore the last connected session when MClash opens" = "MClash 啟動時恢復上次的連線狀態";
 "Lightweight mode" = "輕量模式";
-"Lightweight mode pauses background traffic and connection telemetry while MClash is hidden. Proxying, App Routing, DNS routing, subscription updates, and recovery stay active." = "MClash 隱藏時，輕量模式會暫停背景流量與連線遙測；代理、App Routing、DNS 路由、訂閱更新與故障恢復仍會運作。";
+"While MClash is hidden, Lightweight mode pauses live traffic, connection, and App Routing updates, hides the Dock icon, and keeps only Open and Quit in the menu bar. Proxying, DNS routing, subscription updates, and recovery stay active." = "MClash 隱藏時，輕量模式會暫停即時流量、連線與 App Routing 更新，隱藏 Dock 圖示，並在選單列中僅保留「開啟」與「結束」。代理、DNS 路由、訂閱更新與故障恢復仍會運作。";
 "MClash exposes one Mixed port that accepts HTTP, HTTPS proxy, and SOCKS5 clients. Port changes are validated and automatically restart a running core." = "MClash 只提供一個 Mixed 連接埠，同時接受 HTTP、HTTPS 代理與 SOCKS5 用戶端。連接埠變更會先驗證，並自動重新啟動執行中的核心。";
 "The Mixed port is configured from Local Proxy settings. Separate HTTP and SOCKS5 listeners are disabled by MClash." = "Mixed 連接埠可在「本機代理」設定中配置。MClash 已停用獨立的 HTTP 與 SOCKS5 監聽器。";
 "Local Proxy Port" = "本機代理連接埠";

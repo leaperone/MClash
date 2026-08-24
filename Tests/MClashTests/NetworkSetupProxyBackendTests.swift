@@ -36,29 +36,37 @@ struct NetworkSetupProxyBackendTests {
         #expect(runner.commands == [["-listallnetworkservices"]])
     }
 
-    @Test("The service catalog refreshes only after its cache lifetime")
-    func refreshesExpiredServiceCatalog() throws {
+    @Test("A service collection returning to an earlier shape reloads the catalog")
+    func reloadsCatalogAfterServiceCollectionChanges() throws {
         let wiFi = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
-        let clock = ManualMonotonicClock()
+        let ethernet = SystemProxyNetworkService(id: "ethernet", name: "Ethernet")
+        let reader = SequencedProxyReader(serviceLists: [[wiFi], [ethernet], [wiFi]])
         let runner = RecordingNetworkSetupRunner(
-            serviceLists: ["*Wi-Fi\n", "Wi-Fi\n"]
+            serviceLists: ["Wi-Fi\n", "Ethernet\n", "Wi-Fi\n"]
         )
-        let backend = NetworkSetupProxyBackend(
-            reader: StaticProxyReader(services: [wiFi], states: []),
-            runner: runner,
-            serviceCatalogCacheLifetime: .seconds(30),
-            serviceCatalogNow: clock.now
+        let backend = NetworkSetupProxyBackend(reader: reader, runner: runner)
+
+        #expect(try backend.enabledNetworkServices() == [wiFi])
+        #expect(try backend.enabledNetworkServices() == [ethernet])
+        #expect(try backend.enabledNetworkServices() == [wiFi])
+        #expect(
+            runner.commands.filter { $0 == ["-listallnetworkservices"] }.count == 3
         )
+    }
+
+    @Test("Replacing a service with the same name reloads the catalog")
+    func reloadsCatalogForAReplacementServiceIdentifier() throws {
+        let oldVPN = SystemProxyNetworkService(id: "old-vpn", name: "VPN")
+        let newVPN = SystemProxyNetworkService(id: "new-vpn", name: "VPN")
+        let reader = SequencedProxyReader(serviceLists: [[oldVPN], [newVPN]])
+        let runner = RecordingNetworkSetupRunner(serviceLists: ["*VPN\n", "VPN\n"])
+        let backend = NetworkSetupProxyBackend(reader: reader, runner: runner)
 
         #expect(try backend.enabledNetworkServices().isEmpty)
-        clock.advance(by: .seconds(29))
-        #expect(try backend.enabledNetworkServices().isEmpty)
-        clock.advance(by: .seconds(1))
-        #expect(try backend.enabledNetworkServices() == [wiFi])
-        #expect(runner.commands == [
-            ["-listallnetworkservices"],
-            ["-listallnetworkservices"],
-        ])
+        #expect(try backend.enabledNetworkServices() == [newVPN])
+        #expect(
+            runner.commands.filter { $0 == ["-listallnetworkservices"] }.count == 2
+        )
     }
 
     @Test("A failed write invalidates the service catalog")
@@ -282,21 +290,6 @@ struct NetworkSetupProxyBackendTests {
     }
 }
 
-private final class ManualMonotonicClock: @unchecked Sendable {
-    private let lock = NSLock()
-    private var instant = ContinuousClock.now
-
-    func now() -> ContinuousClock.Instant {
-        lock.withLock { instant }
-    }
-
-    func advance(by duration: Duration) {
-        lock.withLock {
-            instant = instant.advanced(by: duration)
-        }
-    }
-}
-
 private final class RecordingNetworkSetupRunner: NetworkSetupCommandRunning, @unchecked Sendable {
     private let lock = NSLock()
     private var serviceLists: [String]
@@ -346,6 +339,32 @@ private struct StaticProxyReader: SystemProxyBackend {
         for services: [SystemProxyNetworkService]
     ) throws -> [SystemProxyServiceState] {
         states.filter { services.contains($0.service) }
+    }
+
+    func applyProxyStates(_ states: [SystemProxyServiceState]) throws {}
+}
+
+private final class SequencedProxyReader: SystemProxyBackend, @unchecked Sendable {
+    private let lock = NSLock()
+    private let serviceLists: [[SystemProxyNetworkService]]
+    private var readCount = 0
+
+    init(serviceLists: [[SystemProxyNetworkService]]) {
+        self.serviceLists = serviceLists
+    }
+
+    func enabledNetworkServices() throws -> [SystemProxyNetworkService] {
+        lock.withLock {
+            let index = min(readCount, max(0, serviceLists.count - 1))
+            readCount += 1
+            return serviceLists[index]
+        }
+    }
+
+    func proxyStates(
+        for services: [SystemProxyNetworkService]
+    ) throws -> [SystemProxyServiceState] {
+        []
     }
 
     func applyProxyStates(_ states: [SystemProxyServiceState]) throws {}

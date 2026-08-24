@@ -174,6 +174,45 @@ final class AppModel {
         }
     }
 
+    private enum AppRoutingActivityMonitorMode: Equatable {
+        case providerOnly
+        case detailed
+        case background
+    }
+
+    struct AppRoutingActivityPollCursor: Equatable, Sendable {
+        private(set) var current: UInt64
+        private(set) var floor: UInt64
+        private(set) var droppedDelta: UInt64 = 0
+        private(set) var requiresStateReset = false
+
+        init(cursor: UInt64, acknowledgedDroppedBefore: UInt64 = 0) {
+            current = cursor
+            floor = max(cursor, acknowledgedDroppedBefore)
+        }
+
+        mutating func observe(droppedBefore: UInt64?) -> Bool {
+            guard let droppedBefore else { return false }
+            let coveredCursor = max(current, floor)
+            guard coveredCursor < droppedBefore else { return false }
+            let (sum, overflow) = droppedDelta.addingReportingOverflow(
+                droppedBefore - coveredCursor
+            )
+            droppedDelta = overflow ? .max : sum
+            floor = droppedBefore
+            guard !requiresStateReset else { return false }
+            requiresStateReset = true
+            current = 0
+            return true
+        }
+
+        mutating func advance(to cursor: UInt64) {
+            current = cursor
+        }
+
+        var committed: UInt64 { max(current, floor) }
+    }
+
     enum SystemProxyState: Equatable {
         case off
         case enabling
@@ -511,6 +550,9 @@ final class AppModel {
     }
     var lightweightMode: Bool {
         didSet {
+            if lightweightMode {
+                menuBarContentIsVisible = false
+            }
             preferenceDefaults.set(lightweightMode, forKey: Self.lightweightModeKey)
             presentationDemandDidChange()
         }
@@ -651,7 +693,9 @@ final class AppModel {
     private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
     private var networkCaptureDeactivationOperation: (id: UUID, task: Task<Bool, Never>)?
     private var appRoutingActivityTask: Task<Void, Never>?
+    private var appRoutingActivityMonitorMode: AppRoutingActivityMonitorMode?
     private var appRoutingMonitorGeneration: UInt64 = 0
+    private var appRoutingActivityAcknowledgedDroppedBefore: UInt64 = 0
     private var dnsProxyRuntimeTask: Task<Void, Never>?
     private var dnsProxyMonitorGeneration: UInt64 = 0
     private var networkEnvironmentEventTask: Task<Void, Never>?
@@ -1116,7 +1160,7 @@ final class AppModel {
     var presentationTelemetryPolicy: PresentationTelemetryPolicy {
         PresentationTelemetryPolicy.resolve(
             mainWindowVisible: mainWindowIsVisible,
-            menuBarContentVisible: menuBarContentIsVisible,
+            menuBarContentVisible: !lightweightMode && menuBarContentIsVisible,
             destination: selection,
             appRoutingActivityVisible: appRoutingActivityViewIsVisible,
             menuBarStatusVisible: !lightweightMode && menuBarDisplayStyle == .proxyStatus
@@ -3801,7 +3845,7 @@ final class AppModel {
                 dnsProxyAutomaticallyDisabled = false
                 markStreamHealthy(.appRouting)
                 startDNSProxyRuntimeMonitor()
-                launchAppRoutingActivityMonitor()
+                launchAppRoutingActivityMonitor(forceRestart: true)
                 networkCaptureRollbackFailure = nil
                 networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
                     completedAt: Date(),
@@ -4949,13 +4993,18 @@ final class AppModel {
     @discardableResult
     func clearAppRoutingActivity() async -> Bool {
         do {
+            var acknowledgedDroppedBefore: UInt64 = 0
             if networkCaptureIsActive {
                 try await networkExtensionControl.clearAppRoutingActivity()
+                acknowledgedDroppedBefore = (try? await networkExtensionControl
+                    .appRoutingActivity(after: .max, limit: 1)
+                    .droppedBeforeSequence) ?? 0
             }
             appRoutingActivities.removeAll(keepingCapacity: true)
             appRoutingActivitiesByIdentifier.removeAll(keepingCapacity: true)
             appRoutingRuleStatistics.removeAll(keepingCapacity: true)
             appRoutingActivityCursor = 0
+            appRoutingActivityAcknowledgedDroppedBefore = acknowledgedDroppedBefore
             appRoutingActivityError = nil
             appRoutingTrafficRateTracker.reset()
             appRoutingTrafficRates = .zero
@@ -5838,6 +5887,9 @@ final class AppModel {
 
     private func presentationDemandDidChange() {
         reconcileControllerTelemetry()
+        if case .on = networkCaptureState {
+            launchAppRoutingActivityMonitor()
+        }
         if presentationTelemetryPolicy.appRoutingActivity {
             scheduleFlowLedgerRefresh()
         } else {
@@ -6496,6 +6548,7 @@ final class AppModel {
     private func startAppRoutingActivityMonitor() {
         appRoutingActivityTask?.cancel()
         appRoutingActivityCursor = 0
+        appRoutingActivityAcknowledgedDroppedBefore = 0
         appRoutingTrafficRateTracker.reset()
         appRoutingTrafficRates = .zero
         appRoutingActiveCount = 0
@@ -6515,11 +6568,26 @@ final class AppModel {
             previousSampleAt: liveStreamHealth[.appRouting]?.lastReceivedAt
         )
         startDNSProxyRuntimeMonitor()
-        launchAppRoutingActivityMonitor()
+        launchAppRoutingActivityMonitor(forceRestart: true)
     }
 
-    private func launchAppRoutingActivityMonitor() {
+    private func launchAppRoutingActivityMonitor(forceRestart: Bool = false) {
+        let hasDetailedPresentation = presentationTelemetryPolicy.appRoutingActivity
+        let mode: AppRoutingActivityMonitorMode = if lightweightMode
+            && !hasDetailedPresentation {
+            .providerOnly
+        } else if hasDetailedPresentation {
+            .detailed
+        } else {
+            .background
+        }
+        guard forceRestart
+                || appRoutingActivityTask == nil
+                || appRoutingActivityMonitorMode != mode
+        else { return }
+
         appRoutingActivityTask?.cancel()
+        appRoutingActivityMonitorMode = mode
         appRoutingMonitorGeneration &+= 1
         let generation = appRoutingMonitorGeneration
         appRoutingActivityTask = Task { @MainActor [weak self] in
@@ -6535,52 +6603,70 @@ final class AppModel {
             let hasDetailedPresentation = presentationTelemetryPolicy.appRoutingActivity
 
             do {
+                if lightweightMode && !hasDetailedPresentation {
+                    failureAttempt = 0
+                    successfulPollsSinceProviderCheck = 0
+                    _ = await verifyAppRoutingProviderRuntime(
+                        expectedRevision: expectedRevision,
+                        requireActiveCaptureState: true,
+                        monitorGeneration: generation
+                    )
+                    guard appRoutingMonitorShouldContinue(
+                        generation: generation,
+                        expectedRevision: expectedRevision
+                    ) else { return }
+                    try await Task.sleep(for: .seconds(10))
+                    continue
+                }
+                let initialCursor = appRoutingActivityCursor
+                let initialAcknowledgedDroppedBefore =
+                    appRoutingActivityAcknowledgedDroppedBefore
+                var pollingCursor = AppRoutingActivityPollCursor(
+                    cursor: initialCursor,
+                    acknowledgedDroppedBefore: initialAcknowledgedDroppedBefore
+                )
                 var hasMore = true
                 var activityUpdates: [AppRoutingActivity] = []
                 while hasMore,
                       appRoutingMonitorShouldContinue(
                         generation: generation,
                         expectedRevision: expectedRevision
-                      ) {
+                    ) {
                     let batch = try await networkExtensionControl.appRoutingActivity(
-                        after: appRoutingActivityCursor,
+                        after: pollingCursor.current,
                         limit: 250
                     )
                     guard appRoutingMonitorShouldContinue(
                         generation: generation,
                         expectedRevision: expectedRevision
                     ) else { return }
-                    if let dropped = batch.droppedBeforeSequence,
-                       appRoutingActivityCursor > 0,
-                       appRoutingActivityCursor < dropped {
-                        appRoutingActivityDroppedCount = Self.saturatingAdd(
-                            appRoutingActivityDroppedCount,
-                            dropped - appRoutingActivityCursor
-                        )
-                        appRoutingActivities.removeAll(keepingCapacity: true)
-                        appRoutingActivitiesByIdentifier.removeAll(keepingCapacity: true)
-                        appRoutingRuleStatistics.removeAll(keepingCapacity: true)
-                        appRoutingActivityCursor = 0
-                        appRoutingTrafficRateTracker.reset()
-                        appRoutingTrafficRates = .zero
-                        appRoutingActiveCount = 0
-                        appRoutingActivityCoverageStartedAt = Date()
+                    if pollingCursor.observe(
+                        droppedBefore: batch.droppedBeforeSequence
+                    ) {
                         activityUpdates.removeAll(keepingCapacity: true)
                         continue
                     }
                     activityUpdates.append(contentsOf: batch.activities)
-                    appRoutingActivityCursor = batch.nextCursor
+                    pollingCursor.advance(to: batch.nextCursor)
                     hasMore = batch.hasMore
                     if hasMore {
                         await Task.yield()
                     }
                 }
-                let processingCursor = appRoutingActivityCursor
+                let processingCursor = pollingCursor.committed
                 let processingRevision = appRoutingActivityStateRevision
-                let currentActivities = appRoutingActivities
-                let currentActivitiesByIdentifier = appRoutingActivitiesByIdentifier
-                let currentRuleStatistics = appRoutingRuleStatistics
-                let currentRateTracker = appRoutingTrafficRateTracker
+                let currentActivities = pollingCursor.requiresStateReset
+                    ? []
+                    : appRoutingActivities
+                let currentActivitiesByIdentifier = pollingCursor.requiresStateReset
+                    ? [:]
+                    : appRoutingActivitiesByIdentifier
+                let currentRuleStatistics = pollingCursor.requiresStateReset
+                    ? [:]
+                    : appRoutingRuleStatistics
+                let currentRateTracker = pollingCursor.requiresStateReset
+                    ? AppRoutingTrafficRateTracker()
+                    : appRoutingTrafficRateTracker
                 let defaultProfileID = activeProfileID
                 let sampledAt = Date()
                 let worker = Task.detached(priority: .utility) {
@@ -6602,13 +6688,24 @@ final class AppModel {
                 guard appRoutingMonitorShouldContinue(
                     generation: generation,
                     expectedRevision: expectedRevision
-                ), appRoutingActivityCursor == processingCursor,
+                ), appRoutingActivityCursor == initialCursor,
+                   appRoutingActivityAcknowledgedDroppedBefore
+                        == initialAcknowledgedDroppedBefore,
                    appRoutingActivityStateRevision == processingRevision else { continue }
 
+                appRoutingActivityCursor = processingCursor
+                appRoutingActivityAcknowledgedDroppedBefore = 0
+                if pollingCursor.requiresStateReset {
+                    appRoutingActivityDroppedCount = Self.saturatingAdd(
+                        appRoutingActivityDroppedCount,
+                        pollingCursor.droppedDelta
+                    )
+                    appRoutingActivityCoverageStartedAt = sampledAt
+                }
                 appRoutingTrafficRateTracker = processed.rateTracker
                 appRoutingTrafficRates = processed.trafficRates
                 appRoutingActiveCount = processed.activeCount
-                if processed.mergedUpdates {
+                if processed.mergedUpdates || pollingCursor.requiresStateReset {
                     appRoutingActivities = processed.activities
                     appRoutingActivitiesByIdentifier = processed.activitiesByIdentifier
                     appRoutingRuleStatistics = processed.ruleStatistics
@@ -6619,7 +6716,8 @@ final class AppModel {
                         )
                     }
                     scheduleFlowLedgerRefresh(
-                        neededForAccounting: processed.needsAccounting
+                        neededForAccounting: pollingCursor.requiresStateReset
+                            || processed.needsAccounting
                     )
                 }
                 failureAttempt = 0
@@ -6892,6 +6990,8 @@ final class AppModel {
     private func stopAppRoutingActivityMonitor() {
         appRoutingActivityTask?.cancel()
         appRoutingActivityTask = nil
+        appRoutingActivityMonitorMode = nil
+        appRoutingActivityAcknowledgedDroppedBefore = 0
         appRoutingMonitorGeneration &+= 1
         dnsProxyRuntimeTask?.cancel()
         dnsProxyRuntimeTask = nil

@@ -24,11 +24,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var mainWindowObservers: [NSObjectProtocol] = []
     private var mainWindowVisibilityHandler: (@MainActor (Bool) -> Void)?
+    private var mainWindowPresentationIsVisible = false
     private let instanceLock = ApplicationInstanceLock()
     private var applicationDidFinishLaunching = false
     private var applicationPreparationHandler: (@MainActor () async -> Void)?
     private var applicationPreparationTask: Task<Void, Never>?
     private var skipNextQuitConfirmation = false
+    private var lightweightModeEnabled = UserDefaults.standard.bool(
+        forKey: AppModel.lightweightModeKey
+    )
     private var shouldPresentInitialMainWindow = ApplicationDelegate.initialWindowShouldPresent(
         arguments: CommandLine.arguments,
         event: NSAppleEventManager.shared().currentAppleEvent
@@ -71,6 +75,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        updateActivationPolicy()
         if Self.isLoginItemLaunch(
             event: NSAppleEventManager.shared().currentAppleEvent
         ), Self.opensQuietlyAtLogin() {
@@ -126,7 +131,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             showMainWindow()
         } else {
             window.orderOut(nil)
-            visibilityDidChange(mainWindowShouldMountPresentation)
+            publishMainWindowVisibility(false)
         }
     }
 
@@ -149,11 +154,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidHide(_ notification: Notification) {
-        mainWindowVisibilityHandler?(false)
+        publishMainWindowVisibility(false)
     }
 
     func applicationDidUnhide(_ notification: Notification) {
-        mainWindowVisibilityHandler?(mainWindowShouldMountPresentation)
+        publishMainWindowVisibility(mainWindowShouldMountPresentation)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -289,12 +294,24 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         skipNextQuitConfirmation = true
     }
 
+    func setLightweightMode(_ isEnabled: Bool) {
+        lightweightModeEnabled = isEnabled
+        updateActivationPolicy()
+    }
+
+    static func activationPolicy(
+        lightweightMode: Bool,
+        mainWindowVisible: Bool
+    ) -> NSApplication.ActivationPolicy {
+        lightweightMode && !mainWindowVisible ? .accessory : .regular
+    }
+
     private func keepRunningInMenuBar(_ sender: NSApplication) {
         if let keepRunningHandler {
             keepRunningHandler()
             return
         }
-        mainWindowVisibilityHandler?(false)
+        publishMainWindowVisibility(false)
         sender.hide(nil)
     }
 
@@ -303,7 +320,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             shouldPresentInitialMainWindow = true
             return
         }
-        mainWindowVisibilityHandler?(true)
+        publishMainWindowVisibility(true)
         mainWindow.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
@@ -343,7 +360,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self, weak window] _ in
                 MainActor.assumeIsolated {
                     guard let self, self.mainWindow === window else { return }
-                    self.mainWindowVisibilityHandler?(false)
+                    self.publishMainWindowVisibility(false)
                 }
             }
         )
@@ -355,7 +372,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self, weak window] _ in
                 MainActor.assumeIsolated {
                     guard let self, self.mainWindow === window else { return }
-                    self.mainWindowVisibilityHandler?(false)
+                    self.publishMainWindowVisibility(false)
                 }
             }
         )
@@ -367,7 +384,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self, weak window] _ in
                 MainActor.assumeIsolated {
                     guard let self, self.mainWindow === window else { return }
-                    self.mainWindowVisibilityHandler?(
+                    self.publishMainWindowVisibility(
                         self.mainWindowShouldMountPresentation
                     )
                 }
@@ -380,6 +397,21 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         return mainWindow.isVisible
             && !mainWindow.isMiniaturized
             && !NSApplication.shared.isHidden
+    }
+
+    private func updateActivationPolicy() {
+        NSApplication.shared.setActivationPolicy(
+            Self.activationPolicy(
+                lightweightMode: lightweightModeEnabled,
+                mainWindowVisible: mainWindowPresentationIsVisible
+            )
+        )
+    }
+
+    private func publishMainWindowVisibility(_ isVisible: Bool) {
+        mainWindowPresentationIsVisible = isVisible
+        mainWindowVisibilityHandler?(isVisible)
+        updateActivationPolicy()
     }
 
     private func removeMainWindowObservers() {

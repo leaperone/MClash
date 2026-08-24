@@ -443,28 +443,17 @@ public struct AppRoutingRelayReportLimiter: Sendable {
         case suppress
     }
 
-    public let minimumIntervalNanoseconds: UInt64
-    public let byteThreshold: UInt64
-
     private var lastRelayingReportAt: UInt64?
-    private var lastUploadBytes: UInt64 = 0
-    private var lastDownloadBytes: UInt64 = 0
     private var scheduledDeadline: UInt64?
 
-    public init(
-        minimumIntervalNanoseconds: UInt64 = 250_000_000,
-        byteThreshold: UInt64 = 256 * 1_024
-    ) {
-        self.minimumIntervalNanoseconds = minimumIntervalNanoseconds
-        self.byteThreshold = byteThreshold
-    }
+    private static let minimumIntervalNanoseconds: UInt64 = 250_000_000
 
-    /// Lifecycle states always emit immediately. Relaying counters emit on the
-    /// first sample, then at most once per interval unless enough bytes accrue.
+    public init() {}
+
+    /// Lifecycle states always emit immediately. Relaying updates emit on the
+    /// first sample, then at most once per interval.
     public mutating func decision(
         for state: AppRoutingRelayState,
-        uploadBytes: UInt64,
-        downloadBytes: UInt64,
         nowNanoseconds: UInt64
     ) -> Decision {
         guard state == .relaying else {
@@ -473,68 +462,38 @@ public struct AppRoutingRelayReportLimiter: Sendable {
         }
 
         guard let lastRelayingReportAt else {
-            recordRelayingReport(
-                uploadBytes: uploadBytes,
-                downloadBytes: downloadBytes,
-                nowNanoseconds: nowNanoseconds
-            )
+            recordRelayingReport(at: nowNanoseconds)
             return .emit
         }
 
-        let elapsed = nowNanoseconds >= lastRelayingReportAt
-            ? nowNanoseconds - lastRelayingReportAt
-            : minimumIntervalNanoseconds
-        let uploadDelta = Self.counterDelta(uploadBytes, since: lastUploadBytes)
-        let downloadDelta = Self.counterDelta(downloadBytes, since: lastDownloadBytes)
-        let byteDelta = uploadDelta.addingReportingOverflow(downloadDelta)
-        let reachedByteThreshold = byteDelta.overflow || byteDelta.partialValue >= byteThreshold
-        if elapsed >= minimumIntervalNanoseconds || reachedByteThreshold {
-            recordRelayingReport(
-                uploadBytes: uploadBytes,
-                downloadBytes: downloadBytes,
-                nowNanoseconds: nowNanoseconds
-            )
+        let nextReport = lastRelayingReportAt.addingReportingOverflow(
+            Self.minimumIntervalNanoseconds
+        )
+        let deadline = nextReport.overflow ? UInt64.max : nextReport.partialValue
+        if nowNanoseconds >= deadline {
+            recordRelayingReport(at: nowNanoseconds)
             return .emit
         }
 
         if scheduledDeadline == nil {
-            let remaining = minimumIntervalNanoseconds - elapsed
-            let deadline = nowNanoseconds.addingReportingOverflow(remaining)
-            scheduledDeadline = deadline.overflow ? UInt64.max : deadline.partialValue
+            let remaining = deadline - nowNanoseconds
+            scheduledDeadline = deadline
             return .schedule(afterNanoseconds: remaining)
         }
         return .suppress
     }
 
-    /// Flushes the latest counters for a previously scheduled trailing report.
-    public mutating func shouldEmitScheduledReport(
-        uploadBytes: UInt64,
-        downloadBytes: UInt64,
-        nowNanoseconds: UInt64
-    ) -> Bool {
+    /// Flushes a previously scheduled trailing report.
+    public mutating func shouldEmitScheduledReport(nowNanoseconds: UInt64) -> Bool {
         guard let scheduledDeadline,
               nowNanoseconds >= scheduledDeadline
         else { return false }
-        recordRelayingReport(
-            uploadBytes: uploadBytes,
-            downloadBytes: downloadBytes,
-            nowNanoseconds: nowNanoseconds
-        )
+        recordRelayingReport(at: nowNanoseconds)
         return true
     }
 
-    private mutating func recordRelayingReport(
-        uploadBytes: UInt64,
-        downloadBytes: UInt64,
-        nowNanoseconds: UInt64
-    ) {
+    private mutating func recordRelayingReport(at nowNanoseconds: UInt64) {
         lastRelayingReportAt = nowNanoseconds
-        lastUploadBytes = uploadBytes
-        lastDownloadBytes = downloadBytes
         scheduledDeadline = nil
-    }
-
-    private static func counterDelta(_ value: UInt64, since previous: UInt64) -> UInt64 {
-        value >= previous ? value - previous : value
     }
 }
