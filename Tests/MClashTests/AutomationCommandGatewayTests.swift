@@ -123,6 +123,36 @@ struct AutomationCommandGatewayTests {
         #expect(changed.error?.type == "invalid_request")
     }
 
+    @Test("Lightweight mode is readable and writable through settings")
+    func lightweightModeSetting() async throws {
+        let defaultsName = "MClash.AutomationGatewayTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let fixture = try makeFixture(scopes: [.readBasic, .control], defaults: defaults)
+
+        let patched = await fixture.gateway.execute(
+            AutomationRPCRequest(
+                method: "settings.patch",
+                params: ["lightweightMode": .bool(true)],
+                authorization: fixture.token
+            ),
+            peer: fixture.peer
+        )
+        #expect(patched.error == nil)
+        #expect(patched.result?.objectValue?["lightweightMode"] == .bool(true))
+        #expect(fixture.model.lightweightMode)
+
+        let fetched = await fixture.gateway.execute(
+            AutomationRPCRequest(
+                method: "settings.get",
+                authorization: fixture.token
+            ),
+            peer: fixture.peer
+        )
+        #expect(fetched.error == nil)
+        #expect(fetched.result?.objectValue?["lightweightMode"] == .bool(true))
+    }
+
     @Test("Proxifier preview is bounded and does not mutate rules")
     func proxifierPreview() async throws {
         let fixture = try makeFixture(scopes: [.control])

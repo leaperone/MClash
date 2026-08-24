@@ -5,8 +5,39 @@ struct MenuBarContent: View {
     @Bindable var model: AppModel
     let presentMainWindow: @MainActor (AppModel.Destination) -> Void
     @State private var pickerGroupName: String?
+    @State private var contentIsVisible = false
+    @State private var retainedPopoverHeight: CGFloat = 410
 
     var body: some View {
+        Group {
+            if contentIsVisible {
+                fullContent
+            } else {
+                Color.clear
+            }
+        }
+        .frame(
+            width: 344,
+            height: contentIsVisible ? popoverHeight : retainedPopoverHeight
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("MClash quick controls")
+        .background {
+            MenuBarWindowVisibilityView { isVisible in
+                if contentIsVisible, !isVisible {
+                    retainedPopoverHeight = popoverHeight
+                }
+                contentIsVisible = isVisible
+                model.setMenuBarContentVisible(isVisible)
+            }
+        }
+        .onDisappear {
+            contentIsVisible = false
+            model.setMenuBarContentVisible(false)
+        }
+    }
+
+    private var fullContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
@@ -44,16 +75,6 @@ struct MenuBarContent: View {
         }
         // MenuBarExtra windows cannot infer a useful intrinsic height from ScrollView content.
         // An explicit popover size keeps the entire quick-control surface visible on every launch.
-        .frame(width: 344, height: popoverHeight)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("MClash quick controls")
-        .background {
-            MenuBarWindowVisibilityView { isVisible in
-                model.setMenuBarContentVisible(isVisible)
-            }
-        }
-        .onAppear { model.setMenuBarContentVisible(true) }
-        .onDisappear { model.setMenuBarContentVisible(false) }
     }
 
     private var statusHeader: some View {
@@ -970,8 +991,9 @@ struct MenuBarContent: View {
 
 /// `MenuBarExtra` may retain its SwiftUI root after ordering the panel out, so
 /// `onDisappear` alone is not a sufficient presentation-demand signal. Track
-/// the actual AppKit panel's key-window lifecycle to stop quick-metric streams
-/// whenever the menu closes.
+/// the actual AppKit panel visibility to stop quick-metric streams whenever
+/// the menu closes. Key-window changes are insufficient because a child
+/// popover can temporarily take focus while the panel remains visible.
 private struct MenuBarWindowVisibilityView: NSViewRepresentable {
     let visibilityDidChange: @MainActor (Bool) -> Void
 
@@ -1010,37 +1032,25 @@ private struct MenuBarWindowVisibilityView: NSViewRepresentable {
         var visibilityDidChange: (@MainActor (Bool) -> Void)?
         var resolutionIsPending = false
         private weak var window: NSWindow?
-        private var observers: [NSObjectProtocol] = []
+        private var visibilityObservation: NSKeyValueObservation?
 
         func observe(_ window: NSWindow) {
             guard self.window !== window else { return }
             stopObserving()
             self.window = window
-            let center = NotificationCenter.default
-            observers.append(
-                center.addObserver(
-                    forName: NSWindow.didBecomeKeyNotification,
-                    object: window,
-                    queue: .main
-                ) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.visibilityDidChange?(true) }
+            visibilityObservation = window.observe(
+                \.isVisible,
+                options: [.initial, .new]
+            ) { [weak self] window, _ in
+                MainActor.assumeIsolated {
+                    self?.visibilityDidChange?(window.isVisible)
                 }
-            )
-            for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
-                observers.append(
-                    center.addObserver(forName: name, object: window, queue: .main) {
-                        [weak self] _ in
-                        MainActor.assumeIsolated { self?.visibilityDidChange?(false) }
-                    }
-                )
             }
-            visibilityDidChange?(window.isVisible && window.isKeyWindow)
         }
 
         func stopObserving() {
-            let center = NotificationCenter.default
-            observers.forEach(center.removeObserver)
-            observers.removeAll()
+            visibilityObservation?.invalidate()
+            visibilityObservation = nil
             visibilityDidChange?(false)
             window = nil
         }

@@ -1,4 +1,5 @@
 import Foundation
+import MClashNetworkShared
 import Testing
 @testable import MClashNetworkExtension
 
@@ -24,5 +25,32 @@ struct DNSProxyRuntimeReporterTests {
         reporter.pauseHeartbeat()
         reporter.pauseHeartbeat()
         reporter.resumeHeartbeat()
+    }
+}
+
+@Suite("DNS backend probe")
+struct MihomoUDPAssociationProbeTests {
+    @Test("Cancellation before start remains effective")
+    func cancellationBeforeStartIsSticky() async throws {
+        let endpoint = try MihomoRouteProxyEndpoint(
+            route: .profileRules,
+            host: "127.0.0.1",
+            port: 1
+        )
+        let proxy = try #require(ProviderSOCKSConfiguration(routeEndpoint: endpoint))
+        let probe = MihomoUDPAssociationProbe()
+
+        probe.cancel()
+        let error: Error? = await withCheckedContinuation { continuation in
+            probe.start(proxy: proxy) { error in
+                continuation.resume(returning: error)
+            }
+        }
+
+        guard let error = error as? UDPFlowSessionError,
+              case .cancelled = error else {
+            Issue.record("Expected a cancelled probe, received \(String(describing: error))")
+            return
+        }
     }
 }

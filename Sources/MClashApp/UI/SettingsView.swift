@@ -51,7 +51,7 @@ struct SettingsView: View {
                 }
                 Toggle("Restore the last connected session when MClash opens", isOn: $model.autoConnectOnLaunch)
                 Toggle("Lightweight mode", isOn: $model.lightweightMode)
-                Text("Lightweight mode pauses background traffic and connection telemetry while MClash is hidden. Proxying, App Routing, DNS routing, subscription updates, and recovery stay active.")
+                Text("While MClash is hidden, Lightweight mode pauses live traffic, connection, and App Routing updates, hides the Dock icon, and keeps only Open and Quit in the menu bar. Proxying, DNS routing, subscription updates, and recovery stay active.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle(

@@ -10,24 +10,17 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
 
     init(
         reader: any SystemProxyBackend = SystemConfigurationProxyBackend(),
-        runner: any NetworkSetupCommandRunning = ProcessNetworkSetupRunner(),
-        serviceCatalogCacheLifetime: Duration = .seconds(30),
-        serviceCatalogNow: @escaping @Sendable () -> ContinuousClock.Instant = {
-            ContinuousClock.now
-        }
+        runner: any NetworkSetupCommandRunning = ProcessNetworkSetupRunner()
     ) {
         self.reader = reader
         self.runner = runner
-        serviceNameCache = NetworkSetupServiceNameCache(
-            lifetime: serviceCatalogCacheLifetime,
-            now: serviceCatalogNow
-        )
+        serviceNameCache = NetworkSetupServiceNameCache()
     }
 
     func enabledNetworkServices() throws -> [SystemProxyNetworkService] {
         let services = try reader.enabledNetworkServices()
         let supportedNames = try networkServiceNames(
-            covering: Set(services.map(\.name))
+            covering: Set(services)
         )
         return services.filter { supportedNames.contains($0.name) }
     }
@@ -41,7 +34,7 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
     func applyProxyStates(_ states: [SystemProxyServiceState]) throws {
         let currentServices = try reader.enabledNetworkServices()
         var supportedNames = try networkServiceNames(
-            covering: Set(currentServices.map(\.name))
+            covering: Set(currentServices)
         )
         let servicesByID = Dictionary(uniqueKeysWithValues: currentServices.map { ($0.id, $0) })
         if states.contains(where: { state in
@@ -50,7 +43,7 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
         }) {
             serviceNameCache.invalidate()
             supportedNames = try networkServiceNames(
-                covering: Set(currentServices.map(\.name))
+                covering: Set(currentServices)
             )
         }
         if let unavailableState = states.first(where: { state in
@@ -172,9 +165,9 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
     }
 
     private func networkServiceNames(
-        covering observedNames: Set<String>
+        covering observedServices: Set<SystemProxyNetworkService>
     ) throws -> Set<String> {
-        try serviceNameCache.supportedNames(covering: observedNames) {
+        try serviceNameCache.supportedNames(covering: observedServices) {
             let output = try runner.run(["-listallnetworkservices"])
             return Set(
                 output.split(whereSeparator: \.isNewline).compactMap { line -> String? in
@@ -215,50 +208,31 @@ struct NetworkSetupProxyBackend: SystemProxyBackend {
 /// on every guard pass.
 private final class NetworkSetupServiceNameCache: @unchecked Sendable {
     private struct Snapshot {
-        var observedNames: Set<String>
+        var observedServices: Set<SystemProxyNetworkService>
         var supportedNames: Set<String>
-        var loadedAt: ContinuousClock.Instant
     }
 
     private let lock = NSLock()
-    private let lifetime: Duration
-    private let now: @Sendable () -> ContinuousClock.Instant
     private var snapshot: Snapshot?
     private var generation: UInt64 = 0
 
-    init(
-        lifetime: Duration,
-        now: @escaping @Sendable () -> ContinuousClock.Instant
-    ) {
-        self.lifetime = lifetime < .zero ? .zero : lifetime
-        self.now = now
-    }
-
     func supportedNames(
-        covering observedNames: Set<String>,
+        covering observedServices: Set<SystemProxyNetworkService>,
         load: () throws -> Set<String>
     ) throws -> Set<String> {
         while true {
-            let requestedAt = now()
             let state = lock.withLock { (snapshot, generation) }
-            if let cached = state.0 {
-                let age = cached.loadedAt.duration(to: requestedAt)
-                if age >= .zero,
-                   age < lifetime,
-                   observedNames.isSubset(of: cached.observedNames) {
-                    return cached.supportedNames
-                }
+            if let cached = state.0,
+               observedServices == cached.observedServices {
+                return cached.supportedNames
             }
 
             let loaded = try load()
             let installed = lock.withLock { () -> Set<String>? in
                 guard generation == state.1 else { return nil }
-                var allObservedNames = snapshot?.observedNames ?? []
-                allObservedNames.formUnion(observedNames)
                 let refreshed = Snapshot(
-                    observedNames: allObservedNames,
-                    supportedNames: loaded,
-                    loadedAt: requestedAt
+                    observedServices: observedServices,
+                    supportedNames: loaded
                 )
                 snapshot = refreshed
                 return refreshed.supportedNames

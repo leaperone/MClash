@@ -213,6 +213,9 @@ final class AutomationCommandGateway {
             if let value = request.optionalBool("autoEnableSystemProxy") {
                 model.autoEnableSystemProxy = value
             }
+            if let value = request.optionalBool("lightweightMode") {
+                model.lightweightMode = value
+            }
             if let value = request.optionalString("menuBarDisplayStyle") {
                 guard let style = AppModel.MenuBarDisplayStyle(rawValue: value) else {
                     throw GatewayError.invalidParameters(
@@ -1433,7 +1436,7 @@ final class AutomationCommandGateway {
             "dnsEnabled": .bool(model.networkCapturePreferences.dnsEnabled),
             "revision": .unsignedInteger(model.networkCapturePreferences.snapshot.revision),
             "ruleCount": .integer(Int64(model.networkCapturePreferences.snapshot.rules.count)),
-            "activitiesAvailableWhileWindowHidden": .bool(true),
+            "activitiesAvailableWhileWindowHidden": .bool(!model.lightweightMode),
             "activityFreshness": freshness(.appRouting),
         ])
     }
@@ -1460,6 +1463,7 @@ final class AutomationCommandGateway {
             "notificationsEnabled": .bool(model.notificationsEnabled),
             "autoConnectOnLaunch": .bool(model.autoConnectOnLaunch),
             "autoEnableSystemProxy": .bool(model.autoEnableSystemProxy),
+            "lightweightMode": .bool(model.lightweightMode),
             "menuBarDisplayStyle": .string(model.menuBarDisplayStyle.rawValue),
             "closeConnectionsOnRoutingChange": .bool(model.closeConnectionsOnRoutingChange),
         ])
@@ -2147,6 +2151,7 @@ final class AutomationCommandGateway {
         "settings.patch": [
             "launchAtLogin": .optional(.bool), "notificationsEnabled": .optional(.bool),
             "autoConnectOnLaunch": .optional(.bool), "autoEnableSystemProxy": .optional(.bool),
+            "lightweightMode": .optional(.bool),
             "menuBarDisplayStyle": .optional(.string, maximumStringBytes: 32),
             "closeConnectionsOnRoutingChange": .optional(.bool),
         ],

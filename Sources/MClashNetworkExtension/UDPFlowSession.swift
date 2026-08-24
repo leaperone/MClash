@@ -1392,6 +1392,7 @@ final class MihomoUDPAssociationProbe: @unchecked Sendable {
     private let queue = DispatchQueue(label: "one.leaper.mclash.socks-udp-probe")
     private var conversation: MihomoUDPConversation?
     private var completion: (@Sendable (Error?) -> Void)?
+    private var cancelled = false
 
     func start(
         proxy: ProviderSOCKSConfiguration,
@@ -1399,6 +1400,10 @@ final class MihomoUDPAssociationProbe: @unchecked Sendable {
     ) {
         queue.async { [self] in
             guard self.completion == nil else { return }
+            guard !cancelled else {
+                completion(UDPFlowSessionError.cancelled)
+                return
+            }
             self.completion = completion
             do {
                 let endpoint = SOCKS5Endpoint(
@@ -1425,6 +1430,7 @@ final class MihomoUDPAssociationProbe: @unchecked Sendable {
 
     func cancel() {
         queue.async { [self] in
+            cancelled = true
             finish(UDPFlowSessionError.cancelled)
         }
     }

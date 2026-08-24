@@ -470,7 +470,7 @@
 "Open quietly at login" = "Abrir en silencio al iniciar sesión";
 "Restore the last connected session when MClash opens" = "Restaurar la última sesión conectada al abrir MClash";
 "Lightweight mode" = "Modo ligero";
-"Lightweight mode pauses background traffic and connection telemetry while MClash is hidden. Proxying, App Routing, DNS routing, subscription updates, and recovery stay active." = "Cuando MClash está oculto, el modo ligero pausa la telemetría de tráfico y conexiones. El proxy, las rutas por aplicación y DNS, las actualizaciones y la recuperación siguen activos.";
+"While MClash is hidden, Lightweight mode pauses live traffic, connection, and App Routing updates, hides the Dock icon, and keeps only Open and Quit in the menu bar. Proxying, DNS routing, subscription updates, and recovery stay active." = "Cuando MClash está oculto, el modo ligero pausa las actualizaciones en directo de tráfico, conexiones y rutas por aplicación, oculta el icono del Dock y mantiene solo Abrir y Salir en la barra de menús. El proxy, las rutas DNS, las actualizaciones de suscripciones y la recuperación siguen activos.";
 "MClash exposes one Mixed port that accepts HTTP, HTTPS proxy, and SOCKS5 clients. Port changes are validated and automatically restart a running core." = "MClash ofrece un puerto mixto para clientes HTTP, proxy HTTPS y SOCKS5. Los cambios se validan y reinician automáticamente el núcleo activo.";
 "The Mixed port is configured from Local Proxy settings. Separate HTTP and SOCKS5 listeners are disabled by MClash." = "El puerto mixto se configura en Proxy local. MClash desactiva los puertos HTTP y SOCKS5 separados.";
 "Local Proxy Port" = "Puerto de proxy local";

@@ -1,8 +1,61 @@
+import Foundation
 import Testing
 @testable import MClashApp
 
 @Suite("Presentation telemetry policy")
 struct PresentationTelemetryPolicyTests {
+    @Test("Activity polling restarts at most once for an uncovered dropped gap")
+    func activityPollCursorBoundsResynchronization() {
+        var cursor = AppModel.AppRoutingActivityPollCursor(cursor: 0)
+
+        let firstRestart = cursor.observe(droppedBefore: 200)
+        let secondRestart = cursor.observe(droppedBefore: 201)
+        #expect(firstRestart)
+        #expect(!secondRestart)
+        #expect(cursor.requiresStateReset)
+        #expect(cursor.droppedDelta == 201)
+        #expect(cursor.committed == 201)
+
+        cursor.advance(to: 450)
+        let caughtUpRestart = cursor.observe(droppedBefore: 250)
+        #expect(!caughtUpRestart)
+        #expect(cursor.droppedDelta == 201)
+        #expect(cursor.committed == 450)
+    }
+
+    @Test("An explicit clear acknowledges its dropped watermark while retaining active flows")
+    func activityPollCursorAcknowledgesExplicitClear() {
+        var cursor = AppModel.AppRoutingActivityPollCursor(
+            cursor: 0,
+            acknowledgedDroppedBefore: 200
+        )
+
+        let acknowledgedRestart = cursor.observe(droppedBefore: 200)
+        #expect(!acknowledgedRestart)
+        cursor.advance(to: 25)
+        #expect(cursor.committed == 200)
+        #expect(cursor.droppedDelta == 0)
+        #expect(!cursor.requiresStateReset)
+    }
+
+    @Test("Lightweight mode ignores a retained menu panel's stale visibility")
+    @MainActor
+    func lightweightModeSuppressesMenuTelemetry() throws {
+        let suite = "PresentationTelemetryPolicyTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = makeTestAppModel(preferenceDefaults: defaults)
+
+        model.setMenuBarContentVisible(true)
+        #expect(model.presentationTelemetryPolicy.hasControllerStreams)
+
+        model.lightweightMode = true
+        #expect(model.presentationTelemetryPolicy == .init())
+
+        model.lightweightMode = false
+        #expect(model.presentationTelemetryPolicy == .init())
+    }
+
     @Test("No presentation surface leaves controller telemetry dormant")
     func backgroundPolicyIsDormant() {
         let policy = AppModel.PresentationTelemetryPolicy.resolve(

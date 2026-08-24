@@ -580,7 +580,7 @@ struct FlowLedger: Sendable {
         let executablePath = nonEmpty(source.executablePath)
         let signingIdentifier = nonEmpty(source.signingIdentifier)
         let displayName = executablePath.map {
-            URL(fileURLWithPath: $0).lastPathComponent
+            ($0 as NSString).lastPathComponent
         } ?? bundleIdentifier ?? signingIdentifier
 
         guard let displayName else { return .unattributed }
@@ -607,7 +607,7 @@ struct FlowLedger: Sendable {
         let processName = nonEmpty(metadata.process)
         let executablePath = nonEmpty(metadata.processPath)
         guard let displayName = processName ?? executablePath.map({
-            URL(fileURLWithPath: $0).lastPathComponent
+            ($0 as NSString).lastPathComponent
         }) else {
             return .unattributed
         }

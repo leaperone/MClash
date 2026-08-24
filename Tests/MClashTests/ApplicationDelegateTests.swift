@@ -4,6 +4,23 @@ import Testing
 
 @Suite("Application lifecycle")
 struct ApplicationDelegateTests {
+    @Test("Lightweight mode hides the Dock only while the main window is dormant")
+    @MainActor
+    func lightweightActivationPolicy() {
+        #expect(ApplicationDelegate.activationPolicy(
+            lightweightMode: true,
+            mainWindowVisible: false
+        ) == .accessory)
+        #expect(ApplicationDelegate.activationPolicy(
+            lightweightMode: true,
+            mainWindowVisible: true
+        ) == .regular)
+        #expect(ApplicationDelegate.activationPolicy(
+            lightweightMode: false,
+            mainWindowVisible: false
+        ) == .regular)
+    }
+
     @Test("Login-item launches are quiet by default and remain configurable")
     @MainActor
     func loginItemQuietPreference() throws {

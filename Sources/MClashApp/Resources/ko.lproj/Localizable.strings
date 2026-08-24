@@ -470,7 +470,7 @@
 "Open quietly at login" = "로그인 시 조용히 실행";
 "Restore the last connected session when MClash opens" = "MClash 실행 시 마지막 연결 상태 복원";
 "Lightweight mode" = "경량 모드";
-"Lightweight mode pauses background traffic and connection telemetry while MClash is hidden. Proxying, App Routing, DNS routing, subscription updates, and recovery stay active." = "MClash가 숨겨진 동안 경량 모드는 백그라운드 트래픽 및 연결 텔레메트리를 일시 중지합니다. 프록시, 앱 라우팅, DNS 라우팅, 구독 업데이트 및 복구는 계속 작동합니다.";
+"While MClash is hidden, Lightweight mode pauses live traffic, connection, and App Routing updates, hides the Dock icon, and keeps only Open and Quit in the menu bar. Proxying, DNS routing, subscription updates, and recovery stay active." = "MClash가 숨겨진 동안 경량 모드는 실시간 트래픽, 연결 및 앱 라우팅 업데이트를 일시 중지하고 Dock 아이콘을 숨기며 메뉴 막대에는 열기와 종료만 표시합니다. 프록시, DNS 라우팅, 구독 업데이트 및 복구는 계속 작동합니다.";
 "MClash exposes one Mixed port that accepts HTTP, HTTPS proxy, and SOCKS5 clients. Port changes are validated and automatically restart a running core." = "MClash는 HTTP, HTTPS 프록시 및 SOCKS5 클라이언트를 받는 하나의 Mixed 포트를 제공합니다. 포트 변경은 검증되며 실행 중인 코어를 자동으로 다시 시작합니다.";
 "The Mixed port is configured from Local Proxy settings. Separate HTTP and SOCKS5 listeners are disabled by MClash." = "Mixed 포트는 로컬 프록시 설정에서 구성합니다. 별도의 HTTP 및 SOCKS5 리스너는 비활성화됩니다.";
 "Local Proxy Port" = "로컬 프록시 포트";
