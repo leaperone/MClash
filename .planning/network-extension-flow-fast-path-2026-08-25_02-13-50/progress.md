@@ -12,10 +12,11 @@
 - 在 TCP、macOS 14 UDP 与 macOS 15+ UDP 入口的 plan/activity 之前加入受信任数据平面快速旁路。
 - 增加回归测试，确认 `mclash-mihomo`/Network Extension 跳过，MClash 宿主与普通应用仍进入评估。
 - 完成独立 diff 审查：三个入口的 guard 均在 plan/UUID/activity 之前，未扩大信任或改变 DNS/普通 App 路由。
+- 添加最小 `.preflight.toml`，将全仓库变更映射到现有 `test-direct.sh` 与 `build-app.sh`。
 
 ## 进行中
 
-- 提交、push、创建 PR 并执行 preflight 五门。
+- 提交 preflight scope 配置并从 Phase 0 重跑五门。
 
 ## 修改文件
 
@@ -24,6 +25,7 @@
 - `Sources/MClashNetworkExtension/NetworkExtensionFlowAdapter.swift`
 - `Sources/MClashNetworkExtension/TransparentProxyProvider.swift`
 - `Tests/MClashNetworkExtensionTests/InitialFlowOwnershipPolicyTests.swift`
+- `.preflight.toml`
 
 ## 验证结果
 
@@ -36,6 +38,7 @@
 | `./scripts/typecheck.sh` | Swift 6 严格并发、warnings-as-errors；MClash/mclashctl/Network Extension 直链通过 | 通过 |
 | `./scripts/build-app.sh` | GEO 离线 smoke、release 构建、App/核心/CLI/System Extension 签名与 Designated Requirement 验证通过 | 通过 |
 | 独立 diff 审查 | 无 critical/high/阻塞问题；确认快速路径顺序与信任边界 | 通过 |
+| 首轮 preflight | merge probe、领域、审查、planning/PR 身份通过；构建因无配置 scope 为 unverified，未合并 | 阻塞 |
 
 ## 错误与恢复
 
@@ -43,3 +46,4 @@
 |---|---:|---|
 | `swift run` 在主 checkout 生成未跟踪 `Package.resolved` | 1 | 删除本轮生成物，未动用户文件。 |
 | Computer Use 重连报 native pipe startup failed | 1 | 不重试同一通道，使用已有 sample 与只读 CLI 证据。 |
+| Python 3.9 无 `tomllib`，Ruby 无 `tomlrb` | 1 | 不为简单配置引入依赖；改由 preflight Phase 0 加载该配置作为真实验证。 |

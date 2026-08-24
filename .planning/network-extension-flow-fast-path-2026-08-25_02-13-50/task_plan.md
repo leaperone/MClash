@@ -30,6 +30,7 @@
 - `Sources/MClashNetworkExtension/NetworkExtensionFlowAdapter.swift`：扩展现有初始 flow 策略以判定是否需要进入评估。
 - `Sources/MClashNetworkExtension/TransparentProxyProvider.swift`：在创建决策计划和活动记录前快速返回。
 - `Tests/MClashNetworkExtensionTests/InitialFlowOwnershipPolicyTests.swift`：增加受信任数据平面与非受信任应用边界测试。
+- `.preflight.toml`：声明仓库现有严格测试与 App 打包构建，避免 Swift 代码在 preflight 中处于未验证状态。
 
 ## 验证方式
 
@@ -56,6 +57,7 @@
 - [x] 完成实现
 - [x] 完成验证
 - [x] 完成交付前收敛检查
+- [x] 配置仓库 preflight 构建 scope
 
 ## 决策
 
@@ -63,9 +65,12 @@
 |---|---|
 | 优先做入口快速旁路 | 当前 2,000 条环形历史中约 42% 来自 `mclash-mihomo`，且全部最终 Direct；在入口返回可同时避免身份、规则、activity 开销。 |
 | 不改 DNS Proxy 的受信任流处理 | DNS Proxy 必须直连中继 Mihomo DNS 出口以打破 DNS→SOCKS→DNS 递归。 |
+| 添加最小 `.preflight.toml` | 首轮五门因 Swift 项目无配置 scope 被强制判为 unverified；复用仓库已有脚本，不新增验证层。 |
 
 ## 错误与处理
 
 | 错误 | 尝试 | 处理结果 |
 |---|---:|---|
 | Computer Use 原生管道后续连接失败 | 1 | 改用已导出的 Activity Monitor 采样、`ps`/`nettop` 和本机 automation API 做只读证据聚合。 |
+| 首轮 preflight 构建门为 unverified | 1 | 仓库无 `.preflight.toml`，默认探测不识别 Swift 脚本；回到执行阶段添加最小 scope 并将重跑全部闸门。 |
+| 系统 Python 无 `tomllib` | 1 | 不安装新依赖；配置仅使用 preflight 已定义的基础 TOML 字段，由 Phase 0 实际加载验证。 |

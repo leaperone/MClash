@@ -25,6 +25,7 @@
 - 现有 `TrustedMClashComponentPolicy` 测试只证明标识分类，不证明 provider 在 plan/activity 之前使用它；需要一个最小入口策略回归测试。
 - macOS SDK 的 `NETransparentProxyNetworkSettings` 仅提供按网络端点/端口/协议/方向的 include/exclude 规则；`NETransparentProxyManager` 不提供 `appRules` 或按源应用排除 API。
 - 按目标地址排除 Mihomo 上游会同时绕过其他应用到同一目标的用户规则，不能作为安全修复。
+- 首轮 preflight 证明构建、merge probe、审查和 PR 身份本身无代码问题，但因仓库没有 Swift scope 配置，构建准入必须按规则标为 unverified。
 
 ## 技术决策
 
@@ -34,6 +35,7 @@
 | 旁路放在 provider 入口 | 放在 coordinator 中仍会生成 plan/activity；入口直接 `return false` 才能避免全部 MClash 自有工作。 |
 | 保留现有 DNS Proxy 路径 | 它对受信任 DNS 流量的 Direct relay 是防递归所必需，不是同一类无效工作。 |
 | 不使用 native 目标地址 exclusion | SDK 没有透明代理的源 App 排除；目标排除会破坏其他 App 的路由语义。 |
+| preflight 配置直接调用现有脚本 | `test-direct.sh` 已覆盖全测试与严格编译，`build-app.sh` 已覆盖真实 App/System Extension 构建签名；无需新建 wrapper。 |
 
 ## 风险与边界
 
