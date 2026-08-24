@@ -47,3 +47,4 @@
 | `swift run` 在主 checkout 生成未跟踪 `Package.resolved` | 1 | 删除本轮生成物，未动用户文件。 |
 | Computer Use 重连报 native pipe startup failed | 1 | 不重试同一通道，使用已有 sample 与只读 CLI 证据。 |
 | Python 3.9 无 `tomllib`，Ruby 无 `tomlrb` | 1 | 不为简单配置引入依赖；改由 preflight Phase 0 加载该配置作为真实验证。 |
+| 第二轮 preflight `test-direct.sh` 随上轮中断被终止 | 1 | 日志仅到测试运行器启动，无 pass/fail；判定为未完成证据并仅重跑一次。 |
