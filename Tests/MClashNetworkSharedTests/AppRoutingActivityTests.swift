@@ -255,6 +255,25 @@ struct AppRoutingActivityTests {
         #expect(!noChange.hasMore)
     }
 
+    @Test("An empty latest-cursor page does not hide a later update")
+    func latestCursorEmptyPageKeepsCursorReady() {
+        let ring = BoundedAppRoutingActivityRing(capacity: 2)
+        var activity = ring.upsert(makeActivity())
+
+        let empty = ring.batch(after: activity.sequence, limit: 2)
+        #expect(empty.activities.isEmpty)
+        #expect(empty.nextCursor == activity.sequence)
+        #expect(!empty.hasMore)
+
+        activity.uploadBytes = 42
+        let updated = ring.upsert(activity)
+        let next = ring.batch(after: empty.nextCursor, limit: 2)
+
+        #expect(next.activities == [updated])
+        #expect(next.nextCursor == updated.sequence)
+        #expect(!next.hasMore)
+    }
+
     @Test("Zero capacity and non-positive limits remain bounded")
     func zeroCapacityAndLimits() {
         let disabled = BoundedAppRoutingActivityRing(capacity: 0)
