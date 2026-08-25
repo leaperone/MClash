@@ -678,6 +678,8 @@ final class AppModel {
     private var persistentTrafficHistoryStore: TrafficHistoryStore?
     private var trafficHistoryPersistTask: Task<Void, Never>?
     private var trafficHistoryPersistGeneration: UInt64 = 0
+    private var trafficHistoryLastPrunedAt: Date?
+    private var trafficHistoryClearInProgress = false
     private var queuedTrafficHistoryCompletions: [TrafficHistoryCompletedFlow] = []
     private var queuedTrafficHistoryIdentifiers: Set<String> = []
     private var persistedTrafficHistoryIdentifiers: Set<String> = []
@@ -5033,9 +5035,8 @@ final class AppModel {
 
     func setPersistentTrafficHistoryEnabled(_ enabled: Bool) async {
         trafficHistoryPersistenceChoice = enabled ? .persistent : .sessionOnly
-        trafficHistoryPersistGeneration &+= 1
-        trafficHistoryPersistTask?.cancel()
-        trafficHistoryPersistTask = nil
+        _ = invalidateTrafficHistoryWriter()
+        trafficHistoryLastPrunedAt = nil
         queuedTrafficHistoryCompletions.removeAll(keepingCapacity: false)
         queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
 
@@ -5051,9 +5052,11 @@ final class AppModel {
 
     func setTrafficHistoryRetention(_ retention: TrafficHistoryRetention) async {
         guard let store = persistentTrafficHistoryStore else { return }
+        let now = Date()
         do {
-            try await store.setRetention(retention)
+            try await store.setRetention(retention, now: now)
             trafficHistoryRetention = retention
+            trafficHistoryLastPrunedAt = now
             await refreshPersistentTrafficHistorySnapshots()
         } catch {
             markPersistentTrafficHistoryUnavailable(
@@ -5064,19 +5067,41 @@ final class AppModel {
 
     @discardableResult
     func clearTrafficHistory() async -> Bool {
-        clearClosedConnectionHistory()
-        guard await clearAppRoutingActivity() else { return false }
+        trafficHistoryClearInProgress = true
+        let ledgerTask = invalidateFlowLedgerRefresh()
+        let writer = invalidateTrafficHistoryWriter()
+        if let writer {
+            await writer.value
+        }
+        if let ledgerTask {
+            await ledgerTask.value
+        }
+        queuedTrafficHistoryCompletions.removeAll(keepingCapacity: false)
+        queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
 
-        guard let store = persistentTrafficHistoryStore else { return true }
+        clearClosedConnectionHistory()
+        guard await clearAppRoutingActivity() else {
+            trafficHistoryClearInProgress = false
+            scheduleFlowLedgerRefresh(neededForAccounting: true)
+            startPersistentTrafficHistoryWriterIfNeeded()
+            return false
+        }
+
+        guard let store = persistentTrafficHistoryStore else {
+            trafficHistoryClearInProgress = false
+            return true
+        }
         do {
             _ = try await store.clear()
             persistedTrafficHistoryIdentifiers.removeAll(keepingCapacity: true)
             persistedTrafficHistoryIdentifierOrder.removeAll(keepingCapacity: true)
-            queuedTrafficHistoryCompletions.removeAll(keepingCapacity: true)
-            queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: true)
+            trafficHistoryLastPrunedAt = Date()
+            trafficHistoryClearInProgress = false
+            scheduleFlowLedgerRefresh(neededForAccounting: true)
             await refreshPersistentTrafficHistorySnapshots()
             return true
         } catch {
+            trafficHistoryClearInProgress = false
             markPersistentTrafficHistoryUnavailable(
                 "MClash could not clear the persistent traffic history: \(error.localizedDescription)"
             )
@@ -5084,15 +5109,25 @@ final class AppModel {
         }
     }
 
-    func refreshPersistentTrafficHistorySnapshots() async {
+    func refreshPersistentTrafficHistorySnapshots(
+        expectedPersistenceGeneration: UInt64? = nil
+    ) async {
         guard let store = persistentTrafficHistoryStore else { return }
         do {
             let today = try await store.snapshot(for: .today)
             let week = try await store.snapshot(for: .week)
+            guard expectedPersistenceGeneration == nil
+                || expectedPersistenceGeneration == trafficHistoryPersistGeneration else {
+                return
+            }
             trafficHistoryTodaySnapshot = today
             trafficHistoryWeekSnapshot = week
             trafficHistoryRuntimeState = .ready(lastUpdatedAt: Date())
         } catch {
+            guard expectedPersistenceGeneration == nil
+                || expectedPersistenceGeneration == trafficHistoryPersistGeneration else {
+                return
+            }
             markPersistentTrafficHistoryUnavailable(
                 "MClash could not read the persistent traffic history: \(error.localizedDescription)"
             )
@@ -5125,7 +5160,10 @@ final class AppModel {
         case let .ready(store):
             persistentTrafficHistoryStore = store
             do {
+                let now = Date()
                 trafficHistoryRetention = try await store.retention()
+                try await store.prune(now: now)
+                trafficHistoryLastPrunedAt = now
                 await refreshPersistentTrafficHistorySnapshots()
                 schedulePersistentTrafficHistory(from: flowLedger)
             } catch {
@@ -5142,6 +5180,7 @@ final class AppModel {
 
     private func markPersistentTrafficHistoryUnavailable(_ reason: String) {
         persistentTrafficHistoryStore = nil
+        trafficHistoryLastPrunedAt = nil
         trafficHistoryRuntimeState = .unavailable(reason)
         appendSupervisorLog("Persistent traffic history is unavailable: \(reason)")
     }
@@ -7166,6 +7205,33 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    private func invalidateFlowLedgerRefresh() -> Task<Void, Never>? {
+        flowLedgerRevision &+= 1
+        flowLedgerTaskGeneration &+= 1
+        let task = flowLedgerTask
+        flowLedgerTask?.cancel()
+        flowLedgerTask = nil
+        flowLedgerAccountingRefreshPending = false
+        flowLedgerPresentationRefreshPending = false
+        flowLedgerActiveBuildNeedsAccounting = false
+        return task
+    }
+
+    @discardableResult
+    private func invalidateTrafficHistoryWriter() -> Task<Void, Never>? {
+        trafficHistoryPersistGeneration &+= 1
+        let task = trafficHistoryPersistTask
+        trafficHistoryPersistTask?.cancel()
+        trafficHistoryPersistTask = nil
+        return task
+    }
+
+    private func shouldPruneTrafficHistory(at date: Date) -> Bool {
+        guard let lastPrunedAt = trafficHistoryLastPrunedAt else { return true }
+        return date.timeIntervalSince(lastPrunedAt) >= Self.trafficHistoryPruneInterval
+    }
+
     private func scheduleFlowLedgerRefresh(neededForAccounting: Bool = false) {
         flowLedgerRevision &+= 1
         if neededForAccounting {
@@ -7289,7 +7355,8 @@ final class AppModel {
 
     private func schedulePersistentTrafficHistory(from ledger: FlowLedger) {
         guard persistentTrafficHistoryStore != nil,
-              trafficHistoryPersistenceChoice == .persistent else { return }
+              trafficHistoryPersistenceChoice == .persistent,
+              !trafficHistoryClearInProgress else { return }
 
         for entry in ledger.entries {
             guard let completion = Self.trafficHistoryCompletion(entry) else { continue }
@@ -7306,6 +7373,7 @@ final class AppModel {
     private func startPersistentTrafficHistoryWriterIfNeeded() {
         guard trafficHistoryPersistTask == nil,
               persistentTrafficHistoryStore != nil,
+              !trafficHistoryClearInProgress,
               !queuedTrafficHistoryCompletions.isEmpty else { return }
 
         trafficHistoryPersistGeneration &+= 1
@@ -7324,6 +7392,15 @@ final class AppModel {
                     guard !Task.isCancelled,
                           generation == self.trafficHistoryPersistGeneration else {
                         return
+                    }
+                    let now = Date()
+                    if self.shouldPruneTrafficHistory(at: now) {
+                        try await store.prune(now: now)
+                        guard !Task.isCancelled,
+                              generation == self.trafficHistoryPersistGeneration else {
+                            return
+                        }
+                        self.trafficHistoryLastPrunedAt = now
                     }
                     for completion in batch {
                         let identifier = completion.checkpointIdentifier
@@ -7353,7 +7430,9 @@ final class AppModel {
             guard generation == self.trafficHistoryPersistGeneration else { return }
             self.trafficHistoryPersistTask = nil
             if !Task.isCancelled {
-                await self.refreshPersistentTrafficHistorySnapshots()
+                await self.refreshPersistentTrafficHistorySnapshots(
+                    expectedPersistenceGeneration: generation
+                )
             }
         }
     }
@@ -9006,6 +9085,7 @@ final class AppModel {
     static let appRoutingProviderFailureThreshold = 3
     static let appRoutingProviderStatusCheckInterval = 5
     static let maximumDedicatedMihomoRoutes = 64
+    private static let trafficHistoryPruneInterval: TimeInterval = 60 * 60
 
     nonisolated private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
         let (value, overflow) = lhs.addingReportingOverflow(rhs)
