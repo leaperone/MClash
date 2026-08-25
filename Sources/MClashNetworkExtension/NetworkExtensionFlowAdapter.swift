@@ -235,6 +235,21 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         planTCPFlow(flow).decision
     }
 
+    func isTrustedMClashComponent(_ flow: NEAppProxyFlow) -> Bool {
+        if trustedComponentPolicy.contains(
+            metadataSigningIdentifier: flow.metaData.sourceAppSigningIdentifier
+        ) {
+            return true
+        }
+        guard let auditToken = flow.metaData.sourceAppAuditToken else { return false }
+        return trustedComponentPolicy.contains(
+            identityCache.resolve(
+                sourceAppAuditToken: auditToken,
+                using: identityResolver
+            )
+        )
+    }
+
     /// Reuses application identity matching for a DNS proxy flow. The remote
     /// endpoint is the resolver rather than the queried hostname, so this is
     /// intentionally used only to select an application-scoped Profile route;

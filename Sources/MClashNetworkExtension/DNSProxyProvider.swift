@@ -76,9 +76,6 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private let flowDecisionCoordinator = NetworkExtensionFlowDecisionCoordinator()
     private let tcpRelays = TCPFlowRelayRegistry()
     private let udpSessions = UDPFlowSessionRegistry()
-    private let identityResolver = ProcessIdentityResolver()
-    private let identityCache = ProcessIdentityResolutionCache(capacity: 64)
-    private let trustedComponentPolicy = TrustedMClashComponentPolicy()
     private var reporter: DNSProxyRuntimeReporter?
     private var proxy: ProviderSOCKSConfiguration?
     private var proxyCatalog: [MihomoRoute: ProviderSOCKSConfiguration] = [:]
@@ -350,9 +347,10 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 transportProtocol: .tcp
             )
         }
+        let sourceIsTrusted = flowDecisionCoordinator.isTrustedMClashComponent(tcpFlow)
         let baseRoute = DNSRelayRoutingPolicy.route(
             destination: destination,
-            isTrustedMClashComponent: isTrustedMClashComponent(tcpFlow)
+            isTrustedMClashComponent: sourceIsTrusted
         )
         let route = resolvedMihomoRoute(
             baseRoute,
@@ -593,7 +591,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             return true
         }
         let parentIdentifier = UUID()
-        let sourceIsTrusted = isTrustedMClashComponent(flow)
+        let sourceIsTrusted = flowDecisionCoordinator.isTrustedMClashComponent(flow)
         let initialRoute = resolvedMihomoRoute(
             DNSRelayRoutingPolicy.route(
                 destination: initialDestination,
@@ -760,21 +758,6 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     ) -> ProviderSOCKSConfiguration? {
         guard case let .mihomo(mihomoRoute) = route else { return nil }
         return proxyCatalog[mihomoRoute]
-    }
-
-    private func isTrustedMClashComponent(_ flow: NEAppProxyFlow) -> Bool {
-        if trustedComponentPolicy.contains(
-            metadataSigningIdentifier: flow.metaData.sourceAppSigningIdentifier
-        ) {
-            return true
-        }
-        guard let auditToken = flow.metaData.sourceAppAuditToken else { return false }
-        return trustedComponentPolicy.contains(
-            identityCache.resolve(
-                sourceAppAuditToken: auditToken,
-                using: identityResolver
-            )
-        )
     }
 
     private func reject(
