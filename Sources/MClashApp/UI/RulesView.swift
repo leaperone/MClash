@@ -60,6 +60,9 @@ struct RulesView: View {
                     return
                 }
                 await loadRulesWhenAvailable()
+                guard !Task.isCancelled,
+                      model.controllerIsReady,
+                      model.mainWindowPresentationTelemetryIsVisible else { return }
                 hasCompletedInitialLoad = true
                 while !Task.isCancelled,
                       model.controllerIsReady,

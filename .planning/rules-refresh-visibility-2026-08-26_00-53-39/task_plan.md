@@ -9,7 +9,8 @@
 
 ## 范围
 
-- 仅修改 `Sources/MClashApp/UI/RulesView.swift` 的自动刷新 task 门控。
+- 修改 `Sources/MClashApp/UI/RulesView.swift` 的自动刷新 task 门控。
+- 在 `Sources/MClashApp/App/AppModel.swift` 的规则加载 catch 中静默处理当前 Task 的取消，避免把视图生命周期取消写成业务错误。
 - 保留代理、DNS、System Proxy、订阅、恢复和 Automation 行为。
 
 ## 非目标
@@ -22,11 +23,14 @@
 
 - task identity、入口 guard、周期 while 与睡眠后的 guard 都依赖 controller ready 和展示遥测可见性。
 - 仅因窗口遮挡而暂停时，不清空 `hasCompletedInitialLoad`。
+- 被取消的初次加载不得标记为已完成，也不得覆盖 controller unavailable 的状态重置。
+- 仅忽略 `Task.isCancelled` 的规则请求错误；真实网络/API 错误仍照常上报。
 - 普通模式被遮挡时展示遥测仍为可见，现有 15 秒刷新行为保持不变。
 
 ## 修改路径
 
 - 复用 `model.mainWindowPresentationTelemetryIsVisible`，将它加入 `RulesView` 现有 SwiftUI task 生命周期判断；不新增状态或抽象。
+- 复用 `Task.isCancelled` 区分 URLSession 协作取消与真实规则加载失败。
 
 ## 验证方式
 
@@ -37,8 +41,9 @@
 
 - 轻量模式可见性变为 false 时，SwiftUI 取消当前规则刷新 task，周期循环不再继续。
 - 可见性恢复为 true 且 controller ready 时，task 立即重启；规则为空时沿用现有即时加载，否则进入既有 15 秒周期。
-- controller 不可用仍会清空初次加载状态；单纯遮挡不会清空。
-- 普通模式行为无变化，改动只涉及目标产品文件和本任务 planning。
+- controller 不可用仍会清空初次加载状态；单纯遮挡不会清空已完成状态，也不会把未完成初载误标为完成。
+- 遮挡取消的 URLSession 请求不写入 `rulesErrorMessage`；恢复后空规则仍可即时重载。
+- 普通模式、手动刷新、Automation 与 controller/provider 加载行为无变化。
 
 ## 未确认事项
 

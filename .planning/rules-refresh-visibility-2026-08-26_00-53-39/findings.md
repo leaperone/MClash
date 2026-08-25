@@ -22,6 +22,8 @@
 - 最小修复应只门控自动循环；在 `AppModel.refreshRules` 加 guard 会错误阻断手动刷新、Automation 或后台一致性路径。
 - 二元 task id 不能简化成布尔合取，否则窗口隐藏时 controller 从 ready 变为 unavailable 仍可能保持同一 id，漏掉初次加载状态重置。
 - 周期 sleep 和初始加载的 100ms 等待后都需再次检查 cancellation/visibility，避免取消恰逢正常 sleep 完成时再发一个新请求。
+- 遮挡也可能取消已经 await 的 URLSession 请求；该请求以 `-999 cancelled` 进入 `AppModel.loadRules` 的通用 catch。只在 `Task.isCancelled` 时静默返回，可保留真实错误上报并让恢复后的空规则立即重试。
+- `loadRulesWhenAvailable` 因取消返回后不能无条件标记初载完成；赋值前需再次确认 task、controller 与展示可见性仍有效。
 
 ## 技术决策
 
@@ -30,7 +32,9 @@
 | 在 `RulesView` task 门控 | 这是唯一 15 秒自动调用入口，其他调用方有独立产品语义。 |
 | 复用展示遥测可见性 | 该值已正确区分轻量遮挡与普通模式遮挡，并由窗口 occlusion 通知更新。 |
 | 保留 `hasCompletedInitialLoad` | 遮挡只暂停展示工作，不应把已完成的 UI 加载改回 loading 状态。 |
-| sleep 后复核 cancellation 与 visibility | 只阻止尚未开始的自动请求，不改变或强制取消已发请求。 |
+| sleep 后复核 cancellation 与 visibility | 阻止取消后再发新的自动请求。 |
+| `loadRules` 静默处理当前 Task 取消 | URLSession 协作取消不应成为规则业务错误；真实请求错误仍保留。 |
+| 初载完成前再复核 task/controller/visibility | 防止取消路径把未完成初载标成完成或覆盖 controller 重置。 |
 
 ## 风险与边界
 
