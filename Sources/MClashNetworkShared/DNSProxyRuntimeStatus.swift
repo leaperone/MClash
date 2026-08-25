@@ -71,7 +71,7 @@ public struct DNSProxyRuntimeReport: Codable, Equatable, Sendable {
 /// payloads, process identity, or proxy credentials.
 public struct DNSProxyRuntimeStatus: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 2
-    public static let defaultMaximumHeartbeatAge: TimeInterval = 6
+    public static let defaultMaximumHeartbeatAge: TimeInterval = 9
 
     public let schemaVersion: Int
     public let revision: UInt64
