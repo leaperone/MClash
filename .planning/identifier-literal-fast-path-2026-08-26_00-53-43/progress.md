@@ -7,16 +7,17 @@
 ## 已完成
 
 - 已读取开发、planning、worktree、项目基线与 Ponytail 指引。
-- 已从 `origin/main` 的 `3911c44` 创建独立 worktree/分支并核对项目基线有效。
+- 已从 `origin/main@3911c44` 创建独立 worktree/分支并核对项目基线有效。
 - 已核对 matcher 实现、规则引擎调用链与现有 shared tests。
 - 已在 `matches(_:)` 中加入纯字面 equality fast path，原 wildcard 实现未改。
 - 已通过规则引擎 17 tests 与 flow adapter 11 tests。
-- 已确认分支 HEAD 与刷新后的 `origin/main` 同为 `3911c44`，源文件 diff 仅为 literal/wildcard 分派。
+- 已确认源文件 diff 仅为 literal/wildcard 分派，并以 `d3ff036` 提交、推送及创建 PR #11。
 - 已移除 SwiftPM 测试生成的未跟踪 `Package.resolved`，不纳入提交。
+- preflight 的完整 direct tests 与 release App 构建均通过。
 
 ## 进行中
 
-- 无；代码与 planning 已达到提交就绪，随后执行 commit、push 与 PR 元数据交付。
+- 无；代码与 planning 已提交并进入 PR preflight。
 
 ## 修改文件
 
@@ -32,8 +33,10 @@
 | `swift test --filter CaptureRuleEngineTests` | 17 tests 通过 | 通过 |
 | `swift test --filter FlowDecisionAdapterTests` | 11 tests 通过 | 通过 |
 | `git diff --check` | 无 whitespace 错误 | 通过 |
-| 分支/base 与提交范围 | HEAD 与 `origin/main` 均为 `3911c44`；仅授权源文件与 planning 待提交 | 通过 |
+| 分支/base 与提交范围 | 基于 `origin/main@3911c44`；提交 `d3ff036` 仅含授权源文件与 planning | 通过 |
 | planning 完整性 | `check-complete.sh` 报告 delivery-ready | 通过 |
+| `./scripts/test-direct.sh` | 完整 direct tests 通过 | 通过 |
+| `./scripts/build-app.sh` | release App、内嵌 CLI/Core/System Extension 构建与签名校验通过 | 通过 |
 
 ## 错误与恢复
 
