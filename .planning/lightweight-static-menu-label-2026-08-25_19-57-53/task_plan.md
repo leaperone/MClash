@@ -28,11 +28,12 @@
 
 - `Sources/MClashApp/App/MClashApp.swift`：轻量菜单标签改为静态原生图标。
 - `Sources/MClashApp/App/AppModel.swift`：轻量隐藏态 DNS runtime 轮询改为 10 秒。
+- `Tests/MClashTests/PresentationTelemetryPolicyTests.swift`：在现有策略测试中固定 10/2/5 秒映射。
 - 本 planning 三文件记录实现与验证。
 
 ## 验证方式
 
-- 运行轻量生命周期、菜单/Dock 策略与 automation 定向测试。
+- 运行轻量生命周期、菜单/Dock、DNS 轮询策略与 automation 定向测试。
 - 运行 typecheck、direct tests、release App 构建与签名校验。
 - 检查 diff，确认标准菜单仍使用 `MenuBarStatusLabel(model:)`。
 
@@ -40,6 +41,7 @@
 
 - 轻量 `MenuBarExtra` label 不再持有或读取 `AppModel`。
 - 轻量隐藏态 DNS runtime 每 10 秒核对一次；详细展示仍为 2 秒，普通后台仍为 5 秒。
+- 现有策略测试可运行地固定上述三档轮询映射。
 - Open MClash/Quit 与标准模式动态状态标签保持可用。
 - 定向测试、静态检查及 release 构建通过。
 

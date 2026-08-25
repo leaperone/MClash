@@ -10,6 +10,7 @@
 - 创建隔离 worktree 并校验项目开发基线。
 - 将轻量菜单标签替换为无 `AppModel` 依赖的静态原生图标；标准菜单保持动态状态。
 - 将轻量隐藏态 DNS runtime 安全轮询从 5 秒降频到 10 秒；其他展示态频率不变。
+- 将轮询间隔收敛为可直接验证的策略方法，并在现有测试中固定 10/2/5 秒映射。
 
 ## 进行中
 
@@ -20,6 +21,7 @@
 - `.planning/lightweight-static-menu-label-2026-08-25_19-57-53/{task_plan,findings,progress}.md`
 - `Sources/MClashApp/App/MClashApp.swift`
 - `Sources/MClashApp/App/AppModel.swift`
+- `Tests/MClashTests/PresentationTelemetryPolicyTests.swift`
 
 ## 验证结果
 
@@ -28,6 +30,7 @@
 | `leaperone-dev-init --check` | 项目基线有效 | 通过 |
 | 当前 main 定向 TrafficHistory store tests | 9/9 | 通过 |
 | 轻量生命周期、AppModel safety、Dock、telemetry policy、automation 定向 tests | 36/36 | 通过 |
+| `swift test --filter PresentationTelemetryPolicyTests` | 8/8，含 DNS 轮询三档映射 | 通过 |
 | `./scripts/typecheck.sh` | App、CLI、Network Extension strict concurrency/direct link | 通过 |
 | `./scripts/test-direct.sh` | App/Shared/Extension/Automation 与 release script tests | 通过 |
 | `CONFIGURATION=release CODE_SIGN_IDENTITY=- ./scripts/build-app.sh` | release App、CLI、Mihomo、System Extension 组装与 ad-hoc 签名验证 | 通过 |
@@ -39,3 +42,4 @@
 | 错误 | 尝试 | 解决方式 |
 |---|---:|---|
 | 历史审计误报 toggle 竞态 | 1 | 对比当前 main FIFO 实现并由原审计者复核撤回。 |
+| Phase 3 发现 DNS 三档轮询缺少可运行映射检查 | 1 | 收敛为纯策略方法，在现有测试文件补 4 个映射断言并重跑完整验证。 |

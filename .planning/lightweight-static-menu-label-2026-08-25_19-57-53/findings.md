@@ -29,7 +29,7 @@
 |---|---|
 | 在轻量 label 调用点内联静态 `Image` | 只改一个调用点即可消除模型依赖；不需要新 View 类型。 |
 | 复用现有 DNS monitor 调度 | 一处 interval 分支即可减少一半轻量态 preferences/provider IPC，取消和失败处理保持原样。 |
-| 不新增测试 | 改动是 SwiftUI label 的直接替换；现有 typecheck/build 能覆盖编译与组装，Ponytail 不为一行展示改动造夹具。 |
+| 只在现有策略测试中补轮询映射检查 | 静态 label 不需要新夹具；10/2/5 秒分支需要一条纯策略检查，避免常量互换后仍然全绿。 |
 
 ## 风险与边界
 
