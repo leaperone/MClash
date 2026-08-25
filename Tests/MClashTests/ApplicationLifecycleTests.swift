@@ -72,6 +72,10 @@ struct ApplicationLifecycleTests {
         #expect(!first.lightweightMode)
         first.openAtLoginSilently = false
         first.lightweightMode = true
+        #expect(!ApplicationDelegate.initialWindowShouldPresent(
+            arguments: ["MClash"],
+            defaults: defaults
+        ))
 
         let restored = makeTestAppModel(
             profileDirectoryLayout: layout,
