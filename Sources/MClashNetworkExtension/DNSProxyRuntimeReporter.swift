@@ -53,9 +53,9 @@ final class DNSProxyRuntimeReporter: @unchecked Sendable {
         try? registry.publish(status)
         let timer = DispatchSource.makeTimerSource(queue: heartbeatQueue)
         timer.schedule(
-            deadline: .now() + .seconds(2),
-            repeating: .seconds(2),
-            leeway: .milliseconds(500)
+            deadline: .now() + .seconds(3),
+            repeating: .seconds(3),
+            leeway: .seconds(1)
         )
         timer.setEventHandler { [weak self] in self?.recordHeartbeat() }
         timer.resume()

@@ -236,9 +236,20 @@ struct DNSProxyRuntimeStatusTests {
     func heartbeatFreshness() throws {
         let start = Date(timeIntervalSince1970: 1_000)
         var status = makeStatus(startedAt: start, updatedAt: start)
+        let maximumAge = DNSProxyRuntimeStatus.defaultMaximumHeartbeatAge
 
-        #expect(status.isFresh(at: start.addingTimeInterval(6), maximumAge: 6))
-        #expect(!status.isFresh(at: start.addingTimeInterval(6.001), maximumAge: 6))
+        #expect(
+            status.isFresh(
+                at: start.addingTimeInterval(maximumAge),
+                maximumAge: maximumAge
+            )
+        )
+        #expect(
+            !status.isFresh(
+                at: start.addingTimeInterval(maximumAge + 0.001),
+                maximumAge: maximumAge
+            )
+        )
         #expect(!status.isFresh(at: start, maximumAge: -.infinity))
 
         let heartbeat = start.addingTimeInterval(2)
@@ -246,22 +257,22 @@ struct DNSProxyRuntimeStatusTests {
         try status.validate(
             expectedRevision: status.revision,
             activationIdentifier: status.activationIdentifier,
-            at: heartbeat.addingTimeInterval(6),
-            maximumAge: 6
+            at: heartbeat.addingTimeInterval(maximumAge),
+            maximumAge: maximumAge
         )
 
         #expect(
             throws: DNSProxyRuntimeStatusValidationError.staleHeartbeat(
                 updatedAt: heartbeat,
-                evaluatedAt: heartbeat.addingTimeInterval(6.001),
-                maximumAge: 6
+                evaluatedAt: heartbeat.addingTimeInterval(maximumAge + 0.001),
+                maximumAge: maximumAge
             )
         ) {
             try status.validate(
                 expectedRevision: status.revision,
                 activationIdentifier: status.activationIdentifier,
-                at: heartbeat.addingTimeInterval(6.001),
-                maximumAge: 6
+                at: heartbeat.addingTimeInterval(maximumAge + 0.001),
+                maximumAge: maximumAge
             )
         }
     }
