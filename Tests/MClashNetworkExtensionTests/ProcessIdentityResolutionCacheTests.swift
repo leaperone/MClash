@@ -39,7 +39,7 @@ struct ProcessIdentityResolutionCacheTests {
         for _ in 0..<2 {
             _ = cache.resolve(
                 sourceAppAuditToken: value.auditToken.data,
-                nowNanoseconds: 100,
+                clock: { 100 },
                 resolver: { _ in
                     calls += 1
                     return failure
@@ -51,7 +51,7 @@ struct ProcessIdentityResolutionCacheTests {
         #expect(calls == 2)
     }
 
-    @Test("Caches a failure briefly and retries after expiry")
+    @Test("Caches a failure for the full TTL after resolution completes")
     func negativeEntryExpires() throws {
         let token = try SourceAppAuditToken(
             Data(repeating: 4, count: SourceAppAuditToken.byteCount)
@@ -61,30 +61,36 @@ struct ProcessIdentityResolutionCacheTests {
             .executablePathPermissionDenied(errno: 1)
         )
         var calls = 0
+        var now: UInt64 = 100
         let resolve: (Data) -> ProcessIdentityResolution = { _ in
             calls += 1
+            if calls == 1 {
+                now = 3_000_000_000
+            }
             return failure
         }
 
         #expect(
             cache.resolve(
                 sourceAppAuditToken: token.data,
-                nowNanoseconds: 100,
+                clock: { now },
                 resolver: resolve
             ) == failure
         )
+        now = 3_000_000_001
         #expect(
             cache.resolve(
                 sourceAppAuditToken: token.data,
-                nowNanoseconds: 101,
+                clock: { now },
                 resolver: resolve
             ) == failure
         )
         #expect(calls == 1)
+        now = 5_000_000_000
         #expect(
             cache.resolve(
                 sourceAppAuditToken: token.data,
-                nowNanoseconds: 2_000_000_100,
+                clock: { now },
                 resolver: resolve
             ) == failure
         )
@@ -115,25 +121,25 @@ struct ProcessIdentityResolutionCacheTests {
         for token in [first, second, third] {
             _ = cache.resolve(
                 sourceAppAuditToken: token.data,
-                nowNanoseconds: 100,
+                clock: { 100 },
                 resolver: resolve
             )
         }
         _ = cache.resolve(
             sourceAppAuditToken: second.data,
-            nowNanoseconds: 101,
+            clock: { 101 },
             resolver: resolve
         )
         _ = cache.resolve(
             sourceAppAuditToken: first.data,
-            nowNanoseconds: 102,
+            clock: { 102 },
             resolver: resolve
         )
 
         #expect(calls == 4)
     }
 
-    @Test("A successful resolution clears its previous failure")
+    @Test("A late failure cannot outlive a concurrent success")
     func successClearsFailure() throws {
         let token = try SourceAppAuditToken(
             Data(repeating: 8, count: SourceAppAuditToken.byteCount)
@@ -144,32 +150,50 @@ struct ProcessIdentityResolutionCacheTests {
         let failure = ProcessIdentityResolution.unavailable(
             .executablePathPermissionDenied(errno: 1)
         )
-        var calls = 0
-        let failedResolve: (Data) -> ProcessIdentityResolution = { _ in
-            calls += 1
-            return failure
+        let slowStarted = DispatchSemaphore(value: 0)
+        let allowSlowFailure = DispatchSemaphore(value: 0)
+        let slowFinished = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = cache.resolve(
+                sourceAppAuditToken: token.data,
+                clock: { 100 },
+                resolver: { _ in
+                    slowStarted.signal()
+                    _ = allowSlowFailure.wait(timeout: .now() + 5)
+                    return failure
+                }
+            )
+            slowFinished.signal()
         }
+        defer { allowSlowFailure.signal() }
+
+        #expect(slowStarted.wait(timeout: .now() + 5) == .success)
+        #expect(
+            cache.resolve(
+                sourceAppAuditToken: token.data,
+                clock: { 100 },
+                resolver: { _ in .resolved(value) }
+            ) == .resolved(value)
+        )
+        cache.insert(replacement)
+        allowSlowFailure.signal()
+        #expect(slowFinished.wait(timeout: .now() + 5) == .success)
+
+        var calls = 0
         let successfulResolve: (Data) -> ProcessIdentityResolution = { _ in
             calls += 1
             return .resolved(value)
         }
 
-        _ = cache.resolve(
-            sourceAppAuditToken: token.data,
-            nowNanoseconds: 100,
-            resolver: failedResolve
-        )
-        cache.insert(value)
-        cache.insert(replacement)
         #expect(
             cache.resolve(
                 sourceAppAuditToken: token.data,
-                nowNanoseconds: 101,
+                clock: { 101 },
                 resolver: successfulResolve
             ) == .resolved(value)
         )
         #expect(cache.identity(for: token) == value)
-        #expect(calls == 2)
+        #expect(calls == 1)
     }
 
     private func identity(

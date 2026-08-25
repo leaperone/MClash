@@ -2,7 +2,7 @@
 
 - 任务 ID：`process-identity-negative-cache-2026-08-26_05-31-09`
 - 创建时间：`2026-08-26_05-31-09`
-- 当前状态：`complete`
+- 当前状态：`in_progress`
 
 ## 已完成
 
@@ -10,10 +10,11 @@
 - 已确认候选是流量驱动的新流身份检查，不是已证实的 idle loop。
 - 已实现完整 audit token 键控、2 秒 TTL、固定容量的失败缓存，并确保并发成功结果优先。
 - 定向测试、类型检查、直接测试与 release App/System Extension 构建均通过。
+- 已修复 Preflight 发现的 TTL 起算和迟到失败竞态，修复后二次独立复审通过。
 
 ## 进行中
 
-- 无；实现与本地交付检查已收敛，PR/preflight 状态由 Git 交付阶段记录。
+- 修复 Preflight 复审发现的 TTL 起算与迟到失败竞态；随后重跑受影响验证与完整门禁。
 
 ## 修改文件
 
@@ -33,6 +34,8 @@
 | `git diff --check` | 无 whitespace 错误 | 通过 |
 | `git merge-tree --write-tree --merge-base origin/main HEAD origin/main` | 成功生成合并树，无结构性冲突 | 通过 |
 | 独立代码审查 | 复审 verdict=pass；无残留 Critical/High/Medium | 通过 |
+| 修复后定向缓存测试 | 5 tests passed，含慢 resolver TTL 与确定性并发交错 | 通过 |
+| 修复后 `./scripts/typecheck.sh` | App、CLI、Network Extension typecheck/link succeeded | 通过 |
 
 ## 错误与恢复
 
@@ -40,3 +43,4 @@
 |---|---:|---|
 | SwiftPM 生成未跟踪 `Package.resolved` | 1 | 排除于本任务交付，交付收敛时清理本轮产物。 |
 | 首次并发 miss 未合并 | 1 | 收窄验收并记录边界；不引入会阻塞 flow admission 的同步层。 |
+| Preflight 最终复审发现 2 个 Medium | 1 | 旧 HEAD 构建证据保留为历史，不用于最终合并；返回实现阶段完成最小竞态修复。 |

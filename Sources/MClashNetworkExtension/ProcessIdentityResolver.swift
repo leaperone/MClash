@@ -215,8 +215,15 @@ final class ProcessIdentityResolutionCache: @unchecked Sendable {
         let resolution: ProcessIdentityResolution
         let expiresAt: UInt64
     }
+    // Concurrent misses still resolve independently. This marker only keeps a
+    // late failure from surviving a success in the same token wave.
+    private struct ActiveResolution {
+        var count: Int
+        var observedSuccess: Bool
+    }
     private var failures: [SourceAppAuditToken: FailureRecord] = [:]
     private var failureOrder: [SourceAppAuditToken] = []
+    private var activeResolutions: [SourceAppAuditToken: ActiveResolution] = [:]
 
     init(capacity: Int) {
         self.capacity = max(0, capacity)
@@ -241,71 +248,111 @@ final class ProcessIdentityResolutionCache: @unchecked Sendable {
     ) -> ProcessIdentityResolution {
         resolve(
             sourceAppAuditToken: data,
-            nowNanoseconds: DispatchTime.now().uptimeNanoseconds,
+            clock: { DispatchTime.now().uptimeNanoseconds },
             resolver: resolver.resolve(sourceAppAuditToken:)
         )
     }
 
     func resolve(
         sourceAppAuditToken data: Data,
-        nowNanoseconds: UInt64,
+        clock: () -> UInt64,
         resolver: (Data) -> ProcessIdentityResolution
     ) -> ProcessIdentityResolution {
         guard let token = try? SourceAppAuditToken(data) else {
             return resolver(data)
         }
-        if let identity = identity(for: token) {
-            return .resolved(identity)
-        }
-        if let failure = failure(for: token, nowNanoseconds: nowNanoseconds) {
-            return failure
-        }
+        guard capacity > 0 else { return resolver(data) }
+        if let cached = cachedResolutionOrBegin(
+            for: token,
+            clock: clock
+        ) { return cached }
+
         let resolution = resolver(data)
-        if case let .resolved(identity) = resolution {
-            insert(identity)
-        } else {
-            insertFailure(
-                resolution,
-                for: token,
-                nowNanoseconds: nowNanoseconds
-            )
-        }
+        completeResolution(
+            resolution,
+            for: token,
+            clock: clock
+        )
         return resolution
     }
 
     func insert(_ identity: ResolvedProcessIdentity) {
         withLock {
-            removeFailureLocked(for: identity.auditToken)
-            guard capacity > 0,
-                  identities[identity.auditToken] == nil else { return }
-            while insertionOrder.count >= capacity {
-                identities.removeValue(forKey: insertionOrder.removeFirst())
+            if var active = activeResolutions[identity.auditToken] {
+                active.observedSuccess = true
+                activeResolutions[identity.auditToken] = active
             }
-            identities[identity.auditToken] = identity
-            insertionOrder.append(identity.auditToken)
+            insertIdentityLocked(identity)
         }
     }
 
-    private func failure(
+    private func cachedResolutionOrBegin(
         for token: SourceAppAuditToken,
-        nowNanoseconds: UInt64
+        clock: () -> UInt64
     ) -> ProcessIdentityResolution? {
         withLock {
-            guard let record = failures[token] else { return nil }
-            guard record.expiresAt > nowNanoseconds else {
-                removeFailureLocked(for: token)
-                return nil
+            if let identity = identities[token] {
+                return .resolved(identity)
             }
-            return record.resolution
+            if let record = failures[token], record.expiresAt > clock() {
+                return record.resolution
+            }
+            if failures[token] != nil {
+                removeFailureLocked(for: token)
+            }
+            var active = activeResolutions[token] ?? ActiveResolution(
+                count: 0,
+                observedSuccess: false
+            )
+            active.count += 1
+            activeResolutions[token] = active
+            return nil
         }
     }
 
-    private func insertFailure(
+    private func completeResolution(
+        _ resolution: ProcessIdentityResolution,
+        for token: SourceAppAuditToken,
+        clock: () -> UInt64
+    ) {
+        withLock {
+            guard var active = activeResolutions[token] else { return }
+            if case let .resolved(identity) = resolution {
+                active.observedSuccess = true
+                insertIdentityLocked(identity)
+            } else if !active.observedSuccess {
+                insertFailureLocked(
+                    resolution,
+                    for: token,
+                    nowNanoseconds: clock()
+                )
+            }
+
+            active.count -= 1
+            if active.count == 0 {
+                activeResolutions.removeValue(forKey: token)
+            } else {
+                activeResolutions[token] = active
+            }
+        }
+    }
+
+    private func insertIdentityLocked(_ identity: ResolvedProcessIdentity) {
+        removeFailureLocked(for: identity.auditToken)
+        guard capacity > 0,
+              identities[identity.auditToken] == nil else { return }
+        while insertionOrder.count >= capacity {
+            identities.removeValue(forKey: insertionOrder.removeFirst())
+        }
+        identities[identity.auditToken] = identity
+        insertionOrder.append(identity.auditToken)
+    }
+
+    private func insertFailureLocked(
         _ resolution: ProcessIdentityResolution,
         for token: SourceAppAuditToken,
         nowNanoseconds: UInt64
     ) {
-        guard capacity > 0 else { return }
         let (expiresAt, overflow) = nowNanoseconds.addingReportingOverflow(
             Self.failureCacheTTLNanoseconds
         )
@@ -313,21 +360,16 @@ final class ProcessIdentityResolutionCache: @unchecked Sendable {
             resolution: resolution,
             expiresAt: overflow ? .max : expiresAt
         )
-        withLock {
-            // A concurrent successful resolution wins. Do not leave a stale
-            // negative entry behind to reappear after the positive entry is
-            // eventually evicted.
-            guard identities[token] == nil else { return }
-            if failures[token] == nil {
-                while failureOrder.count >= capacity {
-                    guard let oldest = failureOrder.first else { break }
-                    failureOrder.removeFirst()
-                    failures.removeValue(forKey: oldest)
-                }
-                failureOrder.append(token)
+        guard identities[token] == nil else { return }
+        if failures[token] == nil {
+            while failureOrder.count >= capacity {
+                guard let oldest = failureOrder.first else { break }
+                failureOrder.removeFirst()
+                failures.removeValue(forKey: oldest)
             }
-            failures[token] = record
+            failureOrder.append(token)
         }
+        failures[token] = record
     }
 
     private func removeFailureLocked(for token: SourceAppAuditToken) {

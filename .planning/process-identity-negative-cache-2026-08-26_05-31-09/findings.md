@@ -33,7 +33,10 @@
 
 - 失败缓存降低的是重复身份检查开销，不保证消除 Network.framework path/relay churn；新版签名构建仍需单独做 CPU/wakeups A/B。
 - 短 TTL 是安全与恢复折中；若后续 profiler 证明其他路径占主导，应停止扩大此改动。
-- 独立复审 verdict=pass；同 token 首批并发 miss 可能重复解析，留待新版 profiler 证明后再考虑 single-flight。
+- 初次独立复审 verdict=pass；同 token 首批并发 miss 可能重复解析，留待新版 profiler 证明后再考虑 single-flight。
+- Preflight 最终复审发现两项真实竞态：TTL 在昂贵 resolver 前起算会缩短抑制窗口；成功项若先被 FIFO 淘汰，迟到失败可重新写入负缓存。
+- 最小修复不引入 single-flight：并发 miss 仍独立解析，只在锁内记录同 token 当前解析波次是否已出现成功，并从失败完成时起算 TTL。
+- 修复后二次独立复审 verdict=pass；两项 Medium 均关闭，未发现新的 Critical/High/Medium。
 
 ## 参考指针
 
