@@ -119,7 +119,7 @@ final class TCPFlowRelay: @unchecked Sendable {
             self.connection = connection
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
-                self.queue.async { self.handleConnectionState(state) }
+                self.handleConnectionState(state)
             }
             scheduleHandshakeTimeout()
             connection.start(queue: queue)
@@ -249,14 +249,12 @@ final class TCPFlowRelay: @unchecked Sendable {
         }
         connection.send(content: data, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            self.queue.async {
-                if let error {
-                    self.finish(error: TCPFlowRelayError.upstreamFailed(
-                        error.localizedDescription
-                    ))
-                } else if !self.finished {
-                    next()
-                }
+            if let error {
+                self.finish(error: TCPFlowRelayError.upstreamFailed(
+                    error.localizedDescription
+                ))
+            } else if !self.finished {
+                next()
             }
         })
     }
@@ -273,22 +271,20 @@ final class TCPFlowRelay: @unchecked Sendable {
             maximumLength: 64 * 1_024
         ) { [weak self] data, _, isComplete, error in
             guard let self else { return }
-            self.queue.async {
-                if let error {
-                    self.finish(error: TCPFlowRelayError.upstreamFailed(
-                        error.localizedDescription
-                    ))
-                    return
-                }
-                if let data, !data.isEmpty {
-                    consume(data)
-                    return
-                }
-                if isComplete {
-                    self.finish(error: TCPFlowRelayError.upstreamClosedDuringHandshake)
-                } else {
-                    self.receiveHandshakeChunk(consume)
-                }
+            if let error {
+                self.finish(error: TCPFlowRelayError.upstreamFailed(
+                    error.localizedDescription
+                ))
+                return
+            }
+            if let data, !data.isEmpty {
+                consume(data)
+                return
+            }
+            if isComplete {
+                self.finish(error: TCPFlowRelayError.upstreamClosedDuringHandshake)
+            } else {
+                self.receiveHandshakeChunk(consume)
             }
         }
     }
@@ -354,15 +350,13 @@ final class TCPFlowRelay: @unchecked Sendable {
                         isComplete: true,
                         completion: .contentProcessed { [weak self] error in
                             guard let self else { return }
-                            self.queue.async {
-                                if let error {
-                                    self.finish(error: TCPFlowRelayError.upstreamFailed(
-                                        error.localizedDescription
-                                    ))
-                                } else {
-                                    self.backpressureState.end(.appToUpstream)
-                                    self.finishIfBothHalvesClosed()
-                                }
+                            if let error {
+                                self.finish(error: TCPFlowRelayError.upstreamFailed(
+                                    error.localizedDescription
+                                ))
+                            } else {
+                                self.backpressureState.end(.appToUpstream)
+                                self.finishIfBothHalvesClosed()
                             }
                         }
                     )
@@ -379,18 +373,16 @@ final class TCPFlowRelay: @unchecked Sendable {
                     content: data,
                     completion: .contentProcessed { [weak self] error in
                         guard let self else { return }
-                        self.queue.async {
-                            if let error {
-                                self.finish(error: TCPFlowRelayError.upstreamFailed(
-                                    error.localizedDescription
-                                ))
-                            } else {
-                                self.backpressureState.end(.appToUpstream)
-                                self.byteLedger.recordUpstreamAccepted(data.count)
-                                self.failoverState.markApplicationPayloadForwarded()
-                                self.report(.relaying)
-                                self.readFromFlow()
-                            }
+                        if let error {
+                            self.finish(error: TCPFlowRelayError.upstreamFailed(
+                                error.localizedDescription
+                            ))
+                        } else {
+                            self.backpressureState.end(.appToUpstream)
+                            self.byteLedger.recordUpstreamAccepted(data.count)
+                            self.failoverState.markApplicationPayloadForwarded()
+                            self.report(.relaying)
+                            self.readFromFlow()
                         }
                     }
                 )
@@ -409,33 +401,31 @@ final class TCPFlowRelay: @unchecked Sendable {
             maximumLength: 64 * 1_024
         ) { [weak self] data, _, isComplete, error in
             guard let self else { return }
-            self.queue.async {
-                if let error {
-                    self.finish(error: TCPFlowRelayError.upstreamFailed(
-                        error.localizedDescription
-                    ))
-                    return
-                }
-                if let data, !data.isEmpty {
-                    self.byteLedger.recordUpstreamReceived(data.count)
-                    self.writeToFlow(data) { [weak self] in
-                        guard let self else { return }
-                        self.backpressureState.end(.upstreamToApp)
-                        self.byteLedger.recordAppDelivered(data.count)
-                        self.report(.relaying)
-                        if isComplete {
-                            self.markUpstreamReadFinished()
-                        } else {
-                            self.readFromUpstream()
-                        }
+            if let error {
+                self.finish(error: TCPFlowRelayError.upstreamFailed(
+                    error.localizedDescription
+                ))
+                return
+            }
+            if let data, !data.isEmpty {
+                self.byteLedger.recordUpstreamReceived(data.count)
+                self.writeToFlow(data) { [weak self] in
+                    guard let self else { return }
+                    self.backpressureState.end(.upstreamToApp)
+                    self.byteLedger.recordAppDelivered(data.count)
+                    self.report(.relaying)
+                    if isComplete {
+                        self.markUpstreamReadFinished()
+                    } else {
+                        self.readFromUpstream()
                     }
-                } else if isComplete {
-                    self.backpressureState.end(.upstreamToApp)
-                    self.markUpstreamReadFinished()
-                } else {
-                    self.backpressureState.end(.upstreamToApp)
-                    self.readFromUpstream()
                 }
+            } else if isComplete {
+                self.backpressureState.end(.upstreamToApp)
+                self.markUpstreamReadFinished()
+            } else {
+                self.backpressureState.end(.upstreamToApp)
+                self.readFromUpstream()
             }
         }
     }
