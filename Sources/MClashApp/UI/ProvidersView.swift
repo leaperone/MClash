@@ -110,12 +110,21 @@ struct ProvidersView: View {
                 .overlay(alignment: .bottom) { Divider() }
             }
         }
-        .task(id: model.controllerIsReady) {
-            guard model.controllerIsReady else {
-                hasCompletedInitialLoad = false
+        .task(id: [
+            model.controllerIsReady,
+            model.mainWindowPresentationTelemetryIsVisible,
+        ]) {
+            guard model.controllerIsReady,
+                  model.mainWindowPresentationTelemetryIsVisible else {
+                if !model.controllerIsReady {
+                    hasCompletedInitialLoad = false
+                }
                 return
             }
             await loadProvidersWhenAvailable()
+            guard !Task.isCancelled,
+                  model.controllerIsReady,
+                  model.mainWindowPresentationTelemetryIsVisible else { return }
             hasCompletedInitialLoad = true
         }
         .toolbar {
@@ -154,13 +163,17 @@ struct ProvidersView: View {
     }
 
     private func loadProvidersWhenAvailable() async {
-        guard model.controllerIsReady,
-              allProvidersAreEmpty,
+        guard !Task.isCancelled,
+              model.controllerIsReady,
+              model.mainWindowPresentationTelemetryIsVisible,
+              model.providersLastLoadedAt == nil,
               model.providersErrorMessage == nil else {
             return
         }
-        while model.controllerIsReady,
-              allProvidersAreEmpty,
+        while !Task.isCancelled,
+              model.controllerIsReady,
+              model.mainWindowPresentationTelemetryIsVisible,
+              model.providersLastLoadedAt == nil,
               model.providersErrorMessage == nil,
               !model.canPerform(.refreshProviders) {
             do {
@@ -169,8 +182,10 @@ struct ProvidersView: View {
                 return
             }
         }
-        if model.controllerIsReady,
-           allProvidersAreEmpty,
+        if !Task.isCancelled,
+           model.controllerIsReady,
+           model.mainWindowPresentationTelemetryIsVisible,
+           model.providersLastLoadedAt == nil,
            model.providersErrorMessage == nil,
            model.canPerform(.refreshProviders) {
             await model.refreshProviders()
