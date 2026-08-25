@@ -6099,6 +6099,7 @@ final class AppModel {
             rulesErrorMessage = nil
             rulesLastLoadedAt = Date()
         } catch {
+            guard !Task.isCancelled else { return }
             guard generation == controllerGeneration, isConnected else { return }
             rulesErrorMessage = error.localizedDescription
             appendSupervisorLog("Rules could not be loaded: \(error.localizedDescription)")
