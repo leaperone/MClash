@@ -28,7 +28,12 @@ struct MClashApp: App {
                 )
                 .background {
                     MainWindowRegistrationView { window in
-                        applicationDelegate.registerMainWindow(window) { isVisible in
+                        applicationDelegate.registerMainWindow(
+                            window,
+                            telemetryVisibilityDidChange: { isVisible in
+                                model.setMainWindowPresentationTelemetryVisible(isVisible)
+                            }
+                        ) { isVisible in
                             mainWindowContentIsActive = isVisible
                             model.setMainWindowVisible(isVisible)
                         }

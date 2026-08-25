@@ -24,6 +24,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var mainWindowObservers: [NSObjectProtocol] = []
     private var mainWindowVisibilityHandler: (@MainActor (Bool) -> Void)?
+    private var mainWindowTelemetryVisibilityHandler: (@MainActor (Bool) -> Void)?
     private var mainWindowPresentationIsVisible = false
     private let instanceLock = ApplicationInstanceLock()
     private var applicationDidFinishLaunching = false
@@ -112,9 +113,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func registerMainWindow(
         _ window: NSWindow,
+        telemetryVisibilityDidChange: (@MainActor (Bool) -> Void)? = nil,
         visibilityDidChange: @escaping @MainActor (Bool) -> Void
     ) {
         mainWindowVisibilityHandler = visibilityDidChange
+        mainWindowTelemetryVisibilityHandler = telemetryVisibilityDidChange
         guard mainWindow !== window else { return }
 
         removeMainWindowObservers()
@@ -296,6 +299,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func setLightweightMode(_ isEnabled: Bool) {
         lightweightModeEnabled = isEnabled
+        publishMainWindowTelemetryVisibility(
+            mainWindowShouldRunPresentationTelemetry
+        )
         updateActivationPolicy()
     }
 
@@ -304,6 +310,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindowVisible: Bool
     ) -> NSApplication.ActivationPolicy {
         lightweightMode && !mainWindowVisible ? .accessory : .regular
+    }
+
+    static func shouldRunMainWindowPresentationTelemetry(
+        lightweightMode: Bool,
+        mainWindowIsVisible: Bool,
+        windowOcclusionState: NSWindow.OcclusionState
+    ) -> Bool {
+        guard mainWindowIsVisible else { return false }
+        return !lightweightMode || windowOcclusionState.contains(.visible)
     }
 
     private func keepRunningInMenuBar(_ sender: NSApplication) {
@@ -390,6 +405,20 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         )
+        mainWindowObservers.append(
+            center.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.mainWindow === window else { return }
+                    self.publishMainWindowTelemetryVisibility(
+                        self.mainWindowShouldRunPresentationTelemetry
+                    )
+                }
+            }
+        )
     }
 
     private var mainWindowShouldMountPresentation: Bool {
@@ -397,6 +426,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         return mainWindow.isVisible
             && !mainWindow.isMiniaturized
             && !NSApplication.shared.isHidden
+    }
+
+    private var mainWindowShouldRunPresentationTelemetry: Bool {
+        guard let mainWindow else { return false }
+        return Self.shouldRunMainWindowPresentationTelemetry(
+            lightweightMode: lightweightModeEnabled,
+            mainWindowIsVisible: mainWindowPresentationIsVisible,
+            windowOcclusionState: mainWindow.occlusionState
+        )
     }
 
     private func updateActivationPolicy() {
@@ -411,7 +449,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private func publishMainWindowVisibility(_ isVisible: Bool) {
         mainWindowPresentationIsVisible = isVisible
         mainWindowVisibilityHandler?(isVisible)
+        publishMainWindowTelemetryVisibility(
+            mainWindowShouldRunPresentationTelemetry
+        )
         updateActivationPolicy()
+    }
+
+    private func publishMainWindowTelemetryVisibility(_ isVisible: Bool) {
+        mainWindowTelemetryVisibilityHandler?(isVisible)
     }
 
     private func removeMainWindowObservers() {
