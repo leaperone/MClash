@@ -344,35 +344,20 @@ struct FlowLedger: Sendable {
             byRelaySourcePort = relayIndex
         }
 
-        func candidates(
+        func forEachCandidate(
             for activity: AppRoutingActivity,
-            relaySourcePort: UInt16? = nil
-        ) -> [IndexedConnection] {
-            guard activity.destination.port > 0 else { return [] }
-            let hosts = Set(
-                [activity.destination.hostname, activity.destination.ipAddress]
-                    .compactMap(FlowLedger.normalizedHost)
-            )
-            guard !hosts.isEmpty else { return [] }
+            relaySourcePort: UInt16? = nil,
+            _ body: (IndexedConnection) -> Void
+        ) {
+            guard activity.destination.port > 0 else { return }
+            let hostname = FlowLedger.normalizedHost(activity.destination.hostname)
+            let ipAddress = FlowLedger.normalizedHost(activity.destination.ipAddress)
 
-            return candidates(
-                hosts: hosts,
-                destinationPort: activity.destination.port,
-                relaySourcePort: relaySourcePort
-            )
-        }
-
-        private func candidates(
-            hosts: Set<String>,
-            destinationPort: UInt16,
-            relaySourcePort: UInt16?
-        ) -> [IndexedConnection] {
-            var identifiers: Set<String> = []
-            var result: [IndexedConnection] = []
-            for host in hosts {
+            func visit(_ host: String?) {
+                guard let host else { return }
                 let destination = ConnectionDestinationKey(
                     host: host,
-                    port: destinationPort
+                    port: activity.destination.port
                 )
                 let candidates: [IndexedConnection]
                 if let relaySourcePort {
@@ -385,12 +370,15 @@ struct FlowLedger: Sendable {
                 } else {
                     candidates = byDestination[destination] ?? []
                 }
-                for candidate in candidates
-                where identifiers.insert(candidate.record.connection.id).inserted {
-                    result.append(candidate)
+                for candidate in candidates {
+                    body(candidate)
                 }
             }
-            return result
+
+            visit(hostname)
+            if ipAddress != hostname {
+                visit(ipAddress)
+            }
         }
     }
 
@@ -417,31 +405,38 @@ struct FlowLedger: Sendable {
     ) -> ConnectionMatch? {
         guard case .mihomo = activity.effectiveAction else { return nil }
 
-        func eligibleCandidates(
+        func preferredCandidate(
             relaySourcePort: UInt16? = nil
-        ) -> [(record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval)] {
-            index.candidates(
+        ) -> (record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval)? {
+            var best: (
+                record: FlowLedgerMihomoConnectionRecord,
+                delta: TimeInterval
+            )?
+            index.forEachCandidate(
                 for: activity,
                 relaySourcePort: relaySourcePort
-            ).compactMap {
-                candidate -> (
-                    record: FlowLedgerMihomoConnectionRecord,
-                    delta: TimeInterval
-                )? in
+            ) { candidate in
                 let record = candidate.record
                 guard !Task<Never, Never>.isCancelled,
                       !claimedConnectionIDs.contains(record.connection.id),
                       transportMatches(activity, connection: record.connection)
-                else { return nil }
+                else { return }
                 let delta = abs(candidate.startedAt.timeIntervalSince(activity.startedAt))
-                guard delta <= associationWindow else { return nil }
-                return (record, delta)
+                guard delta <= associationWindow else { return }
+                let eligible = (record: record, delta: delta)
+                if let currentBest = best {
+                    if candidateIsPreferred(eligible, currentBest) {
+                        best = eligible
+                    }
+                } else {
+                    best = eligible
+                }
             }
+            return best
         }
 
         if let relayLocalPort = activity.relayLocalPort {
-            let exact = eligibleCandidates(relaySourcePort: relayLocalPort)
-                .min(by: candidateIsPreferred)
+            let exact = preferredCandidate(relaySourcePort: relayLocalPort)
             if let exact {
                 return ConnectionMatch(
                     record: exact.record,
@@ -450,8 +445,7 @@ struct FlowLedger: Sendable {
             }
         }
 
-        let candidates = eligibleCandidates()
-        guard let heuristic = candidates.min(by: candidateIsPreferred) else { return nil }
+        guard let heuristic = preferredCandidate() else { return nil }
             return ConnectionMatch(
                 record: heuristic.record,
                 association: .destinationAndStartTime(
