@@ -21,6 +21,56 @@ struct ApplicationDelegateTests {
         ) == .regular)
     }
 
+    @Test("Lightweight mode pauses telemetry without unloading occluded UI")
+    @MainActor
+    func lightweightOcclusionPolicy() {
+        #expect(!ApplicationDelegate.shouldRunMainWindowPresentationTelemetry(
+            lightweightMode: true,
+            mainWindowIsVisible: true,
+            windowOcclusionState: []
+        ))
+        #expect(ApplicationDelegate.shouldRunMainWindowPresentationTelemetry(
+            lightweightMode: true,
+            mainWindowIsVisible: true,
+            windowOcclusionState: .visible
+        ))
+        #expect(ApplicationDelegate.shouldRunMainWindowPresentationTelemetry(
+            lightweightMode: false,
+            mainWindowIsVisible: true,
+            windowOcclusionState: []
+        ))
+        #expect(!ApplicationDelegate.shouldRunMainWindowPresentationTelemetry(
+            lightweightMode: false,
+            mainWindowIsVisible: false,
+            windowOcclusionState: .visible
+        ))
+
+        let delegate = ApplicationDelegate()
+        let window = NSWindow()
+        var contentVisibilityChanges: [Bool] = []
+        var telemetryVisibilityChanges: [Bool] = []
+        delegate.registerMainWindow(
+            window,
+            telemetryVisibilityDidChange: {
+                telemetryVisibilityChanges.append($0)
+            }
+        ) {
+            contentVisibilityChanges.append($0)
+        }
+        contentVisibilityChanges.removeAll()
+        telemetryVisibilityChanges.removeAll()
+        delegate.setLightweightMode(true)
+        telemetryVisibilityChanges.removeAll()
+
+        NotificationCenter.default.post(
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: window
+        )
+
+        #expect(contentVisibilityChanges.isEmpty)
+        #expect(telemetryVisibilityChanges.last == false)
+    }
+
     @Test("Login-item launches are quiet by default and remain configurable")
     @MainActor
     func loginItemQuietPreference() throws {

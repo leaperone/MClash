@@ -446,6 +446,7 @@ final class AppModel {
         }
     }
     private(set) var mainWindowIsVisible = false
+    private(set) var mainWindowPresentationTelemetryIsVisible = false
     private(set) var menuBarContentIsVisible = false
     private(set) var appRoutingActivityViewIsVisible = false
     var coreState: CoreRunState = .stopped
@@ -1181,7 +1182,7 @@ final class AppModel {
 
     var presentationTelemetryPolicy: PresentationTelemetryPolicy {
         PresentationTelemetryPolicy.resolve(
-            mainWindowVisible: mainWindowIsVisible,
+            mainWindowVisible: mainWindowPresentationTelemetryIsVisible,
             menuBarContentVisible: !lightweightMode && menuBarContentIsVisible,
             destination: selection,
             appRoutingActivityVisible: appRoutingActivityViewIsVisible,
@@ -1192,6 +1193,11 @@ final class AppModel {
     func setMainWindowVisible(_ isVisible: Bool) {
         guard mainWindowIsVisible != isVisible else { return }
         mainWindowIsVisible = isVisible
+    }
+
+    func setMainWindowPresentationTelemetryVisible(_ isVisible: Bool) {
+        guard mainWindowPresentationTelemetryIsVisible != isVisible else { return }
+        mainWindowPresentationTelemetryIsVisible = isVisible
         presentationDemandDidChange()
     }
 
