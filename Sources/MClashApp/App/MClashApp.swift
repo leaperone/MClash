@@ -101,7 +101,11 @@ struct MClashApp: App {
             }
             .keyboardShortcut("q")
         } label: {
-            MenuBarStatusLabel(model: model)
+            Image(systemName: "network")
+                .symbolRenderingMode(.monochrome)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 16, height: 16)
+                .accessibilityLabel("MClash")
         }
         .environment(\.locale, selectedLanguage.locale)
         .menuBarExtraStyle(.menu)

@@ -7185,10 +7185,16 @@ final class AppModel {
                     monitorGeneration: generation
                 )
                 do {
+                    let interval: Duration = if lightweightMode
+                        && !presentationTelemetryPolicy.appRoutingActivity {
+                        .seconds(10)
+                    } else if presentationTelemetryPolicy.appRoutingActivity {
+                        .seconds(2)
+                    } else {
+                        .seconds(5)
+                    }
                     try await Task.sleep(
-                        for: presentationTelemetryPolicy.appRoutingActivity
-                            ? .seconds(2)
-                            : .seconds(5)
+                        for: interval
                     )
                 } catch {
                     return
