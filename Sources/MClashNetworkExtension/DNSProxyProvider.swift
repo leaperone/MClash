@@ -450,9 +450,9 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let timer = DispatchSource.makeTimerSource(queue: backendProbeQueue)
         let generation = backendProbeGeneration
         timer.schedule(
-            deadline: .now() + .seconds(30),
-            repeating: .seconds(30),
-            leeway: .seconds(5)
+            deadline: .now() + .seconds(60),
+            repeating: .seconds(60),
+            leeway: .seconds(10)
         )
         timer.setEventHandler { [weak self] in
             self?.runBackendProbe(expectedGeneration: generation)
