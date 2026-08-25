@@ -8,6 +8,7 @@ protocol TransparentProxyManaging: Sendable {
     func start() async throws
     func stop() async throws
     func providerStatus() async throws -> TransparentProxyProviderStatus
+    func providerHeartbeat() async throws -> TransparentProxyProviderStatus
     func quiesceProvider(revision: UInt64) async throws -> TransparentProxyProviderStatus
     func applyProviderConfiguration(
         _ configuration: NetworkExtensionRuntimeConfiguration
@@ -18,6 +19,12 @@ protocol TransparentProxyManaging: Sendable {
     func appRoutingActivity(after cursor: UInt64, limit: Int) async throws
         -> AppRoutingActivityBatch
     func clearAppRoutingActivity() async throws
+}
+
+extension TransparentProxyManaging {
+    func providerHeartbeat() async throws -> TransparentProxyProviderStatus {
+        try await providerStatus()
+    }
 }
 
 private final class AppleTransparentProxyProviderMessageSession:
@@ -137,7 +144,11 @@ actor AppleTransparentProxyManager: TransparentProxyManaging, DNSProxyRuntimeCha
         // the in-memory manager is not authoritative, while the configuration
         // persisted by NetworkExtension is.
         try await reload()
-        return try await providerMessageClient().status()
+        return try await providerHeartbeat()
+    }
+
+    func providerHeartbeat() async throws -> TransparentProxyProviderStatus {
+        try await providerMessageClient().status()
     }
 
     func prepareDNSActivation(

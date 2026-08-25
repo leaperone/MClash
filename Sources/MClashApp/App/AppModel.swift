@@ -731,6 +731,9 @@ final class AppModel {
     private var appRoutingActivityCursor: UInt64 = 0
     private var appRoutingActivitiesByIdentifier: [UUID: AppRoutingActivity] = [:]
     private var appRoutingTrafficRateTracker = AppRoutingTrafficRateTracker()
+    private var networkExtensionPreferencesCheckGeneration: UInt64 = 0
+    private var appRoutingProviderPreferencesCheckDeadline: ContinuousClock.Instant?
+    private var dnsProxyPreferencesCheckDeadline: ContinuousClock.Instant?
     private(set) var appRoutingProviderStatusFailureCount = 0
     private(set) var appRoutingProviderLastVerifiedAt: Date?
     private(set) var preparationInProgress = false
@@ -6556,6 +6559,7 @@ final class AppModel {
 
     private func startNetworkEnvironmentMonitoring() {
         guard prepared, !shutdownInProgress, networkEnvironmentEventTask == nil else { return }
+        invalidateNetworkExtensionPreferencesChecks()
         let events = networkEnvironmentMonitor.start()
         networkEnvironmentEventTask = Task { @MainActor [weak self] in
             for await event in events {
@@ -6599,6 +6603,10 @@ final class AppModel {
 
     private func receiveNetworkEnvironmentEvent(_ event: NetworkEnvironmentEvent) {
         guard !shutdownInProgress else { return }
+        if event == .networkExtensionConfigurationChanged {
+            invalidateNetworkExtensionPreferencesChecks()
+            return
+        }
         if event == .willSleep {
             pauseAppRoutingMonitorsForSleep()
             invalidateNetworkEnvironmentRecovery()
@@ -6611,6 +6619,19 @@ final class AppModel {
         applyNetworkEnvironmentRecoveryDirective(
             networkEnvironmentRecoveryPolicy.receive(event)
         )
+    }
+
+    private func invalidateNetworkExtensionPreferencesChecks() {
+        networkExtensionPreferencesCheckGeneration &+= 1
+        appRoutingProviderPreferencesCheckDeadline = nil
+        dnsProxyPreferencesCheckDeadline = nil
+    }
+
+    private func networkExtensionPreferencesCheckIsDue(
+        _ deadline: ContinuousClock.Instant?
+    ) -> Bool {
+        guard let deadline else { return true }
+        return deadline <= ContinuousClock.now
     }
 
     private func pauseAppRoutingMonitorsForSleep() {
@@ -7019,10 +7040,15 @@ final class AppModel {
                 if lightweightMode && !hasDetailedPresentation {
                     failureAttempt = 0
                     successfulPollsSinceProviderCheck = 0
+                    let checkPersistedConfiguration =
+                        networkExtensionPreferencesCheckIsDue(
+                            appRoutingProviderPreferencesCheckDeadline
+                        )
                     _ = await verifyAppRoutingProviderRuntime(
                         expectedRevision: expectedRevision,
                         requireActiveCaptureState: true,
-                        monitorGeneration: generation
+                        monitorGeneration: generation,
+                        checkPersistedConfiguration: checkPersistedConfiguration
                     )
                     guard appRoutingMonitorShouldContinue(
                         generation: generation,
@@ -7202,6 +7228,7 @@ final class AppModel {
         guard !appRoutingMonitorsPausedForSleep else { return }
         dnsProxyRuntimeTask?.cancel()
         dnsProxyMonitorGeneration &+= 1
+        invalidateNetworkExtensionPreferencesChecks()
         let generation = dnsProxyMonitorGeneration
         dnsProxyRuntimeFailureCount = 0
         dnsProxyRuntimeStatus = nil
@@ -7214,9 +7241,15 @@ final class AppModel {
             guard let self else { return }
             while self.dnsProxyMonitorShouldContinue(generation: generation) {
                 guard case let .on(expectedRevision) = networkCaptureState else { return }
+                let checkPersistedConfiguration = !lightweightMode
+                    || presentationTelemetryPolicy.appRoutingActivity
+                    || networkExtensionPreferencesCheckIsDue(
+                        dnsProxyPreferencesCheckDeadline
+                    )
                 await refreshDNSProxyRuntime(
                     expectedRevision: expectedRevision,
-                    monitorGeneration: generation
+                    monitorGeneration: generation,
+                    checkPersistedConfiguration: checkPersistedConfiguration
                 )
                 do {
                     try await Task.sleep(
@@ -7232,7 +7265,8 @@ final class AppModel {
 
     private func refreshDNSProxyRuntime(
         expectedRevision: UInt64,
-        monitorGeneration: UInt64
+        monitorGeneration: UInt64,
+        checkPersistedConfiguration: Bool
     ) async {
         guard networkCapturePreferences.dnsEnabled,
               !dnsProxyAutomaticallyDisabled,
@@ -7240,9 +7274,17 @@ final class AppModel {
                 generation: monitorGeneration,
                 expectedRevision: expectedRevision
               ) else { return }
+        let preferencesCheckGeneration = networkExtensionPreferencesCheckGeneration
+        if checkPersistedConfiguration {
+            dnsProxyPreferencesCheckDeadline = nil
+        }
         do {
-            guard let status = try await networkExtensionControl
-                .dnsProviderRuntimeStatus() else {
+            let currentStatus = if checkPersistedConfiguration {
+                try await networkExtensionControl.dnsProviderRuntimeStatus()
+            } else {
+                try await networkExtensionControl.dnsProviderRuntimeHeartbeat()
+            }
+            guard let status = currentStatus else {
                 throw NSError(
                     domain: "one.leaper.mclash.dns-runtime",
                     code: 0,
@@ -7265,6 +7307,11 @@ final class AppModel {
                             "DNS Provider revision \(status.revision) is \(status.phase.rawValue) and backendReady=\(status.backendReady)"
                     ]
                 )
+            }
+            if checkPersistedConfiguration,
+               preferencesCheckGeneration == networkExtensionPreferencesCheckGeneration {
+                dnsProxyPreferencesCheckDeadline = ContinuousClock.now
+                    + Self.networkExtensionPreferencesCheckInterval
             }
             dnsProxyRuntimeStatus = status
             dnsProxyRuntimeError = nil
@@ -7328,7 +7375,8 @@ final class AppModel {
     func verifyAppRoutingProviderRuntime(
         expectedRevision: UInt64,
         requireActiveCaptureState: Bool = false,
-        monitorGeneration: UInt64? = nil
+        monitorGeneration: UInt64? = nil,
+        checkPersistedConfiguration: Bool = true
     ) async -> Bool {
         if let monitorGeneration,
            !appRoutingMonitorShouldContinue(
@@ -7341,8 +7389,16 @@ final class AppModel {
            !networkCaptureState.isActive(revision: expectedRevision) {
             return false
         }
+        let preferencesCheckGeneration = networkExtensionPreferencesCheckGeneration
+        if checkPersistedConfiguration {
+            appRoutingProviderPreferencesCheckDeadline = nil
+        }
         do {
-            let status = try await networkExtensionControl.providerRuntimeStatus()
+            let status = if checkPersistedConfiguration {
+                try await networkExtensionControl.providerRuntimeStatus()
+            } else {
+                try await networkExtensionControl.providerRuntimeHeartbeat()
+            }
             if let monitorGeneration,
                !appRoutingMonitorShouldContinue(
                 generation: monitorGeneration,
@@ -7364,6 +7420,12 @@ final class AppModel {
                     captureEnabled: status.captureEnabled,
                     providerMessage: status.message
                 )
+            }
+
+            if checkPersistedConfiguration,
+               preferencesCheckGeneration == networkExtensionPreferencesCheckGeneration {
+                appRoutingProviderPreferencesCheckDeadline = ContinuousClock.now
+                    + Self.networkExtensionPreferencesCheckInterval
             }
 
             appRoutingProviderStatusFailureCount = 0
@@ -7411,6 +7473,7 @@ final class AppModel {
         dnsProxyRuntimeTask?.cancel()
         dnsProxyRuntimeTask = nil
         dnsProxyMonitorGeneration &+= 1
+        invalidateNetworkExtensionPreferencesChecks()
         appRoutingProviderStatusFailureCount = 0
         appRoutingProviderLastVerifiedAt = nil
         degradedStreams.remove(.appRouting)
@@ -9445,6 +9508,7 @@ final class AppModel {
     static let systemProxyGuardFailureThreshold = 3
     static let appRoutingProviderFailureThreshold = 3
     static let appRoutingProviderStatusCheckInterval = 5
+    static let networkExtensionPreferencesCheckInterval: Duration = .seconds(60)
     static let maximumDedicatedMihomoRoutes = 64
     private static let trafficHistoryPruneInterval: TimeInterval = 24 * 60 * 60
 
