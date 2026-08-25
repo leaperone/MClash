@@ -99,7 +99,7 @@ final class UDPFlowSession: @unchecked Sendable {
         let key: ConversationKey
         let plan: UDPFlowInterceptionPlan
         var conversation: (any UDPConversation)?
-        var pendingPayloads: [Data] = []
+        var pendingPayloads: ArraySlice<Data?> = []
         var ready = false
         var sendInFlight = false
         var mihomoPayloadForwarded = false
@@ -139,7 +139,7 @@ final class UDPFlowSession: @unchecked Sendable {
         maximumDatagrams: Limits.maximumQueuedResponseDatagrams,
         maximumBytes: Limits.maximumQueuedResponseBytes
     )
-    private var pendingResponses: [PendingResponse] = []
+    private var pendingResponses: ArraySlice<PendingResponse?> = []
     private var readInFlight = false
     private var writeInFlight = false
     private var opened = false
@@ -436,7 +436,7 @@ final class UDPFlowSession: @unchecked Sendable {
               record.ready,
               !record.sendInFlight,
               let conversation = record.conversation,
-              let payload = record.pendingPayloads.first else { return }
+              let payload = record.pendingPayloads.first ?? nil else { return }
         record.sendInFlight = true
         conversation.send(payload) { [weak self] error in
             guard let self else { return }
@@ -450,7 +450,8 @@ final class UDPFlowSession: @unchecked Sendable {
                 if record.conversation is MihomoUDPConversation {
                     record.mihomoPayloadForwarded = true
                 }
-                _ = record.pendingPayloads.removeFirst()
+                record.pendingPayloads[record.pendingPayloads.startIndex] = nil
+                record.pendingPayloads.removeFirst()
                 self.outboundBudget.release(bytes: payload.count)
                 self.drain(record)
                 self.readFromFlowIfPossible()
@@ -474,7 +475,7 @@ final class UDPFlowSession: @unchecked Sendable {
     private func writeNextResponseIfNeeded() {
         guard !finished,
               !writeInFlight,
-              let response = pendingResponses.first else { return }
+              let response = pendingResponses.first ?? nil else { return }
         writeInFlight = true
         UDPAppProxyFlowCompatibility.write(response.datagram, to: flow) { [weak self] error in
             guard let self else { return }
@@ -487,7 +488,8 @@ final class UDPFlowSession: @unchecked Sendable {
                     ))
                     return
                 }
-                _ = self.pendingResponses.removeFirst()
+                self.pendingResponses[self.pendingResponses.startIndex] = nil
+                self.pendingResponses.removeFirst()
                 self.responseBudget.release(bytes: response.datagram.payload.count)
                 if let record = self.record(forConversation: response.conversationIdentifier),
                    let conversation = record.conversation {
