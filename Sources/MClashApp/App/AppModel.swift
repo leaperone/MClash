@@ -3519,7 +3519,11 @@ final class AppModel {
         defer { end(.refreshProviders) }
 
         guard let apiClient else { return false }
-        await loadProviders(using: apiClient, generation: controllerGeneration)
+        let generation = controllerGeneration
+        await loadProviders(using: apiClient, generation: generation)
+        guard !Task.isCancelled,
+              generation == controllerGeneration,
+              isConnected else { return false }
         return providersErrorMessage == nil
     }
 
@@ -6112,28 +6116,39 @@ final class AppModel {
 
         do {
             let proxyCollection = try await client.fetchProxyProviders()
-            guard generation == controllerGeneration, isConnected else { return }
+            guard !Task.isCancelled,
+                  generation == controllerGeneration,
+                  isConnected else { return }
             proxyProviders = proxyCollection.providers.values.sorted {
                 $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
             loadedAtLeastOneCollection = true
         } catch {
-            guard generation == controllerGeneration, isConnected else { return }
+            guard !Task.isCancelled,
+                  generation == controllerGeneration,
+                  isConnected else { return }
             failures.append("Proxy providers: \(error.localizedDescription)")
         }
 
         do {
             let ruleCollection = try await client.fetchRuleProviders()
-            guard generation == controllerGeneration, isConnected else { return }
+            guard !Task.isCancelled,
+                  generation == controllerGeneration,
+                  isConnected else { return }
             ruleProviders = ruleCollection.providers.values.sorted {
                 $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
             loadedAtLeastOneCollection = true
         } catch {
-            guard generation == controllerGeneration, isConnected else { return }
+            guard !Task.isCancelled,
+                  generation == controllerGeneration,
+                  isConnected else { return }
             failures.append("Rule providers: \(error.localizedDescription)")
         }
 
+        guard !Task.isCancelled,
+              generation == controllerGeneration,
+              isConnected else { return }
         if failures.isEmpty {
             providersErrorMessage = nil
         } else {
