@@ -9,11 +9,12 @@
 - 已读取开发、planning、worktree、项目基线与 Ponytail 指引。
 - 已从 `origin/main@3911c44` 创建独立 worktree/分支并核对项目基线有效。
 - 已核对 matcher 实现、规则引擎调用链与现有 shared tests。
-- 已在 `matches(_:)` 中加入纯字面 equality fast path，原 wildcard 实现未改。
+- 已在 `matches(_:)` 中加入纯字面 `elementsEqual` fast path，原 wildcard 实现未改。
 - 已通过规则引擎 17 tests 与 flow adapter 11 tests。
 - 已确认源文件 diff 仅为 literal/wildcard 分派，并以 `d3ff036` 提交、推送及创建 PR #11。
 - 已移除 SwiftPM 测试生成的未跟踪 `Package.resolved`，不纳入提交。
 - preflight 的完整 direct tests 与 release App 构建均通过。
+- 代码审查复现 `String ==` 的 canonical-equivalence 扩大匹配问题；已改用逐 `Character` 的 `elementsEqual` 并保留无数组分配。
 
 ## 进行中
 
@@ -37,6 +38,7 @@
 | planning 完整性 | `check-complete.sh` 报告 delivery-ready | 通过 |
 | `./scripts/test-direct.sh` | 完整 direct tests 通过 | 通过 |
 | `./scripts/build-app.sh` | release App、内嵌 CLI/Core/System Extension 构建与签名校验通过 | 通过 |
+| Unicode 语义复现探针 | `String ==` 为 true、旧数组比较与 `elementsEqual` 均为 false | 通过 |
 
 ## 错误与恢复
 
@@ -44,3 +46,4 @@
 |---|---:|---|
 | 无 | 1 | 无需恢复。 |
 | SwiftPM 生成未跟踪 `Package.resolved` | 1 | 确认为本轮构建产物并在提交前移除。 |
+| 审查发现 `String ==` canonical equivalence 扩大纯字面匹配 | 1 | 改为 `elementsEqual`，保留旧逐 `Character` 语义。 |

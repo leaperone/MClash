@@ -5,7 +5,7 @@
 
 ## 目标
 
-让 `ApplicationIdentifierPatternMatcher` 对不含 `*`、`?` 的常见纯字面模式直接执行现有大小写不敏感的字符串相等比较，避免在新流规则判定中为 pattern 与 candidate 构造两个 `[Character]`。
+让 `ApplicationIdentifierPatternMatcher` 对不含 `*`、`?` 的常见纯字面模式直接执行现有大小写不敏感的逐 `Character` 比较，避免在新流规则判定中为 pattern 与 candidate 构造两个 `[Character]`。
 
 ## 范围
 
@@ -23,14 +23,14 @@
 ## 关键约束
 
 - 从当前 `origin/main` 创建并仅使用 `perf/identifier-literal-fast-path` 独立 worktree。
-- 纯字面 equality 必须维持 `candidate.lowercased()` 与初始化时已 lowercased pattern 比较的既有语义。
+- 纯字面匹配必须维持 `candidate.lowercased()` 后逐 `Character` 比较的既有语义，不能用会扩大 canonical-equivalent 匹配集合的 `String ==`。
 - 含 `*` 或 `?` 时继续走原 `wildcardMatch`，不得降低安全或匹配边界。
 - 不覆盖其他 agent 的 worktree 或改动。
 
 ## 修改路径
 
 1. 核对 matcher 全部调用方、现有 tests 与归一化语义。
-2. 在 `matches(_:)` 中先归一化 candidate；纯字面直接 equality，通配符仍转换为 `[Character]` 后调用原算法。
+2. 在 `matches(_:)` 中先归一化 candidate；纯字面用不分配数组的 `elementsEqual`，通配符仍转换为 `[Character]` 后调用原算法。
 3. 运行现有 shared matcher/engine/adapter 验证，检查 diff 与提交范围。
 4. 完成 planning 检查、commit、push 并创建 PR。
 
@@ -65,7 +65,7 @@
 | 决策 | 理由 |
 |---|---|
 | 在 `matches(_:)` 内分派，不改变存储模型 | 这是所有 matcher 调用的共同入口，差异最小且不影响 Codable/Hashable 数据契约。 |
-| 使用现有 `lowercased()` 后的字符串 equality | 精确保留既有归一化顺序，避免改用 Foundation case-insensitive compare 产生潜在 Unicode 语义漂移。 |
+| 使用现有 `lowercased()` 后的 `elementsEqual` | 精确保留旧 `[Character]` 序列语义，避免 `String ==` 或 Foundation case-insensitive compare 扩大 Unicode 匹配集合。 |
 | 不存储 `hasWildcard` | 每个 matcher 新增衍生状态会扩大 Codable/Hashable/初始化面；当前短 pattern 扫描比两组 Character 分配更小、更直接。 |
 
 ## 错误与处理

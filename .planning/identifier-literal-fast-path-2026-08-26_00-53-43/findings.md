@@ -18,8 +18,9 @@
 ## 调研结论
 
 - pattern 在初始化时已 trim 并 lowercased；candidate 现有语义仅 lowercased，不 trim。
-- 因此纯字面 fast path 应比较 `pattern == candidate.lowercased()`，不能额外 trim 或改为不同 Unicode/locale 比较方式。
+- 因此纯字面 fast path 应在 `candidate.lowercased()` 后用 `String.elementsEqual` 逐 `Character` 比较，不能额外 trim 或改为 canonical-equivalent 的 `String ==` / Foundation locale 比较。
 - `caseInsensitiveCompare` 会把旧语义不等的 Unicode 形式扩大为相等（例如 `STRASSE`/`straße`），不适合代替现有 lowercased equality。
+- `String ==` 同样会做 canonical equivalence；例如合法 pattern `U+16D68` 与两个 `U+16D67` 组成的 candidate 会被判相等，而旧 `[Character]` 路径为 false。`elementsEqual` 不分配数组且保留旧序列长度与逐项语义。
 - `com.google.*` 与 `*helper?` 的现有测试覆盖 wildcard 大小写与 `*`/`?` 组合；纯字面规则链由 MClash host 与 kernel metadata adapter tests 覆盖。
 - 现有 tests 没有单独覆盖 uppercase candidate + literal pattern；按本任务边界不新增测试，语义由原归一化表达式保持并通过 shared 调用链回归验证。
 
@@ -28,7 +29,7 @@
 | 决策 | 证据 |
 |---|---|
 | 仅在 `matches(_:)` 增加无 wildcard guard | 所有实际调用均汇聚此处，且原 `wildcardMatch` 可原样保留。 |
-| candidate 只 lowercased 一次 | 纯字面直接 equality；wildcard 分支再构造数组，结果与旧路径一致。 |
+| candidate 只 lowercased 一次 | 纯字面用 `elementsEqual`；wildcard 分支再构造数组，结果与旧路径一致。 |
 
 ## 风险与边界
 
