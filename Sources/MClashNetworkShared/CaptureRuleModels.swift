@@ -43,7 +43,11 @@ public struct ApplicationIdentifierPatternMatcher: Codable, Hashable, Sendable {
     }
 
     public func matches(_ candidate: String) -> Bool {
-        Self.wildcardMatch(pattern: Array(pattern), candidate: Array(candidate.lowercased()))
+        let candidate = candidate.lowercased()
+        guard pattern.contains("*") || pattern.contains("?") else {
+            return pattern == candidate
+        }
+        return Self.wildcardMatch(pattern: Array(pattern), candidate: Array(candidate))
     }
 
     private static func wildcardMatch(pattern: [Character], candidate: [Character]) -> Bool {
