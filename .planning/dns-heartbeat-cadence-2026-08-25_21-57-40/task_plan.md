@@ -64,6 +64,8 @@
 |---|---|
 | 3s heartbeat / 1s leeway | 减少约三分之一固定 timer 唤醒，同时保留正常调度余量。 |
 | 9s freshness | 覆盖 3s 周期加 1s leeway，并避免 Host 在正常 heartbeat cadence 下误判 stale。 |
+| 接受旧 Host 混跑为 medium 风险 | 同包升级会同时替换 Host/Extension；仅旧 Host + 新 Extension 在极端调度延迟下可能误判 stale，交付时明确升级边界。 |
+| 固定 freshness 契约测试值 | 9 秒是本次调优的明确默认契约，测试直接锁定它；timer 具体调度仍由系统 DispatchSource 管理。 |
 
 ## 错误与处理
 

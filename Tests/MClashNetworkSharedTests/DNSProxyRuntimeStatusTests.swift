@@ -237,6 +237,7 @@ struct DNSProxyRuntimeStatusTests {
         let start = Date(timeIntervalSince1970: 1_000)
         var status = makeStatus(startedAt: start, updatedAt: start)
         let maximumAge = DNSProxyRuntimeStatus.defaultMaximumHeartbeatAge
+        #expect(maximumAge == 9)
 
         #expect(
             status.isFresh(
