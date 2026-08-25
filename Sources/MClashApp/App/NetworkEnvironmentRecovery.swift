@@ -1,11 +1,13 @@
 import AppKit
 import Foundation
 import Network
+@preconcurrency import NetworkExtension
 
 enum NetworkEnvironmentEvent: Equatable, Sendable {
     case willSleep
     case didWake
     case pathChanged(NetworkEnvironmentPath)
+    case networkExtensionConfigurationChanged
 }
 
 struct NetworkEnvironmentPath: Equatable, Sendable {
@@ -89,6 +91,7 @@ protocol NetworkEnvironmentMonitoring: AnyObject {
 @MainActor
 final class AppleNetworkEnvironmentMonitor: NetworkEnvironmentMonitoring {
     private let workspaceNotificationCenter: NotificationCenter
+    private let networkExtensionNotificationCenter: NotificationCenter
     private let pathQueue = DispatchQueue(
         label: "one.leaper.mclash.network-environment-path",
         qos: .utility
@@ -96,13 +99,16 @@ final class AppleNetworkEnvironmentMonitor: NetworkEnvironmentMonitoring {
 
     private var continuation: AsyncStream<NetworkEnvironmentEvent>.Continuation?
     private var workspaceObservers: [NSObjectProtocol] = []
+    private var networkExtensionObservers: [NSObjectProtocol] = []
     private var pathMonitor: NWPathMonitor?
     private var lastPath: NetworkEnvironmentPath?
 
     init(
-        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
+        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        networkExtensionNotificationCenter: NotificationCenter = .default
     ) {
         self.workspaceNotificationCenter = workspaceNotificationCenter
+        self.networkExtensionNotificationCenter = networkExtensionNotificationCenter
     }
 
     func start() -> AsyncStream<NetworkEnvironmentEvent> {
@@ -128,6 +134,26 @@ final class AppleNetworkEnvironmentMonitor: NetworkEnvironmentMonitoring {
                 Task { @MainActor in self?.yield(.didWake) }
             },
         ]
+        networkExtensionObservers = [
+            networkExtensionNotificationCenter.addObserver(
+                forName: .NEVPNConfigurationChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.yield(.networkExtensionConfigurationChanged)
+                }
+            },
+            networkExtensionNotificationCenter.addObserver(
+                forName: .NEDNSProxyConfigurationDidChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.yield(.networkExtensionConfigurationChanged)
+                }
+            },
+        ]
 
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
@@ -147,6 +173,10 @@ final class AppleNetworkEnvironmentMonitor: NetworkEnvironmentMonitoring {
             workspaceNotificationCenter.removeObserver(observer)
         }
         workspaceObservers.removeAll(keepingCapacity: false)
+        for observer in networkExtensionObservers {
+            networkExtensionNotificationCenter.removeObserver(observer)
+        }
+        networkExtensionObservers.removeAll(keepingCapacity: false)
         continuation?.finish()
         continuation = nil
         lastPath = nil
@@ -241,6 +271,9 @@ struct NetworkEnvironmentRecoveryPolicy: Sendable {
         at now: Date = Date()
     ) -> Directive {
         switch event {
+        case .networkExtensionConfigurationChanged:
+            return .none
+
         case .willSleep:
             isSleeping = true
             recoveryRequested = false

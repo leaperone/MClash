@@ -11,7 +11,18 @@ protocol DNSProxyManaging: Sendable {
     func runtimeStatus(
         for configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> DNSProxyRuntimeStatus
+    func runtimeHeartbeat(
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> DNSProxyRuntimeStatus
     func disable() async throws
+}
+
+extension DNSProxyManaging {
+    func runtimeHeartbeat(
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> DNSProxyRuntimeStatus {
+        try await runtimeStatus(for: configuration)
+    }
 }
 
 /// DNS status is relayed by the already-running transparent provider. Both
@@ -243,6 +254,12 @@ actor AppleDNSProxyManager: DNSProxyManaging {
             operation: .inspectDNSProxy
         )
 
+        return try await runtimeHeartbeat(for: configuration)
+    }
+
+    func runtimeHeartbeat(
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> DNSProxyRuntimeStatus {
         do {
             let report = try await runtimeChannel.dnsRuntimeReport(for: configuration)
             if let startupFailure = report.startupFailure {
@@ -268,7 +285,7 @@ actor AppleDNSProxyManager: DNSProxyManaging {
             }
             throw NetworkExtensionControlFailure(
                 operation: .inspectDNSProxy,
-                message: "The persisted DNS proxy is enabled, but its runtime heartbeat is invalid: "
+                message: "The DNS Provider runtime heartbeat is invalid: "
                     + error.localizedDescription
             )
         }

@@ -18,7 +18,9 @@ protocol NetworkExtensionControlling: Sendable {
     func uninstall() async throws -> NetworkExtensionUninstallOutcome
     func currentState() async -> NetworkExtensionControlState
     func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus
+    func providerRuntimeHeartbeat() async throws -> TransparentProxyProviderStatus
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus?
+    func dnsProviderRuntimeHeartbeat() async throws -> DNSProxyRuntimeStatus?
     func appRoutingActivity(after cursor: UInt64, limit: Int) async throws
         -> AppRoutingActivityBatch
     func clearAppRoutingActivity() async throws
@@ -32,6 +34,14 @@ extension NetworkExtensionControlling {
     }
 
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus? { nil }
+
+    func providerRuntimeHeartbeat() async throws -> TransparentProxyProviderStatus {
+        try await providerRuntimeStatus()
+    }
+
+    func dnsProviderRuntimeHeartbeat() async throws -> DNSProxyRuntimeStatus? {
+        try await dnsProviderRuntimeStatus()
+    }
 
     func updateRuntimeConfiguration(
         _ configuration: NetworkExtensionRuntimeConfiguration
@@ -459,9 +469,18 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
         try await transparentProxy.providerStatus()
     }
 
+    func providerRuntimeHeartbeat() async throws -> TransparentProxyProviderStatus {
+        try await transparentProxy.providerHeartbeat()
+    }
+
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus? {
         guard let activeDNSConfiguration else { return nil }
         return try await dnsProxy.runtimeStatus(for: activeDNSConfiguration)
+    }
+
+    func dnsProviderRuntimeHeartbeat() async throws -> DNSProxyRuntimeStatus? {
+        guard let activeDNSConfiguration else { return nil }
+        return try await dnsProxy.runtimeHeartbeat(for: activeDNSConfiguration)
     }
 
     func appRoutingActivity(
