@@ -2,7 +2,7 @@
 
 - 任务 ID：`process-identity-negative-cache-2026-08-26_05-31-09`
 - 创建时间：`2026-08-26_05-31-09`
-- 当前状态：`in_progress`
+- 当前状态：`complete`
 
 ## 已完成
 
@@ -14,7 +14,7 @@
 
 ## 进行中
 
-- 修复 Preflight 复审发现的 TTL 起算与迟到失败竞态；随后重跑受影响验证与完整门禁。
+- 无；最终代码内容的完整测试、构建、合并探测和独立复审均已通过。
 
 ## 修改文件
 
@@ -36,6 +36,10 @@
 | 独立代码审查 | 复审 verdict=pass；无残留 Critical/High/Medium | 通过 |
 | 修复后定向缓存测试 | 5 tests passed，含慢 resolver TTL 与确定性并发交错 | 通过 |
 | 修复后 `./scripts/typecheck.sh` | App、CLI、Network Extension typecheck/link succeeded | 通过 |
+| 修复后最终 `./scripts/test-direct.sh` | 直接测试与脚本检查全部通过 | 通过 |
+| 修复后最终 `./scripts/build-app.sh` | App/System Extension 构建及全套签名、GEO smoke 验证通过 | 通过 |
+| `git merge-tree` 对 `origin/main@a315ca5` | 成功生成合并树，无冲突 | 通过 |
+| 修复后二次独立代码审查 | verdict=pass；无 Critical/High/Medium | 通过 |
 
 ## 错误与恢复
 
