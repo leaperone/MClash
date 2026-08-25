@@ -190,6 +190,7 @@ final class AppModel {
         private(set) var floor: UInt64
         private(set) var droppedDelta: UInt64 = 0
         private(set) var requiresStateReset = false
+        private var remainingPageCount = 8
 
         init(cursor: UInt64, acknowledgedDroppedBefore: UInt64 = 0) {
             current = cursor
@@ -213,6 +214,12 @@ final class AppModel {
 
         mutating func advance(to cursor: UInt64) {
             current = cursor
+        }
+
+        mutating func consumePage() -> Bool {
+            guard remainingPageCount > 0 else { return false }
+            remainingPageCount -= 1
+            return true
         }
 
         var committed: UInt64 { max(current, floor) }
@@ -7015,7 +7022,7 @@ final class AppModel {
                       appRoutingMonitorShouldContinue(
                         generation: generation,
                         expectedRevision: expectedRevision
-                    ) {
+                      ), pollingCursor.consumePage() {
                     let batch = try await networkExtensionControl.appRoutingActivity(
                         after: pollingCursor.current,
                         limit: 250
