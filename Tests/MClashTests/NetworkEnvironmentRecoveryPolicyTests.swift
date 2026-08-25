@@ -69,7 +69,7 @@ struct NetworkEnvironmentRecoveryPolicyTests {
         #expect(policy.receive(.willSleep, at: base.addingTimeInterval(3)) == .cancelScheduledRecovery)
         #expect(
             policy.receive(.didWake, at: base.addingTimeInterval(5))
-                == .schedule(after: 2)
+                == .schedule(after: 7)
         )
     }
 
