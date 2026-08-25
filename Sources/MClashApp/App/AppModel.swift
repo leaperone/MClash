@@ -695,6 +695,7 @@ final class AppModel {
     private var appRoutingActivityTask: Task<Void, Never>?
     private var appRoutingActivityMonitorMode: AppRoutingActivityMonitorMode?
     private var appRoutingMonitorGeneration: UInt64 = 0
+    private var appRoutingMonitorsPausedForSleep = false
     private var appRoutingActivityAcknowledgedDroppedBefore: UInt64 = 0
     private var dnsProxyRuntimeTask: Task<Void, Never>?
     private var dnsProxyMonitorGeneration: UInt64 = 0
@@ -702,6 +703,7 @@ final class AppModel {
     private var networkEnvironmentDebounceTask: Task<Void, Never>?
     private var networkEnvironmentRecoveryTask: Task<Void, Never>?
     private var networkEnvironmentRecoveryPolicy = NetworkEnvironmentRecoveryPolicy()
+    private var networkEnvironmentPathIsUsable: Bool?
     private var networkEnvironmentRecoveryArmed = false
     private var networkEnvironmentDebounceGeneration: UInt64 = 0
     private var networkEnvironmentRecoveryGeneration: UInt64 = 0
@@ -4285,12 +4287,22 @@ final class AppModel {
             dnsProxyAutomaticallyDisabled = false
             dnsProxyRuntimeError = nil
             networkCaptureState = .off
+            if !networkEnvironmentRecoveryPolicy.isSleeping,
+               networkEnvironmentRecoveryTask == nil,
+               networkEnvironmentDebounceTask == nil {
+                appRoutingMonitorsPausedForSleep = false
+            }
             return true
         } catch {
             let message = error.localizedDescription
             networkCaptureState = .failed(message)
             errorMessage = message
             appendSupervisorLog("Network Extension shutdown failed: \(message)")
+            if !networkEnvironmentRecoveryPolicy.isSleeping,
+               networkEnvironmentRecoveryTask == nil,
+               networkEnvironmentDebounceTask == nil {
+                appRoutingMonitorsPausedForSleep = false
+            }
             return false
         }
     }
@@ -6292,6 +6304,8 @@ final class AppModel {
         networkEnvironmentMonitor.stop()
         networkEnvironmentRecoveryArmed = false
         networkEnvironmentRecoveryPolicy = NetworkEnvironmentRecoveryPolicy()
+        networkEnvironmentPathIsUsable = nil
+        appRoutingMonitorsPausedForSleep = false
     }
 
     private func resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
@@ -6312,11 +6326,45 @@ final class AppModel {
     private func receiveNetworkEnvironmentEvent(_ event: NetworkEnvironmentEvent) {
         guard !shutdownInProgress else { return }
         if event == .willSleep {
+            pauseAppRoutingMonitorsForSleep()
             networkEnvironmentRecoveryTask?.cancel()
+        } else if case let .pathChanged(path) = event {
+            networkEnvironmentPathIsUsable = path.isUsable
         }
         applyNetworkEnvironmentRecoveryDirective(
             networkEnvironmentRecoveryPolicy.receive(event)
         )
+    }
+
+    private func pauseAppRoutingMonitorsForSleep() {
+        appRoutingMonitorsPausedForSleep = true
+        guard appRoutingActivityTask != nil || dnsProxyRuntimeTask != nil else {
+            return
+        }
+        appRoutingActivityTask?.cancel()
+        appRoutingActivityTask = nil
+        appRoutingActivityMonitorMode = nil
+        appRoutingMonitorGeneration &+= 1
+        dnsProxyRuntimeTask?.cancel()
+        dnsProxyRuntimeTask = nil
+        dnsProxyMonitorGeneration &+= 1
+    }
+
+    private func resumeAppRoutingMonitorsAfterSleepIfNeeded() {
+        guard appRoutingMonitorsPausedForSleep else { return }
+        guard !shutdownInProgress,
+              networkCapturePreferences.enabled,
+              case .on = networkCaptureState else {
+            appRoutingMonitorsPausedForSleep = false
+            return
+        }
+        guard !networkEnvironmentRecoveryPolicy.isSleeping,
+              networkEnvironmentPathIsUsable != false else { return }
+        guard networkEnvironmentDebounceTask == nil,
+              networkEnvironmentRecoveryTask == nil else { return }
+        appRoutingMonitorsPausedForSleep = false
+        startDNSProxyRuntimeMonitor()
+        launchAppRoutingActivityMonitor(forceRestart: true)
     }
 
     private func applyNetworkEnvironmentRecoveryDirective(
@@ -6324,6 +6372,7 @@ final class AppModel {
     ) {
         switch directive {
         case .none:
+            resumeAppRoutingMonitorsAfterSleepIfNeeded()
             return
 
         case .cancelScheduledRecovery:
@@ -6364,12 +6413,14 @@ final class AppModel {
                         succeeded: succeeded
                     )
                 )
+                self.resumeAppRoutingMonitorsAfterSleepIfNeeded()
             }
 
         case .suppressAfterRepeatedFailures:
             appendSupervisorLog(
                 "Automatic network-environment recovery paused after repeated failures. A later wake or network-path change will re-evaluate the session."
             )
+            resumeAppRoutingMonitorsAfterSleepIfNeeded()
         }
     }
 
@@ -6546,6 +6597,7 @@ final class AppModel {
     }
 
     private func startAppRoutingActivityMonitor() {
+        guard !appRoutingMonitorsPausedForSleep else { return }
         appRoutingActivityTask?.cancel()
         appRoutingActivityCursor = 0
         appRoutingActivityAcknowledgedDroppedBefore = 0
@@ -6572,6 +6624,7 @@ final class AppModel {
     }
 
     private func launchAppRoutingActivityMonitor(forceRestart: Bool = false) {
+        guard !appRoutingMonitorsPausedForSleep else { return }
         let hasDetailedPresentation = presentationTelemetryPolicy.appRoutingActivity
         let mode: AppRoutingActivityMonitorMode = if lightweightMode
             && !hasDetailedPresentation {
@@ -6779,12 +6832,14 @@ final class AppModel {
         expectedRevision: UInt64? = nil
     ) -> Bool {
         guard !Task.isCancelled,
+              !appRoutingMonitorsPausedForSleep,
               generation == appRoutingMonitorGeneration else { return false }
         guard let expectedRevision else { return true }
         return networkCaptureState.isActive(revision: expectedRevision)
     }
 
     private func startDNSProxyRuntimeMonitor() {
+        guard !appRoutingMonitorsPausedForSleep else { return }
         dnsProxyRuntimeTask?.cancel()
         dnsProxyMonitorGeneration &+= 1
         let generation = dnsProxyMonitorGeneration
@@ -6902,6 +6957,7 @@ final class AppModel {
         expectedRevision: UInt64? = nil
     ) -> Bool {
         guard !Task.isCancelled,
+              !appRoutingMonitorsPausedForSleep,
               generation == dnsProxyMonitorGeneration else { return false }
         guard let expectedRevision else { return true }
         return networkCaptureState.isActive(revision: expectedRevision)

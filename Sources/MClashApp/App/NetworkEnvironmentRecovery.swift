@@ -244,6 +244,7 @@ struct NetworkEnvironmentRecoveryPolicy: Sendable {
             isSleeping = true
             recoveryRequested = false
             recoveryIsScheduled = false
+            recoveryIsInProgress = false
             return .cancelScheduledRecovery
 
         case .didWake:

@@ -53,6 +53,13 @@
 - 宿主 activation 等待使用 12 秒 `ContinuousClock`；若启动过程中机器长时间睡眠，醒来后可能 timeout。该边界不是本次性能改动引入，保留为未覆盖项。
 - 当前登录会话已有安装版持有单实例锁；启动分支 App 只会激活旧实例，绕锁还可能在 startup 清理当前 provider。因此没有冒险做同机分支 UI/真实 Extension A/B，真实菜单与能耗验收保留给隔离测试机或签名安装。
 
+## 后续审计确认（2026-08-25）
+
+- `DNSProxyProvider.scheduleBackendProbeConfirmation` 使用不可持有句柄的 `asyncAfter`；stop/sleep/live update 只递增 generation，约 4 秒后仍会产生无效队列唤醒。改为可取消的一次性 `DispatchSourceTimer`，并在所有生命周期入口取出并取消。
+- `AppModel` 的 provider-only 与 DNS runtime monitor 在 `.willSleep` 未取消；连续时钟在唤醒后可能立即执行过期 deadline，并与网络环境 recovery 并发验证。暂停 monitor，恢复由既有 recovery 完成路径统一触发。
+- `TrafficHistoryStore.prune` 只在显式 retention/compact API 中调用；生产打开和 writer drain 未调度，过期 checkpoint/索引会长期增长。启动后清理，writer drain 以 24 小时节流维护。
+- `clearTrafficHistory` 在 await 前未失效 writer/ledger generation，旧批次可能在 clear 后回写。先取消 writer、清空待写队列并取消当前 ledger build，再清空数据。
+
 ## 参考指针
 
 - `/tmp/mclash-host-20260825-0317.sample.txt`

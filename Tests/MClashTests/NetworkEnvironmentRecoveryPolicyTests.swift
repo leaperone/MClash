@@ -59,6 +59,20 @@ struct NetworkEnvironmentRecoveryPolicyTests {
         #expect(!policy.isSleeping)
     }
 
+    @Test("Sleep clears an in-flight recovery so the next wake can retry")
+    func sleepCancelsInFlightRecovery() {
+        var policy = makePolicy()
+        _ = policy.setArmed(true, at: base)
+        _ = policy.receive(.didWake, at: base)
+        #expect(policy.scheduledRecoveryFired(at: base.addingTimeInterval(2)) == .recover)
+
+        #expect(policy.receive(.willSleep, at: base.addingTimeInterval(3)) == .cancelScheduledRecovery)
+        #expect(
+            policy.receive(.didWake, at: base.addingTimeInterval(5))
+                == .schedule(after: 2)
+        )
+    }
+
     @Test("A failed recovery observes the cooldown before retrying")
     func failedRecoveryUsesCooldown() {
         var policy = makePolicy()
