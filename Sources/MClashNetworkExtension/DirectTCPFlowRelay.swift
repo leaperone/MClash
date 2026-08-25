@@ -102,7 +102,7 @@ final class DirectTCPFlowRelay: @unchecked Sendable {
             self.connection = connection
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
-                self.queue.async { self.handleConnectionState(state) }
+                self.handleConnectionState(state)
             }
             scheduleConnectionTimeout()
             connection.start(queue: queue)
@@ -191,17 +191,15 @@ final class DirectTCPFlowRelay: @unchecked Sendable {
                     content: data,
                     completion: .contentProcessed { [weak self] error in
                         guard let self else { return }
-                        self.queue.async {
-                            if let error {
-                                self.finish(error: DirectTCPFlowRelayError.upstreamFailed(
-                                    error.localizedDescription
-                                ))
-                            } else if !self.finished {
-                                self.backpressureState.end(.appToUpstream)
-                                self.byteLedger.recordUpstreamAccepted(data.count)
-                                self.report(.relaying)
-                                self.readFromFlow()
-                            }
+                        if let error {
+                            self.finish(error: DirectTCPFlowRelayError.upstreamFailed(
+                                error.localizedDescription
+                            ))
+                        } else if !self.finished {
+                            self.backpressureState.end(.appToUpstream)
+                            self.byteLedger.recordUpstreamAccepted(data.count)
+                            self.report(.relaying)
+                            self.readFromFlow()
                         }
                     }
                 )
@@ -222,15 +220,13 @@ final class DirectTCPFlowRelay: @unchecked Sendable {
             isComplete: true,
             completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
-                self.queue.async {
-                    if let error {
-                        self.finish(error: DirectTCPFlowRelayError.upstreamFailed(
-                            error.localizedDescription
-                        ))
-                    } else {
-                        self.backpressureState.end(.appToUpstream)
-                        self.finishIfBothHalvesClosed()
-                    }
+                if let error {
+                    self.finish(error: DirectTCPFlowRelayError.upstreamFailed(
+                        error.localizedDescription
+                    ))
+                } else {
+                    self.backpressureState.end(.appToUpstream)
+                    self.finishIfBothHalvesClosed()
                 }
             }
         )
@@ -247,33 +243,31 @@ final class DirectTCPFlowRelay: @unchecked Sendable {
             maximumLength: 64 * 1_024
         ) { [weak self] data, _, isComplete, error in
             guard let self else { return }
-            self.queue.async {
-                if let error {
-                    self.finish(error: DirectTCPFlowRelayError.upstreamFailed(
-                        error.localizedDescription
-                    ))
-                    return
-                }
-                if let data, !data.isEmpty {
-                    self.byteLedger.recordUpstreamReceived(data.count)
-                    self.writeToFlow(data) { [weak self] in
-                        guard let self else { return }
-                        self.backpressureState.end(.upstreamToApp)
-                        self.byteLedger.recordAppDelivered(data.count)
-                        self.report(.relaying)
-                        if isComplete {
-                            self.markUpstreamReadFinished()
-                        } else {
-                            self.readFromUpstream()
-                        }
+            if let error {
+                self.finish(error: DirectTCPFlowRelayError.upstreamFailed(
+                    error.localizedDescription
+                ))
+                return
+            }
+            if let data, !data.isEmpty {
+                self.byteLedger.recordUpstreamReceived(data.count)
+                self.writeToFlow(data) { [weak self] in
+                    guard let self else { return }
+                    self.backpressureState.end(.upstreamToApp)
+                    self.byteLedger.recordAppDelivered(data.count)
+                    self.report(.relaying)
+                    if isComplete {
+                        self.markUpstreamReadFinished()
+                    } else {
+                        self.readFromUpstream()
                     }
-                } else if isComplete {
-                    self.backpressureState.end(.upstreamToApp)
-                    self.markUpstreamReadFinished()
-                } else {
-                    self.backpressureState.end(.upstreamToApp)
-                    self.readFromUpstream()
                 }
+            } else if isComplete {
+                self.backpressureState.end(.upstreamToApp)
+                self.markUpstreamReadFinished()
+            } else {
+                self.backpressureState.end(.upstreamToApp)
+                self.readFromUpstream()
             }
         }
     }
