@@ -38,6 +38,18 @@ struct PresentationTelemetryPolicyTests {
         #expect(!cursor.requiresStateReset)
     }
 
+    @Test("Activity polling is bounded to eight pages per round")
+    func activityPollCursorBoundsPageCount() {
+        var cursor = AppModel.AppRoutingActivityPollCursor(cursor: 0)
+
+        for _ in 0..<8 {
+            let consumed = cursor.consumePage()
+            #expect(consumed)
+        }
+        let exhausted = cursor.consumePage()
+        #expect(!exhausted)
+    }
+
     @Test("Lightweight mode ignores a retained menu panel's stale visibility")
     @MainActor
     func lightweightModeSuppressesMenuTelemetry() throws {
