@@ -48,20 +48,30 @@ struct RulesView: View {
                     RuleResultsStatusBar(presentation: presentation)
                 }
             }
-            .task(id: model.controllerIsReady) {
-                guard model.controllerIsReady else {
-                    hasCompletedInitialLoad = false
+            .task(id: [
+                model.controllerIsReady,
+                model.mainWindowPresentationTelemetryIsVisible,
+            ]) {
+                guard model.controllerIsReady,
+                      model.mainWindowPresentationTelemetryIsVisible else {
+                    if !model.controllerIsReady {
+                        hasCompletedInitialLoad = false
+                    }
                     return
                 }
                 await loadRulesWhenAvailable()
                 hasCompletedInitialLoad = true
-                while !Task.isCancelled, model.controllerIsReady {
+                while !Task.isCancelled,
+                      model.controllerIsReady,
+                      model.mainWindowPresentationTelemetryIsVisible {
                     do {
                         try await Task.sleep(for: .seconds(15))
                     } catch {
                         return
                     }
-                    guard model.controllerIsReady,
+                    guard !Task.isCancelled,
+                          model.controllerIsReady,
+                          model.mainWindowPresentationTelemetryIsVisible,
                           model.canPerform(.refreshRules) else { continue }
                     await model.refreshRules()
                 }
@@ -194,7 +204,9 @@ struct RulesView: View {
                 return
             }
         }
-        if model.controllerIsReady,
+        if !Task.isCancelled,
+           model.controllerIsReady,
+           model.mainWindowPresentationTelemetryIsVisible,
            model.rules.isEmpty,
            model.rulesErrorMessage == nil,
            model.canPerform(.refreshRules) {
