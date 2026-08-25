@@ -130,6 +130,11 @@ final class AppModel {
             traffic || connections || logs || proxies
         }
 
+        func dnsProxyRuntimePollInterval(lightweightMode: Bool) -> Duration {
+            if appRoutingActivity { return .seconds(2) }
+            return lightweightMode ? .seconds(10) : .seconds(5)
+        }
+
         static func resolve(
             mainWindowVisible: Bool,
             menuBarContentVisible: Bool,
@@ -7186,9 +7191,8 @@ final class AppModel {
                 )
                 do {
                     try await Task.sleep(
-                        for: presentationTelemetryPolicy.appRoutingActivity
-                            ? .seconds(2)
-                            : .seconds(5)
+                        for: presentationTelemetryPolicy
+                            .dnsProxyRuntimePollInterval(lightweightMode: lightweightMode)
                     )
                 } catch {
                     return

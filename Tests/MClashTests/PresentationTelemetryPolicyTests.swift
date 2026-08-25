@@ -69,6 +69,18 @@ struct PresentationTelemetryPolicyTests {
         #expect(!policy.hasControllerStreams)
     }
 
+    @Test("DNS runtime polling follows presentation demand and lightweight mode")
+    func dnsRuntimePollingCadence() {
+        let background = AppModel.PresentationTelemetryPolicy()
+        #expect(background.dnsProxyRuntimePollInterval(lightweightMode: false) == .seconds(5))
+        #expect(background.dnsProxyRuntimePollInterval(lightweightMode: true) == .seconds(10))
+
+        var detailed = background
+        detailed.appRoutingActivity = true
+        #expect(detailed.dnsProxyRuntimePollInterval(lightweightMode: false) == .seconds(2))
+        #expect(detailed.dnsProxyRuntimePollInterval(lightweightMode: true) == .seconds(2))
+    }
+
     @Test("The menu popover requests quick metrics but not logs or the full ledger")
     func menuBarPolicyIsLightweight() {
         let policy = AppModel.PresentationTelemetryPolicy.resolve(
