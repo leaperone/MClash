@@ -665,7 +665,7 @@ private final class DirectUDPConversation: UDPConversation, @unchecked Sendable 
             self.connection = connection
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
-                self.queue.async { self.handle(state) }
+                self.handle(state)
             }
             connection.start(queue: queue)
         } catch {
@@ -687,21 +687,19 @@ private final class DirectUDPConversation: UDPConversation, @unchecked Sendable 
             isComplete: true,
             completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
-                self.queue.async {
-                    if let error {
-                        let failure = UDPFlowSessionError.directConnectionFailed(
-                            error.localizedDescription
-                        )
-                        completion(failure)
-                        self.fail(failure, stage: .relaying)
-                        return
-                    }
-                    self.byteLedger.recordUpstreamAccepted(payload.count)
-                    self.uploadDatagrams = Self.increment(self.uploadDatagrams)
-                    self.lastPayloadAt = Date()
-                    self.report(.relaying)
-                    completion(nil)
+                if let error {
+                    let failure = UDPFlowSessionError.directConnectionFailed(
+                        error.localizedDescription
+                    )
+                    completion(failure)
+                    self.fail(failure, stage: .relaying)
+                    return
                 }
+                self.byteLedger.recordUpstreamAccepted(payload.count)
+                self.uploadDatagrams = Self.increment(self.uploadDatagrams)
+                self.lastPayloadAt = Date()
+                self.report(.relaying)
+                completion(nil)
             }
         )
     }
@@ -758,30 +756,28 @@ private final class DirectUDPConversation: UDPConversation, @unchecked Sendable 
         receiveInFlight = true
         connection.receiveMessage { [weak self] data, _, isComplete, error in
             guard let self else { return }
-            self.queue.async {
-                self.receiveInFlight = false
-                if let error {
-                    self.fail(
-                        UDPFlowSessionError.directConnectionFailed(error.localizedDescription),
-                        stage: .relaying
-                    )
-                    return
-                }
-                guard isComplete else {
-                    self.fail(UDPFlowSessionError.incompleteDatagram, stage: .relaying)
-                    return
-                }
-                guard let data else {
-                    self.receiveNext()
-                    return
-                }
-                self.byteLedger.recordUpstreamReceived(data.count)
-                self.lastPayloadAt = Date()
-                self.responseCallback(
-                    self.id,
-                    UDPFlowDatagram(payload: data, endpoint: self.endpoint)
+            self.receiveInFlight = false
+            if let error {
+                self.fail(
+                    UDPFlowSessionError.directConnectionFailed(error.localizedDescription),
+                    stage: .relaying
                 )
+                return
             }
+            guard isComplete else {
+                self.fail(UDPFlowSessionError.incompleteDatagram, stage: .relaying)
+                return
+            }
+            guard let data else {
+                self.receiveNext()
+                return
+            }
+            self.byteLedger.recordUpstreamReceived(data.count)
+            self.lastPayloadAt = Date()
+            self.responseCallback(
+                self.id,
+                UDPFlowDatagram(payload: data, endpoint: self.endpoint)
+            )
         }
     }
 
@@ -880,7 +876,7 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         controlConnection = connection
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
-            self.queue.async { self.handleControlState(state) }
+            self.handleControlState(state)
         }
         let timeout = DispatchWorkItem { [weak self] in
             self?.fail(
@@ -911,21 +907,19 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
                 isComplete: true,
                 completion: .contentProcessed { [weak self] error in
                     guard let self else { return }
-                    self.queue.async {
-                        if let error {
-                            let failure = UDPFlowSessionError.mihomoRelayFailed(
-                                error.localizedDescription
-                            )
-                            completion(failure)
-                            self.fail(failure, stage: .relaying)
-                            return
-                        }
-                        self.byteLedger.recordUpstreamAccepted(payload.count)
-                        self.uploadDatagrams = Self.increment(self.uploadDatagrams)
-                        self.lastPayloadAt = Date()
-                        self.report(.relaying)
-                        completion(nil)
+                    if let error {
+                        let failure = UDPFlowSessionError.mihomoRelayFailed(
+                            error.localizedDescription
+                        )
+                        completion(failure)
+                        self.fail(failure, stage: .relaying)
+                        return
                     }
+                    self.byteLedger.recordUpstreamAccepted(payload.count)
+                    self.uploadDatagrams = Self.increment(self.uploadDatagrams)
+                    self.lastPayloadAt = Date()
+                    self.report(.relaying)
+                    completion(nil)
                 }
             )
         } catch {
@@ -1110,7 +1104,7 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         udpConnection = connection
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
-            self.queue.async { self.handleUDPState(state) }
+            self.handleUDPState(state)
         }
         connection.start(queue: queue)
     }
@@ -1154,15 +1148,13 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
             content: data,
             completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
-                self.queue.async {
-                    if let error {
-                        self.fail(
-                            UDPFlowSessionError.mihomoSetupFailed(error.localizedDescription),
-                            stage: .setup
-                        )
-                    } else if !self.finished {
-                        next()
-                    }
+                if let error {
+                    self.fail(
+                        UDPFlowSessionError.mihomoSetupFailed(error.localizedDescription),
+                        stage: .setup
+                    )
+                } else if !self.finished {
+                    next()
                 }
             }
         )
@@ -1180,19 +1172,17 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
             maximumLength: 64 * 1_024
         ) { [weak self] data, _, isComplete, error in
             guard let self else { return }
-            self.queue.async {
-                if let error {
-                    self.fail(
-                        UDPFlowSessionError.mihomoSetupFailed(error.localizedDescription),
-                        stage: .setup
-                    )
-                } else if let data, !data.isEmpty {
-                    consume(data)
-                } else if isComplete {
-                    self.fail(UDPFlowRelayError.controlConnectionClosed, stage: .setup)
-                } else {
-                    self.receiveControlChunk(consume)
-                }
+            if let error {
+                self.fail(
+                    UDPFlowSessionError.mihomoSetupFailed(error.localizedDescription),
+                    stage: .setup
+                )
+            } else if let data, !data.isEmpty {
+                consume(data)
+            } else if isComplete {
+                self.fail(UDPFlowRelayError.controlConnectionClosed, stage: .setup)
+            } else {
+                self.receiveControlChunk(consume)
             }
         }
     }
@@ -1204,19 +1194,17 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
             maximumLength: 1
         ) { [weak self] data, _, isComplete, error in
             guard let self else { return }
-            self.queue.async {
-                if let error {
-                    self.fail(
-                        UDPFlowSessionError.mihomoRelayFailed(error.localizedDescription),
-                        stage: .relaying
-                    )
-                } else if let data, !data.isEmpty {
-                    self.fail(UDPFlowRelayError.unexpectedControlData, stage: .relaying)
-                } else if isComplete {
-                    self.fail(UDPFlowRelayError.controlConnectionClosed, stage: .relaying)
-                } else {
-                    self.monitorControlConnection()
-                }
+            if let error {
+                self.fail(
+                    UDPFlowSessionError.mihomoRelayFailed(error.localizedDescription),
+                    stage: .relaying
+                )
+            } else if let data, !data.isEmpty {
+                self.fail(UDPFlowRelayError.unexpectedControlData, stage: .relaying)
+            } else if isComplete {
+                self.fail(UDPFlowRelayError.controlConnectionClosed, stage: .relaying)
+            } else {
+                self.monitorControlConnection()
             }
         }
     }
@@ -1226,37 +1214,35 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         receiveInFlight = true
         udpConnection.receiveMessage { [weak self] data, _, isComplete, error in
             guard let self else { return }
-            self.queue.async {
-                self.receiveInFlight = false
-                if let error {
-                    self.fail(
-                        UDPFlowSessionError.mihomoRelayFailed(error.localizedDescription),
-                        stage: .relaying
+            self.receiveInFlight = false
+            if let error {
+                self.fail(
+                    UDPFlowSessionError.mihomoRelayFailed(error.localizedDescription),
+                    stage: .relaying
+                )
+                return
+            }
+            guard isComplete else {
+                self.fail(UDPFlowSessionError.incompleteDatagram, stage: .relaying)
+                return
+            }
+            guard let data else {
+                self.receiveNext()
+                return
+            }
+            do {
+                let decoded = try SOCKS5Codec.decodeUDPDatagram(data)
+                self.byteLedger.recordUpstreamReceived(decoded.payload.count)
+                self.lastPayloadAt = Date()
+                self.responseCallback(
+                    self.id,
+                    UDPFlowDatagram(
+                        payload: decoded.payload,
+                        endpoint: decoded.destination
                     )
-                    return
-                }
-                guard isComplete else {
-                    self.fail(UDPFlowSessionError.incompleteDatagram, stage: .relaying)
-                    return
-                }
-                guard let data else {
-                    self.receiveNext()
-                    return
-                }
-                do {
-                    let decoded = try SOCKS5Codec.decodeUDPDatagram(data)
-                    self.byteLedger.recordUpstreamReceived(decoded.payload.count)
-                    self.lastPayloadAt = Date()
-                    self.responseCallback(
-                        self.id,
-                        UDPFlowDatagram(
-                            payload: decoded.payload,
-                            endpoint: decoded.destination
-                        )
-                    )
-                } catch {
-                    self.fail(error, stage: .relaying)
-                }
+                )
+            } catch {
+                self.fail(error, stage: .relaying)
             }
         }
     }
