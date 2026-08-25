@@ -21,7 +21,7 @@ struct ApplicationDelegateTests {
         ) == .regular)
     }
 
-    @Test("Lightweight mode pauses telemetry without unloading occluded UI")
+    @Test("Lightweight mode hides visible UI and ignores later occlusion changes")
     @MainActor
     func lightweightOcclusionPolicy() {
         #expect(!ApplicationDelegate.shouldRunMainWindowPresentationTelemetry(
@@ -60,6 +60,8 @@ struct ApplicationDelegateTests {
         contentVisibilityChanges.removeAll()
         telemetryVisibilityChanges.removeAll()
         delegate.setLightweightMode(true)
+        #expect(contentVisibilityChanges == [false])
+        contentVisibilityChanges.removeAll()
         telemetryVisibilityChanges.removeAll()
 
         NotificationCenter.default.post(

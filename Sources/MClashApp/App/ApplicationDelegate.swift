@@ -64,6 +64,18 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         event: NSAppleEventDescriptor? = nil,
         defaults: UserDefaults = .standard
     ) -> Bool {
+        launchRequestsPresentation(
+            arguments: arguments,
+            event: event,
+            defaults: defaults
+        ) && !defaults.bool(forKey: AppModel.lightweightModeKey)
+    }
+
+    private static func launchRequestsPresentation(
+        arguments: [String],
+        event: NSAppleEventDescriptor? = nil,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
         guard !arguments.contains("--mclash-background") else { return false }
         return !isLoginItemLaunch(event: event)
             || !opensQuietlyAtLogin(defaults: defaults)
@@ -84,7 +96,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         }
 
         guard instanceLock.isOwner else {
-            if shouldPresentInitialMainWindow {
+            if Self.launchRequestsPresentation(
+                arguments: CommandLine.arguments,
+                event: NSAppleEventManager.shared().currentAppleEvent
+            ) {
                 DistributedNotificationCenter.default().postNotificationName(
                     Self.activationRequestNotification,
                     object: nil,
@@ -299,6 +314,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func setLightweightMode(_ isEnabled: Bool) {
         lightweightModeEnabled = isEnabled
+        if isEnabled, mainWindowPresentationIsVisible {
+            mainWindow?.orderOut(nil)
+            publishMainWindowVisibility(false)
+            return
+        }
         publishMainWindowTelemetryVisibility(
             mainWindowShouldRunPresentationTelemetry
         )
