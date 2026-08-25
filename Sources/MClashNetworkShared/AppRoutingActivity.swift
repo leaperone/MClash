@@ -331,24 +331,38 @@ public final class BoundedAppRoutingActivityRing: @unchecked Sendable {
     /// Returns records whose most recent update is newer than `cursor`.
     /// Negative limits are treated as zero; limits above capacity are harmless.
     public func batch(after cursor: UInt64 = 0, limit: Int) -> AppRoutingActivityBatch {
-        let snapshot = withLock {
+        let snapshot: (
+            candidates: [AppRoutingActivity]?,
+            boundedLimit: Int,
+            droppedBefore: UInt64?
+        ) = withLock {
             let boundedLimit = min(max(0, limit), capacity)
+            guard cursor < nextSequence - 1 else {
+                return (nil, boundedLimit, droppedBefore)
+            }
             var candidates = active.values.filter { $0.sequence > cursor }
             candidates.append(contentsOf: history.values.lazy
                 .map(\.activity)
                 .filter { $0.sequence > cursor })
             return (candidates, boundedLimit, droppedBefore)
         }
+        guard var candidates = snapshot.candidates else {
+            return AppRoutingActivityBatch(
+                activities: [],
+                nextCursor: cursor,
+                droppedBeforeSequence: snapshot.droppedBefore,
+                hasMore: false
+            )
+        }
         // Sorting can dominate this operation at the 2,000-record bound. Do it
         // after copying the value snapshot so flow admission and counter upserts
         // do not wait behind O(n log n) work on the ring's only lock.
-        var candidates = snapshot.0
         candidates.sort { $0.sequence < $1.sequence }
-        let selected = Array(candidates.prefix(snapshot.1))
+        let selected = Array(candidates.prefix(snapshot.boundedLimit))
         return AppRoutingActivityBatch(
             activities: selected,
             nextCursor: selected.last?.sequence ?? cursor,
-            droppedBeforeSequence: snapshot.2,
+            droppedBeforeSequence: snapshot.droppedBefore,
             hasMore: candidates.count > selected.count
         )
     }
