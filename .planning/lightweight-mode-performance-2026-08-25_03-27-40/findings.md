@@ -5,7 +5,7 @@
 
 ## 需求事实
 
-- 已安装版为 1.3.4 (49)，尚未包含 `origin/main@2a244c0` 的 Network Extension fast-path。
+- 诊断时安装版为 1.3.4 (49)，尚未包含本任务基于 `origin/main@632d181` 的 Network Extension fast-path。
 - 10 秒/1 秒抽样均显示主 App 是当前最大热点：约 32%–90% CPU；单帧约 19,390 context switches/s、253 MB footprint。NE 约 2.6%，主 Mihomo 约 1%。这些是未控环境诊断基线，不是正式阈值。
 - 产品边界是“轻量隐藏时 UI/UX 最小化，但网络与恢复继续”，不是让宿主退出。
 
@@ -59,6 +59,22 @@
 - `AppModel` 的 provider-only 与 DNS runtime monitor 在 `.willSleep` 未取消；连续时钟在唤醒后可能立即执行过期 deadline，并与网络环境 recovery 并发验证。暂停 monitor，恢复由既有 recovery 完成路径统一触发。
 - `TrafficHistoryStore.prune` 只在显式 retention/compact API 中调用；生产打开和 writer drain 未调度，过期 checkpoint/索引会长期增长。启动后清理，writer drain 以 24 小时节流维护。
 - `clearTrafficHistory` 在 await 前未失效 writer/ledger generation，旧批次可能在 clear 后回写。先取消 writer、清空待写队列并取消当前 ledger build，再清空数据。
+
+## 最终生命周期复核（2026-08-25）
+
+- 历史持久化的 open、clear、toggle、retention 现在通过 AppModel MainActor 上的 FIFO mutation gate 串行执行；generation 仍用于过滤已取消 writer、ledger 和 snapshot 的迟到结果。
+- clear 持有 gate 期间，新的 persistent open 不会与 SQLite clear 交错；clear 自身在缺 store 时显式允许一次 open，且不会启动 writer 直到清理完成。
+- prune 失败不再更新 `trafficHistoryLastPrunedAt`；writer 采用既有 fail-closed 路径，避免维护失败后把过期数据标记为已清理或每批重复重试。
+- sleep、不可用网络路径、disarm 和 shutdown 统一失效 recovery generation/task；恢复 task 在等待旧 recovery operation 释放时不把竞争误记为一次失败。
+- 当前仍未有可控阻塞 mock 覆盖真实 AppModel sleep/wake 与 clear/toggle 交错；源码审查、定向 policy/history tests 和严格并发编译通过，真实签名 Extension A/B 仍是未验收边界。
+
+## 收尾复核（2026-08-25）
+
+- 持久化 writer 只有在 ingest/prune 成功且 generation 仍有效时才移除批次；取消或旧 generation 会保留 batch，避免清空、切换或 retention 交错时丢失未完成记录。
+- writer 的尾部 snapshot 读取仍持有占用标记，完成后会重新 kick writer，避免 snapshot 期间新完成记录永久滞留。
+- persistent store 不可用且不在打开过渡期时不再接收新的历史队列；打开失败会清理过渡期队列，避免长期内存增长。
+- 网络恢复在既有 recovery operation 竞争时使用 deferred directive，不以失败计入 cooldown；恢复任务不再以 25ms 周期轮询。
+- clear 在 snapshot 完成前保持 clear guard，阻止新 writer 覆盖清空后的快照；取消的排队 mutation 在取得 gate 后会直接退出。
 
 ## 参考指针
 

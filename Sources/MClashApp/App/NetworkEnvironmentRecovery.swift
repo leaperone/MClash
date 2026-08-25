@@ -228,6 +228,7 @@ struct NetworkEnvironmentRecoveryPolicy: Sendable {
         guard armed else {
             recoveryRequested = false
             recoveryIsScheduled = false
+            recoveryIsInProgress = false
             failedRecoveryDates.removeAll(keepingCapacity: true)
             return .cancelScheduledRecovery
         }
@@ -257,6 +258,7 @@ struct NetworkEnvironmentRecoveryPolicy: Sendable {
             recoveryRequested = true
             guard path.isUsable else {
                 recoveryIsScheduled = false
+                recoveryIsInProgress = false
                 return .cancelScheduledRecovery
             }
             return scheduleIfPossible(at: now)
@@ -301,6 +303,13 @@ struct NetworkEnvironmentRecoveryPolicy: Sendable {
             failedRecoveryDates.append(now)
             recoveryRequested = true
         }
+        return scheduleIfPossible(at: now)
+    }
+
+    mutating func recoveryDeferred(at now: Date = Date()) -> Directive {
+        guard recoveryIsInProgress else { return .none }
+        recoveryIsInProgress = false
+        recoveryRequested = true
         return scheduleIfPossible(at: now)
     }
 
