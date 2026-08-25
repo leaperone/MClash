@@ -2,13 +2,13 @@
 
 - 任务 ID：`lightweight-mode-performance-2026-08-25_03-27-40`
 - 创建时间：`2026-08-25_03-27-40`
-- 当前状态：`complete`
+- 当前状态：`completed`
 
-## 已完成
+## 收尾完成
 
 - 对当前安装进程完成 CPU/context-switch/footprint 诊断和宿主 sample。
 - 审计主 App、Network Extension 的持续循环、取消边界、presentation demand、FlowLedger 与 automation。
-- 从 `origin/main@2a244c0` 创建隔离分支 `fix/lightweight-mode-performance` 并校验项目基线。
+- 从 `origin/main@632d181` 创建隔离分支 `fix/runtime-idle-guards` 并校验项目基线。
 - 完成宿主增量：隐藏菜单卸载、轻量原生菜单/Dock、遥测门控、App Routing 低频安全分支、FlowLedger 词法路径、automation 与 System Proxy cache。
 - 同步八种语言的轻量模式行为说明。
 - 合入 Network Extension 限频与 timer 生命周期增量：relay 4Hz 硬上限、低频 DNS backend probe、timer leeway、sleep/wake heartbeat 管理与即时 freshness 刷新。
@@ -17,25 +17,27 @@
 - 修正 startup completion 与 stop completion 的 FIFO 交付顺序，覆盖 bootstrap reject、reporter init、probe result 与 stop teardown，避免已停止后晚到启动结果。
 - 完成最终宿主与 Extension 独立复核；当前 diff 无确定性代码 finding。
 
-## 进行中
+## 已完成
 
-- 无；实现与本地交付检查已收敛。
+- 处理后台一次性 probe、睡眠恢复监视器和历史持久化维护的后续审计缺口。
+- 将网络恢复竞争改为可延期重试，避免在旧操作释放前进行高频轮询或误计失败。
+- 为历史打开、清空、切换、retention 与 writer drain 增加 FIFO gate、generation 防护和失败时的有界队列行为。
 
 ## 修改文件
 
 - `.planning/lightweight-mode-performance-2026-08-25_03-27-40/{task_plan,findings,progress}.md`
-- `Sources/MClashApp/App/{AppModel,ApplicationDelegate,MClashApp}.swift`
+- `Sources/MClashApp/App/{AppModel,ApplicationDelegate,MClashApp,NetworkEnvironmentRecovery}.swift`
 - `Sources/MClashApp/{Automation/AutomationCommandGateway,SystemProxy/NetworkSetupProxyBackend,Traffic/FlowLedger,UI/MenuBarContent,UI/SettingsView}.swift`
 - `Sources/MClashApp/Resources/*.lproj/Localizable.strings`
 - `Sources/MClashNetworkExtension/{DNSProxyProvider,UDPFlowSession}.swift`
 - `Tests/MClashNetworkExtensionTests/DNSProxyRuntimeReporterTests.swift`
-- `Tests/MClashTests/{ApplicationDelegate,AutomationCommandGateway,NetworkSetupProxyBackend,PresentationTelemetryPolicy}Tests.swift`
+- `Tests/MClashTests/{ApplicationDelegate,AutomationCommandGateway,NetworkSetupProxyBackend,PresentationTelemetryPolicy,NetworkEnvironmentRecoveryPolicy,TrafficHistoryStore}Tests.swift`
 
 ## 验证结果
 
 | 检查 | 结果 | 状态 |
 |---|---|---|
-| `git fetch origin main` | base 固定为 `2a244c0` | 通过 |
+| `git fetch origin main` | base 固定为 `632d181` | 通过 |
 | 进程 sample | 主 App SwiftUI/FlowLedger 为当前最大热点 | 通过 |
 | 循环审计 | 确认 Extension 两个 repeating timer 和主 App 隐藏处理链 | 通过 |
 | 宿主针对性 tests | 48 tests：lifecycle、telemetry policy、automation、FlowLedger、System Proxy cache、localization | 通过 |
@@ -43,7 +45,7 @@
 | Extension typecheck | `./scripts/typecheck.sh` | 通过 |
 | 合并修复针对性 tests | 19 tests：presentation cursor/clear、System Proxy cache、DNS probe cancellation | 通过 |
 | Extension 最终定向 tests | 6 tests：registry rollback/idempotency、heartbeat resume、sticky probe cancellation | 通过 |
-| `swift test --configuration debug --no-parallel` | 522 tests / 79 suites | 通过 |
+| `swift test --configuration debug --no-parallel` | 527 tests / 79 suites | 通过 |
 | `./scripts/typecheck.sh` | App、CLI、Network Extension strict concurrency/direct link | 通过 |
 | `./scripts/test-direct.sh` | App/Shared/Extension/Automation、warnings-as-errors、release script tests | 通过 |
 | `./scripts/integration-test.sh` | 双 Profile、HTTP/SOCKS、runtime listener、crash recovery、graceful shutdown、System Proxy read、Mihomo API | 通过 |

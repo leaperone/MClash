@@ -25,14 +25,14 @@
 
 ## 关键约束
 
-- 从 `origin/main@2a244c0` 的隔离 worktree 开发，保留主 checkout 与无关工作。
+- 从 `origin/main@632d181` 的隔离 worktree 开发，保留主 checkout 与无关工作。
 - 复用现有 Observation/AppKit/SwiftUI、`PresentationTelemetryPolicy` 和安全 monitor；最小直接改动。
 - 轻量模式可牺牲隐藏期间展示型流量历史完整性，但不得停止数据面和安全核对。
 - 不输出 Mihomo 启动参数、控制器凭据或其他敏感信息。
 
 ## 修改路径
 
-- `Sources/MClashApp/App/{MClashApp,ApplicationDelegate,AppModel}.swift`：菜单、Dock、展示需求与 App Routing monitor。
+- `Sources/MClashApp/App/{MClashApp,ApplicationDelegate,AppModel,NetworkEnvironmentRecovery}.swift`：菜单、Dock、展示需求、App Routing monitor 与恢复生命周期。
 - `Sources/MClashApp/UI/MenuBarContent.swift`：panel 隐藏时卸载完整内容。
 - `Sources/MClashApp/Traffic/FlowLedger.swift`：无文件系统的 last path component。
 - `Sources/MClashApp/Automation/AutomationCommandGateway.swift`：轻量模式自动化读写。
@@ -42,7 +42,7 @@
 
 ## 验证方式
 
-- 针对性 Swift tests 后运行 `swift test --no-parallel`、`Scripts/typecheck.sh`、`Scripts/build-app.sh` 和现有集成/签名检查。
+- 针对性 Swift tests 后运行 `swift test --no-parallel`、`scripts/typecheck.sh`、`scripts/build-app.sh` 和现有集成/签名检查。
 - 校验自动化 schema 与 `settings.patch` 持久化，隐藏态 telemetry policy 五项为 false。
 - 手工检查 Dock、最小菜单、主窗口恢复、连续模式切换；Computer Use 可用时保留截图/可见状态证据。
 - 对新构建分别采样 MClash、Mihomo、Network Extension 的 CPU、内存和 context switches；只有已安装且已激活的签名 Extension 才作为真实 NE 证据。
@@ -64,9 +64,19 @@
 ## 执行状态
 
 - [x] 完成只读探索并确认真实调用链
-- [x] 完成实现
-- [x] 完成验证
+- [x] 修复后台定时器、睡眠监视器和持久化维护缺口
+- [x] 完成针对性与全量验证
 - [x] 完成交付前收敛检查
+
+## 本轮增量范围
+
+- 取消 DNS backend probe 的一次性确认定时器，避免停止、睡眠或 live update 后留下无效唤醒。
+- 睡眠时暂停宿主 App Routing/DNS 状态监视，待既有网络恢复流程完成后恢复，避免唤醒时重复 disable/enable。
+- 在持久化历史打开及既有 writer 维护点执行低频 retention prune；清空历史前失效 writer 和正在构建的 ledger，避免旧批次在清空后回写。
+
+## 本轮非目标
+
+- 不增加新的后台轮询、不丢弃交通历史、不修改发布版本或覆盖当前安装版。
 
 ## 决策
 

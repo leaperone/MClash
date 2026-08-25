@@ -59,6 +59,42 @@ struct NetworkEnvironmentRecoveryPolicyTests {
         #expect(!policy.isSleeping)
     }
 
+    @Test("Sleep clears an in-flight recovery so the next wake can retry")
+    func sleepCancelsInFlightRecovery() {
+        var policy = makePolicy()
+        _ = policy.setArmed(true, at: base)
+        _ = policy.receive(.didWake, at: base)
+        #expect(policy.scheduledRecoveryFired(at: base.addingTimeInterval(2)) == .recover)
+
+        #expect(policy.receive(.willSleep, at: base.addingTimeInterval(3)) == .cancelScheduledRecovery)
+        #expect(
+            policy.receive(.didWake, at: base.addingTimeInterval(5))
+                == .schedule(after: 7)
+        )
+    }
+
+    @Test("Path loss cancels an in-flight recovery before the next usable path")
+    func pathLossCancelsInFlightRecovery() {
+        var policy = makePolicy()
+        _ = policy.setArmed(true, at: base)
+        _ = policy.receive(.didWake, at: base)
+        #expect(policy.scheduledRecoveryFired(at: base.addingTimeInterval(2)) == .recover)
+
+        #expect(
+            policy.receive(
+                .pathChanged(NetworkEnvironmentPath(status: .unsatisfied)),
+                at: base.addingTimeInterval(3)
+            ) == .cancelScheduledRecovery
+        )
+        #expect(!policy.recoveryIsInProgress)
+        #expect(
+            policy.receive(
+                .pathChanged(NetworkEnvironmentPath(status: .satisfied)),
+                at: base.addingTimeInterval(4)
+            ) == .schedule(after: 8)
+        )
+    }
+
     @Test("A failed recovery observes the cooldown before retrying")
     func failedRecoveryUsesCooldown() {
         var policy = makePolicy()
@@ -77,6 +113,28 @@ struct NetworkEnvironmentRecoveryPolicyTests {
         #expect(
             policy.scheduledRecoveryFired(at: base.addingTimeInterval(12)) == .recover
         )
+    }
+
+    @Test("A contended recovery is deferred without recording a failure")
+    func deferredRecoveryUsesCooldownWithoutFailure() {
+        var policy = NetworkEnvironmentRecoveryPolicy(
+            configuration: .init(
+                debounceInterval: 0,
+                minimumRecoveryInterval: 0,
+                failureWindow: 300,
+                maximumFailedRecoveries: 1
+            )
+        )
+        _ = policy.setArmed(true, at: base)
+        _ = policy.receive(.didWake, at: base)
+        #expect(policy.scheduledRecoveryFired(at: base) == .recover)
+
+        #expect(
+            policy.recoveryDeferred(at: base) == .schedule(after: 0)
+        )
+        #expect(policy.scheduledRecoveryFired(at: base) == .recover)
+        #expect(policy.recoveryCompleted(succeeded: false, at: base) == .schedule(after: 0))
+        #expect(policy.scheduledRecoveryFired(at: base) == .suppressAfterRepeatedFailures)
     }
 
     @Test("Repeated failures are bounded inside the failure window")

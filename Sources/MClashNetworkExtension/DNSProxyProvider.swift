@@ -87,6 +87,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     )
     private let backendProbeLock = NSLock()
     private var backendProbeTimer: DispatchSourceTimer?
+    private var backendProbeConfirmationTimer: DispatchSourceTimer?
+    private var backendProbeConfirmationID: UUID?
     private var activeBackendProbe: MihomoUDPAssociationProbe?
     private var pendingStartCompletion: DNSProxyLifecycleCompletion?
     private var liveUpdaterToken: UUID?
@@ -103,6 +105,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     ) {
         let startCompletion = DNSProxyLifecycleCompletion(completionHandler)
         backendProbeLock.lock()
+        let staleConfirmationTimer = takeBackendProbeConfirmationTimerLocked()
+        staleConfirmationTimer?.cancel()
         backendProbeGeneration &+= 1
         let startGeneration = backendProbeGeneration
         backendProbingSuspended = true
@@ -297,6 +301,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         consecutiveBackendProbeFailures = 0
         let timer = backendProbeTimer
         backendProbeTimer = nil
+        let confirmationTimer = takeBackendProbeConfirmationTimerLocked()
         let probe = activeBackendProbe
         activeBackendProbe = nil
         let pendingStartCompletion = pendingStartCompletion
@@ -314,6 +319,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         backendProbeLock.unlock()
         timer?.setEventHandler {}
         timer?.cancel()
+        cancelBackendProbeConfirmationTimer(confirmationTimer)
         probe?.cancel()
         backendProbeQueue.async { [self] in
             pendingStartCompletion?.call(DNSProxyBootstrapError.cancelledDuringStartup)
@@ -463,11 +469,13 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         consecutiveBackendProbeFailures = 0
         let timer = backendProbeTimer
         backendProbeTimer = nil
+        let confirmationTimer = takeBackendProbeConfirmationTimerLocked()
         let probe = activeBackendProbe
         activeBackendProbe = nil
         backendProbeLock.unlock()
         timer?.setEventHandler {}
         timer?.cancel()
+        cancelBackendProbeConfirmationTimer(confirmationTimer)
         probe?.cancel()
     }
 
@@ -520,11 +528,59 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     }
 
     private func scheduleBackendProbeConfirmation(generation: UInt64) {
-        backendProbeQueue.asyncAfter(
-            deadline: .now() + Self.backendProbeConfirmationDelay
-        ) { [weak self] in
-            self?.runBackendProbe(expectedGeneration: generation)
+        backendProbeLock.lock()
+        guard generation == backendProbeGeneration,
+              !backendProbingSuspended,
+              backendProbeConfirmationTimer == nil else {
+            backendProbeLock.unlock()
+            return
         }
+        let confirmationID = UUID()
+        let timer = DispatchSource.makeTimerSource(queue: backendProbeQueue)
+        timer.schedule(
+            deadline: .now() + Self.backendProbeConfirmationDelay,
+            leeway: .seconds(1)
+        )
+        timer.setEventHandler { [weak self] in
+            self?.runBackendProbeConfirmation(
+                id: confirmationID,
+                generation: generation
+            )
+        }
+        backendProbeConfirmationID = confirmationID
+        backendProbeConfirmationTimer = timer
+        timer.resume()
+        backendProbeLock.unlock()
+    }
+
+    private func runBackendProbeConfirmation(id: UUID, generation: UInt64) {
+        backendProbeLock.lock()
+        guard backendProbeConfirmationID == id else {
+            backendProbeLock.unlock()
+            return
+        }
+        let timer = takeBackendProbeConfirmationTimerLocked()
+        guard backendProbeGeneration == generation,
+              !backendProbingSuspended else {
+            backendProbeLock.unlock()
+            cancelBackendProbeConfirmationTimer(timer)
+            return
+        }
+        backendProbeLock.unlock()
+        cancelBackendProbeConfirmationTimer(timer)
+        runBackendProbe(expectedGeneration: generation)
+    }
+
+    private func takeBackendProbeConfirmationTimerLocked() -> DispatchSourceTimer? {
+        let timer = backendProbeConfirmationTimer
+        backendProbeConfirmationTimer = nil
+        backendProbeConfirmationID = nil
+        return timer
+    }
+
+    private func cancelBackendProbeConfirmationTimer(_ timer: DispatchSourceTimer?) {
+        timer?.setEventHandler {}
+        timer?.cancel()
     }
 
     private func handleUDPFlow(
@@ -801,6 +857,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         consecutiveBackendProbeFailures = 0
         let previousTimer = backendProbeTimer
         backendProbeTimer = nil
+        let previousConfirmationTimer = takeBackendProbeConfirmationTimerLocked()
         let previousReporter = reporter
         let previousProbe = activeBackendProbe
         activeBackendProbe = nil
@@ -816,6 +873,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
 
         previousTimer?.setEventHandler {}
         previousTimer?.cancel()
+        cancelBackendProbeConfirmationTimer(previousConfirmationTimer)
         previousProbe?.cancel()
         previousReporter?.stop()
         runBackendProbe()

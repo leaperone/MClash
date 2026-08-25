@@ -677,7 +677,15 @@ final class AppModel {
     private var trafficAttribution = TrafficAttribution()
     private var persistentTrafficHistoryStore: TrafficHistoryStore?
     private var trafficHistoryPersistTask: Task<Void, Never>?
+    private var trafficHistoryPersistDrainTask: Task<Void, Never>?
+    private var trafficHistoryPersistDrainGeneration: UInt64?
     private var trafficHistoryPersistGeneration: UInt64 = 0
+    private var trafficHistoryPersistenceOperationGeneration: UInt64 = 0
+    private var trafficHistoryLastPrunedAt: Date?
+    private var trafficHistoryClearInProgress = false
+    private var trafficHistoryPersistenceTransitionInProgress = false
+    private var trafficHistoryMutationInProgress = false
+    private var trafficHistoryMutationWaiters: [CheckedContinuation<Void, Never>] = []
     private var queuedTrafficHistoryCompletions: [TrafficHistoryCompletedFlow] = []
     private var queuedTrafficHistoryIdentifiers: Set<String> = []
     private var persistedTrafficHistoryIdentifiers: Set<String> = []
@@ -695,6 +703,7 @@ final class AppModel {
     private var appRoutingActivityTask: Task<Void, Never>?
     private var appRoutingActivityMonitorMode: AppRoutingActivityMonitorMode?
     private var appRoutingMonitorGeneration: UInt64 = 0
+    private var appRoutingMonitorsPausedForSleep = false
     private var appRoutingActivityAcknowledgedDroppedBefore: UInt64 = 0
     private var dnsProxyRuntimeTask: Task<Void, Never>?
     private var dnsProxyMonitorGeneration: UInt64 = 0
@@ -702,6 +711,7 @@ final class AppModel {
     private var networkEnvironmentDebounceTask: Task<Void, Never>?
     private var networkEnvironmentRecoveryTask: Task<Void, Never>?
     private var networkEnvironmentRecoveryPolicy = NetworkEnvironmentRecoveryPolicy()
+    private var networkEnvironmentPathIsUsable: Bool?
     private var networkEnvironmentRecoveryArmed = false
     private var networkEnvironmentDebounceGeneration: UInt64 = 0
     private var networkEnvironmentRecoveryGeneration: UInt64 = 0
@@ -4285,12 +4295,22 @@ final class AppModel {
             dnsProxyAutomaticallyDisabled = false
             dnsProxyRuntimeError = nil
             networkCaptureState = .off
+            if !networkEnvironmentRecoveryPolicy.isSleeping,
+               networkEnvironmentRecoveryTask == nil,
+               networkEnvironmentDebounceTask == nil {
+                appRoutingMonitorsPausedForSleep = false
+            }
             return true
         } catch {
             let message = error.localizedDescription
             networkCaptureState = .failed(message)
             errorMessage = message
             appendSupervisorLog("Network Extension shutdown failed: \(message)")
+            if !networkEnvironmentRecoveryPolicy.isSleeping,
+               networkEnvironmentRecoveryTask == nil,
+               networkEnvironmentDebounceTask == nil {
+                appRoutingMonitorsPausedForSleep = false
+            }
             return false
         }
     }
@@ -4670,27 +4690,35 @@ final class AppModel {
     /// prove the state transitions without waiting for the periodic timer.
     func performSystemProxyGuardCheck(
         endpoints: LocalSystemProxyEndpoints,
-        bypassDomains: [String]
+        bypassDomains: [String],
+        recoveryGeneration: UInt64? = nil
     ) async {
-        guard !shutdownInProgress, systemProxyGuardCanVerify else { return }
+        func canContinue() -> Bool {
+            guard !shutdownInProgress, systemProxyGuardCanVerify else { return false }
+            guard let recoveryGeneration else { return true }
+            return networkEnvironmentRecoveryCanContinue(generation: recoveryGeneration)
+        }
+
+        guard canContinue() else { return }
         do {
             let matches = try await systemProxyManager.configurationMatches(
                 endpoints: endpoints,
                 bypassDomains: bypassDomains
             )
-            guard !shutdownInProgress, systemProxyGuardCanVerify else { return }
+            guard canContinue() else { return }
             if !matches {
                 let detectedAt = Date()
+                guard canContinue() else { return }
                 try await systemProxyManager.apply(
                     endpoints: endpoints,
                     bypassDomains: bypassDomains
                 )
-                guard !shutdownInProgress, systemProxyGuardCanVerify else { return }
+                guard canContinue() else { return }
                 let repairedConfigurationMatches = try await systemProxyManager.configurationMatches(
                     endpoints: endpoints,
                     bypassDomains: bypassDomains
                 )
-                guard !shutdownInProgress, systemProxyGuardCanVerify else { return }
+                guard canContinue() else { return }
                 guard repairedConfigurationMatches else {
                     throw AppModelError.systemProxyGuardVerificationFailed
                 }
@@ -4710,7 +4738,7 @@ final class AppModel {
                 systemProxyState = .on
             }
         } catch {
-            guard systemProxyGuardCanVerify else { return }
+            guard canContinue() else { return }
             recordSystemProxyGuardFailure(error)
         }
     }
@@ -5020,30 +5048,100 @@ final class AppModel {
     }
 
     func setPersistentTrafficHistoryEnabled(_ enabled: Bool) async {
+        await beginTrafficHistoryMutation()
+        defer { endTrafficHistoryMutation() }
+        guard !Task.isCancelled, !shutdownInProgress else { return }
+
+        trafficHistoryPersistenceOperationGeneration &+= 1
+        let operationGeneration = trafficHistoryPersistenceOperationGeneration
+        trafficHistoryPersistenceTransitionInProgress = true
+        defer {
+            if operationGeneration == trafficHistoryPersistenceOperationGeneration {
+                trafficHistoryPersistenceTransitionInProgress = false
+                if persistentTrafficHistoryStore == nil {
+                    queuedTrafficHistoryCompletions.removeAll(keepingCapacity: false)
+                    queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
+                }
+                startFlowLedgerRefreshIfNeeded()
+                startPersistentTrafficHistoryWriterIfNeeded()
+            }
+        }
         trafficHistoryPersistenceChoice = enabled ? .persistent : .sessionOnly
-        trafficHistoryPersistGeneration &+= 1
-        trafficHistoryPersistTask?.cancel()
-        trafficHistoryPersistTask = nil
+        trafficHistoryLastPrunedAt = nil
         queuedTrafficHistoryCompletions.removeAll(keepingCapacity: false)
         queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
-
+        persistedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
+        persistedTrafficHistoryIdentifierOrder.removeAll(keepingCapacity: false)
+        persistentTrafficHistoryStore = nil
+        let writer = invalidateTrafficHistoryWriter()
+        let writerGeneration = trafficHistoryPersistGeneration
+        if let writer {
+            await writer.value
+        }
+        guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+            return
+        }
+        if trafficHistoryPersistDrainGeneration == writerGeneration {
+            trafficHistoryPersistDrainTask = nil
+            trafficHistoryPersistDrainGeneration = nil
+        }
         guard enabled else {
-            persistentTrafficHistoryStore = nil
             trafficHistoryTodaySnapshot = nil
             trafficHistoryWeekSnapshot = nil
             trafficHistoryRuntimeState = .sessionOnly
             return
         }
-        await openPersistentTrafficHistory()
+        await openPersistentTrafficHistory(operationGeneration: operationGeneration)
     }
 
     func setTrafficHistoryRetention(_ retention: TrafficHistoryRetention) async {
+        await beginTrafficHistoryMutation()
+        defer { endTrafficHistoryMutation() }
+        guard !Task.isCancelled, !shutdownInProgress else { return }
+
+        guard !trafficHistoryClearInProgress,
+              !trafficHistoryPersistenceTransitionInProgress else { return }
+        trafficHistoryPersistenceOperationGeneration &+= 1
+        let operationGeneration = trafficHistoryPersistenceOperationGeneration
+        trafficHistoryPersistenceTransitionInProgress = true
+        defer {
+            if operationGeneration == trafficHistoryPersistenceOperationGeneration {
+                trafficHistoryPersistenceTransitionInProgress = false
+                if persistentTrafficHistoryStore == nil {
+                    queuedTrafficHistoryCompletions.removeAll(keepingCapacity: false)
+                    queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
+                }
+                startFlowLedgerRefreshIfNeeded()
+                startPersistentTrafficHistoryWriterIfNeeded()
+            }
+        }
+        guard trafficHistoryPersistenceChoice == .persistent else { return }
         guard let store = persistentTrafficHistoryStore else { return }
+        let writer = invalidateTrafficHistoryWriter()
+        let writerGeneration = trafficHistoryPersistGeneration
+        if let writer {
+            await writer.value
+        }
+        guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+            return
+        }
+        if trafficHistoryPersistDrainGeneration == writerGeneration {
+            trafficHistoryPersistDrainTask = nil
+            trafficHistoryPersistDrainGeneration = nil
+        }
+        let now = Date()
         do {
-            try await store.setRetention(retention)
+            try await store.setRetention(retention, now: now)
+            guard operationGeneration == trafficHistoryPersistenceOperationGeneration,
+                  trafficHistoryPersistenceChoice == .persistent else { return }
             trafficHistoryRetention = retention
-            await refreshPersistentTrafficHistorySnapshots()
+            trafficHistoryLastPrunedAt = now
+            await refreshPersistentTrafficHistorySnapshots(
+                expectedOperationGeneration: operationGeneration
+            )
         } catch {
+            guard operationGeneration == trafficHistoryPersistenceOperationGeneration,
+                  trafficHistoryPersistenceChoice == .persistent else { return }
             markPersistentTrafficHistoryUnavailable(
                 "MClash could not update the traffic history retention period: \(error.localizedDescription)"
             )
@@ -5052,19 +5150,95 @@ final class AppModel {
 
     @discardableResult
     func clearTrafficHistory() async -> Bool {
-        clearClosedConnectionHistory()
-        guard await clearAppRoutingActivity() else { return false }
+        await beginTrafficHistoryMutation()
+        defer { endTrafficHistoryMutation() }
+        guard !Task.isCancelled, !shutdownInProgress else { return false }
 
-        guard let store = persistentTrafficHistoryStore else { return true }
+        guard !trafficHistoryClearInProgress else { return false }
+        trafficHistoryPersistenceOperationGeneration &+= 1
+        let operationGeneration = trafficHistoryPersistenceOperationGeneration
+        trafficHistoryClearInProgress = true
+        trafficHistoryPersistenceTransitionInProgress = false
+        let ledgerTask = invalidateFlowLedgerRefresh()
+        let writer = invalidateTrafficHistoryWriter()
+        let writerGeneration = trafficHistoryPersistGeneration
+        if let writer {
+            await writer.value
+        }
+        if trafficHistoryPersistDrainGeneration == writerGeneration {
+            trafficHistoryPersistDrainTask = nil
+            trafficHistoryPersistDrainGeneration = nil
+        }
+        if let ledgerTask {
+            await ledgerTask.value
+        }
+        guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+            trafficHistoryClearInProgress = false
+            return false
+        }
+        queuedTrafficHistoryCompletions.removeAll(keepingCapacity: false)
+        queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
+
+        if persistentTrafficHistoryStore == nil,
+           trafficHistoryPersistenceChoice == .persistent {
+            await openPersistentTrafficHistory(
+                operationGeneration: operationGeneration,
+                allowDuringClear: true
+            )
+            guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+                trafficHistoryClearInProgress = false
+                return false
+            }
+        }
+
+        clearClosedConnectionHistory()
+        guard await clearAppRoutingActivity() else {
+            guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+                trafficHistoryClearInProgress = false
+                return false
+            }
+            trafficHistoryClearInProgress = false
+            scheduleFlowLedgerRefresh(neededForAccounting: true)
+            startPersistentTrafficHistoryWriterIfNeeded()
+            return false
+        }
+
+        let persistentHistoryExpected = trafficHistoryPersistenceChoice == .persistent
+        guard let store = persistentTrafficHistoryStore else {
+            guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+                trafficHistoryClearInProgress = false
+                return false
+            }
+            trafficHistoryClearInProgress = false
+            scheduleFlowLedgerRefresh(neededForAccounting: true)
+            return !persistentHistoryExpected
+        }
         do {
             _ = try await store.clear()
+            guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+                trafficHistoryClearInProgress = false
+                return false
+            }
             persistedTrafficHistoryIdentifiers.removeAll(keepingCapacity: true)
             persistedTrafficHistoryIdentifierOrder.removeAll(keepingCapacity: true)
-            queuedTrafficHistoryCompletions.removeAll(keepingCapacity: true)
-            queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: true)
-            await refreshPersistentTrafficHistorySnapshots()
+            trafficHistoryLastPrunedAt = Date()
+            await refreshPersistentTrafficHistorySnapshots(
+                expectedOperationGeneration: operationGeneration
+            )
+            guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+                trafficHistoryClearInProgress = false
+                return false
+            }
+            trafficHistoryClearInProgress = false
+            scheduleFlowLedgerRefresh(neededForAccounting: true)
             return true
         } catch {
+            guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
+                trafficHistoryClearInProgress = false
+                return false
+            }
+            trafficHistoryClearInProgress = false
+            scheduleFlowLedgerRefresh(neededForAccounting: true)
             markPersistentTrafficHistoryUnavailable(
                 "MClash could not clear the persistent traffic history: \(error.localizedDescription)"
             )
@@ -5072,15 +5246,30 @@ final class AppModel {
         }
     }
 
-    func refreshPersistentTrafficHistorySnapshots() async {
+    func refreshPersistentTrafficHistorySnapshots(
+        expectedPersistenceGeneration: UInt64? = nil,
+        expectedOperationGeneration: UInt64? = nil
+    ) async {
         guard let store = persistentTrafficHistoryStore else { return }
         do {
             let today = try await store.snapshot(for: .today)
             let week = try await store.snapshot(for: .week)
+            guard expectedPersistenceGeneration == nil
+                || expectedPersistenceGeneration == trafficHistoryPersistGeneration,
+                expectedOperationGeneration == nil
+                || expectedOperationGeneration == trafficHistoryPersistenceOperationGeneration else {
+                return
+            }
             trafficHistoryTodaySnapshot = today
             trafficHistoryWeekSnapshot = week
             trafficHistoryRuntimeState = .ready(lastUpdatedAt: Date())
         } catch {
+            guard expectedPersistenceGeneration == nil
+                || expectedPersistenceGeneration == trafficHistoryPersistGeneration,
+                expectedOperationGeneration == nil
+                || expectedOperationGeneration == trafficHistoryPersistenceOperationGeneration else {
+                return
+            }
             markPersistentTrafficHistoryUnavailable(
                 "MClash could not read the persistent traffic history: \(error.localizedDescription)"
             )
@@ -5088,17 +5277,56 @@ final class AppModel {
     }
 
     private func prepareTrafficHistoryPersistenceIfNeeded() async {
+        await beginTrafficHistoryMutation()
+        defer { endTrafficHistoryMutation() }
+        guard !Task.isCancelled, !shutdownInProgress else { return }
+
         switch trafficHistoryPersistenceChoice {
         case .undecided:
             trafficHistoryRuntimeState = .notConfigured
         case .sessionOnly:
             trafficHistoryRuntimeState = .sessionOnly
         case .persistent:
-            await openPersistentTrafficHistory()
+            trafficHistoryPersistenceOperationGeneration &+= 1
+            let operationGeneration = trafficHistoryPersistenceOperationGeneration
+            trafficHistoryPersistenceTransitionInProgress = true
+            defer {
+                if operationGeneration == trafficHistoryPersistenceOperationGeneration {
+                    trafficHistoryPersistenceTransitionInProgress = false
+                    if persistentTrafficHistoryStore == nil {
+                        queuedTrafficHistoryCompletions.removeAll(keepingCapacity: false)
+                        queuedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
+                    }
+                    startFlowLedgerRefreshIfNeeded()
+                    startPersistentTrafficHistoryWriterIfNeeded()
+                }
+            }
+            let writer = invalidateTrafficHistoryWriter()
+            let writerGeneration = trafficHistoryPersistGeneration
+            if let writer {
+                await writer.value
+            }
+            if trafficHistoryPersistDrainGeneration == writerGeneration {
+                trafficHistoryPersistDrainTask = nil
+                trafficHistoryPersistDrainGeneration = nil
+            }
+            await openPersistentTrafficHistory(
+                operationGeneration: operationGeneration
+            )
         }
     }
 
-    private func openPersistentTrafficHistory() async {
+    private func openPersistentTrafficHistory(
+        operationGeneration: UInt64,
+        allowDuringClear: Bool = false
+    ) async {
+        func isCurrentOperation() -> Bool {
+            return operationGeneration == self.trafficHistoryPersistenceOperationGeneration
+                && self.trafficHistoryPersistenceChoice == .persistent
+        }
+
+        guard isCurrentOperation(),
+              allowDuringClear || !trafficHistoryClearInProgress else { return }
         guard let profileLayout else {
             markPersistentTrafficHistoryUnavailable(
                 "The MClash Application Support directory is unavailable."
@@ -5109,19 +5337,41 @@ final class AppModel {
         let result = await Task.detached(priority: .utility) {
             TrafficHistoryStore.open(layout: profileLayout)
         }.value
+        guard isCurrentOperation() else { return }
         switch result {
         case let .ready(store):
-            persistentTrafficHistoryStore = store
             do {
-                trafficHistoryRetention = try await store.retention()
-                await refreshPersistentTrafficHistorySnapshots()
+                let retention = try await store.retention()
+                guard isCurrentOperation() else { return }
+                let now = Date()
+                do {
+                    try await store.prune(now: now)
+                    guard isCurrentOperation() else { return }
+                    trafficHistoryLastPrunedAt = now
+                } catch {
+                    guard isCurrentOperation() else { return }
+                    appendSupervisorLog(
+                        "Persistent traffic history maintenance was deferred: \(error.localizedDescription)"
+                    )
+                }
+                guard isCurrentOperation() else { return }
+                persistentTrafficHistoryStore = store
+                trafficHistoryRetention = retention
+                persistedTrafficHistoryIdentifiers.removeAll(keepingCapacity: false)
+                persistedTrafficHistoryIdentifierOrder.removeAll(keepingCapacity: false)
+                await refreshPersistentTrafficHistorySnapshots(
+                    expectedOperationGeneration: operationGeneration
+                )
+                guard isCurrentOperation(), persistentTrafficHistoryStore != nil else { return }
                 schedulePersistentTrafficHistory(from: flowLedger)
             } catch {
+                guard isCurrentOperation() else { return }
                 markPersistentTrafficHistoryUnavailable(
                     "MClash opened traffic history but could not verify it: \(error.localizedDescription)"
                 )
             }
         case let .unavailable(reason):
+            guard isCurrentOperation() else { return }
             markPersistentTrafficHistoryUnavailable(
                 Self.trafficHistoryUnavailableDescription(reason)
             )
@@ -5130,6 +5380,7 @@ final class AppModel {
 
     private func markPersistentTrafficHistoryUnavailable(_ reason: String) {
         persistentTrafficHistoryStore = nil
+        trafficHistoryLastPrunedAt = nil
         trafficHistoryRuntimeState = .unavailable(reason)
         appendSupervisorLog("Persistent traffic history is unavailable: \(reason)")
     }
@@ -6286,12 +6537,12 @@ final class AppModel {
         networkEnvironmentDebounceGeneration &+= 1
         networkEnvironmentDebounceTask?.cancel()
         networkEnvironmentDebounceTask = nil
-        networkEnvironmentRecoveryGeneration &+= 1
-        networkEnvironmentRecoveryTask?.cancel()
-        networkEnvironmentRecoveryTask = nil
+        invalidateNetworkEnvironmentRecovery()
         networkEnvironmentMonitor.stop()
         networkEnvironmentRecoveryArmed = false
         networkEnvironmentRecoveryPolicy = NetworkEnvironmentRecoveryPolicy()
+        networkEnvironmentPathIsUsable = nil
+        appRoutingMonitorsPausedForSleep = false
     }
 
     private func resumeNetworkEnvironmentMonitoringAfterCancelledShutdown(
@@ -6303,6 +6554,9 @@ final class AppModel {
     }
 
     private func setNetworkEnvironmentRecoveryArmed(_ armed: Bool) {
+        if !armed, networkEnvironmentRecoveryArmed {
+            invalidateNetworkEnvironmentRecovery()
+        }
         networkEnvironmentRecoveryArmed = armed
         applyNetworkEnvironmentRecoveryDirective(
             networkEnvironmentRecoveryPolicy.setArmed(armed)
@@ -6312,11 +6566,50 @@ final class AppModel {
     private func receiveNetworkEnvironmentEvent(_ event: NetworkEnvironmentEvent) {
         guard !shutdownInProgress else { return }
         if event == .willSleep {
-            networkEnvironmentRecoveryTask?.cancel()
+            pauseAppRoutingMonitorsForSleep()
+            invalidateNetworkEnvironmentRecovery()
+        } else if case let .pathChanged(path) = event {
+            networkEnvironmentPathIsUsable = path.isUsable
+            if !path.isUsable {
+                invalidateNetworkEnvironmentRecovery()
+            }
         }
         applyNetworkEnvironmentRecoveryDirective(
             networkEnvironmentRecoveryPolicy.receive(event)
         )
+    }
+
+    private func pauseAppRoutingMonitorsForSleep() {
+        appRoutingMonitorsPausedForSleep = true
+        guard appRoutingActivityTask != nil || dnsProxyRuntimeTask != nil else {
+            return
+        }
+        appRoutingActivityTask?.cancel()
+        appRoutingActivityTask = nil
+        appRoutingActivityMonitorMode = nil
+        appRoutingMonitorGeneration &+= 1
+        dnsProxyRuntimeTask?.cancel()
+        dnsProxyRuntimeTask = nil
+        dnsProxyMonitorGeneration &+= 1
+    }
+
+    private func resumeAppRoutingMonitorsAfterSleepIfNeeded() {
+        guard appRoutingMonitorsPausedForSleep else { return }
+        guard !networkEnvironmentRecoveryPolicy.isSleeping else { return }
+        guard !shutdownInProgress,
+              networkCapturePreferences.enabled,
+              case .on = networkCaptureState else {
+            appRoutingMonitorsPausedForSleep = false
+            return
+        }
+        guard networkEnvironmentPathIsUsable != false else { return }
+        guard networkEnvironmentDebounceTask == nil,
+              networkEnvironmentRecoveryTask == nil else { return }
+        appRoutingMonitorsPausedForSleep = false
+        appRoutingProviderStatusFailureCount = 0
+        appRoutingProviderLastVerifiedAt = nil
+        startDNSProxyRuntimeMonitor()
+        launchAppRoutingActivityMonitor(forceRestart: true)
     }
 
     private func applyNetworkEnvironmentRecoveryDirective(
@@ -6324,6 +6617,7 @@ final class AppModel {
     ) {
         switch directive {
         case .none:
+            resumeAppRoutingMonitorsAfterSleepIfNeeded()
             return
 
         case .cancelScheduledRecovery:
@@ -6356,32 +6650,52 @@ final class AppModel {
             networkEnvironmentRecoveryTask?.cancel()
             networkEnvironmentRecoveryTask = Task { @MainActor [weak self] in
                 guard let self else { return }
-                let succeeded = await self.performNetworkEnvironmentRecovery()
-                guard generation == self.networkEnvironmentRecoveryGeneration else { return }
+                let result = await self.performNetworkEnvironmentRecovery(
+                    generation: generation
+                )
+                guard !Task.isCancelled,
+                      generation == self.networkEnvironmentRecoveryGeneration else { return }
+                guard let succeeded = result else {
+                    self.networkEnvironmentRecoveryTask = nil
+                    self.applyNetworkEnvironmentRecoveryDirective(
+                        self.networkEnvironmentRecoveryPolicy.recoveryDeferred()
+                    )
+                    self.resumeAppRoutingMonitorsAfterSleepIfNeeded()
+                    return
+                }
                 self.networkEnvironmentRecoveryTask = nil
                 self.applyNetworkEnvironmentRecoveryDirective(
                     self.networkEnvironmentRecoveryPolicy.recoveryCompleted(
                         succeeded: succeeded
                     )
                 )
+                self.resumeAppRoutingMonitorsAfterSleepIfNeeded()
             }
 
         case .suppressAfterRepeatedFailures:
             appendSupervisorLog(
                 "Automatic network-environment recovery paused after repeated failures. A later wake or network-path change will re-evaluate the session."
             )
+            resumeAppRoutingMonitorsAfterSleepIfNeeded()
         }
     }
 
-    private func performNetworkEnvironmentRecovery() async -> Bool {
-        guard networkEnvironmentRecoveryArmed,
-              !shutdownInProgress,
-              !Task.isCancelled else { return true }
+    private func invalidateNetworkEnvironmentRecovery() {
+        networkEnvironmentRecoveryGeneration &+= 1
+        networkEnvironmentRecoveryTask?.cancel()
+        networkEnvironmentRecoveryTask = nil
+    }
+
+    private func performNetworkEnvironmentRecovery(generation: UInt64) async -> Bool? {
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+            return nil
+        }
+        guard !operations.contains(.recoverNetworkEnvironment) else { return nil }
         guard begin(.recoverNetworkEnvironment) else {
             appendSupervisorLog(
                 "Network-environment recovery was deferred while another network operation was in progress."
             )
-            return false
+            return nil
         }
         defer { end(.recoverNetworkEnvironment) }
 
@@ -6389,18 +6703,25 @@ final class AppModel {
             "Verifying the network data plane after a wake or network-path change."
         )
 
-        if !(await verifyCoreAndLocalListenersForNetworkRecovery()) {
-            guard await reconnectForNetworkEnvironmentRecovery() else { return false }
+        if !(await verifyCoreAndLocalListenersForNetworkRecovery(generation: generation)) {
+            guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                return false
+            }
+            guard await reconnectForNetworkEnvironmentRecovery(generation: generation) else {
+                return false
+            }
         }
-        guard !Task.isCancelled,
-              networkEnvironmentRecoveryArmed,
+        guard networkEnvironmentRecoveryCanContinue(generation: generation),
               isConnected,
               controllerIsReady else { return false }
 
-        guard await verifyOrRecoverAppRoutingForNetworkEnvironment() else {
+        guard await verifyOrRecoverAppRoutingForNetworkEnvironment(
+            generation: generation
+        ) else {
             return false
         }
-        guard await verifySystemProxyForNetworkEnvironment() else {
+        guard networkEnvironmentRecoveryCanContinue(generation: generation),
+              await verifySystemProxyForNetworkEnvironment(generation: generation) else {
             return false
         }
 
@@ -6408,7 +6729,21 @@ final class AppModel {
         return true
     }
 
-    private func verifyCoreAndLocalListenersForNetworkRecovery() async -> Bool {
+    private func networkEnvironmentRecoveryCanContinue(generation: UInt64) -> Bool {
+        generation == networkEnvironmentRecoveryGeneration
+            && networkEnvironmentRecoveryArmed
+            && networkEnvironmentPathIsUsable != false
+            && !networkEnvironmentRecoveryPolicy.isSleeping
+            && !shutdownInProgress
+            && !Task.isCancelled
+    }
+
+    private func verifyCoreAndLocalListenersForNetworkRecovery(
+        generation: UInt64
+    ) async -> Bool {
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+            return false
+        }
         guard isConnected,
               controllerIsReady,
               let session = runningSession,
@@ -6421,11 +6756,17 @@ final class AppModel {
                 requestTimeout: 3
             )
             _ = try await probe.fetchVersion()
+            guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                return false
+            }
             try Task.checkCancellation()
             try await localPortProbe.waitUntilProxyProtocols(
                 httpPort: httpPort,
                 socksPort: socksPort
             )
+            guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                return false
+            }
             if let dedicatedPort = activeProfileDedicatedMixedListener.map({
                 Int($0.port)
             }) {
@@ -6433,11 +6774,17 @@ final class AppModel {
                     httpPort: dedicatedPort,
                     socksPort: dedicatedPort
                 )
+                guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                    return false
+                }
             }
             if let activeProfileID {
                 try await verifyProfileRouteListenerProtocols(
                     profileID: activeProfileID
                 )
+                guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                    return false
+                }
             }
             if activeNetworkExtensionMihomoListener != nil {
                 try await localPortProbe.waitUntilListening(
@@ -6445,8 +6792,13 @@ final class AppModel {
                         Int($0.port)
                     })
                 )
+                guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                    return false
+                }
             }
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             appendSupervisorLog(
                 "Core or local listener verification failed after the network environment changed: \(error.localizedDescription)"
@@ -6455,22 +6807,27 @@ final class AppModel {
         }
     }
 
-    private func reconnectForNetworkEnvironmentRecovery() async -> Bool {
+    private func reconnectForNetworkEnvironmentRecovery(generation: UInt64) async -> Bool {
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
         let shouldRestoreSystemProxy = systemProxyEnabled || hasSystemProxySnapshot
         appendSupervisorLog(
             "Restarting the current proxy session because the core, controller, or a local listener could not be verified."
         )
         guard await performDisconnect(),
-              !Task.isCancelled,
-              networkEnvironmentRecoveryArmed else { return false }
+              networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
         guard await performConnect() else { return false }
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
         if shouldRestoreSystemProxy, !networkCapturePreferences.enabled {
             await enableSystemProxyAfterConnect()
         }
-        return await verifyCoreAndLocalListenersForNetworkRecovery()
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
+        return await verifyCoreAndLocalListenersForNetworkRecovery(generation: generation)
     }
 
-    private func verifyOrRecoverAppRoutingForNetworkEnvironment() async -> Bool {
+    private func verifyOrRecoverAppRoutingForNetworkEnvironment(
+        generation: UInt64
+    ) async -> Bool {
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
         guard networkCapturePreferences.enabled else { return true }
         switch networkCaptureState {
         case .requiresReboot, .awaitingUserApproval:
@@ -6480,22 +6837,30 @@ final class AppModel {
         case .enabling, .disabling:
             return false
         case .off, .waitingForConnection, .failed:
-            return await restartAppRoutingForNetworkEnvironment()
+            return await restartAppRoutingForNetworkEnvironment(generation: generation)
         case let .on(revision):
             guard await appRoutingRuntimeIsHealthyForNetworkEnvironment(
-                expectedRevision: revision
+                expectedRevision: revision,
+                generation: generation
             ) else {
-                return await restartAppRoutingForNetworkEnvironment()
+                return await restartAppRoutingForNetworkEnvironment(generation: generation)
             }
-            return true
+            return networkEnvironmentRecoveryCanContinue(generation: generation)
         }
     }
 
     private func appRoutingRuntimeIsHealthyForNetworkEnvironment(
-        expectedRevision: UInt64
+        expectedRevision: UInt64,
+        generation: UInt64
     ) async -> Bool {
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+            return false
+        }
         do {
             let provider = try await networkExtensionControl.providerRuntimeStatus()
+            guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                return false
+            }
             guard provider.running,
                   provider.captureEnabled,
                   provider.revision == expectedRevision else { return false }
@@ -6503,6 +6868,9 @@ final class AppModel {
                 guard let dns = try await networkExtensionControl
                     .dnsProviderRuntimeStatus(),
                     dns.isOperational else { return false }
+                guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                    return false
+                }
                 dnsProxyRuntimeStatus = dns
                 dnsProxyRuntimeError = nil
                 dnsProxyRuntimeFailureCount = 0
@@ -6512,6 +6880,9 @@ final class AppModel {
             appRoutingProviderLastVerifiedAt = Date()
             return true
         } catch {
+            guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
+                return false
+            }
             appendSupervisorLog(
                 "App Routing runtime verification failed after the network environment changed: \(error.localizedDescription)"
             )
@@ -6519,7 +6890,8 @@ final class AppModel {
         }
     }
 
-    private func restartAppRoutingForNetworkEnvironment() async -> Bool {
+    private func restartAppRoutingForNetworkEnvironment(generation: UInt64) async -> Bool {
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
         appendSupervisorLog(
             "Retrying App Routing and DNS Routing after runtime verification failed."
         )
@@ -6527,25 +6899,31 @@ final class AppModel {
            !(await performNetworkCaptureDeactivation()) {
             return false
         }
-        guard !Task.isCancelled, networkEnvironmentRecoveryArmed else { return false }
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
         await performNetworkCaptureActivation()
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
         guard case let .on(revision) = networkCaptureState else { return false }
         return await appRoutingRuntimeIsHealthyForNetworkEnvironment(
-            expectedRevision: revision
+            expectedRevision: revision,
+            generation: generation
         )
     }
 
-    private func verifySystemProxyForNetworkEnvironment() async -> Bool {
+    private func verifySystemProxyForNetworkEnvironment(generation: UInt64) async -> Bool {
+        guard networkEnvironmentRecoveryCanContinue(generation: generation) else { return false }
         guard systemProxyEnabled else { return true }
         guard let endpoints = currentSystemProxyEndpoints() else { return false }
         await performSystemProxyGuardCheck(
             endpoints: endpoints,
-            bypassDomains: systemProxyPreferences.effectiveBypassDomains
+            bypassDomains: systemProxyPreferences.effectiveBypassDomains,
+            recoveryGeneration: generation
         )
-        return systemProxyGuardFailure == nil
+        return networkEnvironmentRecoveryCanContinue(generation: generation)
+            && systemProxyGuardFailure == nil
     }
 
     private func startAppRoutingActivityMonitor() {
+        guard !appRoutingMonitorsPausedForSleep else { return }
         appRoutingActivityTask?.cancel()
         appRoutingActivityCursor = 0
         appRoutingActivityAcknowledgedDroppedBefore = 0
@@ -6572,6 +6950,7 @@ final class AppModel {
     }
 
     private func launchAppRoutingActivityMonitor(forceRestart: Bool = false) {
+        guard !appRoutingMonitorsPausedForSleep else { return }
         let hasDetailedPresentation = presentationTelemetryPolicy.appRoutingActivity
         let mode: AppRoutingActivityMonitorMode = if lightweightMode
             && !hasDetailedPresentation {
@@ -6779,12 +7158,14 @@ final class AppModel {
         expectedRevision: UInt64? = nil
     ) -> Bool {
         guard !Task.isCancelled,
+              !appRoutingMonitorsPausedForSleep,
               generation == appRoutingMonitorGeneration else { return false }
         guard let expectedRevision else { return true }
         return networkCaptureState.isActive(revision: expectedRevision)
     }
 
     private func startDNSProxyRuntimeMonitor() {
+        guard !appRoutingMonitorsPausedForSleep else { return }
         dnsProxyRuntimeTask?.cancel()
         dnsProxyMonitorGeneration &+= 1
         let generation = dnsProxyMonitorGeneration
@@ -6902,6 +7283,7 @@ final class AppModel {
         expectedRevision: UInt64? = nil
     ) -> Bool {
         guard !Task.isCancelled,
+              !appRoutingMonitorsPausedForSleep,
               generation == dnsProxyMonitorGeneration else { return false }
         guard let expectedRevision else { return true }
         return networkCaptureState.isActive(revision: expectedRevision)
@@ -7110,6 +7492,37 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    private func invalidateFlowLedgerRefresh() -> Task<Void, Never>? {
+        flowLedgerRevision &+= 1
+        flowLedgerTaskGeneration &+= 1
+        let task = flowLedgerTask
+        flowLedgerTask?.cancel()
+        flowLedgerTask = nil
+        flowLedgerAccountingRefreshPending = false
+        flowLedgerPresentationRefreshPending = false
+        flowLedgerActiveBuildNeedsAccounting = false
+        return task
+    }
+
+    @discardableResult
+    private func invalidateTrafficHistoryWriter() -> Task<Void, Never>? {
+        trafficHistoryPersistGeneration &+= 1
+        let task = trafficHistoryPersistTask ?? trafficHistoryPersistDrainTask
+        trafficHistoryPersistTask?.cancel()
+        trafficHistoryPersistTask = nil
+        trafficHistoryPersistDrainTask = task
+        trafficHistoryPersistDrainGeneration = task == nil
+            ? nil
+            : trafficHistoryPersistGeneration
+        return task
+    }
+
+    private func shouldPruneTrafficHistory(at date: Date) -> Bool {
+        guard let lastPrunedAt = trafficHistoryLastPrunedAt else { return true }
+        return date.timeIntervalSince(lastPrunedAt) >= Self.trafficHistoryPruneInterval
+    }
+
     private func scheduleFlowLedgerRefresh(neededForAccounting: Bool = false) {
         flowLedgerRevision &+= 1
         if neededForAccounting {
@@ -7123,7 +7536,11 @@ final class AppModel {
     private func startFlowLedgerRefreshIfNeeded() {
         let needsRefresh = flowLedgerAccountingRefreshPending
             || flowLedgerPresentationRefreshPending
-        guard needsRefresh, flowLedgerTask == nil else { return }
+        guard !trafficHistoryClearInProgress,
+              !trafficHistoryPersistenceTransitionInProgress,
+              !shutdownInProgress,
+              needsRefresh,
+              flowLedgerTask == nil else { return }
         flowLedgerTaskGeneration &+= 1
         let generation = flowLedgerTaskGeneration
         flowLedgerTask = Task { @MainActor [weak self] in
@@ -7232,8 +7649,12 @@ final class AppModel {
     }
 
     private func schedulePersistentTrafficHistory(from ledger: FlowLedger) {
-        guard persistentTrafficHistoryStore != nil,
-              trafficHistoryPersistenceChoice == .persistent else { return }
+        guard trafficHistoryPersistenceChoice == .persistent,
+              (persistentTrafficHistoryStore != nil
+                || trafficHistoryPersistenceTransitionInProgress),
+              !trafficHistoryClearInProgress,
+              !shutdownInProgress,
+              !ledger.entries.isEmpty else { return }
 
         for entry in ledger.entries {
             guard let completion = Self.trafficHistoryCompletion(entry) else { continue }
@@ -7249,26 +7670,43 @@ final class AppModel {
 
     private func startPersistentTrafficHistoryWriterIfNeeded() {
         guard trafficHistoryPersistTask == nil,
+              trafficHistoryPersistDrainTask == nil,
               persistentTrafficHistoryStore != nil,
+              !trafficHistoryClearInProgress,
+              !trafficHistoryPersistenceTransitionInProgress,
+              !shutdownInProgress,
               !queuedTrafficHistoryCompletions.isEmpty else { return }
 
         trafficHistoryPersistGeneration &+= 1
         let generation = trafficHistoryPersistGeneration
+        let operationGeneration = trafficHistoryPersistenceOperationGeneration
         trafficHistoryPersistTask = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled,
                   generation == self.trafficHistoryPersistGeneration,
+                  operationGeneration == self.trafficHistoryPersistenceOperationGeneration,
                   let store = self.persistentTrafficHistoryStore,
                   !self.queuedTrafficHistoryCompletions.isEmpty {
                 let count = min(250, self.queuedTrafficHistoryCompletions.count)
                 let batch = Array(self.queuedTrafficHistoryCompletions.prefix(count))
-                self.queuedTrafficHistoryCompletions.removeFirst(count)
                 do {
                     _ = try await store.ingest(batch)
                     guard !Task.isCancelled,
-                          generation == self.trafficHistoryPersistGeneration else {
+                          generation == self.trafficHistoryPersistGeneration,
+                          operationGeneration == self.trafficHistoryPersistenceOperationGeneration else {
                         return
                     }
+                    let now = Date()
+                    if self.shouldPruneTrafficHistory(at: now) {
+                        try await store.prune(now: now)
+                        guard !Task.isCancelled,
+                              generation == self.trafficHistoryPersistGeneration,
+                              operationGeneration == self.trafficHistoryPersistenceOperationGeneration else {
+                            return
+                        }
+                        self.trafficHistoryLastPrunedAt = now
+                    }
+                    self.queuedTrafficHistoryCompletions.removeFirst(count)
                     for completion in batch {
                         let identifier = completion.checkpointIdentifier
                         self.queuedTrafficHistoryIdentifiers.remove(identifier)
@@ -7279,13 +7717,9 @@ final class AppModel {
                     self.trimPersistedTrafficHistoryIdentifierCache()
                 } catch {
                     guard !Task.isCancelled,
-                          generation == self.trafficHistoryPersistGeneration else {
+                          generation == self.trafficHistoryPersistGeneration,
+                          operationGeneration == self.trafficHistoryPersistenceOperationGeneration else {
                         return
-                    }
-                    for completion in batch {
-                        self.queuedTrafficHistoryIdentifiers.remove(
-                            completion.checkpointIdentifier
-                        )
                     }
                     self.trafficHistoryPersistTask = nil
                     self.markPersistentTrafficHistoryUnavailable(
@@ -7294,11 +7728,22 @@ final class AppModel {
                     return
                 }
             }
-            guard generation == self.trafficHistoryPersistGeneration else { return }
-            self.trafficHistoryPersistTask = nil
-            if !Task.isCancelled {
-                await self.refreshPersistentTrafficHistorySnapshots()
+            guard generation == self.trafficHistoryPersistGeneration,
+                  operationGeneration == self.trafficHistoryPersistenceOperationGeneration else {
+                return
             }
+            if !Task.isCancelled {
+                await self.refreshPersistentTrafficHistorySnapshots(
+                    expectedPersistenceGeneration: generation,
+                    expectedOperationGeneration: operationGeneration
+                )
+            }
+            guard generation == self.trafficHistoryPersistGeneration,
+                  operationGeneration == self.trafficHistoryPersistenceOperationGeneration else {
+                return
+            }
+            self.trafficHistoryPersistTask = nil
+            self.startPersistentTrafficHistoryWriterIfNeeded()
         }
     }
 
@@ -7310,6 +7755,24 @@ final class AppModel {
             persistedTrafficHistoryIdentifiers.remove(identifier)
         }
         persistedTrafficHistoryIdentifierOrder.removeFirst(overflow)
+    }
+
+    private func beginTrafficHistoryMutation() async {
+        guard trafficHistoryMutationInProgress else {
+            trafficHistoryMutationInProgress = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            trafficHistoryMutationWaiters.append(continuation)
+        }
+    }
+
+    private func endTrafficHistoryMutation() {
+        guard !trafficHistoryMutationWaiters.isEmpty else {
+            trafficHistoryMutationInProgress = false
+            return
+        }
+        trafficHistoryMutationWaiters.removeFirst().resume()
     }
 
     private static func trafficHistoryCompletion(
@@ -8950,6 +9413,7 @@ final class AppModel {
     static let appRoutingProviderFailureThreshold = 3
     static let appRoutingProviderStatusCheckInterval = 5
     static let maximumDedicatedMihomoRoutes = 64
+    private static let trafficHistoryPruneInterval: TimeInterval = 24 * 60 * 60
 
     nonisolated private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
         let (value, overflow) = lhs.addingReportingOverflow(rhs)

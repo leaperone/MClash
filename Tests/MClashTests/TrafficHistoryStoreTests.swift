@@ -287,6 +287,81 @@ struct TrafficHistoryStoreTests {
         #expect(try await reopened.retention() == .thirtyDays)
     }
 
+    @MainActor
+    @Test("Opening persistent history prunes rows past the configured retention")
+    func appModelOpeningPrunesExpiredRows() async throws {
+        let root = temporaryDirectory()
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        let now = Date()
+        let seedStore = try readyStore(
+            TrafficHistoryStore.open(
+                layout: layout,
+                now: now.addingTimeInterval(-100 * 86_400)
+            )
+        )
+        _ = try await seedStore.ingest([
+            completion(id: "expired-on-open", at: now.addingTimeInterval(-40 * 86_400)),
+            completion(id: "recent-on-open", at: now.addingTimeInterval(-86_400)),
+        ])
+
+        let defaults = UserDefaults(
+            suiteName: "MClash-TrafficHistory-open-\(UUID().uuidString)"
+        )!
+        let model = makeTestAppModel(
+            profileDirectoryLayout: layout,
+            preferenceDefaults: defaults
+        )
+        await model.setPersistentTrafficHistoryEnabled(true)
+
+        #expect(
+            try sqliteIntScalar(
+                at: layout.trafficHistoryDatabaseURL,
+                sql: "SELECT COUNT(*) FROM flow_checkpoint"
+            ) == 1
+        )
+        if case .ready = model.trafficHistoryRuntimeState {
+            // Expected.
+        } else {
+            Issue.record("Persistent traffic history should be ready after opening")
+        }
+    }
+
+    @MainActor
+    @Test("Clearing persistent history removes stored completions")
+    func appModelClearRemovesPersistedRows() async throws {
+        let root = temporaryDirectory()
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        let now = Date()
+        let seedStore = try readyStore(TrafficHistoryStore.open(layout: layout, now: now))
+        _ = try await seedStore.ingest([
+            completion(id: "clear-me", at: now.addingTimeInterval(1))
+        ])
+
+        let defaults = UserDefaults(
+            suiteName: "MClash-TrafficHistory-clear-\(UUID().uuidString)"
+        )!
+        let model = makeTestAppModel(
+            profileDirectoryLayout: layout,
+            preferenceDefaults: defaults
+        )
+        await model.setPersistentTrafficHistoryEnabled(true)
+        #expect(
+            try sqliteIntScalar(
+                at: layout.trafficHistoryDatabaseURL,
+                sql: "SELECT COUNT(*) FROM flow_checkpoint"
+            ) == 1
+        )
+
+        #expect(await model.clearTrafficHistory())
+        #expect(
+            try sqliteIntScalar(
+                at: layout.trafficHistoryDatabaseURL,
+                sql: "SELECT COUNT(*) FROM flow_checkpoint"
+            ) == 0
+        )
+        #expect(model.trafficHistoryTodaySnapshot?.totals.completedFlowCount == 0)
+    }
+
     @Test("Newer and corrupted databases return explicit unavailable states")
     func explicitUnavailableStates() throws {
         let root = temporaryDirectory()
