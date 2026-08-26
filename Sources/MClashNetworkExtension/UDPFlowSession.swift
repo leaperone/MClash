@@ -1300,15 +1300,12 @@ final class UDPFlowSessionRegistry: @unchecked Sendable {
         observerFactory:
             @escaping @Sendable (UUID) -> @Sendable (AppRoutingRelaySnapshot) -> Void
     ) -> Bool {
-        let expectedGeneration: UUID
         lock.lock()
         guard sessions.count < Self.maximumActiveSessions else {
             lock.unlock()
             return false
         }
-        expectedGeneration = generation
-        lock.unlock()
-
+        let expectedGeneration = generation
         let session = UDPFlowSession(
             id: id,
             flow: flow,
@@ -1327,14 +1324,6 @@ final class UDPFlowSessionRegistry: @unchecked Sendable {
                 self?.remove(identifier, generation: expectedGeneration)
             }
         )
-
-        lock.lock()
-        guard generation == expectedGeneration,
-              sessions.count < Self.maximumActiveSessions else {
-            lock.unlock()
-            session.cancel()
-            return false
-        }
         sessions[id] = session
         lock.unlock()
         session.start()
