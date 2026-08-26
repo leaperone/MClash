@@ -92,6 +92,11 @@ struct TransparentProxyProviderStatus: Codable, Equatable, Sendable {
     }
 }
 
+struct TransparentProxyProviderRuntimeSnapshot: Equatable, Sendable {
+    let providerStatus: TransparentProxyProviderStatus
+    let dnsRuntimeReport: DNSProxyRuntimeReport?
+}
+
 private struct TransparentProxyProviderControlResponse: Decodable, Sendable {
     let protocolVersion: Int
     let accepted: Bool
@@ -214,10 +219,8 @@ struct TransparentProxyProviderMessageClient: Sendable {
     func dnsRuntimeReport(
         for configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> DNSProxyRuntimeReport {
-        let response = try await validatedResponse(for: TransparentProxyProviderControlRequest(
-            command: .dnsStatus
-        ))
-        guard let report = response.dnsRuntimeReport else {
+        let snapshot = try await dnsRuntimeSnapshot()
+        guard let report = snapshot.dnsRuntimeReport else {
             throw TransparentProxyProviderMessageError.missingDNSRuntimeReport
         }
         guard report.expectedRevision == configuration.revision,
@@ -226,6 +229,16 @@ struct TransparentProxyProviderMessageClient: Sendable {
             throw TransparentProxyProviderMessageError.dnsActivationMismatch
         }
         return report
+    }
+
+    func dnsRuntimeSnapshot() async throws -> TransparentProxyProviderRuntimeSnapshot {
+        let response = try await validatedResponse(for: TransparentProxyProviderControlRequest(
+            command: .dnsStatus
+        ))
+        return TransparentProxyProviderRuntimeSnapshot(
+            providerStatus: response.status,
+            dnsRuntimeReport: response.dnsRuntimeReport
+        )
     }
 
     func quiesce(revision: UInt64) async throws -> TransparentProxyProviderStatus {

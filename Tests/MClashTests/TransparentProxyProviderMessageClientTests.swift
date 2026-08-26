@@ -179,14 +179,24 @@ struct TransparentProxyProviderMessageClientTests {
                 failOpen: false,
                 dnsRuntimeReport: report
             ),
+            response(
+                revision: 12,
+                captureEnabled: true,
+                failOpen: false,
+                dnsRuntimeReport: report
+            ),
         ])
         let client = TransparentProxyProviderMessageClient(session: session)
 
         try await client.prepareDNSActivation(configuration)
+        let snapshot = try await client.dnsRuntimeSnapshot()
+        #expect(snapshot.providerStatus.revision == 12)
+        #expect(snapshot.providerStatus.captureEnabled)
+        #expect(snapshot.dnsRuntimeReport == report)
         #expect(try await client.dnsRuntimeReport(for: configuration) == report)
 
         let requests = try session.decodedRequests()
-        #expect(requests.map(\.command) == [.prepareDNS, .dnsStatus])
+        #expect(requests.map(\.command) == [.prepareDNS, .dnsStatus, .dnsStatus])
         #expect(requests[0].revision == configuration.revision)
         #expect(requests[0].activationIdentifier == configuration.activationIdentifier)
         #expect(requests[0].dnsProxyBootstrap == configuration.encodedDNSProxyBootstrap)

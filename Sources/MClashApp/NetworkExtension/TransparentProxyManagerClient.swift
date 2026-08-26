@@ -9,6 +9,7 @@ protocol TransparentProxyManaging: Sendable {
     func stop() async throws
     func providerStatus() async throws -> TransparentProxyProviderStatus
     func providerHeartbeat() async throws -> TransparentProxyProviderStatus
+    func dnsRuntimeSnapshot() async throws -> TransparentProxyProviderRuntimeSnapshot
     func quiesceProvider(revision: UInt64) async throws -> TransparentProxyProviderStatus
     func applyProviderConfiguration(
         _ configuration: NetworkExtensionRuntimeConfiguration
@@ -24,6 +25,13 @@ protocol TransparentProxyManaging: Sendable {
 extension TransparentProxyManaging {
     func providerHeartbeat() async throws -> TransparentProxyProviderStatus {
         try await providerStatus()
+    }
+
+    func dnsRuntimeSnapshot() async throws -> TransparentProxyProviderRuntimeSnapshot {
+        TransparentProxyProviderRuntimeSnapshot(
+            providerStatus: try await providerHeartbeat(),
+            dnsRuntimeReport: nil
+        )
     }
 }
 
@@ -165,6 +173,13 @@ actor AppleTransparentProxyManager: TransparentProxyManaging, DNSProxyRuntimeCha
             try await reload()
         }
         return try await providerMessageClient().dnsRuntimeReport(for: configuration)
+    }
+
+    func dnsRuntimeSnapshot() async throws -> TransparentProxyProviderRuntimeSnapshot {
+        if manager == nil {
+            try await reload()
+        }
+        return try await providerMessageClient().dnsRuntimeSnapshot()
     }
 
     func quiesceProvider(revision: UInt64) async throws -> TransparentProxyProviderStatus {

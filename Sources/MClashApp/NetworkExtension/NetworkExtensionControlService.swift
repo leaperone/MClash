@@ -1,3 +1,4 @@
+import Foundation
 import MClashNetworkShared
 import OSLog
 
@@ -5,6 +6,37 @@ private let networkExtensionControlLogger = Logger(
     subsystem: "one.leaper.mclash",
     category: "NetworkExtensionControl"
 )
+
+struct NetworkExtensionRuntimeObservationError: Error, Equatable, Sendable, LocalizedError {
+    let message: String
+
+    init(_ error: any Error) {
+        message = error.localizedDescription
+    }
+
+    var errorDescription: String? { message }
+}
+
+struct NetworkExtensionRuntimeObservation: Equatable, Sendable {
+    let providerStatus: Result<
+        TransparentProxyProviderStatus,
+        NetworkExtensionRuntimeObservationError
+    >
+    let dnsStatus: Result<
+        DNSProxyRuntimeStatus?,
+        NetworkExtensionRuntimeObservationError
+    >
+}
+
+private func runtimeObservationResult<Value: Sendable>(
+    _ operation: @Sendable () async throws -> Value
+) async -> Result<Value, NetworkExtensionRuntimeObservationError> {
+    do {
+        return .success(try await operation())
+    } catch {
+        return .failure(NetworkExtensionRuntimeObservationError(error))
+    }
+}
 
 protocol NetworkExtensionControlling: Sendable {
     func enable(
@@ -21,6 +53,9 @@ protocol NetworkExtensionControlling: Sendable {
     func providerRuntimeHeartbeat() async throws -> TransparentProxyProviderStatus
     func dnsProviderRuntimeStatus() async throws -> DNSProxyRuntimeStatus?
     func dnsProviderRuntimeHeartbeat() async throws -> DNSProxyRuntimeStatus?
+    func providerAndDNSRuntimeObservation(
+        checkDNSPersistedConfiguration: Bool
+    ) async -> NetworkExtensionRuntimeObservation
     func appRoutingActivity(after cursor: UInt64, limit: Int) async throws
         -> AppRoutingActivityBatch
     func clearAppRoutingActivity() async throws
@@ -41,6 +76,24 @@ extension NetworkExtensionControlling {
 
     func dnsProviderRuntimeHeartbeat() async throws -> DNSProxyRuntimeStatus? {
         try await dnsProviderRuntimeStatus()
+    }
+
+    func providerAndDNSRuntimeObservation(
+        checkDNSPersistedConfiguration: Bool
+    ) async -> NetworkExtensionRuntimeObservation {
+        let providerStatus = await runtimeObservationResult {
+            try await providerRuntimeHeartbeat()
+        }
+        let dnsStatus = await runtimeObservationResult {
+            if checkDNSPersistedConfiguration {
+                return try await dnsProviderRuntimeStatus()
+            }
+            return try await dnsProviderRuntimeHeartbeat()
+        }
+        return NetworkExtensionRuntimeObservation(
+            providerStatus: providerStatus,
+            dnsStatus: dnsStatus
+        )
     }
 
     func updateRuntimeConfiguration(
@@ -481,6 +534,47 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
     func dnsProviderRuntimeHeartbeat() async throws -> DNSProxyRuntimeStatus? {
         guard let activeDNSConfiguration else { return nil }
         return try await dnsProxy.runtimeHeartbeat(for: activeDNSConfiguration)
+    }
+
+    func providerAndDNSRuntimeObservation(
+        checkDNSPersistedConfiguration: Bool
+    ) async -> NetworkExtensionRuntimeObservation {
+        guard let activeDNSConfiguration else {
+            let providerStatus = await runtimeObservationResult {
+                try await transparentProxy.providerHeartbeat()
+            }
+            return NetworkExtensionRuntimeObservation(
+                providerStatus: providerStatus,
+                dnsStatus: .success(nil)
+            )
+        }
+
+        let snapshot: TransparentProxyProviderRuntimeSnapshot
+        do {
+            snapshot = try await transparentProxy.dnsRuntimeSnapshot()
+        } catch {
+            let failure = NetworkExtensionRuntimeObservationError(error)
+            return NetworkExtensionRuntimeObservation(
+                providerStatus: .failure(failure),
+                dnsStatus: .failure(failure)
+            )
+        }
+
+        let dnsStatus: Result<
+            DNSProxyRuntimeStatus?,
+            NetworkExtensionRuntimeObservationError
+        > = await runtimeObservationResult {
+            let status = try await dnsProxy.runtimeStatus(
+                from: snapshot.dnsRuntimeReport,
+                for: activeDNSConfiguration,
+                checkPersistedConfiguration: checkDNSPersistedConfiguration
+            )
+            return status
+        }
+        return NetworkExtensionRuntimeObservation(
+            providerStatus: .success(snapshot.providerStatus),
+            dnsStatus: dnsStatus
+        )
     }
 
     func appRoutingActivity(
