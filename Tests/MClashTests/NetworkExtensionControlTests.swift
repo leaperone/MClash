@@ -413,6 +413,117 @@ struct NetworkExtensionControlTests {
         #expect(await recorder.snapshot() == ["transparent.status"])
     }
 
+    @Test("A DNS snapshot supplies both runtime heartbeats")
+    func combinedRuntimeHeartbeatUsesOneProviderMessage() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        _ = try await service.enable(
+            NetworkExtensionRuntimeConfiguration(revision: 22, dnsEnabled: true)
+        )
+        await recorder.removeAll()
+
+        let observation = await service.providerAndDNSRuntimeObservation(
+            checkDNSPersistedConfiguration: false
+        )
+
+        #expect(try observation.providerStatus.get().revision == 22)
+        #expect(try observation.dnsStatus.get()?.revision == 22)
+        #expect(await recorder.snapshot() == [
+            "transparent.dns-status",
+            "dns.prefetched-status",
+        ])
+    }
+
+    @Test("A separate Provider full-check failure preserves the DNS heartbeat")
+    func combinedRuntimeProviderFailureIsIndependent() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        _ = try await service.enable(
+            NetworkExtensionRuntimeConfiguration(revision: 23, dnsEnabled: true)
+        )
+        await recorder.removeAll()
+        await recorder.setProviderStatusFailuresRemaining(1)
+
+        let observation = await service.providerAndDNSRuntimeObservation(
+            checkDNSPersistedConfiguration: false
+        )
+
+        #expect(try observation.providerStatus.get().revision == 23)
+        #expect(try observation.dnsStatus.get()?.revision == 23)
+        do {
+            _ = try await service.providerRuntimeStatus()
+            Issue.record("Expected the separate Provider full check to fail")
+        } catch {}
+        #expect(await recorder.snapshot() == [
+            "transparent.dns-status",
+            "dns.prefetched-status",
+            "transparent.status",
+        ])
+    }
+
+    @Test("A DNS preference failure preserves the Provider heartbeat")
+    func combinedRuntimeDNSFailureIsIndependent() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        _ = try await service.enable(
+            NetworkExtensionRuntimeConfiguration(revision: 24, dnsEnabled: true)
+        )
+        await recorder.removeAll()
+        await recorder.setDNSRuntimeStatusFailuresRemaining(1)
+
+        let observation = await service.providerAndDNSRuntimeObservation(
+            checkDNSPersistedConfiguration: true
+        )
+
+        #expect(try observation.providerStatus.get().revision == 24)
+        if case .success = observation.dnsStatus {
+            Issue.record("Expected the DNS preference check to fail")
+        }
+        #expect(await recorder.snapshot() == [
+            "transparent.dns-status",
+            "dns.prefetched-status.full",
+        ])
+    }
+
+    @Test("A DNS snapshot transport failure affects both heartbeats")
+    func combinedRuntimeTransportFailureIsShared() async throws {
+        let recorder = NetworkExtensionOperationRecorder()
+        let service = NetworkExtensionControlService(
+            systemExtension: MockSystemExtensionController(recorder: recorder),
+            transparentProxy: MockTransparentProxyManager(recorder: recorder),
+            dnsProxy: MockDNSProxyManager(recorder: recorder)
+        )
+        _ = try await service.enable(
+            NetworkExtensionRuntimeConfiguration(revision: 25, dnsEnabled: true)
+        )
+        await recorder.removeAll()
+        await recorder.setDNSRuntimeSnapshotFailuresRemaining(1)
+
+        let observation = await service.providerAndDNSRuntimeObservation(
+            checkDNSPersistedConfiguration: false
+        )
+
+        if case .success = observation.providerStatus {
+            Issue.record("Expected the Provider heartbeat to fail")
+        }
+        if case .success = observation.dnsStatus {
+            Issue.record("Expected the DNS heartbeat to fail")
+        }
+        #expect(await recorder.snapshot() == ["transparent.dns-status"])
+    }
+
     @Test("Rule updates both providers live without stopping capture")
     func ruleUpdateUpdatesBothProvidersLive() async throws {
         let recorder = NetworkExtensionOperationRecorder()
@@ -758,8 +869,12 @@ private actor NetworkExtensionOperationRecorder {
     private var operations: [String] = []
     private var configuredRevision: UInt64 = 0
     private var capturedConfigurations: [NetworkExtensionRuntimeConfiguration] = []
+    private var activeConfiguration: NetworkExtensionRuntimeConfiguration?
     private var providerStatuses: [TransparentProxyProviderStatus] = []
     private var dnsUpdateFailuresRemaining = 0
+    private var providerStatusFailuresRemaining = 0
+    private var dnsRuntimeStatusFailuresRemaining = 0
+    private var dnsRuntimeSnapshotFailuresRemaining = 0
 
     func append(_ operation: String) {
         operations.append(operation)
@@ -780,10 +895,15 @@ private actor NetworkExtensionOperationRecorder {
 
     func capture(_ configuration: NetworkExtensionRuntimeConfiguration) {
         capturedConfigurations.append(configuration)
+        activeConfiguration = configuration
     }
 
     func configurations() -> [NetworkExtensionRuntimeConfiguration] {
         capturedConfigurations
+    }
+
+    func currentConfiguration() -> NetworkExtensionRuntimeConfiguration? {
+        activeConfiguration
     }
 
     func revision() -> UInt64 {
@@ -801,6 +921,36 @@ private actor NetworkExtensionOperationRecorder {
     func consumeDNSUpdateFailure() -> Bool {
         guard dnsUpdateFailuresRemaining > 0 else { return false }
         dnsUpdateFailuresRemaining -= 1
+        return true
+    }
+
+    func setProviderStatusFailuresRemaining(_ count: Int) {
+        providerStatusFailuresRemaining = count
+    }
+
+    func consumeProviderStatusFailure() -> Bool {
+        guard providerStatusFailuresRemaining > 0 else { return false }
+        providerStatusFailuresRemaining -= 1
+        return true
+    }
+
+    func setDNSRuntimeStatusFailuresRemaining(_ count: Int) {
+        dnsRuntimeStatusFailuresRemaining = count
+    }
+
+    func consumeDNSRuntimeStatusFailure() -> Bool {
+        guard dnsRuntimeStatusFailuresRemaining > 0 else { return false }
+        dnsRuntimeStatusFailuresRemaining -= 1
+        return true
+    }
+
+    func setDNSRuntimeSnapshotFailuresRemaining(_ count: Int) {
+        dnsRuntimeSnapshotFailuresRemaining = count
+    }
+
+    func consumeDNSRuntimeSnapshotFailure() -> Bool {
+        guard dnsRuntimeSnapshotFailuresRemaining > 0 else { return false }
+        dnsRuntimeSnapshotFailuresRemaining -= 1
         return true
     }
 
@@ -957,6 +1107,13 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
 
     func providerStatus() async throws -> TransparentProxyProviderStatus {
         await recorder.append("transparent.status")
+        if await recorder.consumeProviderStatusFailure() {
+            throw NSError(
+                domain: "TransparentProviderStatus",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "status unavailable"]
+            )
+        }
         if let status = await recorder.nextProviderStatus() { return status }
         if let statusOverride { return statusOverride }
         let revision = await recorder.revision()
@@ -965,6 +1122,49 @@ private struct MockTransparentProxyManager: TransparentProxyManaging {
             running: true,
             captureEnabled: true,
             failOpen: true
+        )
+    }
+
+    func dnsRuntimeSnapshot() async throws -> TransparentProxyProviderRuntimeSnapshot {
+        await recorder.append("transparent.dns-status")
+        if await recorder.consumeDNSRuntimeSnapshotFailure() {
+            throw NSError(
+                domain: "TransparentProviderMessage",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "snapshot unavailable"]
+            )
+        }
+        let configuration = await recorder.currentConfiguration()
+        let revision: UInt64
+        if let configuration {
+            revision = configuration.revision
+        } else {
+            revision = await recorder.revision()
+        }
+        let now = Date()
+        let report = configuration.map {
+            DNSProxyRuntimeReport(
+                expectedRevision: $0.revision,
+                expectedActivationIdentifier: $0.activationIdentifier,
+                status: DNSProxyRuntimeStatus(
+                    revision: $0.revision,
+                    activationIdentifier: $0.activationIdentifier,
+                    phase: .running,
+                    backendReady: true,
+                    startedAt: now,
+                    updatedAt: now,
+                    lastBackendAssociationAt: now
+                )
+            )
+        }
+        return TransparentProxyProviderRuntimeSnapshot(
+            providerStatus: statusOverride ?? TransparentProxyProviderStatus(
+                revision: revision,
+                running: true,
+                captureEnabled: true,
+                failOpen: true
+            ),
+            dnsRuntimeReport: report
         )
     }
 
@@ -1051,6 +1251,13 @@ private struct MockDNSProxyManager: DNSProxyManaging {
         for configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> DNSProxyRuntimeStatus {
         await recorder.append("dns.status")
+        if await recorder.consumeDNSRuntimeStatusFailure() {
+            throw NSError(
+                domain: "DNSRuntimeStatus",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "preferences unavailable"]
+            )
+        }
         let now = Date()
         return DNSProxyRuntimeStatus(
             revision: configuration.revision,
@@ -1059,6 +1266,40 @@ private struct MockDNSProxyManager: DNSProxyManaging {
             backendReady: true,
             startedAt: now
         )
+    }
+
+    func runtimeStatus(
+        from report: DNSProxyRuntimeReport?,
+        for configuration: NetworkExtensionRuntimeConfiguration,
+        checkPersistedConfiguration: Bool
+    ) async throws -> DNSProxyRuntimeStatus {
+        await recorder.append(
+            checkPersistedConfiguration
+                ? "dns.prefetched-status.full"
+                : "dns.prefetched-status"
+        )
+        if await recorder.consumeDNSRuntimeStatusFailure() {
+            throw NSError(
+                domain: "DNSRuntimeStatus",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "preferences unavailable"]
+            )
+        }
+        guard let report,
+              report.expectedRevision == configuration.revision,
+              report.expectedActivationIdentifier == configuration.activationIdentifier,
+              let status = report.status else {
+            throw NSError(
+                domain: "DNSRuntimeStatus",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "prefetched report mismatch"]
+            )
+        }
+        try status.validate(
+            expectedRevision: configuration.revision,
+            activationIdentifier: configuration.activationIdentifier
+        )
+        return status
     }
 
     func disable() async throws {

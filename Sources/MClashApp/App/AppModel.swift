@@ -7019,14 +7019,20 @@ final class AppModel {
         } else {
             .background
         }
+        let providerHeartbeatHandledByDNS = mode == .providerOnly
+            && networkCapturePreferences.dnsEnabled
         guard forceRestart
-                || appRoutingActivityTask == nil
                 || appRoutingActivityMonitorMode != mode
+                || (appRoutingActivityTask == nil && !providerHeartbeatHandledByDNS)
         else { return }
 
         appRoutingActivityTask?.cancel()
         appRoutingActivityMonitorMode = mode
         appRoutingMonitorGeneration &+= 1
+        guard !providerHeartbeatHandledByDNS else {
+            appRoutingActivityTask = nil
+            return
+        }
         let generation = appRoutingMonitorGeneration
         appRoutingActivityTask = Task { @MainActor [weak self] in
             await self?.monitorAppRoutingActivity(generation: generation)
@@ -7042,6 +7048,7 @@ final class AppModel {
 
             do {
                 if lightweightMode && !hasDetailedPresentation {
+                    guard !networkCapturePreferences.dnsEnabled else { return }
                     failureAttempt = 0
                     successfulPollsSinceProviderCheck = 0
                     let checkPersistedConfiguration =
@@ -7245,16 +7252,30 @@ final class AppModel {
             guard let self else { return }
             while self.dnsProxyMonitorShouldContinue(generation: generation) {
                 guard case let .on(expectedRevision) = networkCaptureState else { return }
-                let checkPersistedConfiguration = !lightweightMode
+                let checkDNSPersistedConfiguration = !lightweightMode
                     || presentationTelemetryPolicy.appRoutingActivity
                     || networkExtensionPreferencesCheckIsDue(
                         dnsProxyPreferencesCheckDeadline
                     )
-                await refreshDNSProxyRuntime(
-                    expectedRevision: expectedRevision,
-                    monitorGeneration: generation,
-                    checkPersistedConfiguration: checkPersistedConfiguration
-                )
+                if appRoutingActivityMonitorMode == .providerOnly {
+                    let appMonitorGeneration = appRoutingMonitorGeneration
+                    await refreshProviderAndDNSRuntime(
+                        expectedRevision: expectedRevision,
+                        appMonitorGeneration: appMonitorGeneration,
+                        dnsMonitorGeneration: generation,
+                        checkProviderPersistedConfiguration:
+                            networkExtensionPreferencesCheckIsDue(
+                                appRoutingProviderPreferencesCheckDeadline
+                            ),
+                        checkDNSPersistedConfiguration: checkDNSPersistedConfiguration
+                    )
+                } else {
+                    await refreshDNSProxyRuntime(
+                        expectedRevision: expectedRevision,
+                        monitorGeneration: generation,
+                        checkPersistedConfiguration: checkDNSPersistedConfiguration
+                    )
+                }
                 do {
                     try await Task.sleep(
                         for: presentationTelemetryPolicy
@@ -7282,13 +7303,180 @@ final class AppModel {
         if checkPersistedConfiguration {
             dnsProxyPreferencesCheckDeadline = nil
         }
+        let result: Result<
+            DNSProxyRuntimeStatus?,
+            NetworkExtensionRuntimeObservationError
+        >
         do {
             let currentStatus = if checkPersistedConfiguration {
                 try await networkExtensionControl.dnsProviderRuntimeStatus()
             } else {
                 try await networkExtensionControl.dnsProviderRuntimeHeartbeat()
             }
-            guard let status = currentStatus else {
+            result = .success(currentStatus)
+        } catch {
+            result = .failure(NetworkExtensionRuntimeObservationError(error))
+        }
+        guard dnsProxyMonitorShouldContinue(
+            generation: monitorGeneration,
+            expectedRevision: expectedRevision
+        ) else { return }
+        guard let runtimeFailure = recordDNSProxyRuntimeResult(
+            result,
+            checkPersistedConfiguration: checkPersistedConfiguration,
+            preferencesCheckGeneration: preferencesCheckGeneration
+        ) else { return }
+        await stopUnverifiedDNSProxyRuntime(
+            runtimeFailure,
+            expectedRevision: expectedRevision,
+            dnsMonitorGeneration: monitorGeneration
+        )
+    }
+
+    private func refreshProviderAndDNSRuntime(
+        expectedRevision: UInt64,
+        appMonitorGeneration: UInt64,
+        dnsMonitorGeneration: UInt64,
+        checkProviderPersistedConfiguration: Bool,
+        checkDNSPersistedConfiguration: Bool
+    ) async {
+        guard networkCapturePreferences.dnsEnabled,
+              !dnsProxyAutomaticallyDisabled,
+              runtimeMonitorsShouldContinue(
+                appGeneration: appMonitorGeneration,
+                dnsGeneration: dnsMonitorGeneration,
+                expectedRevision: expectedRevision
+        ) else { return }
+        let preferencesCheckGeneration = networkExtensionPreferencesCheckGeneration
+        if checkDNSPersistedConfiguration {
+            dnsProxyPreferencesCheckDeadline = nil
+        }
+        let observation = await networkExtensionControl
+            .providerAndDNSRuntimeObservation(
+                checkDNSPersistedConfiguration: checkDNSPersistedConfiguration
+            )
+        guard runtimeMonitorsShouldContinue(
+            appGeneration: appMonitorGeneration,
+            dnsGeneration: dnsMonitorGeneration,
+            expectedRevision: expectedRevision
+        ) else { return }
+
+        let dnsFailure = recordDNSProxyRuntimeResult(
+            observation.dnsStatus,
+            checkPersistedConfiguration: checkDNSPersistedConfiguration,
+            preferencesCheckGeneration: preferencesCheckGeneration
+        )
+        let providerResult: (verified: Bool, failureMessage: String?)?
+        if case .failure = observation.providerStatus {
+            providerResult = recordAppRoutingProviderRuntimeResult(
+                observation.providerStatus,
+                expectedRevision: expectedRevision,
+                checkPersistedConfiguration: false,
+                preferencesCheckGeneration: preferencesCheckGeneration
+            )
+        } else if checkProviderPersistedConfiguration
+                    || appRoutingActivityTask != nil {
+            // A due or in-flight full check owns the Provider failure counter.
+            // Healthy snapshots must not erase its consecutive failures.
+            providerResult = nil
+        } else {
+            providerResult = recordAppRoutingProviderRuntimeResult(
+                observation.providerStatus,
+                expectedRevision: expectedRevision,
+                checkPersistedConfiguration: false,
+                preferencesCheckGeneration: preferencesCheckGeneration
+            )
+        }
+
+        if let dnsFailure {
+            await stopUnverifiedDNSProxyRuntime(
+                dnsFailure,
+                expectedRevision: expectedRevision,
+                dnsMonitorGeneration: dnsMonitorGeneration
+            )
+            return
+        }
+        if let failureMessage = providerResult?.failureMessage {
+            networkCaptureState = .failed(failureMessage)
+            appendSupervisorLog(failureMessage)
+            return
+        }
+        if checkProviderPersistedConfiguration,
+           case .success = observation.providerStatus {
+            launchAppRoutingProviderPreferencesCheck(
+                expectedRevision: expectedRevision,
+                appMonitorGeneration: appMonitorGeneration,
+                dnsMonitorGeneration: dnsMonitorGeneration
+            )
+        }
+    }
+
+    private func launchAppRoutingProviderPreferencesCheck(
+        expectedRevision: UInt64,
+        appMonitorGeneration: UInt64,
+        dnsMonitorGeneration: UInt64
+    ) {
+        guard appRoutingActivityTask == nil,
+              appRoutingActivityMonitorMode == .providerOnly,
+              runtimeMonitorsShouldContinue(
+                appGeneration: appMonitorGeneration,
+                dnsGeneration: dnsMonitorGeneration,
+                expectedRevision: expectedRevision
+              ) else { return }
+        let preferencesCheckGeneration = networkExtensionPreferencesCheckGeneration
+        appRoutingProviderPreferencesCheckDeadline = nil
+        appRoutingActivityTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if appMonitorGeneration == self.appRoutingMonitorGeneration,
+                   self.appRoutingActivityMonitorMode == .providerOnly {
+                    self.appRoutingActivityTask = nil
+                }
+            }
+            guard self.runtimeMonitorsShouldContinue(
+                appGeneration: appMonitorGeneration,
+                dnsGeneration: dnsMonitorGeneration,
+                expectedRevision: expectedRevision
+            ) else { return }
+            let result: Result<
+                TransparentProxyProviderStatus,
+                NetworkExtensionRuntimeObservationError
+            >
+            do {
+                result = .success(
+                    try await self.networkExtensionControl.providerRuntimeStatus()
+                )
+            } catch {
+                result = .failure(NetworkExtensionRuntimeObservationError(error))
+            }
+            guard self.runtimeMonitorsShouldContinue(
+                appGeneration: appMonitorGeneration,
+                dnsGeneration: dnsMonitorGeneration,
+                expectedRevision: expectedRevision
+            ) else { return }
+            let recorded = self.recordAppRoutingProviderRuntimeResult(
+                result,
+                expectedRevision: expectedRevision,
+                checkPersistedConfiguration: true,
+                preferencesCheckGeneration: preferencesCheckGeneration
+            )
+            if let failureMessage = recorded.failureMessage {
+                self.networkCaptureState = .failed(failureMessage)
+                self.appendSupervisorLog(failureMessage)
+            }
+        }
+    }
+
+    private func recordDNSProxyRuntimeResult(
+        _ result: Result<
+            DNSProxyRuntimeStatus?,
+            NetworkExtensionRuntimeObservationError
+        >,
+        checkPersistedConfiguration: Bool,
+        preferencesCheckGeneration: UInt64
+    ) -> NetworkExtensionRuntimeObservationError? {
+        do {
+            guard let status = try result.get() else {
                 throw NSError(
                     domain: "one.leaper.mclash.dns-runtime",
                     code: 0,
@@ -7298,10 +7486,6 @@ final class AppModel {
                     ]
                 )
             }
-            guard dnsProxyMonitorShouldContinue(
-                generation: monitorGeneration,
-                expectedRevision: expectedRevision
-            ) else { return }
             guard status.isOperational else {
                 throw NSError(
                     domain: "one.leaper.mclash.dns-runtime",
@@ -7321,45 +7505,66 @@ final class AppModel {
             dnsProxyRuntimeError = nil
             dnsProxyRuntimeFailureCount = 0
             dnsProxyLastVerifiedAt = Date()
+            return nil
         } catch {
-            guard dnsProxyMonitorShouldContinue(
-                generation: monitorGeneration,
-                expectedRevision: expectedRevision
-            ) else { return }
-            let runtimeFailure = error
+            let runtimeFailure = error as? NetworkExtensionRuntimeObservationError
+                ?? NetworkExtensionRuntimeObservationError(error)
             dnsProxyRuntimeStatus = nil
             dnsProxyRuntimeFailureCount += 1
             dnsProxyRuntimeError = runtimeFailure.localizedDescription
-            guard dnsProxyRuntimeFailureCount >= 2 else { return }
-            do {
-                // DNS is part of the default App Routing data plane. If its
-                // persisted manager or Provider heartbeat cannot be verified,
-                // stop both providers so the UI never claims a partially
-                // active routing mode.
-                guard dnsProxyMonitorShouldContinue(
-                    generation: monitorGeneration,
-                    expectedRevision: expectedRevision
-                ) else { return }
-                try await networkExtensionControl.disable()
-                guard dnsProxyMonitorShouldContinue(generation: monitorGeneration) else {
-                    return
-                }
-                dnsProxyAutomaticallyDisabled = true
-                let message = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: \(runtimeFailure.localizedDescription)"
-                dnsProxyRuntimeError = message
-                networkCaptureState = .failed(message)
-                appendSupervisorLog(message)
-            } catch let shutdownFailure {
-                guard dnsProxyMonitorShouldContinue(
-                    generation: monitorGeneration,
-                    expectedRevision: expectedRevision
-                ) else { return }
-                let message = "DNS Routing became unverified and MClash could not confirm that the coupled App Routing data plane shut down safely. Runtime error: \(runtimeFailure.localizedDescription) Shutdown error: \(shutdownFailure.localizedDescription)"
-                dnsProxyRuntimeError = message
-                networkCaptureState = .failed(message)
-                appendSupervisorLog(message)
-            }
+            return dnsProxyRuntimeFailureCount >= 2 ? runtimeFailure : nil
         }
+    }
+
+    private func stopUnverifiedDNSProxyRuntime(
+        _ runtimeFailure: NetworkExtensionRuntimeObservationError,
+        expectedRevision: UInt64,
+        dnsMonitorGeneration: UInt64
+    ) async {
+        do {
+            // DNS is part of the default App Routing data plane. If its
+            // persisted manager or Provider heartbeat cannot be verified,
+            // stop both providers so the UI never claims a partially active
+            // routing mode.
+            guard dnsProxyMonitorShouldContinue(
+                generation: dnsMonitorGeneration,
+                expectedRevision: expectedRevision
+            ) else { return }
+            try await networkExtensionControl.disable()
+            guard dnsProxyMonitorShouldContinue(generation: dnsMonitorGeneration) else {
+                return
+            }
+            dnsProxyAutomaticallyDisabled = true
+            let message = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: \(runtimeFailure.localizedDescription)"
+            dnsProxyRuntimeError = message
+            networkCaptureState = .failed(message)
+            appendSupervisorLog(message)
+        } catch let shutdownFailure {
+            guard dnsProxyMonitorShouldContinue(
+                generation: dnsMonitorGeneration,
+                expectedRevision: expectedRevision
+            ) else { return }
+            let message = "DNS Routing became unverified and MClash could not confirm that the coupled App Routing data plane shut down safely. Runtime error: \(runtimeFailure.localizedDescription) Shutdown error: \(shutdownFailure.localizedDescription)"
+            dnsProxyRuntimeError = message
+            networkCaptureState = .failed(message)
+            appendSupervisorLog(message)
+        }
+    }
+
+    private func runtimeMonitorsShouldContinue(
+        appGeneration: UInt64?,
+        dnsGeneration: UInt64,
+        expectedRevision: UInt64? = nil
+    ) -> Bool {
+        guard dnsProxyMonitorShouldContinue(
+            generation: dnsGeneration,
+            expectedRevision: expectedRevision
+        ) else { return false }
+        guard let appGeneration else { return true }
+        return appRoutingMonitorShouldContinue(
+            generation: appGeneration,
+            expectedRevision: expectedRevision
+        )
     }
 
     private func dnsProxyMonitorShouldContinue(
@@ -7397,23 +7602,55 @@ final class AppModel {
         if checkPersistedConfiguration {
             appRoutingProviderPreferencesCheckDeadline = nil
         }
+        let result: Result<
+            TransparentProxyProviderStatus,
+            NetworkExtensionRuntimeObservationError
+        >
         do {
             let status = if checkPersistedConfiguration {
                 try await networkExtensionControl.providerRuntimeStatus()
             } else {
                 try await networkExtensionControl.providerRuntimeHeartbeat()
             }
-            if let monitorGeneration,
-               !appRoutingMonitorShouldContinue(
-                generation: monitorGeneration,
-                expectedRevision: expectedRevision
-               ) {
-                return false
-            }
-            if requireActiveCaptureState,
-               !networkCaptureState.isActive(revision: expectedRevision) {
-                return false
-            }
+            result = .success(status)
+        } catch {
+            result = .failure(NetworkExtensionRuntimeObservationError(error))
+        }
+        if let monitorGeneration,
+           !appRoutingMonitorShouldContinue(
+            generation: monitorGeneration,
+            expectedRevision: expectedRevision
+           ) {
+            return false
+        }
+        if requireActiveCaptureState,
+           !networkCaptureState.isActive(revision: expectedRevision) {
+            return false
+        }
+        let recorded = recordAppRoutingProviderRuntimeResult(
+            result,
+            expectedRevision: expectedRevision,
+            checkPersistedConfiguration: checkPersistedConfiguration,
+            preferencesCheckGeneration: preferencesCheckGeneration
+        )
+        if let failureMessage = recorded.failureMessage {
+            networkCaptureState = .failed(failureMessage)
+            appendSupervisorLog(failureMessage)
+        }
+        return recorded.verified
+    }
+
+    private func recordAppRoutingProviderRuntimeResult(
+        _ result: Result<
+            TransparentProxyProviderStatus,
+            NetworkExtensionRuntimeObservationError
+        >,
+        expectedRevision: UInt64,
+        checkPersistedConfiguration: Bool,
+        preferencesCheckGeneration: UInt64
+    ) -> (verified: Bool, failureMessage: String?) {
+        do {
+            let status = try result.get()
             guard status.running,
                   status.captureEnabled,
                   status.revision == expectedRevision else {
@@ -7425,30 +7662,17 @@ final class AppModel {
                     providerMessage: status.message
                 )
             }
-
             if checkPersistedConfiguration,
                preferencesCheckGeneration == networkExtensionPreferencesCheckGeneration {
                 appRoutingProviderPreferencesCheckDeadline = ContinuousClock.now
                     + Self.networkExtensionPreferencesCheckInterval
             }
-
             appRoutingProviderStatusFailureCount = 0
             appRoutingProviderLastVerifiedAt = Date()
             appRoutingActivityError = nil
             degradedStreams.remove(.appRouting)
-            return true
+            return (true, nil)
         } catch {
-            if let monitorGeneration,
-               !appRoutingMonitorShouldContinue(
-                generation: monitorGeneration,
-                expectedRevision: expectedRevision
-               ) {
-                return false
-            }
-            if requireActiveCaptureState,
-               !networkCaptureState.isActive(revision: expectedRevision) {
-                return false
-            }
             appRoutingProviderStatusFailureCount += 1
             let count = appRoutingProviderStatusFailureCount
             let reason = error.localizedDescription
@@ -7457,14 +7681,13 @@ final class AppModel {
 
             if count >= Self.appRoutingProviderFailureThreshold {
                 let message = "App Routing is no longer verified after \(count) consecutive provider checks. Expected active revision \(expectedRevision). Last error: \(reason)"
-                networkCaptureState = .failed(message)
-                appendSupervisorLog(message)
+                return (false, message)
             } else if count == 1 {
                 appendSupervisorLog(
                     "App Routing provider verification is retrying: \(reason)"
                 )
             }
-            return false
+            return (false, nil)
         }
     }
 

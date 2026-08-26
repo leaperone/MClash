@@ -141,6 +141,88 @@ struct DNSProxyManagerClientTests {
         }
     }
 
+    @Test("A prefetched DNS report is validated without another provider message")
+    func prefetchedRuntimeReportAvoidsAnotherHeartbeat() async throws {
+        let configuration = try Self.configuration(revision: 46)
+        let now = Date()
+        let report = DNSProxyRuntimeReport(
+            expectedRevision: configuration.revision,
+            expectedActivationIdentifier: configuration.activationIdentifier,
+            status: DNSProxyRuntimeStatus(
+                revision: configuration.revision,
+                activationIdentifier: configuration.activationIdentifier,
+                phase: .running,
+                backendReady: true,
+                startedAt: now,
+                updatedAt: now,
+                lastBackendAssociationAt: now
+            )
+        )
+        let channel = StubDNSRuntimeChannel()
+        let preferences = StubDNSProxyPreferences(
+            initial: Self.preferenceSnapshot(configuration, enabled: true),
+            runtimeChannel: channel
+        )
+        let manager = AppleDNSProxyManager(
+            preferences: preferences,
+            runtimeChannel: channel
+        )
+
+        let heartbeat = try await manager.runtimeStatus(
+            from: report,
+            for: configuration,
+            checkPersistedConfiguration: false
+        )
+        #expect(heartbeat.isOperational)
+        #expect(await preferences.loadCount() == 0)
+        #expect(await channel.runtimeReportRequestCount() == 0)
+
+        let fullStatus = try await manager.runtimeStatus(
+            from: report,
+            for: configuration,
+            checkPersistedConfiguration: true
+        )
+        #expect(fullStatus == heartbeat)
+        #expect(await preferences.loadCount() == 1)
+        #expect(await channel.runtimeReportRequestCount() == 0)
+    }
+
+    @Test("A prefetched DNS report still validates its outer activation")
+    func prefetchedRuntimeReportRejectsAnotherActivation() async throws {
+        let configuration = try Self.configuration(revision: 47)
+        let now = Date()
+        let report = DNSProxyRuntimeReport(
+            expectedRevision: configuration.revision,
+            expectedActivationIdentifier: UUID(),
+            status: DNSProxyRuntimeStatus(
+                revision: configuration.revision,
+                activationIdentifier: configuration.activationIdentifier,
+                phase: .running,
+                backendReady: true,
+                startedAt: now
+            )
+        )
+        let channel = StubDNSRuntimeChannel()
+        let preferences = StubDNSProxyPreferences(runtimeChannel: channel)
+        let manager = AppleDNSProxyManager(
+            preferences: preferences,
+            runtimeChannel: channel
+        )
+
+        do {
+            _ = try await manager.runtimeStatus(
+                from: report,
+                for: configuration,
+                checkPersistedConfiguration: false
+            )
+            Issue.record("Expected another activation to fail")
+        } catch let failure as NetworkExtensionControlFailure {
+            #expect(failure.operation == .inspectDNSProxy)
+            #expect(failure.message.contains("different activation"))
+        }
+        #expect(await channel.runtimeReportRequestCount() == 0)
+    }
+
     @Test("A provider bootstrap rejection is returned without waiting for timeout")
     func bootstrapFailureIsImmediate() async throws {
         let channel = StubDNSRuntimeChannel()
@@ -241,6 +323,7 @@ struct DNSProxyManagerClientTests {
 
 private actor StubDNSRuntimeChannel: DNSProxyRuntimeChannel {
     private var report: DNSProxyRuntimeReport?
+    private var runtimeReportRequests = 0
 
     func prepareDNSActivation(
         _ configuration: NetworkExtensionRuntimeConfiguration
@@ -254,11 +337,14 @@ private actor StubDNSRuntimeChannel: DNSProxyRuntimeChannel {
     func dnsRuntimeReport(
         for configuration: NetworkExtensionRuntimeConfiguration
     ) throws -> DNSProxyRuntimeReport {
+        runtimeReportRequests += 1
         guard let report else {
             throw TransparentProxyProviderMessageError.missingDNSRuntimeReport
         }
         return report
     }
+
+    func runtimeReportRequestCount() -> Int { runtimeReportRequests }
 
     func isPrepared(for configuration: NetworkExtensionRuntimeConfiguration) -> Bool {
         report?.expectedRevision == configuration.revision

@@ -14,6 +14,11 @@ protocol DNSProxyManaging: Sendable {
     func runtimeHeartbeat(
         for configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> DNSProxyRuntimeStatus
+    func runtimeStatus(
+        from report: DNSProxyRuntimeReport?,
+        for configuration: NetworkExtensionRuntimeConfiguration,
+        checkPersistedConfiguration: Bool
+    ) async throws -> DNSProxyRuntimeStatus
     func disable() async throws
 }
 
@@ -22,6 +27,17 @@ extension DNSProxyManaging {
         for configuration: NetworkExtensionRuntimeConfiguration
     ) async throws -> DNSProxyRuntimeStatus {
         try await runtimeStatus(for: configuration)
+    }
+
+    func runtimeStatus(
+        from report: DNSProxyRuntimeReport?,
+        for configuration: NetworkExtensionRuntimeConfiguration,
+        checkPersistedConfiguration: Bool
+    ) async throws -> DNSProxyRuntimeStatus {
+        if checkPersistedConfiguration {
+            return try await runtimeStatus(for: configuration)
+        }
+        return try await runtimeHeartbeat(for: configuration)
     }
 }
 
@@ -262,23 +278,34 @@ actor AppleDNSProxyManager: DNSProxyManaging {
     ) async throws -> DNSProxyRuntimeStatus {
         do {
             let report = try await runtimeChannel.dnsRuntimeReport(for: configuration)
-            if let startupFailure = report.startupFailure {
-                throw NetworkExtensionControlFailure(
-                    operation: .inspectDNSProxy,
-                    message: Self.startupFailureMessage(startupFailure.reason)
-                )
+            return try validateRuntimeReport(report, for: configuration)
+        } catch {
+            if let failure = error as? NetworkExtensionControlFailure {
+                throw failure
             }
-            guard let status = report.status else {
-                throw NetworkExtensionControlFailure(
-                    operation: .inspectDNSProxy,
-                    message: "DNS Provider runtime status has not been published yet"
-                )
-            }
-            try status.validate(
-                expectedRevision: configuration.revision,
-                activationIdentifier: configuration.activationIdentifier
+            throw NetworkExtensionControlFailure(
+                operation: .inspectDNSProxy,
+                message: "The DNS Provider runtime heartbeat is invalid: "
+                    + error.localizedDescription
             )
-            return status
+        }
+    }
+
+    func runtimeStatus(
+        from report: DNSProxyRuntimeReport?,
+        for configuration: NetworkExtensionRuntimeConfiguration,
+        checkPersistedConfiguration: Bool
+    ) async throws -> DNSProxyRuntimeStatus {
+        if checkPersistedConfiguration {
+            let persisted = try await load(operation: .inspectDNSProxy)
+            try validateEnabledPreferences(
+                persisted,
+                for: configuration,
+                operation: .inspectDNSProxy
+            )
+        }
+        do {
+            return try validateRuntimeReport(report, for: configuration)
         } catch {
             if let failure = error as? NetworkExtensionControlFailure {
                 throw failure
@@ -357,6 +384,37 @@ actor AppleDNSProxyManager: DNSProxyManaging {
                 message: "The saved DNS proxy bootstrap does not match the requested revision, activation, or private Mihomo relay"
             )
         }
+    }
+
+    private func validateRuntimeReport(
+        _ report: DNSProxyRuntimeReport?,
+        for configuration: NetworkExtensionRuntimeConfiguration
+    ) throws -> DNSProxyRuntimeStatus {
+        guard let report else {
+            throw TransparentProxyProviderMessageError.missingDNSRuntimeReport
+        }
+        guard report.expectedRevision == configuration.revision,
+              report.expectedActivationIdentifier == configuration.activationIdentifier
+        else {
+            throw TransparentProxyProviderMessageError.dnsActivationMismatch
+        }
+        if let startupFailure = report.startupFailure {
+            throw NetworkExtensionControlFailure(
+                operation: .inspectDNSProxy,
+                message: Self.startupFailureMessage(startupFailure.reason)
+            )
+        }
+        guard let status = report.status else {
+            throw NetworkExtensionControlFailure(
+                operation: .inspectDNSProxy,
+                message: "DNS Provider runtime status has not been published yet"
+            )
+        }
+        try status.validate(
+            expectedRevision: configuration.revision,
+            activationIdentifier: configuration.activationIdentifier
+        )
+        return status
     }
 
     private func waitForOperationalStatus(
