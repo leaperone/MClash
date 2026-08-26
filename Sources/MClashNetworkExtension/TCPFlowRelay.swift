@@ -5,6 +5,7 @@ import MClashNetworkShared
 
 enum TCPFlowRelayError: Error, LocalizedError, Sendable {
     case cancelled
+    case capacityExceeded
     case handshakeTimedOut
     case upstreamClosedDuringHandshake
     case upstreamFailed(String)
@@ -16,6 +17,8 @@ enum TCPFlowRelayError: Error, LocalizedError, Sendable {
         switch self {
         case .cancelled:
             "The TCP relay was cancelled because App Routing stopped or slept."
+        case .capacityExceeded:
+            "MClash reached the active TCP relay safety limit."
         case .handshakeTimedOut:
             "The local mihomo SOCKS5 handshake timed out."
         case .upstreamClosedDuringHandshake:
@@ -519,6 +522,7 @@ final class TCPFlowRelay: @unchecked Sendable {
 }
 
 final class TCPFlowRelayRegistry: @unchecked Sendable {
+    private static let maximumActiveRelays = 512
     private let lock = NSLock()
     private var mihomoRelays: [UUID: TCPFlowRelay] = [:]
     private var directRelays: [UUID: DirectTCPFlowRelay] = [:]
@@ -534,6 +538,25 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
     ) {
         let fallbackDestination = directFallbackDestination ?? destination
         let relayGeneration = currentGeneration()
+        lock.lock()
+        guard generation == relayGeneration else {
+            lock.unlock()
+            rejectBeforeStart(
+                flow,
+                error: .cancelled,
+                activityObserver: activityObserver
+            )
+            return
+        }
+        guard mihomoRelays.count + directRelays.count < Self.maximumActiveRelays else {
+            lock.unlock()
+            rejectBeforeStart(
+                flow,
+                error: .capacityExceeded,
+                activityObserver: activityObserver
+            )
+            return
+        }
         let relay = TCPFlowRelay(
             flow: flow,
             proxy: proxy,
@@ -549,12 +572,6 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
                 destination: fallbackDestination,
                 activityObserver: activityObserver
             )
-        }
-        lock.lock()
-        guard generation == relayGeneration else {
-            lock.unlock()
-            relay.cancel()
-            return
         }
         mihomoRelays[relay.id] = relay
         lock.unlock()
@@ -596,21 +613,21 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
         destination: SOCKS5Endpoint,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
     ) {
-        lock.lock()
-        let wasRegistered = mihomoRelays.removeValue(forKey: identifier) != nil
-        let mayTransition = wasRegistered && generation == relayGeneration
-        lock.unlock()
-
-        guard mayTransition,
-              case let .directFallback(reason) = exit
-        else { return }
-        startDirect(
-            flow: flow,
-            destination: destination,
-            relayNote: "Mihomo SOCKS setup failed before application payload forwarding; MClash used the rule's Direct fallback. \(reason)",
-            activityObserver: activityObserver,
-            expectedGeneration: relayGeneration
-        )
+        switch exit {
+        case .finished:
+            lock.lock()
+            mihomoRelays.removeValue(forKey: identifier)
+            lock.unlock()
+        case let .directFallback(reason):
+            startDirect(
+                flow: flow,
+                destination: destination,
+                relayNote: "Mihomo SOCKS setup failed before application payload forwarding; MClash used the rule's Direct fallback. \(reason)",
+                activityObserver: activityObserver,
+                expectedGeneration: relayGeneration,
+                replacingMihomo: identifier
+            )
+        }
     }
 
     private func startDirect(
@@ -618,8 +635,40 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
         destination: SOCKS5Endpoint,
         relayNote: String? = nil,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
-        expectedGeneration: UUID
+        expectedGeneration: UUID,
+        replacingMihomo identifier: UUID? = nil
     ) {
+        lock.lock()
+        guard generation == expectedGeneration else {
+            lock.unlock()
+            rejectBeforeStart(
+                flow,
+                error: .cancelled,
+                activityObserver: activityObserver
+            )
+            return
+        }
+        if let identifier {
+            guard mihomoRelays.removeValue(forKey: identifier) != nil else {
+                lock.unlock()
+                rejectBeforeStart(
+                    flow,
+                    error: .cancelled,
+                    activityObserver: activityObserver
+                )
+                return
+            }
+        } else {
+            guard mihomoRelays.count + directRelays.count < Self.maximumActiveRelays else {
+                lock.unlock()
+                rejectBeforeStart(
+                    flow,
+                    error: .capacityExceeded,
+                    activityObserver: activityObserver
+                )
+                return
+            }
+        }
         let relay = DirectTCPFlowRelay(
             flow: flow,
             destination: destination,
@@ -627,12 +676,6 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
             activityObserver: activityObserver
         ) { [weak self] identifier in
             self?.removeDirect(identifier)
-        }
-        lock.lock()
-        guard generation == expectedGeneration else {
-            lock.unlock()
-            relay.cancel()
-            return
         }
         directRelays[relay.id] = relay
         lock.unlock()
@@ -649,5 +692,22 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return generation
+    }
+
+    private func rejectBeforeStart(
+        _ flow: NEAppProxyTCPFlow,
+        error: TCPFlowRelayError,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
+    ) {
+        flow.closeReadWithError(error)
+        flow.closeWriteWithError(error)
+        activityObserver(AppRoutingRelaySnapshot(
+            state: .failed,
+            uploadBytes: 0,
+            downloadBytes: 0,
+            error: error.localizedDescription,
+            localPort: nil,
+            effectiveAction: .reject
+        ))
     }
 }
