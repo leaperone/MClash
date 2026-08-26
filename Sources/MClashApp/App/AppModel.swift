@@ -4685,7 +4685,11 @@ final class AppModel {
         systemProxyGuardTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .seconds(interval))
+                    try await Task.sleep(
+                        for: .seconds(interval),
+                        tolerance: .milliseconds(500),
+                        clock: .suspending
+                    )
                 } catch {
                     return
                 }
