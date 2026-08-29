@@ -112,8 +112,10 @@ private struct OverviewStatusCard: View {
     @ViewBuilder
     private var statusPills: some View {
         statusPill(
-            model.activeProfile?.name ?? AppLocalization.string("No Profile"),
-            symbol: "doc.text"
+            model.configurationDocument.currentWorkspace?.name
+                ?? model.activeProfile?.name
+                ?? AppLocalization.string("No Workspace"),
+            symbol: "rectangle.3.group"
         )
         statusPill(captureTitle, symbol: captureSymbol)
         if model.liveDataIsDegraded {

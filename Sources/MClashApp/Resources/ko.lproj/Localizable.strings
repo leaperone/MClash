@@ -1,4 +1,40 @@
 /* MClash 한국어 현지화 */
+"Alias (Optional)" = "별칭(선택 사항)";
+"App Routing using legacy profile rules" = "기존 프로필 규칙을 사용하는 App Routing";
+"App Routing using unified MClash rules" = "MClash 통합 규칙을 사용하는 App Routing";
+"Bind Address" = "바인드 주소";
+"Bind address is required." = "바인드 주소가 필요합니다.";
+"Capture application traffic using the unified MClash rules" = "MClash 통합 규칙으로 앱 트래픽 캡처";
+"Domain suffix (Optional)" = "도메인 접미사(선택 사항)";
+"Entrance" = "진입점";
+"Legacy application capture is active until a MClash Workspace is selected" = "MClash 워크스페이스를 선택할 때까지 기존 앱 캡처를 사용합니다";
+"Name is required." = "이름이 필요합니다.";
+"No nodes imported yet." = "가져온 노드가 없습니다.";
+"Node" = "노드";
+"Port (Optional)" = "포트(선택 사항)";
+"Port must be between 1 and 65535." = "포트는 1~65535 사이여야 합니다.";
+"Proxy Group" = "프록시 그룹";
+"Sources are refreshed from the original profile and provide node data only." = "소스는 원본 프로필에서 새로 고쳐지며 노드 데이터만 제공합니다.";
+
+"Configuration" = "구성";
+"Entrances" = "진입점";
+"Workspaces" = "워크스페이스";
+"Nodes" = "노드";
+"Proxy Groups" = "프록시 그룹";
+"Add Source?" = "소스를 추가할까요?";
+"Import Source" = "소스 가져오기";
+"Organize" = "정리";
+"Unified strategy" = "통합 전략";
+"Unified strategy: imports provide nodes only" = "통합 전략: 가져오기는 노드만 제공합니다";
+"Hide Inspector" = "인스펙터 숨기기";
+"Show Inspector" = "인스펙터 표시";
+"Search %@" = "%@ 검색";
+"No matching items" = "일치하는 항목 없음";
+"Select an item" = "항목 선택";
+"Use This Workspace" = "이 워크스페이스 사용";
+"Toggle Enabled" = "활성화 전환";
+"Add %@" = "%@ 추가";
+"No Workspace" = "워크스페이스 없음";
 
 "#" = "#";
 "1.1.1.1, 104.18.0.0/16" = "1.1.1.1, 104.18.0.0/16";

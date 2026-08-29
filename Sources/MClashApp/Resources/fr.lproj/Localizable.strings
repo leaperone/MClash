@@ -1,4 +1,40 @@
 /* MClash French localization. */
+"Alias (Optional)" = "Alias (facultatif)";
+"App Routing using legacy profile rules" = "App Routing avec les règles de profil héritées";
+"App Routing using unified MClash rules" = "App Routing avec les règles MClash unifiées";
+"Bind Address" = "Adresse d’écoute";
+"Bind address is required." = "L’adresse d’écoute est requise.";
+"Capture application traffic using the unified MClash rules" = "Capturer le trafic des applications avec les règles MClash unifiées";
+"Domain suffix (Optional)" = "Suffixe de domaine (facultatif)";
+"Entrance" = "Entrée";
+"Legacy application capture is active until a MClash Workspace is selected" = "La capture héritée reste active jusqu’à la sélection d’un espace MClash";
+"Name is required." = "Le nom est requis.";
+"No nodes imported yet." = "Aucun nœud importé pour l’instant.";
+"Node" = "Nœud";
+"Port (Optional)" = "Port (facultatif)";
+"Port must be between 1 and 65535." = "Le port doit être compris entre 1 et 65535.";
+"Proxy Group" = "Groupe de proxy";
+"Sources are refreshed from the original profile and provide node data only." = "Les sources sont actualisées depuis le profil d’origine et fournissent uniquement les nœuds.";
+
+"Configuration" = "Configuration";
+"Entrances" = "Entrées";
+"Workspaces" = "Espaces de travail";
+"Nodes" = "Nœuds";
+"Proxy Groups" = "Groupes de proxy";
+"Add Source?" = "Ajouter une source ?";
+"Import Source" = "Importer la source";
+"Organize" = "Organiser";
+"Unified strategy" = "Stratégie unifiée";
+"Unified strategy: imports provide nodes only" = "Stratégie unifiée : les imports fournissent uniquement des nœuds";
+"Hide Inspector" = "Masquer l’inspecteur";
+"Show Inspector" = "Afficher l’inspecteur";
+"Search %@" = "Rechercher %@";
+"No matching items" = "Aucun élément correspondant";
+"Select an item" = "Sélectionner un élément";
+"Use This Workspace" = "Utiliser cet espace";
+"Toggle Enabled" = "Basculer l’activation";
+"Add %@" = "Ajouter %@";
+"No Workspace" = "Aucun espace de travail";
 
 "#" = "#";
 "1.1.1.1, 104.18.0.0/16" = "1.1.1.1, 104.18.0.0/16";

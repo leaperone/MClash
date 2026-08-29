@@ -1,4 +1,40 @@
 /* MClash German localization. */
+"Alias (Optional)" = "Alias (optional)";
+"App Routing using legacy profile rules" = "App Routing mit alten Profilregeln";
+"App Routing using unified MClash rules" = "App Routing mit einheitlichen MClash-Regeln";
+"Bind Address" = "Bind-Adresse";
+"Bind address is required." = "Eine Bind-Adresse ist erforderlich.";
+"Capture application traffic using the unified MClash rules" = "Anwendungsverkehr mit den einheitlichen MClash-Regeln erfassen";
+"Domain suffix (Optional)" = "Domain-Suffix (optional)";
+"Entrance" = "Eingang";
+"Legacy application capture is active until a MClash Workspace is selected" = "Die alte Anwendungserfassung bleibt aktiv, bis ein MClash-Arbeitsbereich gewählt wird";
+"Name is required." = "Name erforderlich.";
+"No nodes imported yet." = "Noch keine Knoten importiert.";
+"Node" = "Knoten";
+"Port (Optional)" = "Port (optional)";
+"Port must be between 1 and 65535." = "Der Port muss zwischen 1 und 65535 liegen.";
+"Proxy Group" = "Proxy-Gruppe";
+"Sources are refreshed from the original profile and provide node data only." = "Quellen werden aus dem Originalprofil aktualisiert und liefern nur Knotendaten.";
+
+"Configuration" = "Konfiguration";
+"Entrances" = "Eingänge";
+"Workspaces" = "Arbeitsbereiche";
+"Nodes" = "Knoten";
+"Proxy Groups" = "Proxy-Gruppen";
+"Add Source?" = "Quelle hinzufügen?";
+"Import Source" = "Quelle importieren";
+"Organize" = "Organisieren";
+"Unified strategy" = "Einheitliche Strategie";
+"Unified strategy: imports provide nodes only" = "Einheitliche Strategie: Importe liefern nur Knoten";
+"Hide Inspector" = "Inspektor ausblenden";
+"Show Inspector" = "Inspektor anzeigen";
+"Search %@" = "%@ durchsuchen";
+"No matching items" = "Keine passenden Elemente";
+"Select an item" = "Element auswählen";
+"Use This Workspace" = "Diesen Arbeitsbereich verwenden";
+"Toggle Enabled" = "Aktivierung umschalten";
+"Add %@" = "%@ hinzufügen";
+"No Workspace" = "Kein Arbeitsbereich";
 
 "#" = "#";
 "1.1.1.1, 104.18.0.0/16" = "1.1.1.1, 104.18.0.0/16";
