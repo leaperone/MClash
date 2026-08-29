@@ -9,6 +9,7 @@
 - 已核对失败 workflow 日志与 integration-test 的所有 standalone `swiftc` 调用。
 - 已为 Core、SystemProxy、MihomoAPI 与可选 Profiles smoke 补齐 AppLanguage/AppLocalization。
 - 已运行完整 `./scripts/integration-test.sh`，所有默认 smoke 通过。
+- 已补入 `ReleaseNotes/1.4.4.md`；此前 preflight 证据需因 HEAD 变化从 Phase 0 重跑。
 
 ## 进行中
 

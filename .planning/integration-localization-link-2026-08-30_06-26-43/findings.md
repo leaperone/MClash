@@ -25,6 +25,7 @@
 ## 风险与边界
 
 - 已验证完整本地 integration smoke；不会把 v1.4.3 失败 run 当作发布成功，也不移动其 tag。Profiles 远程 smoke 仍只在提供 `MCLASH_TEST_SUBSCRIPTION` 时运行。
+- release workflow 对精确路径 `ReleaseNotes/<version>.md` 做非空检查；本分支补入 `ReleaseNotes/1.4.4.md`，使合并后的 main 可直接触发下一合法 patch。
 
 ## 参考指针
 

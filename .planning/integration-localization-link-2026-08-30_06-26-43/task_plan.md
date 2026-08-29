@@ -10,6 +10,7 @@
 ## 范围
 
 - 在 Core、SystemProxy、MihomoAPI 与可选 Profiles smoke 的独立 `swiftc` 调用中加入既有 `AppLanguage.swift` 与 `AppLocalization.swift`。
+- 为下一次合法 patch tag 补齐非空的 `ReleaseNotes/1.4.4.md`。
 
 ## 非目标
 
@@ -21,7 +22,7 @@
 
 ## 修改路径
 
-- `scripts/integration-test.sh` 的 standalone smoke 编译源列表。
+- `scripts/integration-test.sh` 的 standalone smoke 编译源列表、`ReleaseNotes/1.4.4.md`。
 
 ## 验证方式
 
@@ -50,6 +51,7 @@
 |---|---|
 | 在 integration 脚本补齐两个既有 App 源文件 | CoreModels 的 `LocalizedError` 已统一调用 AppLocalization；不复制本地化逻辑即可修复独立编译目标 |
 | 同步修复所有引用本地化的 standalone 目标 | SystemProxy、MihomoAPI 与可选 Profiles 也直接引用 AppLocalization；一次补齐可避免流水线逐段失败 |
+| 使用 1.4.4 作为下一合法 patch | 1.4.3 tag 已受保护且没有 Release/资产，不能移动或重写；release workflow 要求 tag 对应非空 notes |
 
 ## 错误与处理
 
