@@ -2,7 +2,7 @@
 
 - 任务 ID：`compact-more-i18n-menubar-2026-08-29_23-24-28`
 - 创建时间：`2026-08-29_23-24-28`
-- 当前状态：`preflight_build_fix`
+- 当前状态：`preflight_pass_ready_for_merge`
 
 ## 已完成
 
@@ -61,3 +61,14 @@
 | Preflight 第三轮 test 暴露零值字节格式回归 | 1 | 保持零值/负值的既有紧凑 `0 B` / `0 B/s` 契约，非零值继续按选定 locale 格式化；重新从 Phase 0 固定 base 并重跑全部门禁 |
 | Preflight 第四轮 check 暴露 guard 后缺少显式 return | 1 | 在 `formattedByteCount` 的非零分支补 `return`，提交后从 Phase 0 重新固定 base 并重跑全部门禁 |
 | Preflight build 暴露 Swift 6 NSApp optional coercion | 1 | 将三个无障碍 announcement producer 统一改用 `NSApplication.shared`，提交后从 Phase 0 重新固定 base 并重跑全部门禁 |
+
+## 最终 preflight 候选证据（HEAD `b717f1b`）
+
+- 固定基线：`origin/main@c31e6b4`；任务 worktree 干净，远端分支与本地 HEAD 一致。
+- Phase 1：`./scripts/test-direct.sh` 通过（395 tests / 59 suites，delta metadata smoke 通过）。
+- Phase 1：`./scripts/build-app.sh` 通过，Apple Silicon app、嵌套签名和 GEO 资源校验通过；本地默认构建显示 `1.3.5 (1)`，正式版本号由 tag workflow 注入。
+- Phase 1.5：`git merge-tree --write-tree --merge-base` 退出 0，无普通或结构性冲突。
+- Phase 2：无配置领域检查，明确未受影响。
+- Phase 3：runtime/config 与 UI/i18n 两路独立只读审查均为 `No findings`，无 Critical/High/P0/P1。
+- Phase 4：planning `check-complete.sh` 通过；PR #35 身份精确匹配当前分支、HEAD 和 `main`。
+- 尚未执行：GitHub squash merge、tag-triggered release、安装版实机窗口与 CPU/Energy A/B。

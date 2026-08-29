@@ -57,6 +57,12 @@
 - i18n 交叉审计覆盖 108 个 Swift 文件、1,223 个唯一静态 key 与 406 个 format key；八个 catalog 各 1,925 个唯一项，key 集/占位符一致，`plutil -lint` 8/8，源码到 catalog 缺失为 0。配置默认 sentinel、`None`、`Direct`、`Reject` 的最后漏项已在 producer/presentation 边界修复。
 - 远端 `v1.4.2`（PR #34，`c31e6b4`）已公开 stable；Release run `33272281653` 全绿，8 个资产、2 个 delta、appcast、source、Sparkle license、SHA256 均已核验。它不包含本任务 UI/i18n，因此本任务版本为 `v1.4.3`。
 - `v1.4.3` tag/Release/run 在本次收敛时不存在；发布必须在本任务 PR squash merge 后创建指向最终 `main` 的 signed annotated tag。安装版 CPU/Energy A/B 仍是独立验收，不能由源码、CI 或 Release 替代。
+
+## Preflight Phase 3 复核（HEAD `b717f1b`）
+
+- Runtime/config 只读审查：`No findings`，无 P0/P1/P2/P3；`git diff --check` 通过。
+- UI/i18n 只读审查：`No findings`，八个 catalog 的 lint、key/placeholder parity 与 More/Proxies/MenuBar 静态检查均通过。
+- 两路审查均未执行手动 UI、VoiceOver 或安装版 CPU/Energy 验收；这些仍是交付后的独立证据，不构成静态代码阻断。
 - 旧候选 `1.3.8 (53)` 已构建并通过签名/结构检查，但不含最后一轮补漏；隔离运行只确认菜单栏 scene，Computer Use 多次返回 `cgWindowNotFound`，因此不能声称完成最终实窗验收。
 - 最新 main 的 Configuration 集成审计确认发布阻断：启动和多条重载路径在 unified enabled 时仍经 `activateStoredProfile` 读取 source YAML；两个 overload 是全部调用方的共同 seam，应在这里统一分流到 `activateCompiledConfiguration`。
 - `compileConfiguration` 在保存 previous 前就覆盖 `compiledConfiguration`，导致失败 rollback 重放候选；应改为无副作用编译并只在成功后提交。
