@@ -43,16 +43,16 @@ extension AppModel.LocalListenerSource {
 
 func formattedByteCount(
     _ value: Int64,
-    style: ByteCountFormatter.CountStyle = .file
+    style: ByteCountFormatStyle.Style = .file
 ) -> String {
-    let normalized = max(0, value)
-    guard normalized > 0 else { return "0 B" }
-
-    return ByteCountFormatter.string(fromByteCount: normalized, countStyle: style)
+    max(0, value).formatted(
+        .byteCount(style: style, spellsOutZero: false)
+            .locale(AppLocalization.selectedLocale)
+    )
 }
 
 func formattedByteRate(_ value: Int64) -> String {
-    "\(formattedByteCount(value))/s"
+    AppLocalization.format("%@/s", formattedByteCount(value))
 }
 
 /// A menu-bar-safe rate with short, stable units and at most four characters.
@@ -80,15 +80,19 @@ private func compactMenuBarMagnitude(_ value: Double, suffixes: [String]) -> Str
 
     let number: String
     if suffixIndex > 0, scaled < 9.95 {
-        number = String(format: "%.1f", scaled)
+        number = scaled.formatted(
+            .number
+                .precision(.fractionLength(1))
+                .locale(AppLocalization.selectedLocale)
+        )
     } else {
-        number = String(Int(scaled.rounded()))
+        number = AppLocalization.number(Int(scaled.rounded()))
     }
     return number + suffixes[suffixIndex]
 }
 
 func formattedCount(_ value: Int) -> String {
-    max(0, value).formatted(.number.grouping(.automatic))
+    AppLocalization.number(max(0, value))
 }
 
 func saturatingByteSum(_ lhs: Int64, _ rhs: Int64) -> Int64 {
