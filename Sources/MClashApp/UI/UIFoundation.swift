@@ -125,9 +125,9 @@ struct DisconnectedUnavailableView: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label(title, systemImage: systemImage)
+            Label(AppLocalization.string(title), systemImage: systemImage)
         } description: {
-            Text(description)
+            Text(AppLocalization.string(description))
         } actions: {
             if model.preparationInProgress {
                 HStack(spacing: 7) {
@@ -190,7 +190,7 @@ struct CopyableValueButton: View {
                     Image(systemName: systemImage)
                 }
                 if let title {
-                    Text(title)
+                    Text(AppLocalization.string(title))
                 }
                 Text(value)
                     .monospacedDigit()
@@ -211,9 +211,22 @@ struct CopyableValueButton: View {
             )
         }
         .buttonStyle(.plain)
-        .help(copied ? "Copied" : "Copy \(accessibilityName): \(value)")
-        .accessibilityLabel("Copy \(accessibilityName)")
-        .accessibilityValue(copied ? "Copied" : value)
+        .help(
+            copied
+                ? AppLocalization.string("Copied")
+                : AppLocalization.format(
+                    "Copy %@: %@",
+                    AppLocalization.string(accessibilityName),
+                    value
+                )
+        )
+        .accessibilityLabel(
+            AppLocalization.format(
+                "Copy %@",
+                AppLocalization.string(accessibilityName)
+            )
+        )
+        .accessibilityValue(copied ? AppLocalization.string("Copied") : value)
         .contextMenu {
             Button("Copy") { copyValue() }
         }
@@ -232,7 +245,10 @@ struct CopyableValueButton: View {
             element: NSApplication.shared,
             notification: .announcementRequested,
             userInfo: [
-                .announcement: AppLocalization.format("Copied %@", accessibilityName),
+                .announcement: AppLocalization.format(
+                    "Copied %@",
+                    AppLocalization.string(accessibilityName)
+                ),
                 .priority: NSAccessibilityPriorityLevel.medium.rawValue,
             ]
         )
