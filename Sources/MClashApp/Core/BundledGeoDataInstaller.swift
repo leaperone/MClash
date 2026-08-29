@@ -146,15 +146,21 @@ extension BundledGeoDataError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .manifestMissing:
-            "The bundled GEO database manifest is missing."
+            AppLocalization.string("The bundled GEO database manifest is missing.")
         case .invalidManifest:
-            "The bundled GEO database manifest is invalid."
+            AppLocalization.string("The bundled GEO database manifest is invalid.")
         case .incompleteManifest:
-            "The bundled GEO database snapshot is incomplete."
+            AppLocalization.string("The bundled GEO database snapshot is incomplete.")
         case let .missingBundledFile(fileName):
-            "The bundled GEO database \(fileName) is missing."
+            AppLocalization.format(
+                "The bundled GEO database %@ is missing.",
+                fileName
+            )
         case let .integrityMismatch(fileName):
-            "The bundled GEO database \(fileName) failed its integrity check."
+            AppLocalization.format(
+                "The bundled GEO database %@ failed its integrity check.",
+                fileName
+            )
         }
     }
 }

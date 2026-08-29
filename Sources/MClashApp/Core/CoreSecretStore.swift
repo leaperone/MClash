@@ -39,7 +39,10 @@ enum CoreSecretStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .randomGenerationFailed(status):
-            "Could not generate the local controller secret (status \(status))."
+            AppLocalization.format(
+                "Could not generate the local controller secret (status %@).",
+                String(status)
+            )
         }
     }
 }

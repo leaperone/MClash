@@ -600,19 +600,37 @@ enum LocalPortProbeError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case let .socketCreationFailed(code):
-            "Could not create a local network socket (errno \(code))."
+            AppLocalization.format(
+                "Could not create a local network socket (errno %@).",
+                String(code)
+            )
         case let .bindFailed(code):
-            "Could not reserve a local proxy port (errno \(code))."
+            AppLocalization.format(
+                "Could not reserve a local proxy port (errno %@).",
+                String(code)
+            )
         case let .portLookupFailed(code):
-            "Could not read the reserved local proxy port (errno \(code))."
+            AppLocalization.format(
+                "Could not read the reserved local proxy port (errno %@).",
+                String(code)
+            )
         case let .invalidPort(port):
-            "The operating system returned an invalid local proxy port (\(port))."
+            AppLocalization.format(
+                "The operating system returned an invalid local proxy port (%@).",
+                String(port)
+            )
         case .noPorts:
-            "No local proxy listener was configured."
+            AppLocalization.string("No local proxy listener was configured.")
         case let .portSetUnavailable(requested):
-            "Could not reserve \(requested) distinct local TCP/UDP proxy ports."
+            AppLocalization.format(
+                "Could not reserve %@ distinct local TCP/UDP proxy ports.",
+                String(requested)
+            )
         case let .listenerUnavailable(ports):
-            "The local proxy listener did not start on \(ports.map(String.init).joined(separator: ", "))."
+            AppLocalization.format(
+                "The local proxy listener did not start on %@.",
+                ports.map(String.init).joined(separator: ", ")
+            )
         }
     }
 }

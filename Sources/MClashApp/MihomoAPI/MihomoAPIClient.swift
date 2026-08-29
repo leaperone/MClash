@@ -29,17 +29,29 @@ extension MihomoAPIError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidBaseURL:
-            "The mihomo controller URL is invalid."
+            AppLocalization.string("The mihomo controller URL is invalid.")
         case let .invalidArgument(message):
-            message
+            AppLocalization.string(message)
         case .invalidResponse:
-            "The mihomo controller returned an invalid HTTP response."
+            AppLocalization.string(
+                "The mihomo controller returned an invalid HTTP response."
+            )
         case .emptyResponse:
-            "The mihomo controller returned an empty response."
+            AppLocalization.string("The mihomo controller returned an empty response.")
         case let .httpStatus(code, message):
-            message.map { "mihomo returned HTTP \(code): \($0)" } ?? "mihomo returned HTTP \(code)."
+            if let message {
+                AppLocalization.format(
+                    "mihomo returned HTTP %@: %@",
+                    String(code),
+                    message
+                )
+            } else {
+                AppLocalization.format("mihomo returned HTTP %@.", String(code))
+            }
         case .invalidWebSocketMessage:
-            "The mihomo controller sent an unsupported WebSocket message."
+            AppLocalization.string(
+                "The mihomo controller sent an unsupported WebSocket message."
+            )
         }
     }
 }

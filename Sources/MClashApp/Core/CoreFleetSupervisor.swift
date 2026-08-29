@@ -298,7 +298,10 @@ actor CoreFleetSupervisor {
     }
 
     private static func stopFailureMessage(_ profileID: ProfileID) -> String {
-        "Profile \(profileID) did not stop before the core shutdown deadline."
+        AppLocalization.format(
+            "Profile %@ did not stop before the core shutdown deadline.",
+            profileID.description
+        )
     }
 }
 
@@ -308,7 +311,10 @@ enum CoreFleetSupervisorError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case let .missingLaunchConfiguration(profileID):
-            "Profile \(profileID) has no core launch configuration."
+            AppLocalization.format(
+                "Profile %@ has no core launch configuration.",
+                profileID.description
+            )
         }
     }
 }
