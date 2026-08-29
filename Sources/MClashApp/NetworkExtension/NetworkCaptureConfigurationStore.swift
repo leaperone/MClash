@@ -60,13 +60,28 @@ enum NetworkCaptureConfigurationStoreError: Error, Equatable, LocalizedError, Se
     var errorDescription: String? {
         switch self {
         case let .unsupportedSchemaVersion(version):
-            "Network capture settings use unsupported schema version \(version)."
+            AppLocalization.format(
+                "Network capture settings use unsupported schema version %@.",
+                String(version)
+            )
         case let .tooManyRules(actual, maximum):
-            "Network capture has \(actual) rules; the maximum is \(maximum)."
+            AppLocalization.format(
+                "Network capture has %@ rules; the maximum is %@.",
+                String(actual),
+                String(maximum)
+            )
         case let .documentTooLarge(actual, maximum):
-            "Network capture settings are \(actual) bytes; the maximum is \(maximum)."
+            AppLocalization.format(
+                "Network capture settings are %@ bytes; the maximum is %@.",
+                String(actual),
+                String(maximum)
+            )
         case let .revisionDidNotAdvance(previous, proposed):
-            "Network capture revision must advance beyond \(previous), but \(proposed) was supplied."
+            AppLocalization.format(
+                "Network capture revision must advance beyond %@, but %@ was supplied.",
+                String(previous),
+                String(proposed)
+            )
         }
     }
 }
