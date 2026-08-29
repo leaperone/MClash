@@ -14,7 +14,7 @@ struct ConfigurationModelsTests {
         let dnsID = DNSPolicyID(); let missing = NodeID()
         let workspace = Workspace(name: "Test", nodeIDs: [missing], dnsPolicyID: dnsID)
         let diagnostics = ConfigurationValidator.validate(workspace: workspace, nodes: [], groups: [], rules: [], dnsPolicies: [], entrances: [])
-        #expect(diagnostics.map(\.code) == ["missing_dns_policy"])
+        #expect(diagnostics.map(\.code) == ["missing_dns_policy", "missing_node"])
     }
 
     @Test func modelsRoundTripCodable() throws {
