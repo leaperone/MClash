@@ -17,7 +17,7 @@
 
 ## 修改文件
 
-- `scripts/integration-test.sh`、本任务 planning 三文件。
+- `scripts/integration-test.sh`、`ReleaseNotes/1.4.4.md`、本任务 planning 三文件。
 
 ## 验证结果
 
