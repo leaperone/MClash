@@ -2491,10 +2491,37 @@ final class AppModel {
         }
     }
 
+    private func compiledConfigurationForCurrentWorkspace() throws -> CompiledConfiguration? {
+        guard unifiedConfigurationEnabled,
+              let workspace = configurationDocument.currentWorkspace else {
+            return nil
+        }
+        if let compiledConfiguration,
+           compiledConfiguration.workspaceID == workspace.id,
+           compiledConfiguration.workspaceRevision == workspace.revision {
+            return compiledConfiguration
+        }
+        return try compileConfiguration(workspaceID: workspace.id)
+    }
+
     private func activateStoredProfile(
         _ id: ProfileID,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
+        if let compiled = try compiledConfigurationForCurrentWorkspace(),
+           let profileStore,
+           let runtimeOverrideCoordinator {
+            return try await runtimeOverrideCoordinator.activateCompiledConfiguration(
+                id,
+                baseConfiguration: compiled.yaml,
+                overrides: effectiveRuntimeOverrides(for: id),
+                networkExtensionListener: activeNetworkExtensionMihomoListener,
+                profileMixedListener: activeProfileDedicatedMixedListener,
+                routeListeners: [],
+                in: profileStore,
+                validator: validator
+            )
+        }
         try await validateProfileRouteListenerTargets(
             profileRouteListeners(for: id)
         )
@@ -2520,6 +2547,20 @@ final class AppModel {
         overrides: RuntimeOverrides,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
+        if let compiled = try compiledConfigurationForCurrentWorkspace(),
+           let profileStore,
+           let runtimeOverrideCoordinator {
+            return try await runtimeOverrideCoordinator.activateCompiledConfiguration(
+                id,
+                baseConfiguration: compiled.yaml,
+                overrides: overrides,
+                networkExtensionListener: activeNetworkExtensionMihomoListener,
+                profileMixedListener: activeProfileDedicatedMixedListener,
+                routeListeners: [],
+                in: profileStore,
+                validator: validator
+            )
+        }
         try await validateProfileRouteListenerTargets(
             profileRouteListeners(for: id)
         )
@@ -9170,6 +9211,9 @@ final class AppModel {
         guard let profileStore else {
             throw AppModelError.profileStoreUnavailable
         }
+        if let compiled = try compiledConfigurationForCurrentWorkspace() {
+            return try RuntimeConfigurationComposer().boundListenerPorts(in: compiled.yaml)
+        }
         let composer = RuntimeConfigurationComposer()
         let sourceData = try await profileStore.configurationData(for: profileID)
         let managedSourceData = try composer.sanitizingForManagedSession(sourceData)
@@ -9476,6 +9520,12 @@ final class AppModel {
     }
 
     private func effectiveRuntimeOverrides(for profileID: ProfileID) -> RuntimeOverrides {
+        if unifiedConfigurationEnabled {
+            // The generated workspace already owns ports, DNS, rules and
+            // listener surfaces. Only the explicit listener arguments passed
+            // by the activation coordinator may be layered on top.
+            return .empty
+        }
         // Advanced runtime overrides belong to the active profile. Applying
         // its DNS, rules, interface, or LAN policy to another airport would
         // silently merge two otherwise independent profiles. Auxiliary
