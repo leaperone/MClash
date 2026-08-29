@@ -1,6 +1,10 @@
 import Foundation
 
 enum AppLocalization {
+    static var selectedLocale: Locale {
+        selectedLanguage.locale
+    }
+
     static func string(_ key: String) -> String {
         NSLocalizedString(
             key,
@@ -14,15 +18,34 @@ enum AppLocalization {
     static func format(_ key: String, _ arguments: CVarArg...) -> String {
         String(
             format: string(key),
-            locale: selectedLanguage.locale,
+            locale: selectedLocale,
             arguments: arguments
+        )
+    }
+
+    static func number(_ value: Int) -> String {
+        value.formatted(
+            .number
+                .grouping(.automatic)
+                .locale(selectedLocale)
+        )
+    }
+
+    static func date(
+        _ date: Date,
+        dateStyle: Date.FormatStyle.DateStyle = .abbreviated,
+        timeStyle: Date.FormatStyle.TimeStyle = .standard
+    ) -> String {
+        date.formatted(
+            Date.FormatStyle(date: dateStyle, time: timeStyle)
+                .locale(selectedLocale)
         )
     }
 
     static func relativeDate(_ date: Date) -> String {
         date.formatted(
             .relative(presentation: .named)
-                .locale(selectedLanguage.locale)
+                .locale(selectedLocale)
         )
     }
 

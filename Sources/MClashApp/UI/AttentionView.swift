@@ -65,7 +65,7 @@ struct AttentionView: View {
         let count = model.operationalIssues.count
         return AppLocalization.format(
             count == 1 ? "%@ active issue" : "%@ active issues",
-            formattedCount(count)
+            AppLocalization.number(count)
         )
     }
 

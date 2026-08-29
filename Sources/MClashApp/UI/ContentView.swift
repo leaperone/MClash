@@ -189,14 +189,21 @@ struct ContentView: View {
     private func destinationAccessory(_ destination: AppModel.Destination) -> some View {
         switch destination {
         case .attention where !model.operationalIssues.isEmpty:
-            Text(formattedCount(model.operationalIssues.count))
+            Text(AppLocalization.number(model.operationalIssues.count))
                 .font(.caption2.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(.red, in: Capsule())
-                .accessibilityLabel("\(model.operationalIssues.count) items need attention")
+                .accessibilityLabel(
+                    AppLocalization.format(
+                        model.operationalIssues.count == 1
+                            ? "%@ item needs attention"
+                            : "%@ items need attention",
+                        AppLocalization.number(model.operationalIssues.count)
+                    )
+                )
         case .connections where model.isConnected:
             Text(sidebarConnectionValue)
                 .font(.caption.monospacedDigit())
@@ -214,7 +221,7 @@ struct ContentView: View {
 
     private var sidebarConnectionValue: String {
         switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
-        case .live: formattedCount(model.connections?.connections.count ?? 0)
+        case .live: AppLocalization.number(model.connections?.connections.count ?? 0)
         case .connecting: "…"
         case .reconnecting, .stale, .inactive: "—"
         }
@@ -222,10 +229,18 @@ struct ContentView: View {
 
     private var sidebarConnectionAccessibilityLabel: String {
         switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
-        case .live: "\(model.connections?.connections.count ?? 0) active connections"
-        case .connecting: "Waiting for active connections"
-        case .reconnecting, .stale: "Active connection count is stale"
-        case .inactive: "Active connection count is unavailable"
+        case .live:
+            let count = model.connections?.connections.count ?? 0
+            return AppLocalization.format(
+                count == 1 ? "%@ active connection" : "%@ active connections",
+                AppLocalization.number(count)
+            )
+        case .connecting:
+            return AppLocalization.string("Waiting for active connections")
+        case .reconnecting, .stale:
+            return AppLocalization.string("Active connection count is stale")
+        case .inactive:
+            return AppLocalization.string("Active connection count is unavailable")
         }
     }
 
@@ -240,16 +255,21 @@ struct ContentView: View {
     }
 
     private var appRoutingAccessoryLabel: String {
-        switch model.networkCaptureState {
-        case .on: "App Routing on"
-        case .failed: "App Routing failed"
-        case .awaitingUserApproval: "App Routing needs approval"
-        case .requiresReboot: "App Routing requires restart"
-        case .enabling: "App Routing starting"
-        case .disabling: "App Routing stopping"
-        case .waitingForConnection: "App Routing waiting for connection"
-        case .off: "App Routing off"
+        let statusKey = switch model.networkCaptureState {
+        case .on: "Active"
+        case .failed: "Failed"
+        case .awaitingUserApproval: "Needs Approval"
+        case .requiresReboot: "Restart Required"
+        case .enabling: "Starting"
+        case .disabling: "Stopping"
+        case .waitingForConnection: "Waiting"
+        case .off: "Off"
         }
+        return AppLocalization.format(
+            "%@, %@",
+            AppLocalization.string("App Routing"),
+            AppLocalization.string(statusKey)
+        )
     }
 }
 
@@ -270,8 +290,8 @@ private struct SidebarOperationalStatus: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Review issues")
-                .accessibilityHint("Opens recovery actions")
+                .help(AppLocalization.string("Review issues"))
+                .accessibilityHint(AppLocalization.string("Opens recovery actions"))
             }
         }
         .padding(.horizontal, 12)
@@ -359,8 +379,8 @@ private struct ErrorBanner: View {
                     Image(systemName: "xmark")
                 }
                 .buttonStyle(.borderless)
-                .help("Dismiss")
-                .accessibilityLabel("Dismiss error")
+                .help(AppLocalization.string("Dismiss"))
+                .accessibilityLabel(AppLocalization.string("Dismiss error"))
             }
         }
         .padding(.horizontal, 14)
@@ -368,6 +388,6 @@ private struct ErrorBanner: View {
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("MClash could not complete the operation")
+        .accessibilityLabel(AppLocalization.string("MClash could not complete the operation"))
     }
 }
