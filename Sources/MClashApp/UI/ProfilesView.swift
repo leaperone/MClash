@@ -465,6 +465,7 @@ private struct ProfileRow: View {
                 .labelStyle(.iconOnly)
         }
         .menuStyle(.borderlessButton)
+        .accessibilityLabel(AppLocalization.format("More actions for %@", profile.name))
         .help(AppLocalization.format("More actions for %@", profile.name))
     }
 

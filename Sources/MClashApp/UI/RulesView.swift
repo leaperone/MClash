@@ -121,6 +121,7 @@ struct RulesView: View {
                                 .labelStyle(.iconOnly)
                         }
                     }
+                    .accessibilityLabel(AppLocalization.string("Refresh Rules"))
                 }
             }
     }

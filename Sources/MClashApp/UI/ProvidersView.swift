@@ -300,6 +300,9 @@ private struct ProxyProviderRow: View {
                     .labelStyle(.iconOnly)
             }
             .menuStyle(.borderlessButton)
+            .accessibilityLabel(
+                AppLocalization.format("More actions for %@", provider.name)
+            )
         }
         .controlSize(.small)
     }
