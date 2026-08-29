@@ -955,18 +955,25 @@ struct CaptureRuleEditorSheet: View {
         attemptedSubmission = true
         do {
             guard !existingRuleIDs.contains(normalizedRuleName) else {
-                submissionError = nil
+                let message = AppLocalization.format(
+                    "A rule named %@ already exists.",
+                    normalizedRuleName
+                )
+                submissionError = message
                 focusedField = .identifier
+                announceValidationError(message)
                 return
             }
             guard !routesThroughMihomo
                 || draft.routingProfileID == nil
                 || selectableRoutingProfiles.contains(where: { $0.id == draft.routingProfileID })
             else {
-                submissionError = AppLocalization.string(
+                let message = AppLocalization.string(
                     "Open this profile's Mixed port or choose another profile."
                 )
+                submissionError = message
                 focusedField = .routingProfile
+                announceValidationError(message)
                 return
             }
             let rule = try draft.makeRule()
@@ -975,7 +982,16 @@ struct CaptureRuleEditorSheet: View {
         } catch {
             submissionError = error.localizedDescription
             focus(for: error)
+            announceValidationError(error.localizedDescription)
         }
+    }
+
+    private func announceValidationError(_ message: String) {
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [.announcement: message]
+        )
     }
 
     private func focus(for error: Error) {

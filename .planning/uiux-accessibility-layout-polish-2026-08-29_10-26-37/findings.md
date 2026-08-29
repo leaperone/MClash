@@ -33,6 +33,8 @@
 - 重复规则名不能走通用 `invalidIdentifier` 错误，否则会遮住专用冲突提示；现在直接保留派生错误并聚焦名称字段。
 - DisclosureGroup 内字段必须在展开后的下一次主 actor 调度再设置 FocusState，避免 macOS SwiftUI 丢失聚焦请求。
 - Attention、Overview 和 Menu Bar 的动态计数也属于展示边界；现统一使用单复数 key 与 `AppLocalization.format`。
+- 仅移动焦点不足以保证 VoiceOver 读出 footer 错误；Save Rule 失败现在通过 `NSAccessibility.announcementRequested` 发布本地化错误，同时保留字段聚焦。
+- Popover source rect 应属于实际触发控件；expanded Inspector 按钮与 compact More 菜单分别持有自己的 popover modifier。
 
 ## 技术决策
 
@@ -56,6 +58,7 @@
 - 最终 LocalizationTests 4 tests / 1 suite 通过；八个语言包各 656 个唯一 key，key 与占位符集合一致，`plutil -lint` 全部通过。
 - 最终 `./scripts/integration-test.sh` 通过；`./scripts/build-app.sh` 成功构建并校验 MClash 1.3.5 (1)。
 - 最终独立只读审查无剩余 Critical、High 或 Medium，结论 `Approve`；`git diff --check` 通过。
+- 首轮 preflight 完整提交审查无 P0/P1，但发现并修复 1 个 P2、1 个 P3；修复后 typecheck 与 540/79 完整测试再次通过，最终 preflight 必须从 Phase 0 重跑。
 
 ## 参考指针
 

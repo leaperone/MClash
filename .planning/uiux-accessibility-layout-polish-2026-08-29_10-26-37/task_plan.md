@@ -85,3 +85,5 @@
 | 首次本地化脚本未跳过文件头块注释 | 1 | 修正只读解析器后，按真实资源集合继续核对 key、重复项、占位符与 `plutil -lint` |
 | 独立 diff 复核发现 banner 覆盖、紧凑 History 信息缺口及状态本地化问题 | 1 | 改用 `safeAreaInset`、紧凑行副标题和统一 `AppLocalization` 展示边界，并按最终代码重新验证 |
 | 最终审查发现重复规则错误、DisclosureGroup 聚焦时序及动态计数本地化缺口 | 1 | 保留专用重复名错误；高级字段展开后让出一次主 actor 再聚焦；三处计数统一走 `AppLocalization.format`，并重新完整验证 |
+| preflight 完整 diff 审查发现错误未播报及 Inspector popover 锚点偏移 | 1 | 提交失败发布 AppKit accessibility announcement；expanded/compact popover 分别锚定真实触发控件，并重新验证 |
+| 首次 announcement typecheck 报 `NSApp` 隐式可选无法桥接为 `Any` | 1 | 使用非可选 `NSApplication.shared`，第二次 typecheck 通过 |

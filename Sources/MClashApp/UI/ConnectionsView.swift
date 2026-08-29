@@ -458,10 +458,6 @@ struct ConnectionsView: View {
                     compact: geometry.size.width < 900
                 )
                     .fixedSize(horizontal: false, vertical: true)
-                    .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
-                        connectionInspector(selectedConnection)
-                            .frame(width: 360, height: 520)
-                    }
                 Divider()
 
                 ZStack {
@@ -786,6 +782,10 @@ struct ConnectionsView: View {
             }
             .menuStyle(.borderlessButton)
             .help("More traffic actions")
+            .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
+                connectionInspector(selectedConnection)
+                    .frame(width: 360, height: 520)
+            }
         }
     }
 
@@ -1218,6 +1218,10 @@ struct ConnectionsView: View {
         .disabled(selectedConnection == nil)
         .help(inspectorPresented ? "Hide Connection Inspector" : "Show Connection Inspector")
         .accessibilityHint("Shows route, process, address, and traffic details for the selected connection")
+        .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
+            connectionInspector(selectedConnection)
+                .frame(width: 360, height: 520)
+        }
     }
 
     private var attachedInspectorBinding: Binding<Bool> {
