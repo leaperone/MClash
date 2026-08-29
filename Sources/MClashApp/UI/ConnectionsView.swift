@@ -656,7 +656,6 @@ struct ConnectionsView: View {
 
     private var showsProfileScope: Bool {
         workspace != .live
-            && (model.profiles.count > 1 || selectedProfileScope != .all)
     }
 
     @ViewBuilder

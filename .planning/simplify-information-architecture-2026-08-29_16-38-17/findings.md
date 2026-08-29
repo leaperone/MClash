@@ -52,13 +52,14 @@
 - Proxifier 导入项的转换问题原先只藏在 tooltip；只在有 warning/skipped 时显示两行内联 note，比常驻说明更可发现也更克制。
 - 2026-08-29 重新核对 GitHub API：远端 `main` 仍为 `216d019f`，与任务基线一致；SSH fetch 被本机 65535 端口路径中断，但 API 证据未显示主分支漂移。
 - 发布由 `v*` tag 或带 version 的手动 dispatch 进入 `.github/workflows/release.yml`；正式 release job 要求 tag 已存在，构建签名/公证 DMG 与 ZIP、生成 Sparkle appcast，并 best-effort 生成相对旧正式版的 delta。
-- 最终静态检查确认八个语言包均为 785 个唯一非空 key；43 个格式化 key 的占位符一致，103 个字面量 `AppLocalization` key 与本轮新增的 61 个 SwiftUI 静态 key 均存在。
+- 最终静态检查确认八个语言包均为 787 个唯一非空 key；44 个格式化 key 的占位符一致，104 个字面量 `AppLocalization` key 与本轮新增的 62 个 SwiftUI 静态 key 均存在。
 - 本轮删除的旧 Connections history、App Routing 诊断卡片和 Menu Bar 未使用 helper 已无引用；`git diff --check` 通过。
 - `ReleaseNotes/1.3.7.md` 随实现提交，合并提交可直接作为 `v1.3.7` tag 目标，无需另造发布提交。
 - 首轮 preflight 编译发现 `OverviewConnectionDetails.connectionStatus` 在前置 `if` 后缺少显式 `return`；在共享 getter 增加一处 `return switch` 即可覆盖所有 core state，无需逐 case 修改。
 - 同轮 build 在刷新 mihomo GEO 数据时收到五次 HTTP 403；GitHub API 配额仍为 5000/5000，随后对 API 与 raw 文件的只读请求均返回 200，证据更符合临时外部下载失败而非仓库配置错误。
 - 第二轮 preflight 的 check/build 已通过，但独立完整 diff 审查发现三个 P2 能力回归：单 Profile 时 More 菜单隐藏真实有效的 Profile/Direct scope；关闭已有 Mixed Port 后本地验证条件与实际提交条件不一致；Profile 订阅额度/到期数据仍被解析持久化却失去全部 UI 入口。
 - 最小修复保持低密度目标：Profile Scope 始终留在既有 More 菜单；端口验证与 `updateProfileRuntime` 的提交条件对齐；订阅额度与到期日仅在 Edit Profile 的 Updates 中按数据存在显示折叠项，不恢复列表常驻文本。
+- 最终完整 diff 复审又发现两个 P2 可达性回归：空规则时 Proxifier Import 随 action bar 一起消失；Traffic 非 Live 视图在单 Profile 时隐藏了仍可切换 Direct/System/Default 的 Profile Scope。最小修复是在空态保留一个普通 Import 按钮，并让非 Live 视图始终显示 scope picker，不恢复其他常驻控制。
 
 ## 参考指针
 

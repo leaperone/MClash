@@ -2,7 +2,7 @@
 
 - 任务 ID：`simplify-information-architecture-2026-08-29_16-38-17`
 - 创建时间：`2026-08-29_16-38-17`
-- 当前状态：`preflight_revalidation`
+- 当前状态：`implementation_ready`
 
 ## 已完成
 
@@ -13,7 +13,7 @@
 
 ## 进行中
 
-- 提交实现并进入 PR preflight；通过后按独立边界执行 merge 与 `v1.3.7` 发布验证。
+- 提交最终修复并从 Phase 0 重跑 PR preflight；通过后按独立边界执行 merge 与 `v1.3.7` 发布验证。
 
 ## 修改文件
 
@@ -29,10 +29,12 @@
 - 已完成 Profiles 增量：条目只保留来源、更新时间、默认来源与 More；移除常驻 Mixed Port、订阅用量和宽布局多按钮，更新间隔与独立 Mixed Port 进入 Edit 的 Advanced。
 - 已完成 Settings 增量：一级收敛为 General、Routing、Updates 与 Advanced；端口、Dedicated Ports、备份、运行时覆盖和 Core Details 默认折叠，Guard/Provider 诊断进入 Connection Behavior，关键错误与系统批准提示保持直达。
 - 已完成辅助 Sheet 增量：Rule Editor 的 Sources/Destinations 渐进披露、Preview 移入可增长 footer；Listener Port 删除重复 footer 操作；Dedicated Ports 空态提供 Add 且非默认路由进入 Advanced；Proxifier Import 显示 ready/warning/skipped 与内联 note；Node Picker 补无结果空态并改用 Test Latencies。
-- 已完成八语言收敛：每种语言 785 个唯一非空 key；格式占位符、`AppLocalization` 字面量与本轮新增 SwiftUI 静态文案均已核对。
+- 已完成八语言收敛：每种语言 787 个唯一非空 key；44 个格式化 key、104 个 `AppLocalization` 字面量与本轮新增的 62 个 SwiftUI 静态文案均已核对。
 - 已补充 `ReleaseNotes/1.3.7.md`，发布说明只描述本轮已实现的信息架构、渐进披露与无障碍改进。
 - preflight 首轮发现 Overview 状态 getter 缺少显式 return，已用一行 `return switch` 修复；外部 GEO 下载 403 随后恢复为 HTTP 200。
-- preflight 第二轮完整测试与签名构建通过；独立 reviewer 的三个 P2 已按原有菜单、表单与本地化 seam 最小修复，等待全量重跑。
+- preflight 第二轮完整测试与签名构建通过；独立 reviewer 的三个 P2 已按原有菜单、表单与本地化 seam 最小修复。
+- 最终完整 diff 复审报告的两个 P2 已最小修复：空规则仍可导入 Proxifier，Traffic 非 Live 视图始终可选择有效 Profile Scope。
+- 修复候选已再次通过完整测试与签名构建；独立复核对两处修复和 planning 统计给出 `No findings`，提交后仍按规则从 Phase 0 全量重跑。
 
 ## 验证结果
 
@@ -47,9 +49,9 @@
 | Settings 源码检查 | `git diff --check` 通过；移除首页复制的监听器、Dedicated Port 与 Active Profile helper 后无残留引用 | 通过 |
 | 辅助 Sheet 源码检查 | `git diff --check` 通过；提交错误仍会展开对应 Rule Editor 区域并聚焦 | 通过 |
 | 八语言 plist | 8 个 `Localizable.strings` 均通过 `plutil -lint` | 通过 |
-| Key 集合 | 每种语言均为 785 个唯一非空 key，集合一致 | 通过 |
-| 占位符 | 43 个格式化 key 在八语言中的参数类型与数量一致 | 通过 |
-| 新增文案 | 103 个字面量 `AppLocalization` key 与 61 个本轮新增 SwiftUI 静态 key 均存在 | 通过 |
+| Key 集合 | 每种语言均为 787 个唯一非空 key，集合一致 | 通过 |
+| 占位符 | 44 个格式化 key 在八语言中的参数类型与数量一致 | 通过 |
+| 新增文案 | 104 个字面量 `AppLocalization` key 与 62 个本轮新增 SwiftUI 静态 key 均存在 | 通过 |
 | 删除收敛 | 旧 history/diagnostic/menu helper 无残留引用 | 通过 |
 | 最终 diff | `git diff --check` 无空白错误 | 通过 |
 | 远端主分支 | GitHub API 返回 `main@216d019f`；与任务基线一致 | 通过 |
@@ -60,14 +62,19 @@
 | Preflight 第 2 轮 build | GEO 校验/smoke 与 App、System Extension、mihomo、CLI、Sparkle 签名验证 | 通过 |
 | Preflight 第 2 轮 merge probe | 固定 `main@216d019f`，退出 0、零冲突 | 通过 |
 | Preflight 第 2 轮 review | 0 个 P0/P1；3 个 P2 能力回归 | 需修改，已修复待全量重跑 |
+| 最终修复候选 check | App 392、Shared 114、Extension 29、Automation 5、release-script 3 | 通过 |
+| 最终修复候选 build | GEO 校验/smoke 与 App、System Extension、mihomo、CLI、Sparkle 签名验证 | 通过 |
+| 最终修复候选 review | 两处 P2 可达性修复与 planning 统计复核；`No findings` | 通过 |
 
 ## 错误与恢复
 
 | 错误 | 尝试 | 解决方式 |
 |---|---:|---|
-| `Reset to 100%` 被通用 printf 正则误识别为占位符 | 1 | 将占位符一致性限定到英文基准确有格式参数的 43 个 key；结果全绿 |
+| `Reset to 100%` 被通用 printf 正则误识别为占位符 | 1 | 将占位符一致性限定到英文基准确有格式参数的 44 个 key；结果全绿 |
 | Overview 状态 getter 编译缺少 return | 1 | 增加一处 `return switch`，所有 core state 共用同一返回路径 |
 | GEO 数据刷新收到 HTTP 403 | 1 | 核对 GitHub API 配额未耗尽，API 与 raw URL 随后恢复 200；不改下载管道，重跑验证 |
 | 单 Profile 无 Profile Scope 入口 | 1 | Picker 始终保留在 More 菜单，默认页面密度不变 |
 | 关闭已有 Mixed Port 后绕过本地端口校验 | 1 | 校验条件与 runtime 提交条件对齐，保留错误聚焦与公告 |
 | 订阅额度/到期信息无 UI 消费者 | 1 | 在远程 Profile 的 Updates 中按数据存在显示折叠详情 |
+| 空规则时 Proxifier Import 不可达 | 1 | 在空态主 Add 操作下保留普通 Import 入口，不恢复整条 action bar |
+| 单 Profile 的 Traffic scope 被隐藏 | 1 | 非 Live 视图始终显示 Profile Scope，使 Direct/System/Default 筛选可达 |

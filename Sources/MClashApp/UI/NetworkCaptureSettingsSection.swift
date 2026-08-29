@@ -838,6 +838,14 @@ struct AppRoutingView: View {
             Button("Add First Rule…") { addRule() }
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canPerform(.changeNetworkCapture))
+            Button {
+                proxifierImportError = nil
+                showingProxifierImporter = true
+            } label: {
+                Label("Import Proxifier Profile…", systemImage: "arrow.down.doc")
+            }
+            .buttonStyle(.bordered)
+            .disabled(!model.canPerform(.changeNetworkCapture))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(32)
