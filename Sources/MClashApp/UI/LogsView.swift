@@ -80,7 +80,9 @@ struct LogsView: View {
                             }
                         } label: {
                             Label(
-                                followsLatest ? "Pause Following" : "Resume Following",
+                                AppLocalization.string(
+                                    followsLatest ? "Pause Following" : "Resume Following"
+                                ),
                                 systemImage: followsLatest ? "pause.fill" : "arrow.down.to.line"
                             )
                         }
@@ -141,22 +143,30 @@ struct LogsView: View {
         ) {
             Button("OK", role: .cancel) { exportError = nil }
         } message: {
-            Text(exportError ?? "The diagnostic log could not be saved.")
+            Text(
+                exportError
+                    ?? AppLocalization.string("The diagnostic log could not be saved.")
+            )
         }
     }
 
     private func statusBar(snapshot: LogPresentationSnapshot) -> some View {
         HStack(spacing: 10) {
             Text(
-                "\(formattedCount(snapshot.visibleLines.count)) of "
-                    + "\(formattedCount(snapshot.allCount)) entries"
+                AppLocalization.format(
+                    "%@ of %@ entries",
+                    formattedCount(snapshot.visibleLines.count),
+                    formattedCount(snapshot.allCount)
+                )
             )
                 .monospacedDigit()
 
             Spacer()
 
             Label(
-                followsLatest ? "Following newest entry" : "Automatic following paused",
+                AppLocalization.string(
+                    followsLatest ? "Following newest entry" : "Automatic following paused"
+                ),
                 systemImage: followsLatest ? "arrow.down.to.line" : "pause.circle"
             )
         }
@@ -233,8 +243,8 @@ struct LogsView: View {
 
     private func exportFilteredLogs(_ logs: [CoreLogLine]) {
         let panel = NSSavePanel()
-        panel.title = "Export MClash Diagnostics"
-        panel.prompt = "Export"
+        panel.title = AppLocalization.string("Export MClash Diagnostics")
+        panel.prompt = AppLocalization.string("Export")
         panel.canCreateDirectories = true
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = exportFileName()
@@ -399,10 +409,12 @@ private struct LogPresentationSnapshot: Sendable {
             for (index, line) in logs.enumerated() {
                 if index.isMultiple(of: 64), Task.isCancelled { break }
                 guard filter.includes(line.stream) else { continue }
+                let sourceTitle = LogSourceFilter.title(for: line.stream)
+                let localizedSourceTitle = AppLocalization.string(sourceTitle)
                 if query.isEmpty
                     || line.message.localizedCaseInsensitiveContains(query)
-                    || LogSourceFilter.title(for: line.stream)
-                        .localizedCaseInsensitiveContains(query) {
+                    || sourceTitle.localizedCaseInsensitiveContains(query)
+                    || localizedSourceTitle.localizedCaseInsensitiveContains(query) {
                     filtered.append(line)
                 }
             }
@@ -410,10 +422,23 @@ private struct LogPresentationSnapshot: Sendable {
         }
 
         latestID = visibleLines.last?.id
+        let localizedFilterTitle = AppLocalization.string(filter.title)
         if query.isEmpty {
-            emptyResultsDescription = "No \(filter.title) entries are currently available."
+            emptyResultsDescription = AppLocalization.format(
+                "No %@ entries are currently available.",
+                localizedFilterTitle
+            )
+        } else if filter == .all {
+            emptyResultsDescription = AppLocalization.format(
+                "No log entries contain “%@”.",
+                query
+            )
         } else {
-            emptyResultsDescription = "No \(filter.title) entries contain “\(query)”."
+            emptyResultsDescription = AppLocalization.format(
+                "No %@ entries contain “%@”.",
+                localizedFilterTitle,
+                query
+            )
         }
     }
 }
@@ -529,8 +554,11 @@ private struct LogLineRow: View {
     }
 
     private var accessibilityDescription: String {
-        let timestamp = line.timestamp.formatted(.dateTime.hour().minute().second())
-        let semanticSource = line.stream == .standardError ? "stderr error" : sourceTitle
-        return "\(timestamp), \(semanticSource), \(line.message)"
+        AppLocalization.format(
+            "%@, %@, %@",
+            AppLocalization.relativeDate(line.timestamp),
+            sourceTitle,
+            line.message
+        )
     }
 }
