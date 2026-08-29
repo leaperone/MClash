@@ -25,6 +25,9 @@
 - Proxies 当前有两层顶部控制和一个底部端口条，且 Inspector 默认展开；默认应聚焦“配置、组、节点”，Topology、Inspector、端口和 System Proxy 作为次级操作。
 - Traffic/App Routing/Rules 的表格可围绕目标、应用、路由/策略、状态和总量收敛；规则、上下行拆分、profile、coverage、时间等留在 Inspector/详情。
 - Attention 的 Technical Details 已符合渐进披露，但只有最高优先级问题应使用 prominent 恢复按钮；Logs 应为次级工具。
+- 配置审计确认 Profiles 每行常驻 Mixed port、订阅用量和多按钮；Settings 常驻 Guard、Provider revision、Dedicated Ports 明细和安全说明，均属于低频或诊断层。
+- Rule Editor 的保存契约和错误聚焦已完整，适合只重组 Section/Disclosure；无需修改 `CaptureRuleDraft.makeRule()`。
+- Logs 导出报告本身包含运行状态、问题和数据源，即使没有日志也有价值；当前空日志禁用导出属于不必要限制。
 - 不需要新的 Logo 系统；现有应用标识与 SF Symbols 已足够表达页面和状态。
 
 ## 技术决策
@@ -42,6 +45,16 @@
 - 运行时拼接文案需避免新增本地化缺口；优先复用现有 key，新增 key 时八个 lproj 必须同步。
 - 不能为了“简洁”隐藏网络恢复、错误原因或破坏危险操作确认。
 - 已安装 Network Extension 的 CPU/Energy A/B 属于独立验收，不由本次 UI merge 或 release 证明。
+- `CopyableValueButton` 是多个技术详情的共享入口；在该 primitive 扩大最小命中区并播报复制结果，比逐页补丁更小且覆盖完整。
+- Profiles 的运行端口、订阅用量与更新周期已有 Edit 路径；默认行仅保留来源、更新时间、设为默认和 More 即可，不需要重复的常驻运行时控制条。
+- Settings 已有端口、Dedicated Ports、System Proxy 与 Runtime Configuration 编辑 Sheet；首页不需要再复制地址、监听器列表、Guard 计数和 Core 字段，保留摘要并将入口收进原生 Disclosure 即可。
+- Rule Editor 的来源与目标输入占据大部分首屏，但两者都可选；折叠时显示当前选择摘要、提交错误时自动展开并聚焦，能降低默认密度而不损害修错路径。
+- Proxifier 导入项的转换问题原先只藏在 tooltip；只在有 warning/skipped 时显示两行内联 note，比常驻说明更可发现也更克制。
+- 2026-08-29 重新核对 GitHub API：远端 `main` 仍为 `216d019f`，与任务基线一致；SSH fetch 被本机 65535 端口路径中断，但 API 证据未显示主分支漂移。
+- 发布由 `v*` tag 或带 version 的手动 dispatch 进入 `.github/workflows/release.yml`；正式 release job 要求 tag 已存在，构建签名/公证 DMG 与 ZIP、生成 Sparkle appcast，并 best-effort 生成相对旧正式版的 delta。
+- 最终静态检查确认八个语言包均为 785 个唯一非空 key；43 个格式化 key 的占位符一致，103 个字面量 `AppLocalization` key 与本轮新增的 61 个 SwiftUI 静态 key 均存在。
+- 本轮删除的旧 Connections history、App Routing 诊断卡片和 Menu Bar 未使用 helper 已无引用；`git diff --check` 通过。
+- `ReleaseNotes/1.3.7.md` 随实现提交，合并提交可直接作为 `v1.3.7` tag 目标，无需另造发布提交。
 
 ## 参考指针
 

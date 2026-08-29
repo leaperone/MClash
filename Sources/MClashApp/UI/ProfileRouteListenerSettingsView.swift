@@ -135,11 +135,18 @@ struct ProfileRouteListenerSettingsEditor: View {
             }
             .overlay {
                 if listeners.isEmpty {
-                    ContentUnavailableView(
-                        "No Dedicated Ports",
-                        systemImage: "point.3.connected.trianglepath.dotted",
-                        description: Text("Add a port for an app that needs its own route.")
-                    )
+                    ContentUnavailableView {
+                        Label(
+                            "No Dedicated Ports",
+                            systemImage: "point.3.connected.trianglepath.dotted"
+                        )
+                    } description: {
+                        Text("Add a port for an app that needs its own route.")
+                    } actions: {
+                        Button("Add Port") { addListener() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(model.profiles.isEmpty || isSaving)
+                    }
                 }
             }
 
@@ -199,19 +206,26 @@ struct ProfileRouteListenerSettingsEditor: View {
                 }
 
                 Section("Routing") {
-                    Picker("Target", selection: targetKindBinding(listenerID)) {
-                        ForEach(RouteListenerTargetKind.allCases) { kind in
-                            Text(kind.title).tag(kind)
+                    DisclosureGroup {
+                        Picker("Target", selection: targetKindBinding(listenerID)) {
+                            ForEach(RouteListenerTargetKind.allCases) { kind in
+                                Text(kind.title).tag(kind)
+                            }
                         }
-                    }
 
-                    if targetKind(for: listener.target).requiresName {
-                        namedTargetPicker(listenerID: listenerID, listener: listener)
-                    }
+                        if targetKind(for: listener.target).requiresName {
+                            namedTargetPicker(listenerID: listenerID, listener: listener)
+                        }
 
-                    routeExplanation(listener)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        routeExplanation(listener)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } label: {
+                        LabeledContent(
+                            "Advanced Routing",
+                            value: targetKind(for: listener.target).title
+                        )
+                    }
                 }
 
                 if listener.enabled,

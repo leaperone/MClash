@@ -42,11 +42,13 @@ struct ProvidersView: View {
                     Button("View Logs") { model.selection = .logs }
                 }
             } else if allProvidersAreEmpty {
-                ContentUnavailableView(
-                    "No providers",
-                    systemImage: "shippingbox",
-                    description: Text("The active profile does not define proxy or rule providers.")
-                )
+                ContentUnavailableView {
+                    Label("No providers", systemImage: "shippingbox")
+                } description: {
+                    Text("The active profile does not define proxy or rule providers.")
+                } actions: {
+                    Button("Open Profiles") { model.selection = .profiles }
+                }
             } else {
                 List {
                     if !model.proxyProviders.isEmpty {
@@ -128,13 +130,7 @@ struct ProvidersView: View {
             hasCompletedInitialLoad = true
         }
         .toolbar {
-            ToolbarItemGroup {
-                if let loadedAt = model.providersLastLoadedAt {
-                    Text("Read \(loadedAt.formatted(.relative(presentation: .named)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help(loadedAt.formatted(date: .abbreviated, time: .standard))
-                }
+            ToolbarItem {
                 Button {
                     Task { await model.refreshProviders() }
                 } label: {
@@ -142,7 +138,7 @@ struct ProvidersView: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Label("Refresh All", systemImage: "arrow.clockwise")
+                        Label("Refresh Status", systemImage: "arrow.clockwise")
                     }
                 }
                 .disabled(
@@ -228,15 +224,19 @@ private struct ProxyProviderRow: View {
             if let subscription = provider.subscriptionInfo, subscription.total > 0 {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: usageFraction(subscription))
+                        .accessibilityLabel(AppLocalization.string("Subscription usage"))
+                        .accessibilityValue(subscriptionUsageAccessibilityValue(subscription))
                     HStack {
                         Text(
-                            "Used \(formattedByteCount(saturatingByteSum(subscription.upload, subscription.download)))"
+                            AppLocalization.format(
+                                "%@ remaining",
+                                remainingTraffic(subscription)
+                            )
                         )
-                        Spacer()
-                        Text("Total \(formattedByteCount(subscription.total))")
                         if subscription.expire > 0 {
                             Text("· Expires \(expiration(subscription))")
                         }
+                        Spacer()
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -264,24 +264,6 @@ private struct ProxyProviderRow: View {
     private var providerActions: some View {
         HStack(spacing: 8) {
             Button {
-                Task { await model.healthCheckProxyProvider(provider.name) }
-            } label: {
-                if model.isPerforming(.healthCheckProxyProvider(provider.name)) {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Checking…")
-                    }
-                } else {
-                    Label("Health Check", systemImage: "speedometer")
-                }
-            }
-            .disabled(
-                providerOperationInProgress
-                    || !model.canPerform(.healthCheckProxyProvider(provider.name))
-            )
-
-            Button {
                 Task { await model.updateProxyProvider(provider.name) }
             } label: {
                 if model.isPerforming(.updateProxyProvider(provider.name)) {
@@ -298,6 +280,21 @@ private struct ProxyProviderRow: View {
                 providerOperationInProgress
                     || !model.canPerform(.updateProxyProvider(provider.name))
             )
+
+            Menu {
+                Button {
+                    Task { await model.healthCheckProxyProvider(provider.name) }
+                } label: {
+                    Label("Test Provider", systemImage: "speedometer")
+                }
+                .disabled(
+                    providerOperationInProgress
+                        || !model.canPerform(.healthCheckProxyProvider(provider.name))
+                )
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
         }
         .controlSize(.small)
     }
@@ -342,14 +339,33 @@ private struct ProxyProviderRow: View {
     private var metadata: String {
         let alive = provider.proxies.count { $0.alive }
         var parts = [
-            provider.vehicleType,
-            "\(formattedCount(provider.proxies.count)) nodes",
-            "\(formattedCount(alive)) available",
+            AppLocalization.format(
+                "Available %@ of %@",
+                formattedCount(alive),
+                formattedCount(provider.proxies.count)
+            )
         ]
         if let updatedAt = provider.updatedAt, let date = parsedRuntimeTimestamp(updatedAt) {
             parts.append("updated \(date.formatted(.relative(presentation: .named)))")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func remainingTraffic(_ subscription: MihomoSubscriptionInfo) -> String {
+        let used = saturatingByteSum(subscription.upload, subscription.download)
+        let remaining = subscription.total > used ? subscription.total - used : 0
+        return formattedByteCount(remaining)
+    }
+
+    private func subscriptionUsageAccessibilityValue(
+        _ subscription: MihomoSubscriptionInfo
+    ) -> String {
+        let used = saturatingByteSum(subscription.upload, subscription.download)
+        return AppLocalization.format(
+            "Used %@ of %@",
+            formattedByteCount(used),
+            formattedByteCount(subscription.total)
+        )
     }
 
     private func usageFraction(_ subscription: MihomoSubscriptionInfo) -> Double {
@@ -376,10 +392,6 @@ private struct RuleProviderRow: View {
                     VStack(alignment: .leading, spacing: 9) {
                         ruleProviderIdentity
                         HStack(spacing: 10) {
-                            Text(updatedLabel)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
                             Spacer(minLength: 0)
                             updateButton
                         }
@@ -388,10 +400,6 @@ private struct RuleProviderRow: View {
                     HStack(spacing: 12) {
                         ruleProviderIdentity
                         Spacer(minLength: 18)
-                        Text(updatedLabel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
                         updateButton
                     }
                 }
@@ -411,7 +419,13 @@ private struct RuleProviderRow: View {
             Text(provider.name)
                 .lineLimit(compact ? 2 : 1)
                 .help(provider.name)
-            Text("\(provider.behavior) · \(provider.vehicleType) · \(provider.ruleCount) rules")
+            Text(
+                AppLocalization.format(
+                    "Rules %@ · %@",
+                    formattedCount(provider.ruleCount),
+                    updatedLabel
+                )
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

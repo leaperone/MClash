@@ -45,69 +45,55 @@ struct LogsView: View {
             .navigationTitle("Logs")
             .searchable(text: $searchText, prompt: "Search log messages or sources")
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                statusBar(snapshot: snapshot)
+                if sourceFilter != .all || !searchText.isEmpty || !followsLatest {
+                    statusBar(snapshot: snapshot)
+                }
             }
             .toolbar {
                 ToolbarItem {
-                    if layout == .wide {
-                        Picker("Log Source", selection: $sourceFilter) {
-                            ForEach(LogSourceFilter.allCases) { filter in
-                                Text(filter.title).tag(filter)
-                            }
+                    Picker("Source", selection: $sourceFilter) {
+                        ForEach(LogSourceFilter.allCases) { filter in
+                            Text(AppLocalization.string(filter.title)).tag(filter)
                         }
-                        .pickerStyle(.segmented)
-                        .frame(minWidth: 220, idealWidth: 260, maxWidth: 300)
-                        .accessibilityLabel("Filter logs by source")
-                    } else {
-                        Picker("Source", selection: $sourceFilter) {
-                            ForEach(LogSourceFilter.allCases) { filter in
-                                Text(filter.title).tag(filter)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .help("Filter logs by source")
                     }
+                    .pickerStyle(.menu)
+                    .help("Filter logs by source")
                 }
 
                 ToolbarItemGroup {
-                    Button {
-                        followsLatest.toggle()
-                        if followsLatest {
-                            scrollToLatest(snapshot.latestID, using: proxy)
-                        } else {
-                            pendingScrollTask?.cancel()
-                            pendingScrollTask = nil
-                        }
-                    } label: {
-                        Label(
-                            followsLatest ? "Pause Following" : "Resume Following",
-                            systemImage: followsLatest ? "pause.fill" : "arrow.down.to.line"
-                        )
-                    }
-                    .help(followsLatest ? "Pause automatic log following" : "Resume automatic log following")
-                    .accessibilityHint(
-                        followsLatest
-                            ? "New matching log entries will no longer move the list."
-                            : "Moves to the newest matching entry and follows new entries."
-                    )
-                    .keyboardShortcut("l", modifiers: [.command, .shift])
-
                     Button {
                         exportFilteredLogs(snapshot.visibleLines)
                     } label: {
                         Label("Export Diagnostics…", systemImage: "square.and.arrow.up")
                     }
-                    .help("Export current operating status and the filtered logs with recognized credentials redacted")
-                    .disabled(snapshot.visibleLines.isEmpty)
+                    .help("Export operating status and filtered logs with recognized credentials redacted")
                     .keyboardShortcut("e", modifiers: [.command, .shift])
 
-                    Button(role: .destructive) {
-                        model.clearLogs()
+                    Menu {
+                        Button {
+                            followsLatest.toggle()
+                            if followsLatest {
+                                scrollToLatest(snapshot.latestID, using: proxy)
+                            } else {
+                                pendingScrollTask?.cancel()
+                                pendingScrollTask = nil
+                            }
+                        } label: {
+                            Label(
+                                followsLatest ? "Pause Following" : "Resume Following",
+                                systemImage: followsLatest ? "pause.fill" : "arrow.down.to.line"
+                            )
+                        }
+
+                        if !model.logs.isEmpty {
+                            Divider()
+                            Button("Clear Logs", systemImage: "trash", role: .destructive) {
+                                model.clearLogs()
+                            }
+                        }
                     } label: {
-                        Label("Clear Logs", systemImage: "trash")
+                        Label("More", systemImage: "ellipsis.circle")
                     }
-                    .help("Clear all collected logs")
-                    .disabled(model.logs.isEmpty)
                 }
             }
             .onChange(of: model.logs.last?.id) { _, _ in
@@ -245,8 +231,6 @@ struct LogsView: View {
     }
 
     private func exportFilteredLogs(_ logs: [CoreLogLine]) {
-        guard !logs.isEmpty else { return }
-
         let panel = NSSavePanel()
         panel.title = "Export MClash Diagnostics"
         panel.prompt = "Export"
@@ -444,9 +428,9 @@ private enum LogSourceFilter: String, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .all: "All"
-        case .stdout: "stdout"
-        case .stderr: "stderr"
-        case .supervisor: "supervisor"
+        case .stdout: "Core"
+        case .stderr: "Core Error"
+        case .supervisor: "MClash"
         }
     }
 
@@ -461,9 +445,9 @@ private enum LogSourceFilter: String, CaseIterable, Identifiable, Sendable {
 
     static func title(for stream: CoreLogLine.Stream) -> String {
         switch stream {
-        case .standardOutput: "stdout"
-        case .standardError: "stderr"
-        case .supervisor: "supervisor"
+        case .standardOutput: "Core"
+        case .standardError: "Core Error"
+        case .supervisor: "MClash"
         }
     }
 }
@@ -524,7 +508,7 @@ private struct LogLineRow: View {
     }
 
     private var sourceTitle: String {
-        LogSourceFilter.title(for: line.stream)
+        AppLocalization.string(LogSourceFilter.title(for: line.stream))
     }
 
     private var sourceSymbol: String {

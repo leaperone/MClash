@@ -171,12 +171,6 @@ struct ListenerPortSettingsEditor: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button("Use Profile") {
-                        draft.useProfileForAll()
-                        errorMessage = nil
-                    }
-                    .disabled(isSaving)
-
                     if isSaving {
                         ProgressView()
                             .controlSize(.small)

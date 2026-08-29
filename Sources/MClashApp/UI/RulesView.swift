@@ -90,30 +90,36 @@ struct RulesView: View {
             }
             .toolbar {
                 ToolbarItem {
-                    Text(rulesFreshnessTitle)
+                    Text(
+                        AppLocalization.format(
+                            "Rules %@ · %@",
+                            formattedCount(model.rules.count),
+                            rulesFreshnessTitle
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .help(rulesFreshnessHelp)
                 }
                 ToolbarItem {
-                    Text("\(formattedCount(model.rules.count)) rules")
-                        .foregroundStyle(.secondary)
-                }
-                ToolbarItem {
-                    Button {
-                        Task { await model.refreshRules() }
+                    Menu {
+                        Button {
+                            Task { await model.refreshRules() }
+                        } label: {
+                            Label("Refresh Rules", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(
+                            !model.controllerIsReady
+                                || !model.canPerform(.refreshRules)
+                        )
                     } label: {
                         if model.isPerforming(.refreshRules) {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
-                            Label("Refresh", systemImage: "arrow.clockwise")
+                            Label("More", systemImage: "ellipsis.circle")
                         }
                     }
-                    .disabled(
-                        !model.controllerIsReady
-                            || !model.canPerform(.refreshRules)
-                    )
                 }
             }
     }
@@ -237,70 +243,31 @@ private struct RuleTableSurface: Equatable, View {
             }
             .width(min: 38, ideal: 46, max: 58)
 
-            TableColumn("Type") { row in
-                HStack(spacing: 7) {
-                    Text(row.rule.type)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    if row.rule.extra?.disabled == true {
-                        Text("Disabled")
-                            .font(.caption2)
+            TableColumn("Match") { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 7) {
+                        Text(row.rule.type)
+                            .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if row.rule.extra?.disabled == true {
+                            Text("Disabled")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    Text(row.payload)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
                 }
-                .help(row.rule.type)
+                .help("\(row.rule.type) · \(row.payload)")
                 .accessibilityLabel(
                     row.rule.extra?.disabled == true
-                        ? "\(row.rule.type), disabled"
-                        : row.rule.type
+                        ? "\(row.rule.type), \(row.payload), disabled"
+                        : "\(row.rule.type), \(row.payload)"
                 )
             }
-            .width(min: 100, ideal: 140, max: 220)
-
-            TableColumn("Payload") { row in
-                Text(row.payload)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
-                    .help(row.payload)
-                    .accessibilityLabel(row.payload)
-            }
-            .width(min: 220, ideal: 460, max: 1_200)
-
-            TableColumn("Hits") { row in
-                if let hitCount = row.rule.extra?.hitCount {
-                    let hitCountText = hitCount.formatted(.number.grouping(.automatic))
-                    Text(hitCountText)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .accessibilityLabel("\(hitCountText) hits")
-                } else {
-                    Text("—")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .help("This Mihomo runtime did not provide hit statistics for this rule.")
-                }
-            }
-            .width(min: 54, ideal: 72, max: 96)
-
-            TableColumn("Last Hit") { row in
-                if let lastHitAt = row.lastHitAt {
-                    Text(lastHitAt, style: .relative)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help(lastHitAt.formatted(date: .abbreviated, time: .standard))
-                } else if row.rule.extra != nil {
-                    Text("Never")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Unavailable")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .width(min: 76, ideal: 105, max: 140)
+            .width(min: 300, ideal: 620, max: 1_200)
 
             TableColumn("Policy") { row in
                 Text(row.rule.proxy)
@@ -310,6 +277,31 @@ private struct RuleTableSurface: Equatable, View {
                     .accessibilityLabel("Policy \(row.rule.proxy)")
             }
             .width(min: 120, ideal: 180, max: 320)
+
+            TableColumn("Activity") { row in
+                VStack(alignment: .trailing, spacing: 2) {
+                    if let hitCount = row.rule.extra?.hitCount {
+                        Text(
+                            AppLocalization.format(
+                                "Hits %@",
+                                hitCount.formatted(.number.grouping(.automatic))
+                            )
+                        )
+                            .monospacedDigit()
+                    } else {
+                        Text("—")
+                    }
+                    if let lastHitAt = row.lastHitAt {
+                        Text(lastHitAt, style: .relative)
+                    } else if row.rule.extra != nil {
+                        Text("Never")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .width(min: 90, ideal: 120, max: 160)
         }
         .accessibilityLabel("Runtime rules")
     }
@@ -546,7 +538,7 @@ final class RulePresentationStore {
         let visibleCount = rows.count
         let totalCount = totalMatches
         let revision = presentationRevision
-        rulesPerformanceLogger.info(
+        rulesPerformanceLogger.debug(
             "publish reason=\(reason, privacy: .public) visible=\(visibleCount, privacy: .public) total=\(totalCount, privacy: .public) revision=\(revision, privacy: .public)"
         )
 
@@ -556,7 +548,7 @@ final class RulePresentationStore {
         DispatchQueue.main.async {
             let readyDelayMilliseconds =
                 (DispatchTime.now().uptimeNanoseconds - publishStarted) / 1_000_000
-            rulesPerformanceLogger.info(
+            rulesPerformanceLogger.debug(
                 "main-ready visible=\(visibleCount, privacy: .public) total=\(totalCount, privacy: .public) revision=\(revision, privacy: .public) delayMs=\(readyDelayMilliseconds, privacy: .public)"
             )
         }
@@ -574,7 +566,7 @@ enum RulePresentationComputation {
             rows.append(RuleTableRow(rule: rule))
         }
         let elapsedMilliseconds = (DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
-        rulesPerformanceLogger.info(
+        rulesPerformanceLogger.debug(
             "build source=\(rules.count, privacy: .public) durationMs=\(elapsedMilliseconds, privacy: .public)"
         )
         return rows
@@ -592,7 +584,7 @@ enum RulePresentationComputation {
             }
         }
         let elapsedMilliseconds = (DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
-        rulesPerformanceLogger.info(
+        rulesPerformanceLogger.debug(
             "filter queryLength=\(query.count, privacy: .public) source=\(rows.count, privacy: .public) matches=\(matches.count, privacy: .public) durationMs=\(elapsedMilliseconds, privacy: .public)"
         )
         return matches

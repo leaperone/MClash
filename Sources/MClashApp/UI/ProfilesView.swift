@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ProfilesView: View {
@@ -58,8 +59,7 @@ struct ProfilesView: View {
                             )
                         }
                     } header: {
-                        Text("Every real Profile has its own optional Mixed port. The star marks which configuration currently backs the virtual Default Profile.")
-                            .textCase(nil)
+                        Text("Profiles")
                     }
                 }
                 .listStyle(.inset)
@@ -103,49 +103,35 @@ struct ProfilesView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                if model.profiles.contains(where: { profile in
-                    if case .remote = profile.origin { return true }
-                    return false
-                }) {
-                    Button {
-                        Task { await model.refreshAllProfiles() }
-                    } label: {
-                        if model.isPerforming(.refreshAllProfiles) {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("Update All", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                    }
-                    .disabled(!model.canPerform(.refreshAllProfiles))
-                    .help("Refresh all subscriptions")
-                }
-
-                Button {
-                    Task { await model.importProfile() }
-                } label: {
-                    if model.isPerforming(.importProfile) {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Import", systemImage: "square.and.arrow.down")
-                    }
-                }
-                .disabled(!model.canPerform(.importProfile))
-                .help("Import a local YAML profile")
-                .accessibilityLabel(
-                    model.isPerforming(.importProfile)
-                        ? "Importing YAML profile"
-                        : "Import YAML profile"
-                )
-
                 Button {
                     showingSubscriptionSheet = true
                 } label: {
                     Label("Add Subscription", systemImage: "link.badge.plus")
                 }
                 .disabled(!model.canPerform(.addRemoteProfile))
-                .help("Add a profile subscription")
+
+                Menu {
+                    Button {
+                        Task { await model.importProfile() }
+                    } label: {
+                        Label("Import YAML Profile…", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(!model.canPerform(.importProfile))
+
+                    if model.profiles.contains(where: { profile in
+                        if case .remote = profile.origin { return true }
+                        return false
+                    }) {
+                        Button {
+                            Task { await model.refreshAllProfiles() }
+                        } label: {
+                            Label("Update All Subscriptions", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .disabled(!model.canPerform(.refreshAllProfiles))
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
             }
         }
         .sheet(isPresented: $showingSubscriptionSheet) {
@@ -174,7 +160,10 @@ struct ProfilesView: View {
         else {
             return "Choose a real Profile to back this stable entry point."
         }
-        return "Currently uses \(profile.name). System Proxy and dynamic App Routing targets use this stable port."
+        return AppLocalization.format(
+            "Uses %@ for the stable default entry point.",
+            profile.name
+        )
     }
 
     private var emptyState: some View {
@@ -269,8 +258,6 @@ private struct ProfileRow: View {
                     profileActions
                 }
             }
-
-            runtimeStatus
         }
         .padding(.vertical, compact ? 9 : 7)
         .accessibilityElement(children: .contain)
@@ -378,58 +365,15 @@ private struct ProfileRow: View {
                     .lineLimit(compact ? 3 : 2)
                     .accessibilityLabel(refreshFailure)
             }
-
-            if case let .remote(remote) = profile.origin,
-               let subscriptionDetails = subscriptionDetails(remote) {
-                Text(subscriptionDetails)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
-    @ViewBuilder
     private var profileActions: some View {
-        if compact {
-            HStack(spacing: 8) {
-                primaryProfileAction
-                profileMoreMenu
-            }
-            .controlSize(.small)
-        } else {
-            HStack(spacing: 8) {
-                Button {
-                    showingEditSheet = true
-                } label: {
-                    Label("Edit", systemImage: "pencil")
-                }
-                .buttonStyle(.borderless)
-                .disabled(!model.canPerform(.updateProfile(profile.id)))
-                .help("Edit \(profile.name)")
-
-                if isRemote {
-                    Button {
-                        refresh()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(!model.canPerform(.refreshProfile(profile.id)))
-                    .help("Refresh \(profile.name) subscription")
-                }
-
-                primaryProfileAction
-
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                    confirmingDelete = true
-                }
-                .buttonStyle(.borderless)
-                .disabled(removalBlockReason != nil
-                    || !model.canPerform(.removeProfile(profile.id)))
-                .help(removalBlockReason ?? "Delete \(profile.name)")
-            }
-            .controlSize(.small)
+        HStack(spacing: 8) {
+            primaryProfileAction
+            profileMoreMenu
         }
+        .controlSize(.small)
     }
 
     @ViewBuilder
@@ -448,88 +392,6 @@ private struct ProfileRow: View {
             .disabled(!model.canPerform(.activateProfile(profile.id)))
             .help("Use \(profile.name) as the default profile")
         }
-    }
-
-    private var runtimeStatus: some View {
-        HStack(spacing: 10) {
-            Toggle("Mixed port", isOn: runtimeEnabled)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .disabled(
-                    model.isPerforming(.updateProfile(profile.id))
-                        || !model.canPerform(.updateProfile(profile.id))
-                )
-
-            if let session = model.profileSessionSpec(for: profile.id) {
-                Text(
-                    session.enabled
-                        ? AppLocalization.format("On · %d", session.mixedPort)
-                        : AppLocalization.format("Off · reserved %d", session.mixedPort)
-                )
-                .monospacedDigit()
-                .foregroundStyle(session.enabled ? Color.primary : .secondary)
-            } else {
-                Text("Off")
-                    .foregroundStyle(.secondary)
-            }
-
-            if isActive {
-                Text("· Backs Default Profile")
-                    .foregroundStyle(.secondary)
-            }
-            if isRuntimeRunning {
-                Label("Running", systemImage: "circle.fill")
-                    .foregroundStyle(.green)
-            }
-
-            Spacer(minLength: 8)
-
-            if let session = model.profileSessionSpec(for: profile.id) {
-                Button("Change Port…") {
-                    showingEditSheet = true
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .disabled(!session.enabled || !model.canPerform(.updateProfile(profile.id)))
-            }
-        }
-        .font(.caption)
-        .padding(.leading, compact ? 36 : 38)
-        .accessibilityElement(children: .contain)
-    }
-
-    private var runtimeEnabled: Binding<Bool> {
-        Binding(
-            get: {
-                model.profileSessionSpec(for: profile.id)?.enabled == true
-            },
-            set: { enabled in
-                operationError = nil
-                Task {
-                    do {
-                        try await model.setProfileMixedPortEnabled(
-                            profileID: profile.id,
-                            enabled: enabled
-                        )
-                    } catch {
-                        let message = sanitizedError(error.localizedDescription)
-                        operationError = message
-                        model.errorMessage = message
-                    }
-                }
-            }
-        )
-    }
-
-    private var isRuntimeRunning: Bool {
-        if isActive {
-            return model.isConnected
-                && model.profileSessionSpec(for: profile.id)?.enabled == true
-        }
-        guard case .running? = model.auxiliaryCoreStates[profile.id] else {
-            return false
-        }
-        return true
     }
 
     private var profileMoreMenu: some View {
@@ -636,28 +498,6 @@ private struct ProfileRow: View {
         date.formatted(.relative(presentation: .named))
     }
 
-    private func subscriptionDetails(_ remote: RemoteSubscriptionMetadata) -> String? {
-        var details: [String] = []
-        if let usage = remote.usage,
-           let used = usage.used,
-           let total = usage.total,
-           total > 0 {
-            details.append(
-                "Used \(ByteCountFormatter.string(fromByteCount: used, countStyle: .binary)) of "
-                    + ByteCountFormatter.string(fromByteCount: total, countStyle: .binary)
-            )
-        }
-        if let expiresAt = remote.usage?.expiresAt {
-            details.append("Expires \(expiresAt.formatted(date: .abbreviated, time: .omitted))")
-        }
-        if remote.automaticUpdatesEnabled {
-            details.append("Every \(remote.effectiveUpdateIntervalHours)h")
-        } else {
-            details.append("Automatic updates off")
-        }
-        return details.isEmpty ? nil : details.joined(separator: " · ")
-    }
-
     private func activate() {
         operationError = nil
         Task {
@@ -723,6 +563,7 @@ private struct EditProfileView: View {
     private enum Field: Hashable {
         case name
         case address
+        case mixedPort
     }
 
     @Bindable var model: AppModel
@@ -738,6 +579,7 @@ private struct EditProfileView: View {
     @State private var submissionError: String?
     @State private var submissionTask: Task<Void, Never>?
     @State private var attemptedSubmission = false
+    @State private var advancedExpanded = false
     @FocusState private var focusedField: Field?
 
     init(model: AppModel, profile: ProfileMetadata, isPresented: Binding<Bool>) {
@@ -757,11 +599,15 @@ private struct EditProfileView: View {
             _updateIntervalHours = State(
                 initialValue: remote.updateIntervalHours ?? remote.effectiveUpdateIntervalHours
             )
+            _advancedExpanded = State(
+                initialValue: runtime?.enabled == true || remote.updateIntervalHours != nil
+            )
         } else {
             _address = State(initialValue: "")
             _automaticUpdatesEnabled = State(initialValue: false)
             _overridesUpdateInterval = State(initialValue: false)
             _updateIntervalHours = State(initialValue: 24)
+            _advancedExpanded = State(initialValue: runtime?.enabled == true)
         }
     }
 
@@ -771,62 +617,83 @@ private struct EditProfileView: View {
                 .font(.title2.weight(.semibold))
 
             Form {
-                TextField("Name", text: $name)
-                    .focused($focusedField, equals: .name)
-                    .disabled(isSubmitting)
-
-                if isRemote {
-                    TextField("Subscription URL", text: $address)
-                        .textContentType(.URL)
-                        .privacySensitive()
-                        .focused($focusedField, equals: .address)
+                Section("Profile") {
+                    TextField("Name", text: $name)
+                        .focused($focusedField, equals: .name)
                         .disabled(isSubmitting)
 
-                    Toggle("Update automatically", isOn: $automaticUpdatesEnabled)
-                        .disabled(isSubmitting)
-
-                    Toggle("Use a custom update interval", isOn: $overridesUpdateInterval)
-                        .disabled(isSubmitting || !automaticUpdatesEnabled)
-
-                    if automaticUpdatesEnabled, overridesUpdateInterval {
-                        Stepper(
-                            "Update every \(updateIntervalHours) hours",
-                            value: $updateIntervalHours,
-                            in: 1...8_760
-                        )
-                        .disabled(isSubmitting)
-                    } else if automaticUpdatesEnabled,
-                              let suggestedInterval = remoteMetadata?.providerSuggestedUpdateIntervalHours {
-                        Text("The subscription provider suggests every \(suggestedInterval) hours.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    if isRemote {
+                        TextField("Subscription URL", text: $address)
+                            .textContentType(.URL)
+                            .privacySensitive()
+                            .focused($focusedField, equals: .address)
+                            .disabled(isSubmitting)
                     }
                 }
 
-                Section("Mixed Port") {
-                    Toggle("Open Mixed port", isOn: $runtimeEnabled)
-                        .disabled(isSubmitting)
-
-                    LabeledContent("Mixed port") {
-                        TextField(
-                            "Port",
-                            value: $mixedPort,
-                            format: .number.grouping(.never)
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.trailing)
-                        .monospacedDigit()
-                        .frame(width: 92)
-                        .disabled(isSubmitting || !runtimeEnabled)
+                if isRemote {
+                    Section("Updates") {
+                        Toggle("Update automatically", isOn: $automaticUpdatesEnabled)
+                            .disabled(isSubmitting)
                     }
+                }
 
-                    Text(
-                        profile.id == model.activeProfileID
-                            ? "This is the real Profile's own port and can be closed independently. The virtual Default Profile keeps its separate stable port."
-                            : "Opening this port makes the Profile available to App Routing and local tools. HTTP, HTTPS proxy, and SOCKS5 share the same Mixed port."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Section {
+                    DisclosureGroup("Advanced", isExpanded: $advancedExpanded) {
+                        if isRemote {
+                            Toggle("Use a custom update interval", isOn: $overridesUpdateInterval)
+                                .disabled(isSubmitting || !automaticUpdatesEnabled)
+
+                            if automaticUpdatesEnabled, overridesUpdateInterval {
+                                Stepper(
+                                    AppLocalization.format(
+                                        "Update every %d hours",
+                                        updateIntervalHours
+                                    ),
+                                    value: $updateIntervalHours,
+                                    in: 1...8_760
+                                )
+                                .disabled(isSubmitting)
+                            } else if automaticUpdatesEnabled,
+                                      let suggestedInterval = remoteMetadata?.providerSuggestedUpdateIntervalHours {
+                                Text(
+                                    AppLocalization.format(
+                                        "The subscription provider suggests every %d hours.",
+                                        suggestedInterval
+                                    )
+                                )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Toggle("Open Mixed port", isOn: $runtimeEnabled)
+                            .disabled(isSubmitting)
+
+                        LabeledContent("Mixed port") {
+                            TextField(
+                                "Port",
+                                value: $mixedPort,
+                                format: .number.grouping(.never)
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.trailing)
+                            .monospacedDigit()
+                            .frame(width: 92)
+                            .disabled(isSubmitting || !runtimeEnabled)
+                            .focused($focusedField, equals: .mixedPort)
+                        }
+
+                        Text(
+                            AppLocalization.string(
+                                profile.id == model.activeProfileID
+                                    ? "This port is independent from the stable Default Profile port."
+                                    : "Open this port only when App Routing or a local tool needs this Profile directly."
+                            )
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -855,7 +722,7 @@ private struct EditProfileView: View {
                 Button("Save") { submit() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .disabled(isSubmitting || validationMessage != nil)
+                    .disabled(isSubmitting)
             }
         }
         .padding(24)
@@ -893,7 +760,7 @@ private struct EditProfileView: View {
     private var validationMessage: String? {
         if normalizedName.isEmpty { return "Enter a profile name." }
         if isRemote, validatedURL == nil { return "Use a complete HTTP or HTTPS subscription address." }
-        if !(1...65_535).contains(mixedPort) {
+        if runtimeEnabled, !(1...65_535).contains(mixedPort) {
             return "Use a Mixed port from 1 to 65535."
         }
         return nil
@@ -906,7 +773,11 @@ private struct EditProfileView: View {
     private func submit() {
         attemptedSubmission = true
         submissionError = nil
-        guard validationMessage == nil else { return }
+        if let validationMessage {
+            focusValidationError()
+            announceValidationError(validationMessage)
+            return
+        }
 
         submissionTask = Task {
             do {
@@ -942,6 +813,31 @@ private struct EditProfileView: View {
         submissionTask?.cancel()
         isPresented = false
     }
+
+    private func focusValidationError() {
+        if normalizedName.isEmpty {
+            focusedField = .name
+        } else if isRemote, validatedURL == nil {
+            focusedField = .address
+        } else {
+            advancedExpanded = true
+            Task { @MainActor in
+                await Task.yield()
+                focusedField = .mixedPort
+            }
+        }
+    }
+
+    private func announceValidationError(_ message: String) {
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
+        )
+    }
 }
 
 private struct AddSubscriptionView: View {
@@ -957,6 +853,7 @@ private struct AddSubscriptionView: View {
     @State private var submissionError: String?
     @State private var submissionTask: Task<Void, Never>?
     @State private var attemptedSubmission = false
+    @State private var showsNameField = false
     @FocusState private var focusedField: Field?
 
     var body: some View {
@@ -972,20 +869,6 @@ private struct AddSubscriptionView: View {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 5) {
-                        TextField("Name", text: $name)
-                            .focused($focusedField, equals: .name)
-                            .submitLabel(.next)
-                            .onSubmit { focusedField = .address }
-                            .disabled(isSubmitting)
-                            .accessibilityIdentifier("subscription.name")
-
-                        if let nameValidationMessage {
-                            validationLabel(nameValidationMessage)
-                                .accessibilityIdentifier("subscription.name.error")
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 5) {
                         TextField("Subscription URL", text: $address)
                             .textContentType(.URL)
                             .privacySensitive()
@@ -999,6 +882,18 @@ private struct AddSubscriptionView: View {
                             validationLabel(addressValidationMessage)
                                 .accessibilityIdentifier("subscription.url.error")
                         }
+                    }
+
+                    DisclosureGroup(
+                        "Profile Name (Optional)",
+                        isExpanded: $showsNameField
+                    ) {
+                        TextField("Name", text: $name)
+                            .focused($focusedField, equals: .name)
+                            .submitLabel(.done)
+                            .onSubmit { submit() }
+                            .disabled(isSubmitting)
+                            .accessibilityIdentifier("subscription.name")
                     }
                 }
             }
@@ -1037,7 +932,7 @@ private struct AddSubscriptionView: View {
                 .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("subscription.cancel")
 
-                Button("Add") {
+                Button("Add Subscription") {
                     submit()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -1049,7 +944,7 @@ private struct AddSubscriptionView: View {
         .padding(24)
         .frame(minWidth: 420, idealWidth: 520, maxWidth: 680)
         .interactiveDismissDisabled(isSubmitting)
-        .onAppear { focusedField = .name }
+        .onAppear { focusedField = .address }
         .onChange(of: name) { _, _ in
             submissionError = nil
         }
@@ -1091,11 +986,6 @@ private struct AddSubscriptionView: View {
         return url
     }
 
-    private var nameValidationMessage: String? {
-        guard attemptedSubmission, normalizedName.isEmpty else { return nil }
-        return "Enter a name for this profile."
-    }
-
     private var addressValidationMessage: String? {
         guard attemptedSubmission || !normalizedAddress.isEmpty else { return nil }
         if normalizedAddress.isEmpty { return "Enter the subscription address." }
@@ -1107,12 +997,11 @@ private struct AddSubscriptionView: View {
         attemptedSubmission = true
         submissionError = nil
 
-        guard !normalizedName.isEmpty else {
-            focusedField = .name
-            return
-        }
         guard let url = validatedURL else {
             focusedField = .address
+            if let addressValidationMessage {
+                announceValidationError(addressValidationMessage)
+            }
             return
         }
         guard model.canPerform(.addRemoteProfile), submissionTask == nil else {
@@ -1124,7 +1013,7 @@ private struct AddSubscriptionView: View {
         submissionTask = Task {
             do {
                 try await model.addRemoteProfile(
-                    name: normalizedName,
+                    name: normalizedName.isEmpty ? suggestedName(for: url) : normalizedName,
                     url: url,
                     activate: model.activeProfileID == nil
                 )
@@ -1150,6 +1039,21 @@ private struct AddSubscriptionView: View {
     private func cancel() {
         submissionTask?.cancel()
         isPresented = false
+    }
+
+    private func suggestedName(for url: URL) -> String {
+        url.host ?? url.absoluteString
+    }
+
+    private func announceValidationError(_ message: String) {
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
+        )
     }
 
     private func sanitizedError(_ message: String, url: URL) -> String {

@@ -214,7 +214,6 @@ struct AppRoutingView: View {
     @State private var activityInspectorPresentation: InspectorPresentation = .popover
     @State private var showingDNSReplacementConfirmation = false
     @State private var showingAppRoutingEnableConfirmation = false
-    @State private var advancedDNSExpanded = false
     @State private var showingProxifierImporter = false
     @State private var proxifierImportPlan: ProxifierRuleImportPlan?
     @State private var proxifierImportError: String?
@@ -223,7 +222,7 @@ struct AppRoutingView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                statusHeader(compact: geometry.size.width < 900)
+                statusHeader
                     .fixedSize(horizontal: false, vertical: true)
                 Divider()
 
@@ -237,15 +236,15 @@ struct AppRoutingView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                Divider()
-                Group {
-                    if workspace == .rules {
-                        actionBar
-                    } else {
-                        activityActionBar
-                    }
+                if workspace == .rules, !visibleRules.isEmpty {
+                    Divider()
+                    actionBar
+                        .frame(minHeight: 46)
+                } else if workspace == .activity {
+                    Divider()
+                    activityActionBar
+                        .frame(minHeight: 46)
                 }
-                    .frame(height: 46)
             }
             // GeometryReader supplies the finite detail-column dimensions.
             // Without this clamp, the empty state's flexible height can make
@@ -360,12 +359,10 @@ struct AppRoutingView: View {
         }
     }
 
-    @ViewBuilder
-    private func statusHeader(compact: Bool) -> some View {
-        if compact {
-            compactStatusHeader
-        } else {
+    private var statusHeader: some View {
+        ViewThatFits(in: .horizontal) {
             expandedStatusHeader
+            compactStatusHeader
         }
     }
 
@@ -385,8 +382,6 @@ struct AppRoutingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 workspacePicker
-
-                profileScopePicker
 
                 statusHeaderControls
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -428,12 +423,8 @@ struct AppRoutingView: View {
                 statusHeaderControls
             }
 
-            HStack(spacing: 8) {
-                workspacePicker
-                    .frame(maxWidth: .infinity)
-                profileScopePicker
-                    .frame(minWidth: 130, idealWidth: 160, maxWidth: 220)
-            }
+            workspacePicker
+                .frame(maxWidth: .infinity)
 
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: compactStatusSymbol)
@@ -468,8 +459,21 @@ struct AppRoutingView: View {
         HStack(spacing: 10) {
             Menu {
                 Toggle("Include DNS with App Routing", isOn: dnsEnabled)
+                if showsProfileScope {
+                    Picker("Profile Scope", selection: $profileScope) {
+                        Text("All Profiles").tag(ProfileScope.all)
+                        Text("Default Profile").tag(ProfileScope.defaultProfile)
+                        ForEach(model.profiles) { profile in
+                            Text(profile.name)
+                                .tag(ProfileScope.profile(profile.id))
+                        }
+                        Text("Direct / System").tag(ProfileScope.system)
+                    }
+                }
                 Divider()
-                Button("Open Attention") { model.selection = .attention }
+                if !model.operationalIssues.isEmpty {
+                    Button("Open Attention") { model.selection = .attention }
+                }
                 Button("Open Logs") { model.selection = .logs }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -487,18 +491,8 @@ struct AppRoutingView: View {
         }
     }
 
-    private var profileScopePicker: some View {
-        Picker("Profile scope", selection: $profileScope) {
-            Text("All Profiles").tag(ProfileScope.all)
-            Text("Default Profile").tag(ProfileScope.defaultProfile)
-            ForEach(model.profiles) { profile in
-                Text(profile.name)
-                    .tag(ProfileScope.profile(profile.id))
-            }
-            Text("Direct / System").tag(ProfileScope.system)
-        }
-        .frame(minWidth: 130, idealWidth: 170, maxWidth: 220)
-        .help("Show all profiles together or focus on one profile")
+    private var showsProfileScope: Bool {
+        model.profiles.count > 1 || profileScope != .all
     }
 
     private var compactStatusMessage: String {
@@ -613,201 +607,6 @@ struct AppRoutingView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var dataPlaneStatus: some View {
-        HStack(alignment: .top, spacing: 12) {
-            dataPlaneCard(
-                title: "Application Traffic",
-                status: applicationDataPlaneTitle,
-                detail: applicationDataPlaneDetail,
-                symbol: applicationDataPlaneSymbol,
-                color: applicationDataPlaneColor
-            ) {
-                EmptyView()
-            }
-
-            dataPlaneCard(
-                title: "DNS Traffic",
-                status: dnsDataPlaneTitle,
-                detail: dnsDataPlaneDetail,
-                symbol: dnsDataPlaneSymbol,
-                color: dnsDataPlaneColor
-            ) {
-                if model.dnsProxyAutomaticallyDisabled
-                    || model.dnsProxyRuntimeError != nil {
-                    Button("Retry") {
-                        Task { await model.retryDNSCaptureActivation() }
-                    }
-                    .controlSize(.small)
-                    .disabled(!model.canPerform(.changeNetworkCapture))
-                }
-            }
-        }
-    }
-
-    private var advancedDNSSettings: some View {
-        DisclosureGroup("Advanced DNS Routing", isExpanded: $advancedDNSExpanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Include DNS when App Routing is enabled", isOn: dnsEnabled)
-                    .toggleStyle(.switch)
-                    .disabled(
-                        model.pendingNetworkCaptureEnabled != nil
-                            || !model.canPerform(.changeNetworkCapture)
-                    )
-                Text("Recommended. DNS Routing normally starts and stops with App Routing. Turn this off only when another DNS Proxy must remain responsible for system DNS. App-provided DoH cannot be identified as DNS traffic.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.top, 6)
-        }
-        .font(.callout)
-    }
-
-    private func dataPlaneCard<Actions: View>(
-        title: String,
-        status: String,
-        detail: String,
-        symbol: String,
-        color: Color,
-        @ViewBuilder actions: () -> Actions
-    ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: symbol)
-                .foregroundStyle(color)
-                .font(.title3)
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(status)
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(color)
-                Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(5)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            actions()
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(color.opacity(0.18), lineWidth: 1)
-        }
-    }
-
-    private var applicationDataPlaneTitle: String {
-        switch model.networkCaptureState {
-        case .on:
-            model.appRoutingProviderLastVerifiedAt == nil
-                ? "Verifying Provider"
-                : "Provider Verified"
-        case .enabling: "Starting"
-        case .awaitingUserApproval: "Approval Required"
-        case .failed: "Needs Attention"
-        case .waitingForConnection: "Waiting for Connection"
-        case .disabling: "Stopping"
-        case .requiresReboot: "Restart Required"
-        case .off: "Off"
-        }
-    }
-
-    private var applicationDataPlaneDetail: String {
-        let active = model.appRoutingActiveCount
-        let measured = model.appRoutingTrafficRates.measured
-        let direct = model.appRoutingTrafficRates.direct
-        let rates = model.liveStreamHealth[.appRouting]?.hasCurrentData == true
-            ? "measured ↓ \(formattedActivityRate(measured.download)) ↑ \(formattedActivityRate(measured.upload)); Direct ↓ \(formattedActivityRate(direct.download)) ↑ \(formattedActivityRate(direct.upload))"
-            : "live rates unavailable; last-known counters are retained"
-        if let date = model.appRoutingProviderLastVerifiedAt {
-            return "\(formattedCount(active)) active conversations · \(rates) · Provider verified \(date.formatted(.relative(presentation: .named)))."
-        }
-        return "\(formattedCount(active)) active conversations · \(rates) · waiting for an authenticated Provider response."
-    }
-
-    private var applicationDataPlaneSymbol: String {
-        switch model.networkCaptureState {
-        case .on: "checkmark.shield.fill"
-        case .failed: "exclamationmark.triangle.fill"
-        case .enabling, .disabling: "arrow.clockwise"
-        case .awaitingUserApproval: "lock.shield.fill"
-        default: "shield"
-        }
-    }
-
-    private var applicationDataPlaneColor: Color {
-        switch model.networkCaptureState {
-        case .on: model.appRoutingProviderLastVerifiedAt == nil ? .orange : .green
-        case .failed: .red
-        case .enabling, .disabling, .awaitingUserApproval, .requiresReboot: .orange
-        default: .secondary
-        }
-    }
-
-    private var dnsDataPlaneTitle: String {
-        guard model.networkCapturePreferences.dnsEnabled else { return "Off" }
-        guard model.networkCapturePreferences.enabled else { return "Starts with App Routing" }
-        if model.dnsProxyRuntimeError != nil { return "Needs Attention" }
-        if model.dnsProxyAutomaticallyDisabled { return "Stopped with App Routing" }
-        if let status = model.dnsProxyRuntimeStatus, status.isOperational {
-            return status.lastResponseDeliveredAt == nil
-                ? "Mihomo Listener Ready"
-                : "DNS Responses Observed"
-        }
-        return "Verifying Provider"
-    }
-
-    private var dnsDataPlaneDetail: String {
-        if let error = model.dnsProxyRuntimeError { return error }
-        guard model.networkCapturePreferences.dnsEnabled else {
-            return "DNS is excluded by the Advanced DNS Routing setting; the current macOS resolver remains responsible."
-        }
-        guard model.networkCapturePreferences.enabled else {
-            return "DNS Routing will start with App Routing and stop when App Routing is turned off."
-        }
-        guard let status = model.dnsProxyRuntimeStatus else {
-            return "Waiting for a matching DNS Provider heartbeat and Mihomo backend probe."
-        }
-        let (totalBytes, overflow) = status.uploadBytes.addingReportingOverflow(
-            status.downloadBytes
-        )
-        let traffic = formattedActivityBytes(overflow ? .max : totalBytes)
-        let association = status.lastBackendAssociationAt.map {
-            "SOCKS association \($0.formatted(.relative(presentation: .named)))"
-        } ?? "SOCKS association not yet verified"
-        let query = status.lastQueryForwardedAt.map {
-            "query forwarded \($0.formatted(.relative(presentation: .named)))"
-        } ?? "no query forwarded yet"
-        let response = status.lastResponseDeliveredAt.map {
-            "response delivered \($0.formatted(.relative(presentation: .named)))"
-        } ?? "no response delivered yet"
-        return "\(formattedCount(Int(clamping: status.activeTCPFlows))) TCP + \(formattedCount(Int(clamping: status.activeUDPFlows))) UDP active · \(formattedCount(Int(clamping: status.completedFlows))) completed · \(formattedCount(Int(clamping: status.failedFlows))) failed · \(traffic). \(association); \(query); \(response)."
-    }
-
-    private var dnsDataPlaneSymbol: String {
-        if model.dnsProxyRuntimeError != nil { return "exclamationmark.triangle.fill" }
-        if model.dnsProxyAutomaticallyDisabled { return "arrow.uturn.backward.circle.fill" }
-        if model.dnsProxyRuntimeStatus?.isOperational == true { return "checkmark.shield.fill" }
-        guard model.networkCapturePreferences.dnsEnabled else { return "network" }
-        return model.networkCapturePreferences.enabled ? "arrow.clockwise" : "link.circle"
-    }
-
-    private var dnsDataPlaneColor: Color {
-        if model.dnsProxyRuntimeError != nil { return .red }
-        if model.dnsProxyAutomaticallyDisabled { return .orange }
-        if model.dnsProxyRuntimeStatus?.isOperational == true { return .green }
-        return model.networkCapturePreferences.dnsEnabled
-            && model.networkCapturePreferences.enabled ? .orange : .secondary
-    }
-
     private var dnsEnabled: Binding<Bool> {
         Binding(
             get: {
@@ -823,325 +622,7 @@ struct AppRoutingView: View {
         )
     }
 
-    @ViewBuilder
-    private var statusNotice: some View {
-        switch model.networkCaptureState {
-        case .waitingForConnection:
-            statusNotice(
-                title: "Connect MClash to start App Routing",
-                message: "The rules are saved. App Routing will start after the active profile connects.",
-                symbol: "pause.circle.fill",
-                color: .secondary
-            ) {
-                Button("Connect Now") {
-                    Task { await model.connect() }
-                }
-                .disabled(!model.canPerform(.connection))
-            }
-        case .awaitingUserApproval:
-            statusNotice(
-                title: "Approve the MClash Network Extension",
-                message: "In System Settings, open General → Login Items & Extensions → Network Extensions, then enable MClash.",
-                symbol: "lock.shield.fill",
-                color: .orange
-            ) {
-                Button("Open System Settings") {
-                    SMAppService.openSystemSettingsLoginItems()
-                }
-            }
-        case .requiresReboot:
-            statusNotice(
-                title: "Restart your Mac to finish enabling App Routing",
-                message: "macOS accepted the Network Extension update and will activate it after the next restart.",
-                symbol: "restart.circle.fill",
-                color: .orange
-            ) { EmptyView() }
-        case let .failed(message):
-            statusNotice(
-                title: "App Routing Needs Attention",
-                message: message,
-                symbol: "exclamationmark.triangle.fill",
-                color: .red
-            ) {
-                HStack(spacing: 8) {
-                    Button("Retry") {
-                        Task { await model.retryNetworkCaptureActivation() }
-                    }
-                    .disabled(!model.canPerform(.changeNetworkCapture))
-                    Button("View Logs") {
-                        model.selection = .logs
-                    }
-                }
-            }
-        case .off, .on:
-            networkCaptureReceiptNotice
-        case .enabling, .disabling:
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private var networkCaptureReceiptNotice: some View {
-        if let receipt = model.networkCaptureChangeReceipt {
-            switch receipt.outcome {
-            case .savedForNextActivation:
-                statusNotice(
-                    title: "Settings saved without interrupting Mihomo",
-                    message: "App Routing is off, so the rules and advanced DNS preference were saved for the next activation. Completed in \(formattedDuration(receipt.duration)).",
-                    symbol: "checkmark.circle.fill",
-                    color: .green
-                ) { EmptyView() }
-            case let .rulesUpdatedLive(dnsEnabled):
-                statusNotice(
-                    title: "Rules updated without interrupting connections",
-                    message: dnsEnabled
-                        ? "New connections now use the updated rules. DNS Routing was refreshed through the verified provider path. Completed in \(formattedDuration(receipt.duration))."
-                        : "New connections now use the updated rules. Mihomo and existing App Routing relays stayed online. Completed in \(formattedDuration(receipt.duration)).",
-                    symbol: "checkmark.circle.fill",
-                    color: .green
-                ) { EmptyView() }
-            case let .requiresReboot(dnsEnabled):
-                statusNotice(
-                    title: "Restart required to finish App Routing",
-                    message: dnsEnabled
-                        ? "macOS saved App Routing and DNS Routing, but the updated Network Extension will not run until this Mac restarts."
-                        : "macOS saved App Routing, but the updated Network Extension will not run until this Mac restarts.",
-                    symbol: "restart.circle.fill",
-                    color: .orange
-                ) { EmptyView() }
-            case let .appliedAndVerified(enabled, dnsEnabled, systemProxyWasDisabled):
-                statusNotice(
-                    title: enabled ? "App Routing change verified" : "App Routing turned off",
-                    message: networkCaptureReceiptMessage(
-                        enabled: enabled,
-                        dnsEnabled: dnsEnabled,
-                        systemProxyWasDisabled: systemProxyWasDisabled,
-                        duration: receipt.duration
-                    ),
-                    symbol: "checkmark.circle.fill",
-                    color: .green
-                ) { EmptyView() }
-            case let .rejectedAndRolledBack(reason):
-                statusNotice(
-                    title: "Change rejected; previous network state restored",
-                    message: "\(reason) Recovery completed in \(formattedDuration(receipt.duration)).",
-                    symbol: "arrow.uturn.backward.circle.fill",
-                    color: .orange
-                ) { EmptyView() }
-            case let .rollbackFailed(reason):
-                statusNotice(
-                    title: "Previous network state was not fully restored",
-                    message: reason,
-                    symbol: "exclamationmark.triangle.fill",
-                    color: .red
-                ) {
-                    Button("View Logs") { model.selection = .logs }
-                }
-            }
-        }
-    }
-
-    private func networkCaptureReceiptMessage(
-        enabled: Bool,
-        dnsEnabled: Bool,
-        systemProxyWasDisabled: Bool,
-        duration: TimeInterval
-    ) -> String {
-        var facts = [
-            enabled ? "App Routing is enabled" : "App Routing is disabled",
-            dnsEnabled && enabled
-                ? "DNS Routing started with App Routing"
-                : dnsEnabled
-                    ? "DNS Routing stopped with App Routing"
-                    : "DNS Routing is excluded in Advanced settings",
-        ]
-        if systemProxyWasDisabled {
-            facts.append("the previously enabled System Proxy was turned off to avoid double interception")
-        }
-        facts.append("completed in \(formattedDuration(duration))")
-        return facts.joined(separator: "; ") + "."
-    }
-
-    private func formattedDuration(_ duration: TimeInterval) -> String {
-        duration < 1
-            ? "\(Int((duration * 1_000).rounded())) ms"
-            : "\(String(format: "%.1f", duration)) s"
-    }
-
-    private var activitySummary: some View {
-        let activities = scopedAppRoutingActivities
-        let recent = activities.filter {
-            $0.startedAt >= Date().addingTimeInterval(-60)
-        }
-        let active = activities.filter {
-            $0.endedAt == nil
-                && $0.relayState != .completed
-                && $0.relayState != .failed
-                && $0.relayState != .notApplicable
-        }.count
-        let viaMihomo = recent.filter {
-            if case .mihomo = $0.effectiveAction { return $0.relayState != .failed }
-            return false
-        }.count
-        let direct = recent.filter {
-            $0.effectiveAction == .direct || $0.effectiveAction == .failOpen
-        }.count
-        let rejected = recent.filter { $0.effectiveAction == .reject }.count
-        let failed = recent.filter { $0.relayState == .failed }.count
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 18) {
-                summaryMetric("Active", value: active, color: .green)
-                summaryMetric("Via Mihomo · 60s", value: viaMihomo, color: .accentColor)
-                summaryMetric("Direct / Handoff · 60s", value: direct, color: .secondary)
-                summaryMetric("Rejected · 60s", value: rejected, color: .red)
-                summaryMetric("Failed · 60s", value: failed, color: .orange)
-                Spacer(minLength: 12)
-                providerHeartbeat
-            }
-            Text("Active includes every retained open conversation. Outcome counts cover flows started in the last minute. Normal Direct traffic stays on the original macOS path and is unmeasured; only Direct fallback inside an already-owned flow can be measured.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Label(
-                    "Measured now ↓ \(formattedActivityRate(scopedTrafficRate.download)) ↑ \(formattedActivityRate(scopedTrafficRate.upload))",
-                    systemImage: "speedometer"
-                )
-                Label(
-                    "Retained \(formattedCount(model.appRoutingActivities.count))/2,000",
-                    systemImage: "tray.full"
-                )
-                if model.appRoutingActivityDroppedCount > 0 {
-                    Label(
-                        "\(formattedActivityCount(model.appRoutingActivityDroppedCount)) records dropped",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .foregroundStyle(.orange)
-                }
-                if let coverage = model.appRoutingActivityCoverageStartedAt {
-                    Text("Coverage since \(coverage.formatted(.relative(presentation: .named)))")
-                }
-            }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            let pathRates = model.appRoutingTrafficRates.byPath
-                .filter { pathBelongsToSelectedProfile($0.key) }
-                .filter { $0.value.total > 0 }
-                .sorted { $0.value.total > $1.value.total }
-            if !pathRates.isEmpty {
-                HStack(spacing: 12) {
-                    Text("Paths now")
-                        .fontWeight(.semibold)
-                    ForEach(Array(pathRates.prefix(4)), id: \.key) { path, rate in
-                        Text(
-                            "\(appRoutingTrafficPathTitle(path)) ↓ \(formattedActivityRate(rate.download)) ↑ \(formattedActivityRate(rate.upload))"
-                        )
-                    }
-                }
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-            }
-        }
-        .padding(12)
-        .background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-    }
-
-    private func summaryMetric(_ title: String, value: Int, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(formattedCount(value))
-                .font(.headline.monospacedDigit())
-                .foregroundStyle(color)
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var providerHeartbeat: some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            Label(providerHeartbeatTitle, systemImage: providerHeartbeatSymbol)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(providerHeartbeatColor)
-            if let verifiedAt = model.appRoutingProviderLastVerifiedAt {
-                Text("Revision verified \(verifiedAt.formatted(.relative(presentation: .named)))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            if let responseAt = model.liveStreamHealth[.appRouting]?.lastReceivedAt {
-                Text("Activity response \(responseAt.formatted(.relative(presentation: .named)))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-    }
-
-    private var providerHeartbeatTitle: String {
-        switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
-        case .live: "Provider verified"
-        case .connecting: "Verifying provider"
-        case .reconnecting: "Provider reconnecting"
-        case .stale: "Provider unverified"
-        case .inactive: "Provider inactive"
-        }
-    }
-
-    private var providerHeartbeatSymbol: String {
-        switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
-        case .live: "checkmark.circle.fill"
-        case .connecting, .reconnecting: "arrow.clockwise"
-        case .stale: "exclamationmark.triangle.fill"
-        case .inactive: "circle"
-        }
-    }
-
-    private var providerHeartbeatColor: Color {
-        switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
-        case .live: .green
-        case .connecting, .reconnecting: .orange
-        case .stale: .red
-        case .inactive: .secondary
-        }
-    }
-
-    private func statusNotice<Actions: View>(
-        title: String,
-        message: String,
-        symbol: String,
-        color: Color,
-        @ViewBuilder actions: () -> Actions
-    ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: symbol)
-                .foregroundStyle(color)
-                .font(.title3)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.callout.weight(.semibold))
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
-            Spacer(minLength: 16)
-            actions()
-        }
-        .padding(12)
-        .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(color.opacity(0.22), lineWidth: 1)
-        }
-        .accessibilityElement(children: .contain)
-    }
-
     private var rulesTable: some View {
-        let statistics = scopedRuleStatistics
         return Table(visibleRules, selection: $selectedRuleID) {
             TableColumn("") { rule in
                 Button {
@@ -1151,94 +632,48 @@ struct AppRoutingView: View {
                         .foregroundStyle(rule.enabled ? Color.green : Color.secondary)
                 }
                 .buttonStyle(.plain)
+                .frame(minWidth: 24, minHeight: 24)
+                .contentShape(Rectangle())
                 .help(rule.enabled ? "Disable rule" : "Enable rule")
                 .accessibilityLabel(rule.enabled ? "Disable \(rule.id)" : "Enable \(rule.id)")
             }
-            .width(26)
+            .width(30)
 
-            TableColumn("Name") { rule in
-                Text(rule.id)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                    .onTapGesture(count: 2) { edit(rule) }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { edit(rule) }
+            TableColumn("Rule") { rule in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(rule.id)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Text(sourceSummary(rule))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .onTapGesture(count: 2) { edit(rule) }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { edit(rule) }
             }
-            .width(min: 110, ideal: 170)
+            .width(min: 190, ideal: 300)
 
-            TableColumn("Application / Process") { rule in
-                Text(sourceSummary(rule))
-                    .lineLimit(2)
-                    .foregroundStyle(rule.enabled ? Color.primary : Color.secondary)
+            TableColumn("Match") { rule in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(destinationSummary(rule))
+                        .lineLimit(1)
+                    Text(transportSummary(rule))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(rule.enabled ? Color.primary : Color.secondary)
             }
-            .width(min: 150, ideal: 230)
+            .width(min: 170, ideal: 260)
 
-            TableColumn("Target") { rule in
-                Text(destinationSummary(rule))
-                    .lineLimit(2)
-                    .foregroundStyle(rule.enabled ? Color.primary : Color.secondary)
-            }
-            .width(min: 130, ideal: 210)
-
-            TableColumn("Protocol / Ports") { rule in
-                Text(transportSummary(rule))
-                    .lineLimit(1)
-                    .foregroundStyle(rule.enabled ? Color.primary : Color.secondary)
-            }
-            .width(min: 105, ideal: 140)
-
-            TableColumn("Action") { rule in
+            TableColumn("Route") { rule in
                 Text(actionSummary(rule.action))
                     .lineLimit(1)
                     .foregroundStyle(actionColor(rule.action))
             }
-            .width(min: 90, ideal: 130)
-
-            TableColumn("Observed") { rule in
-                let value = statistics[rule.id] ?? .zero
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(formattedCount(value.matchCount)) matches")
-                        .monospacedDigit()
-                    if value.activeCount > 0 {
-                        Text("\(formattedCount(value.activeCount)) active")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    } else if value.failureCount > 0 {
-                        Text("\(formattedCount(value.failureCount)) failed")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
-            }
-            .width(min: 88, ideal: 110)
-
-            TableColumn("Traffic") { rule in
-                let value = statistics[rule.id] ?? .zero
-                let rate = model.appRoutingTrafficRates.byRule[rule.id] ?? AppRoutingByteRate()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(formattedRuleTraffic(value.measuredBytes, partial: value.unmeasuredCount > 0))
-                    Text("↓ \(formattedActivityRate(rate.download))  ↑ \(formattedActivityRate(rate.upload))")
-                        .foregroundStyle(.secondary)
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(value.unmeasuredCount > 0 ? Color.orange : Color.secondary)
-                .help(ruleTrafficHelp(value))
-            }
-            .width(min: 116, ideal: 138)
-
-            TableColumn("Last Match") { rule in
-                if let date = statistics[rule.id]?.lastMatchedAt {
-                    Text(date, style: .relative)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help(date.formatted(date: .abbreviated, time: .standard))
-                } else {
-                    Text("Never")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .width(min: 72, ideal: 96)
+            .width(min: 100, ideal: 150)
         }
         .contextMenu(forSelectionType: String.self) { selection in
             if let id = selection.first,
@@ -1297,15 +732,6 @@ struct AppRoutingView: View {
             }
 
             Spacer(minLength: 12)
-
-            if enabledRuleCount == 0 {
-                Button(action: addRule) {
-                    Label("Add Rule…", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!model.canPerform(.changeNetworkCapture))
-            }
         }
         .frame(height: 44)
         .padding(.horizontal, MClashLayout.pagePadding)
@@ -1365,48 +791,22 @@ struct AppRoutingView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activityRoute(activity))
                         .lineLimit(1)
-                    Text(activity.matchedRuleIdentifier ?? activityCause(activity))
+                    Label(
+                        activityResult(activity),
+                        systemImage: activityResultSymbol(activity)
+                    )
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(activityResultColor(activity))
                         .lineLimit(1)
                 }
+                .help(activity.relayError ?? activity.relayNote ?? activityCause(activity))
             }
-            .width(min: 115, ideal: 165)
-
-            TableColumn("Profile") { activity in
-                Text(activityProfileTitle(activity))
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
-            }
-            .width(min: 90, ideal: 125)
-
-            TableColumn("State") { activity in
-                Label(
-                    activityResult(activity),
-                    systemImage: activityResultSymbol(activity)
-                )
-                .foregroundStyle(activityResultColor(activity))
-                .lineLimit(1)
-                .help(activity.relayError ?? activity.relayNote ?? activityResult(activity))
-            }
-            .width(min: 100, ideal: 130)
+            .width(min: 150, ideal: 220)
 
             TableColumn("Current Speed") { activity in
                 activitySpeed(activity)
             }
             .width(min: 104, ideal: 122)
-
-            TableColumn("Transferred") { activity in
-                activityTraffic(activity)
-            }
-            .width(min: 92, ideal: 110)
-
-            TableColumn("Duration") { activity in
-                Text(activity.startedAt, style: .timer)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            .width(min: 72, ideal: 88)
         }
         .contextMenu(forSelectionType: UUID.self) { selection in
             if let id = selection.first,
@@ -1456,48 +856,39 @@ struct AppRoutingView: View {
             }
             .keyboardShortcut("n", modifiers: .command)
 
+            if selectedRule != nil {
+                Button("Edit…", action: editSelectedRule)
+            }
+
             Menu {
                 Button {
                     proxifierImportError = nil
                     showingProxifierImporter = true
                 } label: {
-                    Label("Proxifier Profile…", systemImage: "arrow.down.doc")
+                    Label("Import Proxifier Profile…", systemImage: "arrow.down.doc")
+                }
+
+                if selectedRule != nil {
+                    Divider()
+                    Button("Duplicate", action: cloneSelectedRule)
+                    Button("Move Up", action: { moveSelectedRule(by: -1) })
+                        .disabled(!canMoveSelectedRule(by: -1))
+                    Button("Move Down", action: { moveSelectedRule(by: 1) })
+                        .disabled(!canMoveSelectedRule(by: 1))
+                    Divider()
+                    Button("Delete Rule", role: .destructive, action: removeSelectedRule)
                 }
             } label: {
-                Label("Import", systemImage: "square.and.arrow.down")
+                Label("More", systemImage: "ellipsis.circle")
             }
-            .help("Import routing rules from a Proxifier .ppx profile")
-
-            Button("Duplicate", action: cloneSelectedRule)
-                .disabled(selectedRule == nil)
-            Button("Edit…", action: editSelectedRule)
-                .disabled(selectedRule == nil)
-            Button("Delete", role: .destructive, action: removeSelectedRule)
-                .disabled(selectedRule == nil)
-
-            Divider()
-                .frame(height: 18)
-
-            Button(action: { moveSelectedRule(by: -1) }) {
-                Image(systemName: "chevron.up")
-            }
-            .help("Move rule up")
-            .accessibilityLabel(AppLocalization.string("Move rule up"))
-            .disabled(!canMoveSelectedRule(by: -1))
-
-            Button(action: { moveSelectedRule(by: 1) }) {
-                Image(systemName: "chevron.down")
-            }
-            .help("Move rule down")
-            .accessibilityLabel(AppLocalization.string("Move rule down"))
-            .disabled(!canMoveSelectedRule(by: 1))
+            .help("More App Routing rule actions")
 
             Spacer()
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
         .padding(.horizontal, MClashLayout.pagePadding)
-        .frame(height: 46)
+        .frame(minHeight: 46)
         .disabled(!model.canPerform(.changeNetworkCapture))
     }
 
@@ -1570,17 +961,6 @@ struct AppRoutingView: View {
             } else {
                 "· \(activityPresentation.visibleActivities.count) shown · \(activityPresentation.activeCount) active"
             }
-        }
-    }
-
-    private var headerDescription: String {
-        switch workspace {
-        case .rules:
-            enabledRuleCount == 0
-                ? "With no enabled rules, applications connect directly. DNS follows its separate setting."
-                : "Enabled rules are evaluated from top to bottom. The first matching rule decides whether traffic uses Mihomo, connects directly, or is rejected."
-        case .activity:
-            "Live provider-owned connections stay here until they close, with their target, route, current speed, transferred bytes, and duration."
         }
     }
 
