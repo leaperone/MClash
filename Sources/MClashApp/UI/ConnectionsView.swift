@@ -640,6 +640,7 @@ struct ConnectionsView: View {
                 .disabled(!model.canPerform(.closeAllConnections))
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .help("More traffic actions")
         } else if workspace == .history, hasTrafficHistoryToClear {
@@ -649,6 +650,7 @@ struct ConnectionsView: View {
                 }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .help("More traffic actions")
         }
@@ -690,6 +692,7 @@ struct ConnectionsView: View {
                 }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .menuStyle(.borderlessButton)
             .help("More traffic actions")

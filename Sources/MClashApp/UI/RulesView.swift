@@ -118,6 +118,7 @@ struct RulesView: View {
                                 .controlSize(.small)
                         } else {
                             Label("More", systemImage: "ellipsis.circle")
+                                .labelStyle(.iconOnly)
                         }
                     }
                 }

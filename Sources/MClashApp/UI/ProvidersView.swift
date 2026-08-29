@@ -293,6 +293,7 @@ private struct ProxyProviderRow: View {
                 )
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .menuStyle(.borderlessButton)
         }

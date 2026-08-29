@@ -131,6 +131,7 @@ struct ProfilesView: View {
                     }
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
+                        .labelStyle(.iconOnly)
                 }
             }
         }

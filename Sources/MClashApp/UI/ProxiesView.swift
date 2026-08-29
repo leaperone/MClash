@@ -411,6 +411,7 @@ struct ProxiesView: View {
             Button("Manage Profile…") { model.selection = .profiles }
         } label: {
             Label("More", systemImage: "ellipsis.circle")
+                .labelStyle(.iconOnly)
         }
         .menuStyle(.borderlessButton)
         .help("Proxy view and routing options")

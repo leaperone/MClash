@@ -862,6 +862,8 @@ struct AppRoutingView: View {
                 Button("Edit…", action: editSelectedRule)
             }
 
+            Spacer()
+
             Menu {
                 Button {
                     proxifierImportError = nil
@@ -882,10 +884,9 @@ struct AppRoutingView: View {
                 }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .help("More App Routing rule actions")
-
-            Spacer()
         }
         .buttonStyle(.bordered)
         .controlSize(.small)

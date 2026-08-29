@@ -93,6 +93,7 @@ struct LogsView: View {
                         }
                     } label: {
                         Label("More", systemImage: "ellipsis.circle")
+                            .labelStyle(.iconOnly)
                     }
                 }
             }
