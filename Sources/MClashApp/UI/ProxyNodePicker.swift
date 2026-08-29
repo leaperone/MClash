@@ -13,8 +13,8 @@ struct ProxyNodePicker: View {
                     Text(group.name)
                         .font(.headline)
                     Text(group.groupBehavior == .selector
-                        ? "Choose a proxy node"
-                        : "Pin the automatic group to a preferred node")
+                        ? AppLocalization.string("Choose a proxy node")
+                        : AppLocalization.string("Pin the automatic group to a preferred node"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -61,7 +61,12 @@ struct ProxyNodePicker: View {
                             .help(proxy)
                         Spacer()
                         if let delay = model.proxyDelay(for: proxy, in: group.name) {
-                            Text("\(delay) ms")
+                            Text(
+                                AppLocalization.format(
+                                    "%@ ms",
+                                    formattedCount(delay)
+                                )
+                            )
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(delayColor(delay))
                         }
@@ -124,15 +129,22 @@ struct ProxyNodePicker: View {
     private func accessibilityLabel(_ proxy: String) -> String {
         var parts = [proxy]
         if model.pendingProxySelections[group.name] == proxy {
-            parts.append("switching")
+            parts.append(AppLocalization.string("Switching"))
         }
-        if proxy == group.fixedOverride { parts.append("pinned preference") }
-        if proxy == group.now { parts.append("selected") }
+        if proxy == group.fixedOverride {
+            parts.append(AppLocalization.string("Pinned preference"))
+        }
+        if proxy == group.now { parts.append(AppLocalization.string("Selected")) }
         if model.proxyAlive(for: proxy, in: group.name) == false {
-            parts.append("unavailable")
+            parts.append(AppLocalization.string("Unavailable"))
         }
         if let delay = model.proxyDelay(for: proxy, in: group.name) {
-            parts.append("\(delay) milliseconds")
+            parts.append(
+                AppLocalization.format(
+                    "%@ milliseconds",
+                    formattedCount(delay)
+                )
+            )
         }
         return parts.joined(separator: ", ")
     }

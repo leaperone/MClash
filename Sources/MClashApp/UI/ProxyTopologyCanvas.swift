@@ -97,7 +97,9 @@ private struct ProxyTopologyRenderModel {
         return Dictionary(
             uniqueKeysWithValues: projection.nodes.map { node in
                 var details = [node.title, node.subtitle]
-                if node.isSelectedPath { details.append("On the current route") }
+                if node.isSelectedPath {
+                    details.append(AppLocalization.string("On the current route"))
+                }
                 details.append(contentsOf: outgoing[node.id, default: []])
                 details.append(contentsOf: incoming[node.id, default: []])
                 return (node.id, details.joined(separator: ". "))
@@ -107,25 +109,31 @@ private struct ProxyTopologyRenderModel {
 
     private static func outgoingDescription(_ edge: ProxyTopologyDisplayEdge) -> String {
         if edge.kind == .dialer {
-            return "Uses \(edge.target) as a dialer dependency"
+            return AppLocalization.format(
+                "Uses %@ as a dialer dependency",
+                edge.target
+            )
         }
         if edge.isDialerPath {
-            return "Dialer path selects \(edge.target)"
+            return AppLocalization.format("Dialer path selects %@", edge.target)
         }
         if edge.isSelected {
-            return "Current route selects \(edge.target)"
+            return AppLocalization.format("Current route selects %@", edge.target)
         }
-        return "Contains \(edge.target)"
+        return AppLocalization.format("Contains %@", edge.target)
     }
 
     private static func incomingDescription(_ edge: ProxyTopologyDisplayEdge) -> String {
         if edge.kind == .dialer || edge.isDialerPath {
-            return "Dialer dependency from \(edge.source)"
+            return AppLocalization.format("Dialer dependency from %@", edge.source)
         }
         if edge.isSelected {
-            return "Selected by \(edge.source) on the current route"
+            return AppLocalization.format(
+                "Selected by %@ on the current route",
+                edge.source
+            )
         }
-        return "Member of \(edge.source)"
+        return AppLocalization.format("Member of %@", edge.source)
     }
 }
 
@@ -285,8 +293,8 @@ private struct ProxyTopologyInteractiveView: View {
         }
         .help(
             relationshipsExpanded
-                ? "Hide the accessible relationship outline"
-                : "Show an accessible relationship outline"
+                ? AppLocalization.string("Hide the accessible relationship outline")
+                : AppLocalization.string("Show an accessible relationship outline")
         )
     }
 
@@ -340,15 +348,27 @@ private struct ProxyTopologyInteractiveView: View {
 
     private func relationshipDescription(_ edge: ProxyTopologyDisplayEdge) -> String {
         if edge.kind == .dialer {
-            return "\(edge.source) uses \(edge.target) as a dialer dependency"
+            return AppLocalization.format(
+                "%@ uses %@ as a dialer dependency",
+                edge.source,
+                edge.target
+            )
         }
         if edge.isDialerPath {
-            return "Dialer path: \(edge.source) selects \(edge.target)"
+            return AppLocalization.format(
+                "Dialer path: %@ selects %@",
+                edge.source,
+                edge.target
+            )
         }
         if edge.isSelected {
-            return "Current path: \(edge.source) selects \(edge.target)"
+            return AppLocalization.format(
+                "Current path: %@ selects %@",
+                edge.source,
+                edge.target
+            )
         }
-        return "\(edge.source) contains \(edge.target)"
+        return AppLocalization.format("%@ contains %@", edge.source, edge.target)
     }
 
     private func relationshipColor(_ edge: ProxyTopologyDisplayEdge) -> Color {
@@ -480,7 +500,10 @@ private struct ProxyTopologyNodeView: View {
         }
         .help(
             node.opensGroup
-                ? "\(node.title) — click the card to inspect or the chevron to open the group"
+                ? AppLocalization.format(
+                    "%@ — click the card to inspect or the chevron to open the group",
+                    node.title
+                )
                 : "\(node.title) — \(node.subtitle)"
         )
     }
@@ -646,8 +669,13 @@ struct ProxyTopologyProjection {
                 displayNodes[summaryID] = ProxyTopologyDisplayNode.summary(
                     id: summaryID,
                     sourceName: group,
-                    title: "\(hiddenCount) more nodes",
-                    subtitle: "Switch to List to inspect all members",
+                    title: AppLocalization.format(
+                        "%@ more nodes",
+                        formattedCount(hiddenCount)
+                    ),
+                    subtitle: AppLocalization.string(
+                        "Switch to List to inspect all members"
+                    ),
                     depth: sourceDepth + 1,
                     order: Int.max - 1
                 )
@@ -902,15 +930,17 @@ private struct ProxyTopologyLayout {
 
 private func groupSubtitle(_ vertex: ProxyTopologyVertex) -> String {
     if case .group(.loadBalance) = vertex.kind {
-        return "LoadBalance · per connection"
+        return AppLocalization.string("LoadBalance · per connection")
     }
     let current = vertex.now.map { " · \($0)" } ?? ""
     return "\(vertex.type)\(current)"
 }
 
 private func endpointSubtitle(_ vertex: ProxyTopologyVertex?, delay: Int?) -> String {
-    guard let vertex else { return "Missing runtime node" }
-    let delayText = delay.map { " · \($0) ms" } ?? ""
+    guard let vertex else { return AppLocalization.string("Missing runtime node") }
+    let delayText = delay.map {
+        " · " + AppLocalization.format("%@ ms", formattedCount($0))
+    } ?? ""
     let provider = normalized(vertex.providerName).map { " · \($0)" } ?? ""
     return "\(vertex.type)\(delayText)\(provider)"
 }
