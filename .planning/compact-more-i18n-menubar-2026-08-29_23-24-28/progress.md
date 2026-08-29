@@ -59,3 +59,4 @@
 | Preflight 首次 check 暴露 Swift 多语句函数缺少显式 return | 1 | 在 `profileRouteListeners(for:)` legacy 分支补 `return`，重新从 Phase 0 固定 base 并重跑全部门禁 |
 | Preflight 合并后 check 暴露新增 Navigate 命令缺少快捷键参数 | 1 | 保留既有 Proxies ⌘6 / Traffic ⌘7，为新增 Proxy Groups 分配 ⌘8，重新从 Phase 0 固定 base 并重跑全部门禁 |
 | Preflight 第三轮 test 暴露零值字节格式回归 | 1 | 保持零值/负值的既有紧凑 `0 B` / `0 B/s` 契约，非零值继续按选定 locale 格式化；重新从 Phase 0 固定 base 并重跑全部门禁 |
+| Preflight 第四轮 check 暴露 guard 后缺少显式 return | 1 | 在 `formattedByteCount` 的非零分支补 `return`，提交后从 Phase 0 重新固定 base 并重跑全部门禁 |
