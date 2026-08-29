@@ -2692,6 +2692,19 @@ final class AppModel {
         }
     }
 
+    private func compiledConfigurationForCurrentWorkspace() throws -> CompiledConfiguration? {
+        guard unifiedConfigurationEnabled,
+              let workspace = configurationDocument.currentWorkspace else {
+            return nil
+        }
+        if let compiledConfiguration,
+           compiledConfiguration.workspaceID == workspace.id,
+           compiledConfiguration.workspaceRevision == workspace.revision {
+            return compiledConfiguration
+        }
+        return try compileConfiguration(workspaceID: workspace.id)
+    }
+
     private func activateStoredProfile(
         _ id: ProfileID,
         validator: any ProfileValidating
@@ -9720,6 +9733,9 @@ final class AppModel {
     ) async throws -> Set<Int> {
         guard let profileStore else {
             throw AppModelError.profileStoreUnavailable
+        }
+        if let compiled = try compiledConfigurationForCurrentWorkspace() {
+            return try RuntimeConfigurationComposer().boundListenerPorts(in: compiled.yaml)
         }
         let composer = RuntimeConfigurationComposer()
         if unifiedConfigurationEnabled {

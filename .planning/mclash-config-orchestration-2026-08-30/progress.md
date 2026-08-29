@@ -11,7 +11,7 @@
 - [x] Run direct typecheck and full direct tests after review corrections.
 - [x] Complete two independent model/UI reviews and fix reported P1/P2 issues.
 - [x] Complete localization and final UI/runtime static review.
-- [ ] Build, sign, publish and verify release.
+- [x] Build, sign, publish and verify `v1.4.1` release.
 
 ## Verification evidence
 
@@ -20,3 +20,7 @@
 - `./scripts/typecheck.sh`: passed after the final model, runtime, and UI edits.
 - `./scripts/test-direct.sh >/dev/null`: exit code 0 after the final edits; 395 MClash tests, 114 Network Shared tests, 29 Network Extension tests, 5 Automation tests and release-script tests passed.
 - `git diff --check`: passed after the final edits.
+- GitHub PR #31 merged implementation into `origin/main` at `e70f165`.
+- The first `v1.4.0` release workflow found one incomplete new-test expectation; immutable tag was left untouched.
+- Fix-forward PR #33 merged at `7d2a50e`; `v1.4.1` release tag points to `f8998dd` and workflow `33270416958` completed successfully.
+- `v1.4.1` published DMG/ZIP, two verified Sparkle deltas, appcast, corresponding mihomo source, Sparkle license and SHA256SUMS; downloaded assets all matched checksums and the ZIP app passed local deep codesign verification.
