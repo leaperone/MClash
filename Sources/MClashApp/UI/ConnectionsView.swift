@@ -484,7 +484,10 @@ struct ConnectionsView: View {
             }
         }
         .confirmationDialog(
-            "Close all \(formattedCount(presentation.totalConnectionCount)) active connections?",
+            AppLocalization.format(
+                "Close all %@ active connections?",
+                formattedCount(presentation.totalConnectionCount)
+            ),
             isPresented: $confirmingCloseAll
         ) {
             Button("Close All Connections", role: .destructive) {
@@ -878,7 +881,13 @@ struct ConnectionsView: View {
                         Task { await model.setPersistentTrafficHistoryEnabled(false) }
                     }
                 } label: {
-                    Label("Keep \(model.trafficHistoryRetention.rawValue) Days", systemImage: "calendar")
+                    Label(
+                        AppLocalization.format(
+                            "Keep %@ Days",
+                            AppLocalization.number(model.trafficHistoryRetention.rawValue)
+                        ),
+                        systemImage: "calendar"
+                    )
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -972,7 +981,13 @@ struct ConnectionsView: View {
                             Task { await model.setPersistentTrafficHistoryEnabled(false) }
                         }
                     } label: {
-                        Label("Keep \(model.trafficHistoryRetention.rawValue) Days", systemImage: "calendar")
+                        Label(
+                            AppLocalization.format(
+                                "Keep %@ Days",
+                                AppLocalization.number(model.trafficHistoryRetention.rawValue)
+                            ),
+                            systemImage: "calendar"
+                        )
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
@@ -1564,7 +1579,12 @@ private struct ConnectionDetailView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Connection details for \(connectionDestination(connection))")
+        .accessibilityLabel(
+            AppLocalization.format(
+                "Connection details for %@",
+                connectionDestination(connection)
+            )
+        )
     }
 
     private var connectionSubtitle: String {

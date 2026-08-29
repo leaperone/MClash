@@ -255,7 +255,7 @@ private struct ProxyTopologyInteractiveView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Proxy topology for \(rootGroup)")
+        .accessibilityLabel(AppLocalization.format("Proxy topology for %@", rootGroup))
     }
 
     private var topologyLegend: some View {
@@ -479,8 +479,8 @@ private struct ProxyTopologyNodeView: View {
                 }
                 .buttonStyle(.borderless)
                 .padding(.trailing, 4)
-                .help("Open group \(node.title)")
-                .accessibilityLabel("Open group \(node.title)")
+                .help(AppLocalization.format("Open group %@", node.title))
+                .accessibilityLabel(AppLocalization.format("Open group %@", node.title))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -545,7 +545,7 @@ private struct ProxyTopologyNodeView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Inspect \(node.title)")
+        .help(AppLocalization.format("Inspect %@", node.title))
         .accessibilityLabel(accessibilityDescription)
         .accessibilityHint("Shows this node in the proxy inspector")
     }

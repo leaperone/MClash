@@ -1448,7 +1448,7 @@ private struct ProxyNodeListContent: View {
         }
         .listStyle(.inset)
         .mclashListSurface(horizontalMargin: 14, verticalMargin: 10)
-        .accessibilityLabel("Nodes in \(group.name)")
+        .accessibilityLabel(AppLocalization.format("Nodes in %@", group.name))
     }
 }
 
@@ -1578,8 +1578,8 @@ private struct ProxyNodeListRow: View {
                 Image(systemName: "chevron.right")
             }
             .buttonStyle(.borderless)
-            .help("Open nested group \(nodeName)")
-            .accessibilityLabel("Open nested group \(nodeName)")
+            .help(AppLocalization.format("Open nested group %@", nodeName))
+            .accessibilityLabel(AppLocalization.format("Open nested group %@", nodeName))
         }
     }
 

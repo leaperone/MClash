@@ -1503,7 +1503,7 @@ struct AppRoutingView: View {
         editingRuleID = nil
         selectedRuleID = nil
         draft = CaptureRuleDraft(
-            identifier: uniqueRuleName("New Rule"),
+            identifier: uniqueRuleName(AppLocalization.string("New Rule")),
             priority: nextPriority,
             action: profileScope == .system ? .direct : .mihomoProfileRules,
             routingProfileID: {
@@ -1552,7 +1552,7 @@ struct AppRoutingView: View {
                 applicationCandidates: applicationCandidates,
                 processCandidates: processCandidates
             )
-            copy.identifier = uniqueRuleName("\(rule.id) Copy")
+            copy.identifier = uniqueRuleName(AppLocalization.format("Copy %@", rule.id))
             copy.priority = nextPriority
             copy.enabled = true
             draft = copy

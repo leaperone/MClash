@@ -481,7 +481,7 @@ private struct RuleProviderRow: View {
     ) -> some View {
         let action = AppLocalization.string("Update")
         let completedAt = AppLocalization.relativeDate(receipt.completedAt)
-        Group {
+        return Group {
             switch receipt.outcome {
             case .succeeded:
                 Label(

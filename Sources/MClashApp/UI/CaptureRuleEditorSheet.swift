@@ -1112,7 +1112,9 @@ struct CaptureRuleEditorSheet: View {
     }
 
     private func suggestRuleName(for application: ApplicationCaptureCandidate) {
-        guard normalizedRuleName.hasPrefix("New Rule")
+        let localizedDefaultName = AppLocalization.string("New Rule")
+        guard normalizedRuleName.hasPrefix(localizedDefaultName)
+                || normalizedRuleName.hasPrefix("New Rule")
                 || normalizedRuleName.hasPrefix("capture-") else {
             return
         }

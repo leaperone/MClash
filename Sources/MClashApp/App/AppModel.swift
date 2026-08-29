@@ -4386,7 +4386,9 @@ final class AppModel {
             return
         }
         guard let listener = activeNetworkExtensionMihomoListener else {
-            reportNetworkCaptureFailure("The private mihomo listener is unavailable.")
+            reportNetworkCaptureFailure(
+                AppLocalization.string("The private mihomo listener is unavailable.")
+            )
             return
         }
         networkCaptureState = .enabling
