@@ -25,6 +25,7 @@
 - 保留主 checkout 的现有分支状态和未跟踪文件；所有写入只在 `release/v1.3.6-notes` worktree 完成。
 - 除 preflight 按配置执行外，不主动做本地耗时编译或测试。
 - 发布前必须确认 `v1.3.6` tag/Release 尚不存在，且 tag 指向包含发布说明的最新 `origin/main`。
+- 按 `docs/RELEASING.md` 创建签名 tag，并在推送前验证签名与 peeled commit。
 - 分别报告说明合并、tag 推送、workflow、Release/资产与安装态验收状态。
 
 ## 修改路径
@@ -38,6 +39,7 @@
 - 检查 Markdown、版本号与 `release-app.sh` 所需文件路径一致，并运行 `git diff --check`。
 - PR 创建后完整执行 preflight；Markdown/planning-only diff 的构建门应明确为 `na`。
 - tag 推送后用 GitHub Actions、Release API、appcast 内容与 `shasum -a 256 -c` 交叉核对发布结果。
+- 确认新 workflow build number 大于上一正式版的 50。
 
 ## 验收标准
 
@@ -55,9 +57,9 @@
 ## 执行状态
 
 - [x] 完成只读探索并确认真实调用链
-- [ ] 完成实现
-- [ ] 完成验证
-- [ ] 完成交付前收敛检查
+- [x] 完成实现
+- [x] 完成验证
+- [x] 完成交付前收敛检查
 
 ## 决策
 
@@ -71,3 +73,4 @@
 | 错误 | 尝试 | 处理结果 |
 |---|---:|---|
 | 直接 tag 会缺少 `ReleaseNotes/1.3.6.md` | 1 | 先走最小 PR 补齐强制发布输入。 |
+| 调研命令引用了不存在的旧 `.sh` 文件名 | 1 | 通过 `rg --files scripts` 定位实际的 `attach-appcast-deltas.py` 并修正记录。 |

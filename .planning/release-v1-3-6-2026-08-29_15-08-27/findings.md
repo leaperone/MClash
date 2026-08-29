@@ -21,6 +21,9 @@
 - 项目已经做增量更新：workflow 生成并验证 BinaryDelta，appcast 挂载 delta；完整 ZIP 始终保留作为 fallback。
 - 1.3.6 文案应聚焦紧凑窗口响应式布局、键盘/VoiceOver/错误播报、八语言动态状态本地化，以及 Connections/Overview/App Routing/Menu Bar 改进。
 - workflow 允许资产 `--clobber` 且不校验 tag 签名；这是既有发布架构边界，本次 patch 不扩大范围修改。
+- 独立只读审计确认唯一仓库硬阻塞仍是缺少非空发布说明；没有发现第二个需改源码或 workflow 的 blocker。
+- `docs/RELEASING.md` 要求 `git tag -s`；workflow 仅检查 tag commit 与 checkout 一致，因此签名必须在推送前由操作者单独验证。
+- 上一正式版 workflow run #50 成功，appcast build 为 50；tag-triggered build 使用新的 `github.run_number`，发布后须确认大于 50。
 
 ## 技术决策
 
@@ -33,6 +36,7 @@
 ## 风险与边界
 
 - Apple 公证和 GitHub Actions 是外部依赖；只有 workflow 与 Release 真实终态可作为发布证据。
+- 历史 v1.3.5 run 只能证明凭据当时有效；证书、profile 与 Apple 公证凭据的当前有效性必须由 v1.3.6 run 重新确认。
 - 成功发布不证明用户当前安装已更新，也不证明真实窗口/VoiceOver 或 Network Extension CPU/Energy 已验收。
 - tag 是发布触发器；推送前必须再次排除并行创建的同名 tag/Release。
 
@@ -40,7 +44,9 @@
 
 - `.github/workflows/release.yml`
 - `scripts/release-app.sh`
-- `scripts/attach-appcast-deltas.sh`
+- `scripts/attach-appcast-deltas.py`
 - `scripts/test-attach-appcast-deltas.py`
 - `ReleaseNotes/1.3.5.md`
 - commit `1184c7308c4aecf509894055e0fff25687761613`
+- `docs/RELEASING.md`
+- Release run `32971886417` / workflow run number `50`
