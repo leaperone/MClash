@@ -57,3 +57,4 @@
 | 收敛期间 `v1.4.1` 被 diagnostics 测试修复占用 | 1 | 版本顺延为 `v1.4.2`，先吸收最新 main 并等待上一版 Release 完成 |
 | 收敛期间 `v1.4.2` 被 compiled Workspace runtime 修复占用 | 1 | 版本顺延为 `v1.4.3`，先吸收 PR #34 并等待上一版 Release 完成 |
 | Preflight 首次 check 暴露 Swift 多语句函数缺少显式 return | 1 | 在 `profileRouteListeners(for:)` legacy 分支补 `return`，重新从 Phase 0 固定 base 并重跑全部门禁 |
+| Preflight 合并后 check 暴露新增 Navigate 命令缺少快捷键参数 | 1 | 保留既有 Proxies ⌘6 / Traffic ⌘7，为新增 Proxy Groups 分配 ⌘8，重新从 Phase 0 固定 base 并重跑全部门禁 |

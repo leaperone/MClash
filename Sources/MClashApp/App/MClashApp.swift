@@ -77,8 +77,8 @@ struct MClashApp: App {
                 navigationCommand("Nodes", destination: .nodes, key: "3")
                 navigationCommand("Sources", destination: .sources, key: "4")
                 navigationCommand("Entrances", destination: .entrances, key: "5")
-                navigationCommand("Proxy Groups", destination: .proxyGroups, key: "6")
-                navigationCommand("Proxies", destination: .proxies)
+                navigationCommand("Proxy Groups", destination: .proxyGroups, key: "8")
+                navigationCommand("Proxies", destination: .proxies, key: "6")
                 navigationCommand("Traffic", destination: .connections, key: "7")
             }
 
