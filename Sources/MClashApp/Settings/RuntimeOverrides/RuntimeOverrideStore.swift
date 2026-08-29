@@ -157,7 +157,10 @@ extension RuntimeOverrideStoreError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .unsupportedSchemaVersion(version):
-            "Runtime overrides use unsupported schema version \(version)."
+            AppLocalization.format(
+                "Runtime overrides use unsupported schema version %d.",
+                version
+            )
         }
     }
 }

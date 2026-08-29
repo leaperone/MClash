@@ -221,9 +221,16 @@ extension RuntimeOverrideValidationError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .invalidPort(field, value):
-            "The \(field) override must be between 0 and 65535; received \(value)."
+            AppLocalization.format(
+                "The %@ override must be between 0 and 65535; received %d.",
+                field,
+                value
+            )
         case let .invalidScalar(field):
-            "The \(field) override contains a line break or null byte."
+            AppLocalization.format(
+                "The %@ override contains a line break or null byte.",
+                field
+            )
         }
     }
 }
