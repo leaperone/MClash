@@ -224,12 +224,14 @@ final class AutomationSocketServer: @unchecked Sendable {
                     + ioTimeoutNanoseconds
             )
         } catch {
+            let message = (error as? ServerError)?.rpcDescription
+                ?? error.localizedDescription
             let fallback = AutomationRPCResponse(
                 id: "invalid-request",
                 error: AutomationRPCError(
                     code: -32700,
                     type: "parse_error",
-                    message: error.localizedDescription
+                    message: message
                 )
             )
             if let payload = try? JSONEncoder.automation.encode(fallback),
@@ -641,6 +643,28 @@ private enum ServerError: Error, LocalizedError {
     case systemCall(String, Int32)
 
     var errorDescription: String? {
+        switch self {
+        case let .socketPathTooLong(path):
+            AppLocalization.format("Automation socket path is too long: %@", path)
+        case let .insecurePath(path):
+            AppLocalization.format("Automation refused an insecure path: %@", path)
+        case let .serverAlreadyRunning(processIdentifier):
+            AppLocalization.format(
+                "Another MClash automation server is already running (PID %d)",
+                processIdentifier
+            )
+        case let .systemCall(name, code):
+            AppLocalization.format(
+                "Automation %@ failed: %@",
+                name,
+                String(cString: strerror(code))
+            )
+        default:
+            rpcDescription
+        }
+    }
+
+    var rpcDescription: String {
         switch self {
         case let .socketPathTooLong(path): "Automation socket path is too long: \(path)"
         case let .insecurePath(path): "Automation refused an insecure path: \(path)"

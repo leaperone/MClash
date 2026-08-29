@@ -337,6 +337,33 @@ enum AuthorizationError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case let .unsupportedSchema(version):
+            AppLocalization.format(
+                "Automation authorization schema %d is unsupported.",
+                version
+            )
+        case .insecureDocument:
+            AppLocalization.string("Automation authorization data is invalid or too large.")
+        case let .insecurePath(path):
+            AppLocalization.format("Automation refused an insecure path: %@", path)
+        case let .keychain(status):
+            AppLocalization.format(
+                "Automation authorization Keychain access failed (%d).",
+                status
+            )
+        case let .systemCall(name, code):
+            AppLocalization.format(
+                "Automation %@ failed: %@",
+                name,
+                String(cString: strerror(code))
+            )
+        default:
+            rpcDescription
+        }
+    }
+
+    var rpcDescription: String {
+        switch self {
         case .authenticationRequired: "This client is not paired with MClash."
         case let .scopeRequired(scope): "This client requires the \(scope.rawValue) scope."
         case .clientIdentityChanged: "The paired client identity no longer matches."

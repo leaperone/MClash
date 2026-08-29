@@ -875,7 +875,7 @@ final class AutomationCommandGateway {
             peer.processIdentifier,
             displaySafe(peer.executablePath, maximumLength: 240),
             signingIdentity.isEmpty ? AppLocalization.string("Ad hoc signed") : signingIdentity,
-            displaySafe(summary),
+            displaySafe(AppLocalization.string(summary)),
             displaySafe(request.method),
             requestSummary(request)
         )
@@ -992,31 +992,52 @@ final class AutomationCommandGateway {
         case "appRouting.rules.replace":
             let ruleCount = request.params["rules"]?.arrayValue?.count ?? 0
             let revision = request.params["expectedRevision"]?.intValue.map(String.init)
-                ?? "missing"
+                ?? AppLocalization.string("Missing")
             let enabled = request.params["enabled"]?.boolValue.map(String.init)
-                ?? "unchanged"
+                ?? AppLocalization.string("Unchanged")
             let dnsEnabled = request.params["dnsEnabled"]?.boolValue.map(String.init)
-                ?? "unchanged"
-            return "Rules: \(ruleCount)\nExpected revision: \(revision)\nApp Routing enabled: \(enabled)\nDNS enabled: \(dnsEnabled)"
+                ?? AppLocalization.string("Unchanged")
+            return AppLocalization.format(
+                "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@",
+                ruleCount,
+                revision,
+                enabled,
+                dnsEnabled
+            )
         case "profiles.remove":
-            let id = request.params["id"]?.stringValue ?? "missing"
+            let id = request.params["id"]?.stringValue
+                ?? AppLocalization.string("Missing")
             let name = UUID(uuidString: id).flatMap { uuid in
                 model.profiles.first { $0.id.rawValue == uuid }?.name
-            } ?? "unknown"
-            return "Profile: \(displaySafe(name))\nID: \(displaySafe(id))"
+            } ?? AppLocalization.string("Unknown")
+            return AppLocalization.format(
+                "Profile: %@\nID: %@",
+                displaySafe(name),
+                displaySafe(id)
+            )
         case "auth.clients.revoke":
-            let id = request.params["id"]?.stringValue ?? "missing"
+            let id = request.params["id"]?.stringValue
+                ?? AppLocalization.string("Missing")
             let name = UUID(uuidString: id).flatMap { uuid in
                 authorizationStore.list().first { $0.id == uuid }?.name
-            } ?? "unknown"
-            return "Client: \(displaySafe(name))\nID: \(displaySafe(id))"
+            } ?? AppLocalization.string("Unknown")
+            return AppLocalization.format(
+                "Client: %@\nID: %@",
+                displaySafe(name),
+                displaySafe(id)
+            )
         case "appRouting.proxifier.import":
             let sourceName = request.params["sourceName"]?.stringValue
                 ?? "Automation.ppx"
             let selectedCount = request.params["selectedItemIDs"]?.arrayValue?.count ?? 0
             let revision = request.params["expectedRevision"]?.intValue.map(String.init)
-                ?? "missing"
-            return "Source: \(displaySafe(sourceName))\nSelected rules: \(selectedCount)\nExpected revision: \(revision)"
+                ?? AppLocalization.string("Missing")
+            return AppLocalization.format(
+                "Source: %@\nSelected rules: %d\nExpected revision: %@",
+                displaySafe(sourceName),
+                selectedCount,
+                revision
+            )
         default:
             break
         }
@@ -1032,7 +1053,9 @@ final class AutomationCommandGateway {
             case .object, .array, .null: return nil
             }
         }
-        return details.isEmpty ? "Parameters: no display-safe summary" : details.joined(separator: "\n")
+        return details.isEmpty
+            ? AppLocalization.string("Parameters: no display-safe summary")
+            : details.joined(separator: "\n")
     }
 
     private func displaySafe(
@@ -2519,21 +2542,21 @@ private extension AuthorizationError {
             AutomationRPCError(
                 code: -32040,
                 type: "authentication_required",
-                message: errorDescription ?? "Client authentication is required",
+                message: rpcDescription,
                 data: .object(["pairingMethod": .string("auth.pair")])
             )
         case let .scopeRequired(scope):
             AutomationRPCError(
                 code: -32041,
                 type: "scope_required",
-                message: errorDescription ?? "Additional scope is required",
+                message: rpcDescription,
                 data: .object(["requiredScope": .string(scope.rawValue)])
             )
         default:
             AutomationRPCError(
                 code: -32042,
                 type: "authorization_failed",
-                message: errorDescription ?? "Client authorization failed"
+                message: rpcDescription
             )
         }
     }
