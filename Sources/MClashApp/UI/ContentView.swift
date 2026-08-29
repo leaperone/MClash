@@ -432,7 +432,7 @@ private struct ErrorBanner: View {
         .onChange(of: message, initial: true) { _, message in
             guard !message.isEmpty else { return }
             NSAccessibility.post(
-                element: NSApp,
+                element: NSApplication.shared,
                 notification: .announcementRequested,
                 userInfo: [
                     .announcement: message,

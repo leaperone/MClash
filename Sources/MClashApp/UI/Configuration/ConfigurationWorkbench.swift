@@ -68,7 +68,7 @@ struct ConfigurationWorkbench: View {
         .onChange(of: statusMessage, initial: true) { _, message in
             guard let message, !message.isEmpty else { return }
             NSAccessibility.post(
-                element: NSApp,
+                element: NSApplication.shared,
                 notification: .announcementRequested,
                 userInfo: [
                     .announcement: message,

@@ -80,7 +80,7 @@ struct MenuBarContent: View {
                   !model.mainWindowIsVisible
             else { return }
             NSAccessibility.post(
-                element: NSApp,
+                element: NSApplication.shared,
                 notification: .announcementRequested,
                 userInfo: [
                     .announcement: message,
