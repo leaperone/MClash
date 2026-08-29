@@ -34,6 +34,7 @@
 - DisclosureGroup 内字段必须在展开后的下一次主 actor 调度再设置 FocusState，避免 macOS SwiftUI 丢失聚焦请求。
 - Attention、Overview 和 Menu Bar 的动态计数也属于展示边界；现统一使用单复数 key 与 `AppLocalization.format`。
 - 仅移动焦点不足以保证 VoiceOver 读出 footer 错误；Save Rule 失败现在通过 `NSAccessibility.announcementRequested` 发布本地化错误，同时保留字段聚焦。
+- AppKit SDK 明确要求 `announcementRequested` 的 `userInfo` 同时携带 priority；校验失败使用 high priority，避免 VoiceOver 忽略或延后用户主动提交产生的错误。
 - Popover source rect 应属于实际触发控件；expanded Inspector 按钮与 compact More 菜单分别持有自己的 popover modifier。
 
 ## 技术决策

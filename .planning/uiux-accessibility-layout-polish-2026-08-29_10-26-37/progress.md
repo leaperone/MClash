@@ -52,6 +52,7 @@
 - 首轮 preflight 完整 diff 审查的 1 个 P2、1 个 P3 已修复：Save Rule 错误现在主动发布 VoiceOver announcement；Inspector popover 重新锚定 expanded Inspector 按钮和 compact More 菜单。
 - announcement 首次 typecheck 因 `NSApp` 隐式可选失败；改用 `NSApplication.shared` 后通过。
 - 修复后 `./scripts/typecheck.sh` 与 `CI=true ./scripts/test-direct.sh` 再次通过：540 tests / 79 suites，delta 元数据 3 tests 通过。
+- 第二轮最终审查确认 AppKit 要求 `announcementRequested` 同时携带 priority；已补充 high priority，随后 `./scripts/typecheck.sh` 再次通过 MClash、mclashctl 与 MClashNetworkExtension 的 Swift 6 类型检查和直接链接。
 
 ## 错误与恢复
 

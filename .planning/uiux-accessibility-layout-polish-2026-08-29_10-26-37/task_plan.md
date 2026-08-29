@@ -87,3 +87,4 @@
 | 最终审查发现重复规则错误、DisclosureGroup 聚焦时序及动态计数本地化缺口 | 1 | 保留专用重复名错误；高级字段展开后让出一次主 actor 再聚焦；三处计数统一走 `AppLocalization.format`，并重新完整验证 |
 | preflight 完整 diff 审查发现错误未播报及 Inspector popover 锚点偏移 | 1 | 提交失败发布 AppKit accessibility announcement；expanded/compact popover 分别锚定真实触发控件，并重新验证 |
 | 首次 announcement typecheck 报 `NSApp` 隐式可选无法桥接为 `Any` | 1 | 使用非可选 `NSApplication.shared`，第二次 typecheck 通过 |
+| 最终审查发现 announcement 缺少 AppKit 必需 priority | 1 | 补充 high priority，并从 preflight Phase 0 重新验证最终 HEAD |

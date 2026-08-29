@@ -990,7 +990,10 @@ struct CaptureRuleEditorSheet: View {
         NSAccessibility.post(
             element: NSApplication.shared,
             notification: .announcementRequested,
-            userInfo: [.announcement: message]
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
         )
     }
 
