@@ -11,11 +11,11 @@ private enum RouteListenerTargetKind: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .profileRules: "Follow Profile Rules"
-        case .subRule: "Named Sub-rule"
-        case .global: "Mihomo GLOBAL"
-        case .policyGroup: "Policy Group"
-        case .proxyNode: "Proxy Node"
+        case .profileRules: AppLocalization.string("Follow Profile Rules")
+        case .subRule: AppLocalization.string("Named Sub-rule")
+        case .global: AppLocalization.string("Mihomo GLOBAL")
+        case .policyGroup: AppLocalization.string("Policy Group")
+        case .proxyNode: AppLocalization.string("Proxy Node")
         }
     }
 }
@@ -85,7 +85,11 @@ struct ProfileRouteListenerSettingsEditor: View {
                         .keyboardShortcut(.cancelAction)
                         .disabled(isSaving)
 
-                    Button(model.isConnected ? "Apply & Restart Cores" : "Save") {
+                    Button(
+                        AppLocalization.string(
+                            model.isConnected ? "Apply & Restart Cores" : "Save"
+                        )
+                    ) {
                         save()
                     }
                     .keyboardShortcut(.defaultAction)
@@ -115,9 +119,19 @@ struct ProfileRouteListenerSettingsEditor: View {
                             .foregroundStyle(listener.enabled ? .primary : .secondary)
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(listener.name.isEmpty ? "Untitled Port" : listener.name)
+                            Text(
+                                listener.name.isEmpty
+                                    ? AppLocalization.string("Untitled Port")
+                                    : listener.name
+                            )
                                 .lineLimit(1)
-                            Text("\(listener.protocolType.title) · 127.0.0.1:\(listener.port)")
+                            Text(
+                                AppLocalization.format(
+                                    "%@ · 127.0.0.1:%d",
+                                    listener.protocolType.title,
+                                    listener.port
+                                )
+                            )
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                             Text(profileName(listener.profileID))
@@ -129,7 +143,15 @@ struct ProfileRouteListenerSettingsEditor: View {
                     .padding(.vertical, 3)
                     .tag(listener.id)
                     .accessibilityLabel(
-                        "\(listener.name), \(listener.protocolType.title), port \(listener.port), \(profileName(listener.profileID))"
+                        AppLocalization.format(
+                            "%@, %@, port %d, %@",
+                            listener.name.isEmpty
+                                ? AppLocalization.string("Untitled Port")
+                                : listener.name,
+                            listener.protocolType.title,
+                            listener.port,
+                            profileName(listener.profileID)
+                        )
                     )
                 }
             }
@@ -284,15 +306,34 @@ struct ProfileRouteListenerSettingsEditor: View {
     private func routeExplanation(_ listener: ProfileRouteListenerSpec) -> Text {
         switch listener.target {
         case .profileRules:
-            Text("Connections entering this port use the Profile's normal rules.")
+            Text(
+                AppLocalization.string(
+                    "Connections entering this port use the Profile's normal rules."
+                )
+            )
         case let .subRule(name):
-            Text("Connections start at the named sub-rule “\(name)”.")
+            Text(
+                AppLocalization.format(
+                    "Connections start at the named sub-rule “%@”.",
+                    name
+                )
+            )
         case .global:
-            Text("Connections use Mihomo's GLOBAL policy selection.")
+            Text(AppLocalization.string("Connections use Mihomo's GLOBAL policy selection."))
         case let .policyGroup(name):
-            Text("Every connection is handed directly to policy group “\(name)”.")
+            Text(
+                AppLocalization.format(
+                    "Every connection is handed directly to policy group “%@”.",
+                    name
+                )
+            )
         case let .proxyNode(name):
-            Text("Every connection is handed directly to node “\(name)”.")
+            Text(
+                AppLocalization.format(
+                    "Every connection is handed directly to node “%@”.",
+                    name
+                )
+            )
         }
     }
 
@@ -329,15 +370,24 @@ struct ProfileRouteListenerSettingsEditor: View {
                 continue
             case let .subRule(name):
                 if !catalog.subRules.contains(name) {
-                    return "Choose an available sub-rule for \(listener.name)."
+                    return AppLocalization.format(
+                        "Choose an available sub-rule for %@.",
+                        listener.name
+                    )
                 }
             case let .policyGroup(name):
                 if !catalog.policyGroups.contains(name) {
-                    return "Choose an available policy group for \(listener.name)."
+                    return AppLocalization.format(
+                        "Choose an available policy group for %@.",
+                        listener.name
+                    )
                 }
             case let .proxyNode(name):
                 if catalog.isLive, !catalog.proxyNodes.contains(name) {
-                    return "Choose an available proxy node for \(listener.name)."
+                    return AppLocalization.format(
+                        "Choose an available proxy node for %@.",
+                        listener.name
+                    )
                 }
             }
         }
@@ -429,7 +479,7 @@ struct ProfileRouteListenerSettingsEditor: View {
             ?? 18_080
         let listener = ProfileRouteListenerSpec(
             profileID: profileID,
-            name: "Routing Port \(listeners.count + 1)",
+            name: AppLocalization.format("Routing Port %d", listeners.count + 1),
             protocolType: .socks,
             port: port,
             target: .profileRules
@@ -452,7 +502,8 @@ struct ProfileRouteListenerSettingsEditor: View {
     }
 
     private func profileName(_ id: ProfileID) -> String {
-        model.profiles.first(where: { $0.id == id })?.name ?? "Unavailable Profile"
+        model.profiles.first(where: { $0.id == id })?.name
+            ?? AppLocalization.string("Unavailable Profile")
     }
 
     private func loadCatalog(for profileID: ProfileID) async {
@@ -526,11 +577,14 @@ struct ProfileRouteListenerSettingsEditor: View {
     ) -> String {
         switch kind {
         case .proxyNode:
-            "Connect \(profileName(profileID)) to load provider nodes."
+            AppLocalization.format(
+                "Connect %@ to load provider nodes.",
+                profileName(profileID)
+            )
         case .subRule:
-            "This Profile does not define any named sub-rules."
+            AppLocalization.string("This Profile does not define any named sub-rules.")
         case .policyGroup:
-            "This Profile does not define any policy groups."
+            AppLocalization.string("This Profile does not define any policy groups.")
         case .profileRules, .global:
             ""
         }
@@ -572,9 +626,9 @@ private extension RouteListenerTargetKind {
 extension ProfileRouteListenerProtocol {
     var title: String {
         switch self {
-        case .mixed: "Mixed"
-        case .socks: "SOCKS5"
-        case .http: "HTTP"
+        case .mixed: AppLocalization.string("Mixed")
+        case .socks: AppLocalization.string("SOCKS5")
+        case .http: AppLocalization.string("HTTP")
         }
     }
 

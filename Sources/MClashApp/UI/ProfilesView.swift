@@ -13,7 +13,12 @@ struct ProfilesView: View {
                 ContentUnavailableView {
                     Label("Profiles unavailable", systemImage: "externaldrive.badge.exclamationmark")
                 } description: {
-                    Text("MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n\(failure.reason)")
+                    Text(
+                        AppLocalization.format(
+                            "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@",
+                            failure.reason
+                        )
+                    )
                 } actions: {
                     Button("Review Recovery") { model.selection = .attention }
                         .buttonStyle(.borderedProminent)
@@ -87,11 +92,16 @@ struct ProfilesView: View {
                         .foregroundStyle(receipt.failedCount == 0 ? Color.green : Color.orange)
                         .accessibilityHidden(true)
                     Text(
-                        "Subscription refresh completed: \(formattedCount(receipt.updatedCount)) updated, \(formattedCount(receipt.unchangedCount)) unchanged, \(formattedCount(receipt.failedCount)) failed."
+                        AppLocalization.format(
+                            "Subscription refresh completed: %@ updated, %@ unchanged, %@ failed.",
+                            formattedCount(receipt.updatedCount),
+                            formattedCount(receipt.unchangedCount),
+                            formattedCount(receipt.failedCount)
+                        )
                     )
                     .font(.callout)
                     Spacer()
-                    Text(receipt.completedAt, style: .relative)
+                    Text(AppLocalization.relativeDate(receipt.completedAt))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -159,7 +169,9 @@ struct ProfilesView: View {
         guard let activeProfileID = model.activeProfileID,
               let profile = model.profiles.first(where: { $0.id == activeProfileID })
         else {
-            return "Choose a real Profile to back this stable entry point."
+            return AppLocalization.string(
+                "Choose a real Profile to back this stable entry point."
+            )
         }
         return AppLocalization.format(
             "Uses %@ for the stable default entry point.",
@@ -218,14 +230,29 @@ enum SubscriptionRefreshStatusText {
         guard remote.consecutiveFailureCount > 0,
               let lastFailureAt = remote.lastFailureAt else { return nil }
 
-        var parts = ["Last refresh failed \(relativeDate(lastFailureAt))"]
+        var parts = [
+            AppLocalization.format(
+                "Last refresh failed %@",
+                relativeDate(lastFailureAt)
+            ),
+        ]
         if remote.consecutiveFailureCount > 1 {
-            parts.append("\(remote.consecutiveFailureCount) consecutive failures")
+            parts.append(
+                AppLocalization.format(
+                    "%d consecutive failures",
+                    remote.consecutiveFailureCount
+                )
+            )
         }
         if remote.automaticUpdatesEnabled, let nextRetryAt = remote.nextRetryAt {
-            parts.append("Automatic retry \(relativeDate(nextRetryAt))")
+            parts.append(
+                AppLocalization.format(
+                    "Automatic retry %@",
+                    relativeDate(nextRetryAt)
+                )
+            )
         } else if !remote.automaticUpdatesEnabled {
-            parts.append("Automatic retry off")
+            parts.append(AppLocalization.string("Automatic retry off"))
         }
         return parts.joined(separator: " · ")
     }
@@ -263,7 +290,7 @@ private struct ProfileRow: View {
         .padding(.vertical, compact ? 9 : 7)
         .accessibilityElement(children: .contain)
         .confirmationDialog(
-            "Delete \(profile.name)?",
+            AppLocalization.format("Delete %@?", profile.name),
             isPresented: $confirmingDelete
         ) {
             Button("Delete Profile", role: .destructive) {
@@ -358,7 +385,7 @@ private struct ProfileRow: View {
             if case let .remote(remote) = profile.origin,
                let refreshFailure = SubscriptionRefreshStatusText.failure(
                    remote,
-                   relativeDate: relativeDate
+                   relativeDate: AppLocalization.relativeDate
                ) {
                 Label(refreshFailure, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -384,14 +411,24 @@ private struct ProfileRow: View {
                 .font(.callout)
                 .foregroundStyle(Color.accentColor)
                 .frame(minWidth: 104)
-                .accessibilityLabel("\(profile.name) backs the Default Profile")
+                .accessibilityLabel(
+                    AppLocalization.format(
+                        "%@ backs the Default Profile",
+                        profile.name
+                    )
+                )
         } else {
             Button("Make Default") {
                 activate()
             }
             .buttonStyle(.bordered)
             .disabled(!model.canPerform(.activateProfile(profile.id)))
-            .help("Use \(profile.name) as the default profile")
+            .help(
+                AppLocalization.format(
+                    "Use %@ as the default profile",
+                    profile.name
+                )
+            )
         }
     }
 
@@ -428,7 +465,7 @@ private struct ProfileRow: View {
                 .labelStyle(.iconOnly)
         }
         .menuStyle(.borderlessButton)
-        .help("More actions for \(profile.name)")
+        .help(AppLocalization.format("More actions for %@", profile.name))
     }
 
     private var activeIndicator: some View {
@@ -455,11 +492,11 @@ private struct ProfileRow: View {
     private var originTitle: String {
         switch profile.origin {
         case .local:
-            "Local"
+            AppLocalization.string("Local")
         case let .imported(fileName):
-            "Imported from \(fileName)"
+            AppLocalization.format("Imported from %@", fileName)
         case .remote:
-            "Subscription"
+            AppLocalization.string("Subscription")
         }
     }
 
@@ -475,28 +512,43 @@ private struct ProfileRow: View {
         switch profile.origin {
         case let .remote(remote):
             if let updatedAt = remote.lastSuccessfulUpdateAt {
-                return "Updated \(relativeDate(updatedAt))"
+                return AppLocalization.format(
+                    "Updated %@",
+                    AppLocalization.relativeDate(updatedAt)
+                )
             }
             if let checkedAt = remote.lastCheckedAt {
-                return "Checked \(relativeDate(checkedAt)) · No update yet"
+                return AppLocalization.format(
+                    "Checked %@ · No update yet",
+                    AppLocalization.relativeDate(checkedAt)
+                )
             }
-            return "Not updated yet"
+            return AppLocalization.string("Not updated yet")
         case .local, .imported:
-            return "Updated \(relativeDate(profile.updatedAt))"
+            return AppLocalization.format(
+                "Updated %@",
+                AppLocalization.relativeDate(profile.updatedAt)
+            )
         }
     }
 
     private var operationTitle: String? {
-        if model.isPerforming(.refreshAllProfiles) { return "Updating subscriptions…" }
-        if model.isPerforming(.updateProfile(profile.id)) { return "Saving settings…" }
-        if model.isPerforming(.refreshProfile(profile.id)) { return "Refreshing and validating…" }
-        if model.isPerforming(.activateProfile(profile.id)) { return "Changing default profile…" }
-        if model.isPerforming(.removeProfile(profile.id)) { return "Deleting…" }
+        if model.isPerforming(.refreshAllProfiles) {
+            return AppLocalization.string("Updating subscriptions…")
+        }
+        if model.isPerforming(.updateProfile(profile.id)) {
+            return AppLocalization.string("Saving settings…")
+        }
+        if model.isPerforming(.refreshProfile(profile.id)) {
+            return AppLocalization.string("Refreshing and validating…")
+        }
+        if model.isPerforming(.activateProfile(profile.id)) {
+            return AppLocalization.string("Changing default profile…")
+        }
+        if model.isPerforming(.removeProfile(profile.id)) {
+            return AppLocalization.string("Deleting…")
+        }
         return nil
-    }
-
-    private func relativeDate(_ date: Date) -> String {
-        date.formatted(.relative(presentation: .named))
     }
 
     private func activate() {
@@ -546,13 +598,13 @@ private struct ProfileRow: View {
     private func redact(_ url: URL, from message: String) -> String {
         var sanitized = message.replacingOccurrences(
             of: url.absoluteString,
-            with: "the subscription endpoint",
+            with: AppLocalization.string("the subscription endpoint"),
             options: .caseInsensitive
         )
         if let host = url.host, !host.isEmpty {
             sanitized = sanitized.replacingOccurrences(
                 of: host,
-                with: "the subscription host",
+                with: AppLocalization.string("the subscription host"),
                 options: .caseInsensitive
             )
         }
@@ -767,7 +819,13 @@ private struct EditProfileView: View {
             details.append(
                 AppLocalization.format(
                     "Expires %@",
-                    expiresAt.formatted(date: .abbreviated, time: .omitted)
+                    expiresAt.formatted(
+                        .dateTime
+                            .year()
+                            .month(.abbreviated)
+                            .day()
+                            .locale(.autoupdatingCurrent)
+                    )
                 )
             )
         }
@@ -791,11 +849,17 @@ private struct EditProfileView: View {
     }
 
     private var validationMessage: String? {
-        if normalizedName.isEmpty { return "Enter a profile name." }
-        if isRemote, validatedURL == nil { return "Use a complete HTTP or HTTPS subscription address." }
+        if normalizedName.isEmpty {
+            return AppLocalization.string("Enter a profile name.")
+        }
+        if isRemote, validatedURL == nil {
+            return AppLocalization.string(
+                "Use a complete HTTP or HTTPS subscription address."
+            )
+        }
         if (model.profileSessionSpec(for: profile.id) != nil || runtimeEnabled)
             && !(1...65_535).contains(mixedPort) {
-            return "Use a Mixed port from 1 to 65535."
+            return AppLocalization.string("Use a Mixed port from 1 to 65535.")
         }
         return nil
     }
@@ -1022,8 +1086,12 @@ private struct AddSubscriptionView: View {
 
     private var addressValidationMessage: String? {
         guard attemptedSubmission || !normalizedAddress.isEmpty else { return nil }
-        if normalizedAddress.isEmpty { return "Enter the subscription address." }
-        if validatedURL == nil { return "Use a complete HTTP or HTTPS address." }
+        if normalizedAddress.isEmpty {
+            return AppLocalization.string("Enter the subscription address.")
+        }
+        if validatedURL == nil {
+            return AppLocalization.string("Use a complete HTTP or HTTPS address.")
+        }
         return nil
     }
 
@@ -1039,7 +1107,9 @@ private struct AddSubscriptionView: View {
             return
         }
         guard model.canPerform(.addRemoteProfile), submissionTask == nil else {
-            submissionError = "Another network or profile operation is still finishing. Try again in a moment."
+            submissionError = AppLocalization.string(
+                "Another network or profile operation is still finishing. Try again in a moment."
+            )
             return
         }
 
@@ -1093,13 +1163,13 @@ private struct AddSubscriptionView: View {
     private func sanitizedError(_ message: String, url: URL) -> String {
         var sanitized = message.replacingOccurrences(
             of: url.absoluteString,
-            with: "the subscription endpoint",
+            with: AppLocalization.string("the subscription endpoint"),
             options: .caseInsensitive
         )
         if let host = url.host, !host.isEmpty {
             sanitized = sanitized.replacingOccurrences(
                 of: host,
-                with: "the subscription host",
+                with: AppLocalization.string("the subscription host"),
                 options: .caseInsensitive
             )
         }

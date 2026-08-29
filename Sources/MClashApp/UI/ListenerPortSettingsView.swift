@@ -8,8 +8,8 @@ enum ListenerPortMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .profile: "Use Profile"
-        case .custom: "Custom"
+        case .profile: AppLocalization.string("Use Profile")
+        case .custom: AppLocalization.string("Custom")
         }
     }
 }
@@ -52,7 +52,7 @@ struct ListenerPortDraft: Equatable {
     var validationMessage: String? {
         guard mode == .custom else { return nil }
         guard let value = Int(customValue), (1...65_535).contains(value) else {
-            return "Enter a port from 1 to 65535."
+            return AppLocalization.string("Enter a port from 1 to 65535.")
         }
         return nil
     }
@@ -78,7 +78,9 @@ struct ListenerPortSettingsDraft: Equatable {
     }
 
     var validationMessage: String? {
-        if let message = mixed.validationMessage { return "Mixed: \(message)" }
+        if let message = mixed.validationMessage {
+            return AppLocalization.format("Mixed: %@", message)
+        }
         return nil
     }
 
@@ -148,9 +150,11 @@ struct ListenerPortSettingsEditor: View {
 
                 Section {
                     Label(
-                        model.isConnected
-                            ? "Applying changes safely restarts the core. If the macOS system proxy is on, MClash restores it with the new ports."
-                            : "Changes are validated now and used the next time the core connects.",
+                        AppLocalization.string(
+                            model.isConnected
+                                ? "Applying changes safely restarts the core. If the macOS system proxy is on, MClash restores it with the new ports."
+                                : "Changes are validated now and used the next time the core connects."
+                        ),
                         systemImage: model.isConnected ? "arrow.clockwise" : "checkmark.shield"
                     )
                     .font(.callout)
@@ -185,7 +189,11 @@ struct ListenerPortSettingsEditor: View {
                         .keyboardShortcut(.cancelAction)
                         .disabled(isSaving)
 
-                    Button(model.isConnected ? "Apply & Restart Core" : "Save") {
+                    Button(
+                        AppLocalization.string(
+                            model.isConnected ? "Apply & Restart Core" : "Save"
+                        )
+                    ) {
                         save()
                     }
                     .keyboardShortcut(.defaultAction)
@@ -210,13 +218,15 @@ struct ListenerPortSettingsEditor: View {
     private var applyProgressTitle: String {
         switch model.runtimeSettingsApplyState {
         case .validating:
-            "Validating configuration…"
+            AppLocalization.string("Validating configuration…")
         case .restarting:
-            "Restarting core…"
+            AppLocalization.string("Restarting core…")
         case .saving:
-            "Saving settings…"
+            AppLocalization.string("Saving settings…")
         case .idle, .completed, .failed:
-            model.isConnected ? "Applying and restarting…" : "Applying settings…"
+            AppLocalization.string(
+                model.isConnected ? "Applying and restarting…" : "Applying settings…"
+            )
         }
     }
 
@@ -240,7 +250,7 @@ struct ListenerPortSettingsEditor: View {
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(AppLocalization.string(title))
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -248,7 +258,10 @@ struct ListenerPortSettingsEditor: View {
 
             Spacer(minLength: 12)
 
-            Picker("\(title) source", selection: draft.mode) {
+            Picker(
+                AppLocalization.format("%@ source", AppLocalization.string(title)),
+                selection: draft.mode
+            ) {
                 ForEach(ListenerPortMode.allCases) { mode in
                     Text(mode.title).tag(mode)
                 }
@@ -269,7 +282,12 @@ struct ListenerPortSettingsEditor: View {
                     .monospacedDigit()
                     .frame(width: 82)
                     .focused($focusedListener, equals: kind)
-                    .accessibilityLabel("\(title) custom port")
+                    .accessibilityLabel(
+                        AppLocalization.format(
+                            "%@ custom port",
+                            AppLocalization.string(title)
+                        )
+                    )
                     .onChange(of: draft.wrappedValue.customValue) { _, _ in
                         errorMessage = nil
                     }
@@ -287,9 +305,11 @@ struct ListenerPortSettingsEditor: View {
         switch draft.mode {
         case .profile:
             if let profileValue = draft.profileValue {
-                profileValue > 0 ? String(profileValue) : "Disabled"
+                profileValue > 0
+                    ? String(profileValue)
+                    : AppLocalization.string("Disabled")
             } else {
-                "Not set"
+                AppLocalization.string("Not set")
             }
         case .custom:
             draft.customValue
