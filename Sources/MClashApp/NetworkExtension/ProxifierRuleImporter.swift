@@ -16,25 +16,33 @@ enum ProxifierRuleImportError: Error, Equatable, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .fileTooLarge:
-            "The Proxifier profile is larger than the 8 MB import limit."
+            AppLocalization.string("The Proxifier profile is larger than the 8 MB import limit.")
         case .unsafeXML:
-            "The Proxifier profile contains a DTD or entity declaration and was not opened."
+            AppLocalization.string(
+                "The Proxifier profile contains a DTD or entity declaration and was not opened."
+            )
         case .invalidXML:
-            "The selected file is not a valid Proxifier XML profile."
+            AppLocalization.string("The selected file is not a valid Proxifier XML profile.")
         case .unsupportedDocument:
-            "The selected file is not a Proxifier profile."
+            AppLocalization.string("The selected file is not a Proxifier profile.")
         case let .unsupportedVersion(version):
-            "Proxifier profile version \(version) is not supported."
+            AppLocalization.format("Proxifier profile version %@ is not supported.", version)
         case .noRules:
-            "The Proxifier profile does not contain any rules."
+            AppLocalization.string("The Proxifier profile does not contain any rules.")
         case .malformedList:
-            "A Proxifier rule contains an unterminated quoted list item."
+            AppLocalization.string(
+                "A Proxifier rule contains an unterminated quoted list item."
+            )
         case .cannotAppendRules:
-            "The imported rules cannot be appended without renumbering the current rule set."
+            AppLocalization.string(
+                "The imported rules cannot be appended without renumbering the current rule set."
+            )
         case .tooManyCriteria:
-            "The Proxifier profile contains too many routing criteria to import safely."
+            AppLocalization.string(
+                "The Proxifier profile contains too many routing criteria to import safely."
+            )
         case .criterionTooLong:
-            "A Proxifier routing criterion is too long to import safely."
+            AppLocalization.string("A Proxifier routing criterion is too long to import safely.")
         }
     }
 }
@@ -107,7 +115,9 @@ struct ProxifierRuleImporter: Sendable {
 
         for (index, definition) in document.rules.enumerated() {
             let originalName = Self.normalizedRuleName(definition.name)
-            let baseName = originalName.isEmpty ? "Imported Rule \(index + 1)" : originalName
+            let baseName = originalName.isEmpty
+                ? AppLocalization.format("Imported Rule %d", index + 1)
+                : originalName
             let importedName = uniqueName(baseName, occupiedNames: &occupiedNames)
             let (offset, offsetOverflow) = (index + 1).multipliedReportingOverflow(by: 10)
             guard !offsetOverflow else { throw ProxifierRuleImportError.cannotAppendRules }
@@ -124,12 +134,23 @@ struct ProxifierRuleImporter: Sendable {
         }
 
         var notes = [
-            "Only routing rules are imported. Proxifier proxy servers, chains, addresses, and credentials are never imported.",
-            "Proxy and Chain actions use the current Mihomo profile rules in MClash.",
-            "Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly.",
+            AppLocalization.string(
+                "Only routing rules are imported. Proxifier proxy servers, chains, addresses, and credentials are never imported."
+            ),
+            AppLocalization.string(
+                "Proxy and Chain actions use the current Mihomo profile rules in MClash."
+            ),
+            AppLocalization.string(
+                "Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly."
+            ),
         ]
         if document.platform.caseInsensitiveCompare("MacOSX") != .orderedSame {
-            notes.append("This profile was created for \(document.platform); review converted rules before importing.")
+            notes.append(
+                AppLocalization.format(
+                    "This profile was created for %@; review converted rules before importing.",
+                    document.platform
+                )
+            )
         }
         return ProxifierRuleImportPlan(
             sourceName: sourceName,
@@ -168,7 +189,9 @@ struct ProxifierRuleImporter: Sendable {
         guard !delegate.rules.isEmpty else { throw ProxifierRuleImportError.noRules }
         return ProxifierDocument(
             version: delegate.version,
-            platform: delegate.platform.isEmpty ? "Unknown" : delegate.platform,
+            platform: delegate.platform.isEmpty
+                ? AppLocalization.string("Unknown")
+                : delegate.platform,
             rules: delegate.rules
         )
     }
@@ -201,7 +224,12 @@ struct ProxifierRuleImporter: Sendable {
                 throw error
             } catch {
                 hasLossyCriteria = true
-                notes.append("Application mask \(Self.safeTokenDescription(token)) is unsupported.")
+                notes.append(
+                    AppLocalization.format(
+                        "Application mask %@ is unsupported.",
+                        Self.safeTokenDescription(token)
+                    )
+                )
             }
         }
         if !applicationTokens.isEmpty && sources.isEmpty {
@@ -211,7 +239,9 @@ struct ProxifierRuleImporter: Sendable {
                 importedName: importedName,
                 action: definition.actionType,
                 criteria: criteriaSummary(applications: applicationTokens, targets: targetTokens, ports: portTokens),
-                notes: notes + ["No application condition could be converted safely."]
+                notes: notes + [
+                    AppLocalization.string("No application condition could be converted safely.")
+                ]
             )
         }
 
@@ -221,7 +251,12 @@ struct ProxifierRuleImporter: Sendable {
             do {
                 guard let matcher = try destinationMatcher(token) else {
                     hasLossyCriteria = true
-                    notes.append("Dynamic target \(Self.safeTokenDescription(token)) was skipped.")
+                    notes.append(
+                        AppLocalization.format(
+                            "Dynamic target %@ was skipped.",
+                            Self.safeTokenDescription(token)
+                        )
+                    )
                     continue
                 }
                 if seenDestinations.insert(matcher).inserted {
@@ -232,7 +267,12 @@ struct ProxifierRuleImporter: Sendable {
                 throw error
             } catch {
                 hasLossyCriteria = true
-                notes.append("Target \(Self.safeTokenDescription(token)) is unsupported.")
+                notes.append(
+                    AppLocalization.format(
+                        "Target %@ is unsupported.",
+                        Self.safeTokenDescription(token)
+                    )
+                )
             }
         }
         if !targetTokens.isEmpty && destinations.isEmpty {
@@ -242,7 +282,9 @@ struct ProxifierRuleImporter: Sendable {
                 importedName: importedName,
                 action: definition.actionType,
                 criteria: criteriaSummary(applications: applicationTokens, targets: targetTokens, ports: portTokens),
-                notes: notes + ["No destination condition could be converted safely."]
+                notes: notes + [
+                    AppLocalization.string("No destination condition could be converted safely.")
+                ]
             )
         }
 
@@ -259,7 +301,12 @@ struct ProxifierRuleImporter: Sendable {
                 throw error
             } catch {
                 hasLossyCriteria = true
-                notes.append("Port \(Self.safeTokenDescription(token)) is unsupported.")
+                notes.append(
+                    AppLocalization.format(
+                        "Port %@ is unsupported.",
+                        Self.safeTokenDescription(token)
+                    )
+                )
             }
         }
         if !portTokens.isEmpty && portRanges.isEmpty {
@@ -269,7 +316,9 @@ struct ProxifierRuleImporter: Sendable {
                 importedName: importedName,
                 action: definition.actionType,
                 criteria: criteriaSummary(applications: applicationTokens, targets: targetTokens, ports: portTokens),
-                notes: notes + ["No port condition could be converted safely."]
+                notes: notes + [
+                    AppLocalization.string("No port condition could be converted safely.")
+                ]
             )
         }
 
@@ -281,7 +330,12 @@ struct ProxifierRuleImporter: Sendable {
             action = .reject
         case "proxy", "chain":
             action = .mihomo(.profileRules)
-            notes.append("Converted from Proxifier \(definition.actionType) to Mihomo profile rules.")
+            notes.append(
+                AppLocalization.format(
+                    "Converted from Proxifier %@ to Mihomo profile rules.",
+                    definition.actionType
+                )
+            )
         default:
             return unsupportedItem(
                 index: index,
@@ -289,7 +343,9 @@ struct ProxifierRuleImporter: Sendable {
                 importedName: importedName,
                 action: definition.actionType,
                 criteria: criteriaSummary(applications: applicationTokens, targets: targetTokens, ports: portTokens),
-                notes: notes + ["The action is not supported by MClash."]
+                notes: notes + [
+                    AppLocalization.string("The action is not supported by MClash.")
+                ]
             )
         }
 
@@ -300,12 +356,20 @@ struct ProxifierRuleImporter: Sendable {
                 originalName: originalName,
                 importedName: importedName,
                 action: definition.actionType,
-                criteria: "All TCP traffic",
-                notes: notes + ["Skipped because MClash already uses Direct when no rule matches."]
+                criteria: AppLocalization.string("All TCP traffic"),
+                notes: notes + [
+                    AppLocalization.string(
+                        "Skipped because MClash already uses Direct when no rule matches."
+                    )
+                ]
             )
         }
         if isCatchAll {
-            notes.append("Catch-all rule: enabling it affects all non-safety-bypass TCP traffic.")
+            notes.append(
+                AppLocalization.string(
+                    "Catch-all rule: enabling it affects all non-safety-bypass TCP traffic."
+                )
+            )
         }
 
         do {
@@ -342,7 +406,9 @@ struct ProxifierRuleImporter: Sendable {
                 importedName: importedName,
                 action: definition.actionType,
                 criteria: criteriaSummary(applications: applicationTokens, targets: targetTokens, ports: portTokens),
-                notes: notes + ["The converted rule did not pass MClash validation."]
+                notes: notes + [
+                    AppLocalization.string("The converted rule did not pass MClash validation.")
+                ]
             )
         }
     }
@@ -430,10 +496,33 @@ struct ProxifierRuleImporter: Sendable {
         ports: [String]
     ) -> String {
         var parts: [String] = []
-        if !applications.isEmpty { parts.append("\(applications.count) app masks") }
-        if !targets.isEmpty { parts.append("\(targets.count) targets") }
-        if !ports.isEmpty { parts.append("\(ports.count) port ranges") }
-        return parts.isEmpty ? "All TCP traffic" : parts.joined(separator: " · ")
+        if !applications.isEmpty {
+            parts.append(
+                AppLocalization.format(
+                    applications.count == 1 ? "%d app mask" : "%d app masks",
+                    applications.count
+                )
+            )
+        }
+        if !targets.isEmpty {
+            parts.append(
+                AppLocalization.format(
+                    targets.count == 1 ? "%d target" : "%d targets",
+                    targets.count
+                )
+            )
+        }
+        if !ports.isEmpty {
+            parts.append(
+                AppLocalization.format(
+                    ports.count == 1 ? "%d port range" : "%d port ranges",
+                    ports.count
+                )
+            )
+        }
+        return parts.isEmpty
+            ? AppLocalization.string("All TCP traffic")
+            : parts.joined(separator: " · ")
     }
 
     private func unavailableFallback(for action: CaptureAction) -> UnavailableFallback {

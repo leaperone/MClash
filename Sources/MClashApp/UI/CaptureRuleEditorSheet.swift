@@ -70,9 +70,13 @@ struct CaptureRuleEditorSheet: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("App Routing Rule")
+                Text(AppLocalization.string("App Routing Rule"))
                     .font(.title2.weight(.semibold))
-                Text("Add applications, processes, or destinations, then choose how matching traffic should be routed.")
+                Text(
+                    AppLocalization.string(
+                        "Add applications, processes, or destinations, then choose how matching traffic should be routed."
+                    )
+                )
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -104,10 +108,18 @@ struct CaptureRuleEditorSheet: View {
                                 .foregroundStyle(.red)
                                 .accessibilityIdentifier("capture-rule-validation-error")
                         } else if appliesImmediately {
-                            Text("Existing connections stay online unless this rule needs a new route listener.")
+                            Text(
+                                AppLocalization.string(
+                                    "Existing connections stay online unless this rule needs a new route listener."
+                                )
+                            )
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text("Changes are saved for the next App Routing activation.")
+                            Text(
+                                AppLocalization.string(
+                                    "Changes are saved for the next App Routing activation."
+                                )
+                            )
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -117,12 +129,12 @@ struct CaptureRuleEditorSheet: View {
                 }
 
                 Spacer()
-                Button("Cancel", role: .cancel) {
+                Button(AppLocalization.string("Cancel"), role: .cancel) {
                     isPresented = false
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button("Save Rule") {
+                Button(AppLocalization.string("Save Rule")) {
                     commit()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -155,24 +167,31 @@ struct CaptureRuleEditorSheet: View {
     }
 
     private var ruleSection: some View {
-        Section("Rule") {
-            TextField("Name", text: $draft.identifier)
+        Section(AppLocalization.string("Rule")) {
+            TextField(AppLocalization.string("Name"), text: $draft.identifier)
                 .textFieldStyle(.roundedBorder)
                 .focused($focusedField, equals: .identifier)
 
-            Toggle("Enabled", isOn: $draft.enabled)
+            Toggle(AppLocalization.string("Enabled"), isOn: $draft.enabled)
         }
     }
 
     private var sourcesSection: some View {
         Section {
             DisclosureGroup(isExpanded: $showsSourceOptions) {
-                Text("Add applications, running processes, or identifiers. Items in this section use OR matching; destinations below are combined with the source group using AND.")
+                Text(
+                    AppLocalization.string(
+                        "Add applications, running processes, or identifiers. Items in this section use OR matching; destinations below are combined with the source group using AND."
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Application & Process Identifiers", systemImage: "textformat.abc")
+                    Label(
+                        AppLocalization.string("Application & Process Identifiers"),
+                        systemImage: "textformat.abc"
+                    )
                         .font(.body.weight(.medium))
 
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -190,11 +209,15 @@ struct CaptureRuleEditorSheet: View {
                         )
                         .focused($focusedField, equals: .applicationIdentifier)
 
-                        Button("Add", action: addApplicationIdentifiers)
+                        Button(AppLocalization.string("Add"), action: addApplicationIdentifiers)
                             .disabled(draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
 
-                    Text("Paste several executable names, signing IDs, bundle IDs, or wildcard patterns separated by semicolons, commas, or new lines.")
+                    Text(
+                        AppLocalization.string(
+                            "Paste several executable names, signing IDs, bundle IDs, or wildcard patterns separated by semicolons, commas, or new lines."
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -205,8 +228,10 @@ struct CaptureRuleEditorSheet: View {
                                 .textSelection(.enabled)
                             Spacer()
                             removeSourceButton(
-                                label: "Remove identifier \(pattern)",
-                                help: "Remove application or process identifier"
+                                label: AppLocalization.format("Remove identifier %@", pattern),
+                                help: AppLocalization.string(
+                                    "Remove application or process identifier"
+                                )
                             ) {
                                 draft.removeApplicationIdentifier(pattern)
                             }
@@ -215,12 +240,19 @@ struct CaptureRuleEditorSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Choose Applications", systemImage: "app.badge")
+                    Label(
+                        AppLocalization.string("Choose Applications"),
+                        systemImage: "app.badge"
+                    )
                         .font(.body.weight(.medium))
 
                     HStack(spacing: 8) {
-                        Picker("Application to add", selection: $applicationToAddID) {
-                            Text("Choose a running application").tag(nil as String?)
+                        Picker(
+                            AppLocalization.string("Application to add"),
+                            selection: $applicationToAddID
+                        ) {
+                            Text(AppLocalization.string("Choose a running application"))
+                                .tag(nil as String?)
                             ForEach(availableApplicationCandidates) { candidate in
                                 Label {
                                     Text(applicationLabel(candidate))
@@ -231,15 +263,15 @@ struct CaptureRuleEditorSheet: View {
                             }
                         }
                         .labelsHidden()
-                        .accessibilityLabel("Application to add")
+                        .accessibilityLabel(AppLocalization.string("Application to add"))
 
-                        Button("Add") { addSelectedApplication() }
+                        Button(AppLocalization.string("Add")) { addSelectedApplication() }
                             .disabled(applicationToAddID == nil)
 
                         Button {
                             showingApplicationImporter = true
                         } label: {
-                            Label("Choose App…", systemImage: "folder")
+                            Label(AppLocalization.string("Choose App…"), systemImage: "folder")
                         }
                     }
 
@@ -249,20 +281,27 @@ struct CaptureRuleEditorSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Choose Running Processes", systemImage: "terminal")
+                    Label(
+                        AppLocalization.string("Choose Running Processes"),
+                        systemImage: "terminal"
+                    )
                         .font(.body.weight(.medium))
 
                     HStack(spacing: 8) {
-                        Picker("Running process to add", selection: $processToAddID) {
-                            Text("Choose a running process").tag(nil as String?)
+                        Picker(
+                            AppLocalization.string("Running process to add"),
+                            selection: $processToAddID
+                        ) {
+                            Text(AppLocalization.string("Choose a running process"))
+                                .tag(nil as String?)
                             ForEach(availableProcessCandidates) { candidate in
                                 Text(candidate.displayName).tag(candidate.id as String?)
                             }
                         }
                         .labelsHidden()
-                        .accessibilityLabel("Running process to add")
+                        .accessibilityLabel(AppLocalization.string("Running process to add"))
 
-                        Button("Add") { addSelectedProcess() }
+                        Button(AppLocalization.string("Add")) { addSelectedProcess() }
                             .disabled(processToAddID == nil)
                     }
 
@@ -271,7 +310,13 @@ struct CaptureRuleEditorSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(process.displayName)
                                     .font(.callout.weight(.medium))
-                                Text("PID \(process.processIdentifier) · \(process.executablePath)")
+                                Text(
+                                    AppLocalization.format(
+                                        "PID %@ · %@",
+                                        String(process.processIdentifier),
+                                        process.executablePath
+                                    )
+                                )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -279,8 +324,11 @@ struct CaptureRuleEditorSheet: View {
                             }
                             Spacer()
                             removeSourceButton(
-                                label: "Remove process \(process.displayName)",
-                                help: "Remove running process"
+                                label: AppLocalization.format(
+                                    "Remove process %@",
+                                    process.displayName
+                                ),
+                                help: AppLocalization.string("Remove running process")
                             ) {
                                 draft.removeProcess(id: process.id)
                             }
@@ -292,12 +340,16 @@ struct CaptureRuleEditorSheet: View {
                    draft.selectedProcesses.isEmpty,
                    draft.applicationIdentifierPatterns.isEmpty,
                    draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("No source restriction — this rule applies to all applications and processes.")
+                    Text(
+                        AppLocalization.string(
+                            "No source restriction — this rule applies to all applications and processes."
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } label: {
-                LabeledContent("Sources", value: sourceSelectionSummary)
+                LabeledContent(AppLocalization.string("Sources"), value: sourceSelectionSummary)
             }
         }
     }
@@ -307,12 +359,16 @@ struct CaptureRuleEditorSheet: View {
 
         return Section {
             DisclosureGroup(isExpanded: $showsDestinationOptions) {
-                Text("A flow may match any destination below. If an application is selected, both the application and one of these destinations must match.")
+                Text(
+                    AppLocalization.string(
+                        "A flow may match any destination below. If an application is selected, both the application and one of these destinations must match."
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Domains", systemImage: "globe")
+                    Label(AppLocalization.string("Domains"), systemImage: "globe")
                         .font(.body.weight(.medium))
 
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -326,11 +382,15 @@ struct CaptureRuleEditorSheet: View {
                         .onSubmit(addDomains)
                         .focused($focusedField, equals: .domain)
 
-                        Button("Add", action: addDomains)
+                        Button(AppLocalization.string("Add"), action: addDomains)
                             .disabled(draft.domainInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
 
-                    Text("Bare domains include their subdomains. Prefix = for an exact hostname. Paste several values separated by commas, spaces, or new lines.")
+                    Text(
+                        AppLocalization.string(
+                            "Bare domains include their subdomains. Prefix = for an exact hostname. Paste several values separated by commas, spaces, or new lines."
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -351,7 +411,10 @@ struct CaptureRuleEditorSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("IP Addresses & Networks", systemImage: "network")
+                    Label(
+                        AppLocalization.string("IP Addresses & Networks"),
+                        systemImage: "network"
+                    )
                         .font(.body.weight(.medium))
 
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -366,11 +429,15 @@ struct CaptureRuleEditorSheet: View {
                         .onSubmit(addNetworks)
                         .focused($focusedField, equals: .network)
 
-                        Button("Add", action: addNetworks)
+                        Button(AppLocalization.string("Add"), action: addNetworks)
                             .disabled(draft.networkInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
 
-                    Text("Accepts IPv4, IPv6, and CIDR networks. Domain matching uses the hostname macOS provides; if an app connects directly by IP, add that IP or CIDR here too.")
+                    Text(
+                        AppLocalization.string(
+                            "Accepts IPv4, IPv6, and CIDR networks. Domain matching uses the hostname macOS provides; if an app connects directly by IP, add that IP or CIDR here too."
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -390,16 +457,19 @@ struct CaptureRuleEditorSheet: View {
                     )
                 }
             } label: {
-                LabeledContent("Destinations", value: destinationSelectionSummary)
+                LabeledContent(
+                    AppLocalization.string("Destinations"),
+                    value: destinationSelectionSummary
+                )
             }
         }
     }
 
     private var actionSection: some View {
-        Section("Action") {
-            Picker("Route traffic", selection: $draft.action) {
+        Section(AppLocalization.string("Action")) {
+            Picker(AppLocalization.string("Route traffic"), selection: $draft.action) {
                 ForEach(CaptureRuleDraftAction.allCases) { action in
-                    Text(action.title)
+                    Text(AppLocalization.string(action.title))
                         .tag(action)
                         .disabled(
                             action == .mihomoGroup
@@ -409,9 +479,9 @@ struct CaptureRuleEditorSheet: View {
             }
 
             if routesThroughMihomo {
-                LabeledContent("Profile") {
+                LabeledContent(AppLocalization.string("Profile")) {
                     HStack(spacing: 8) {
-                        Picker("Profile", selection: $draft.routingProfileID) {
+                        Picker(AppLocalization.string("Profile"), selection: $draft.routingProfileID) {
                             Text(defaultProfilePickerTitle)
                                 .tag(nil as ProfileID?)
                             ForEach(selectableRoutingProfiles) { profile in
@@ -432,7 +502,10 @@ struct CaptureRuleEditorSheet: View {
                         Button {
                             showingProfileManager.toggle()
                         } label: {
-                            Label("Manage Profiles…", systemImage: "slider.horizontal.3")
+                            Label(
+                                AppLocalization.string("Manage Profiles…"),
+                                systemImage: "slider.horizontal.3"
+                            )
                         }
                         .popover(isPresented: $showingProfileManager, arrowEdge: .trailing) {
                             AppRoutingProfileQuickManager(
@@ -443,11 +516,19 @@ struct CaptureRuleEditorSheet: View {
                     }
                 }
 
-                Text("Default Profile is a stable virtual target. Real Profiles can be selected when their own Mixed port is open.")
+                Text(
+                    AppLocalization.string(
+                        "Default Profile is a stable virtual target. Real Profiles can be selected when their own Mixed port is open."
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if draft.routingProfileID != nil {
-                    Text("Policy-group routing is currently available only for the default profile. Other profiles support Profile Rules and GLOBAL.")
+                    Text(
+                        AppLocalization.string(
+                            "Policy-group routing is currently available only for the default profile. Other profiles support Profile Rules and GLOBAL."
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -455,12 +536,12 @@ struct CaptureRuleEditorSheet: View {
 
             if draft.action == .mihomoGroup {
                 if availableMihomoGroups.isEmpty {
-                    TextField("Policy group", text: $draft.mihomoGroup)
+                    TextField(AppLocalization.string("Policy group"), text: $draft.mihomoGroup)
                         .textFieldStyle(.roundedBorder)
                         .focused($focusedField, equals: .policyGroup)
                 } else {
-                    Picker("Policy group", selection: $draft.mihomoGroup) {
-                        Text("Choose a group").tag("")
+                    Picker(AppLocalization.string("Policy group"), selection: $draft.mihomoGroup) {
+                        Text(AppLocalization.string("Choose a group")).tag("")
                         ForEach(availableMihomoGroups, id: \.self) { group in
                             Text(group).tag(group)
                         }
@@ -483,49 +564,74 @@ struct CaptureRuleEditorSheet: View {
 
     private var advancedSection: some View {
         Section {
-            DisclosureGroup("Advanced Matching", isExpanded: $showsAdvancedOptions) {
+            DisclosureGroup(
+                AppLocalization.string("Advanced Matching"),
+                isExpanded: $showsAdvancedOptions
+            ) {
                 VStack(alignment: .leading, spacing: 14) {
-                    TextField("Executable path (optional)", text: $draft.executablePath)
+                    TextField(
+                        AppLocalization.string("Executable path (optional)"),
+                        text: $draft.executablePath
+                    )
                         .textFieldStyle(.roundedBorder)
                         .font(.body.monospaced())
                         .textContentType(.none)
                         .focused($focusedField, equals: .executablePath)
 
-                    TextField("User ID (optional)", text: $draft.userID)
+                    TextField(
+                        AppLocalization.string("User ID (optional)"),
+                        text: $draft.userID
+                    )
                         .textFieldStyle(.roundedBorder)
                         .monospacedDigit()
                         .focused($focusedField, equals: .userID)
 
                     Divider()
 
-                    LabeledContent("Transport") {
+                    LabeledContent(AppLocalization.string("Transport")) {
                         HStack(spacing: 18) {
-                            Toggle("TCP", isOn: $draft.matchesTCP)
+                            Toggle(AppLocalization.string("TCP"), isOn: $draft.matchesTCP)
                                 .toggleStyle(.checkbox)
                                 .focused($focusedField, equals: .transport)
-                            Toggle("UDP", isOn: $draft.matchesUDP)
+                            Toggle(AppLocalization.string("UDP"), isOn: $draft.matchesUDP)
                                 .toggleStyle(.checkbox)
                         }
                     }
 
-                    TextField("Ports or ranges (optional)", text: $draft.portRange)
+                    TextField(
+                        AppLocalization.string("Ports or ranges (optional)"),
+                        text: $draft.portRange
+                    )
                         .textFieldStyle(.roundedBorder)
                         .monospacedDigit()
                         .focused($focusedField, equals: .portRange)
 
-                    Text("Separate multiple ports or ranges with commas or semicolons, for example 80; 443; 8000-9000.")
+                    Text(
+                        AppLocalization.string(
+                            "Separate multiple ports or ranges with commas or semicolons, for example 80; 443; 8000-9000."
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Picker("If Mihomo is unavailable", selection: $draft.unavailableFallback) {
-                        Text("Connect directly").tag(UnavailableFallback.direct)
-                        Text("Reject the connection").tag(UnavailableFallback.reject)
+                    Picker(
+                        AppLocalization.string("If Mihomo is unavailable"),
+                        selection: $draft.unavailableFallback
+                    ) {
+                        Text(AppLocalization.string("Connect directly"))
+                            .tag(UnavailableFallback.direct)
+                        Text(AppLocalization.string("Reject the connection"))
+                            .tag(UnavailableFallback.reject)
                     }
                 }
                 .padding(.top, 8)
             }
 
-            Text("Use advanced matching for an executable path, user, protocol, port range, or fallback behavior.")
+            Text(
+                AppLocalization.string(
+                    "Use advanced matching for an executable path, user, protocol, port range, or fallback behavior."
+                )
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -553,7 +659,7 @@ struct CaptureRuleEditorSheet: View {
             Spacer()
 
             if !application.runningProcessIdentifiers.isEmpty {
-                Text("Running")
+                Text(AppLocalization.string("Running"))
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.green)
                     .padding(.horizontal, 7)
@@ -562,8 +668,11 @@ struct CaptureRuleEditorSheet: View {
             }
 
             removeSourceButton(
-                label: "Remove application \(application.displayName)",
-                help: "Remove application"
+                label: AppLocalization.format(
+                    "Remove application %@",
+                    application.displayName
+                ),
+                help: AppLocalization.string("Remove application")
             ) {
                 draft.removeApplication(id: application.id)
             }
@@ -597,8 +706,13 @@ struct CaptureRuleEditorSheet: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
-            .help("Remove destination")
-            .accessibilityLabel("Remove \(CaptureRuleDraft.destinationLabel(destination))")
+            .help(AppLocalization.string("Remove destination"))
+            .accessibilityLabel(
+                AppLocalization.format(
+                    "Remove %@",
+                    CaptureRuleDraft.destinationLabel(destination)
+                )
+            )
         }
     }
 
@@ -614,9 +728,18 @@ struct CaptureRuleEditorSheet: View {
             let first = page * Self.destinationPageSize + 1
             let last = min(totalCount, first + Self.destinationPageSize - 1)
             let lastPage = max(0, (totalCount - 1) / Self.destinationPageSize)
+            let localizedLabel = AppLocalization.string(label)
 
             HStack(spacing: 8) {
-                Text("Showing \(first)–\(last) of \(totalCount.formatted()) \(label)")
+                Text(
+                    AppLocalization.format(
+                        "Showing %@–%@ of %@ %@",
+                        String(first),
+                        String(last),
+                        totalCount.formatted(),
+                        localizedLabel
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -625,15 +748,15 @@ struct CaptureRuleEditorSheet: View {
                     Image(systemName: "chevron.left")
                 }
                 .disabled(page == 0)
-                .help("Previous \(label)")
-                .accessibilityLabel("Previous \(label)")
+                .help(AppLocalization.format("Previous %@", localizedLabel))
+                .accessibilityLabel(AppLocalization.format("Previous %@", localizedLabel))
 
                 Button(action: next) {
                     Image(systemName: "chevron.right")
                 }
                 .disabled(page >= lastPage)
-                .help("Next \(label)")
-                .accessibilityLabel("Next \(label)")
+                .help(AppLocalization.format("Next %@", localizedLabel))
+                .accessibilityLabel(AppLocalization.format("Next %@", localizedLabel))
             }
             .buttonStyle(.borderless)
         }
@@ -758,18 +881,27 @@ struct CaptureRuleEditorSheet: View {
             $0.id == draft.routingProfileID
         })?.name ?? model.profiles.first(where: {
             $0.id == model.activeProfileID
-        })?.name ?? "the current default profile"
+        })?.name ?? AppLocalization.string("the current default profile")
         return switch draft.action {
         case .mihomoProfileRules:
-            "Send matching traffic to \(profileName) and apply that profile's routing rules."
+            AppLocalization.format(
+                "Send matching traffic to %@ and apply that profile's routing rules.",
+                profileName
+            )
         case .mihomoGlobal:
-            "Send matching traffic to \(profileName)'s GLOBAL target through a dedicated private listener."
+            AppLocalization.format(
+                "Send matching traffic to %@'s GLOBAL target through a dedicated private listener.",
+                profileName
+            )
         case .mihomoGroup:
-            "Send matching traffic to the selected policy group in \(profileName) through its own private listener."
+            AppLocalization.format(
+                "Send matching traffic to the selected policy group in %@ through its own private listener.",
+                profileName
+            )
         case .direct:
-            "Connect matching traffic directly without using a proxy."
+            AppLocalization.string("Connect matching traffic directly without using a proxy.")
         case .reject:
-            "Block matching connections."
+            AppLocalization.string("Block matching connections.")
         }
     }
 
@@ -792,22 +924,22 @@ struct CaptureRuleEditorSheet: View {
         guard let profile = model.profiles.first(where: {
             $0.id == model.activeProfileID
         }) else {
-            return "Default profile"
+            return AppLocalization.string("Default profile")
         }
-        return "Default Profile — uses \(profile.name)"
+        return AppLocalization.format("Default Profile — uses %@", profile.name)
     }
 
     private func profilePickerTitle(_ profile: ProfileMetadata) -> String {
         guard let port = model.profileSessionSpec(for: profile.id)?.mixedPort else {
             return profile.name
         }
-        return "\(profile.name) — Mixed \(port)"
+        return AppLocalization.format("%@ — Mixed %@", profile.name, String(port))
     }
 
     private func unavailableProfilePickerTitle(_ profileID: ProfileID) -> String {
         let name = model.profiles.first(where: { $0.id == profileID })?.name
             ?? profileID.description
-        return "\(name) — Mixed port off"
+        return AppLocalization.format("%@ — Mixed port off", name)
     }
 
     private var availableMihomoGroups: [String] {
@@ -822,7 +954,9 @@ struct CaptureRuleEditorSheet: View {
     private var rulePreview: String {
         let source: String
         var sourceNames = draft.selectedApplications.map(\.displayName)
-            + draft.selectedProcesses.map { "\($0.displayName) (this run)" }
+            + draft.selectedProcesses.map {
+                AppLocalization.format("%@ (this run)", $0.displayName)
+            }
             + draft.applicationIdentifierPatterns
         let executableName = draft.executablePath.trimmingCharacters(in: .whitespacesAndNewlines)
         if !executableName.isEmpty {
@@ -831,13 +965,18 @@ struct CaptureRuleEditorSheet: View {
         let hasPendingSource = !draft.applicationIdentifierInput
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if sourceNames.isEmpty, !hasPendingSource {
-            source = "All applications"
+            source = AppLocalization.string("All applications")
         } else {
             var parts = Array(sourceNames.prefix(3))
             if sourceNames.count > parts.count {
-                parts.append("+\(sourceNames.count - parts.count) more")
+                parts.append(
+                    AppLocalization.format(
+                        "+%d more",
+                        sourceNames.count - parts.count
+                    )
+                )
             }
-            if hasPendingSource { parts.append("+ pending") }
+            if hasPendingSource { parts.append(AppLocalization.string("+ pending")) }
             source = parts.joined(separator: ", ")
         }
 
@@ -854,17 +993,22 @@ struct CaptureRuleEditorSheet: View {
             || !draft.networkInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let target: String
         if destinationCount == 0, !hasPendingDestinations {
-            target = "any destination"
+            target = AppLocalization.string("any destination")
         } else {
             var parts: [String] = []
             if !destinationLabels.isEmpty {
                 parts.append(destinationLabels.joined(separator: ", "))
             }
             if destinationCount > destinationLabels.count {
-                parts.append("+\(destinationCount - destinationLabels.count) more")
+                parts.append(
+                    AppLocalization.format(
+                        "+%d more",
+                        destinationCount - destinationLabels.count
+                    )
+                )
             }
             if hasPendingDestinations {
-                parts.append("+ pending entries")
+                parts.append(AppLocalization.string("+ pending entries"))
             }
             target = parts.joined(separator: " ")
         }
@@ -873,9 +1017,12 @@ struct CaptureRuleEditorSheet: View {
         let targetWithPort = port.isEmpty ? target : "\(target):\(port)"
         let action = draft.action == .mihomoGroup
             && !draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Mihomo · \(draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines))"
-            : draft.action.title
-        return "\(source) → \(targetWithPort) → \(action)"
+            ? AppLocalization.format(
+                "Mihomo · %@",
+                draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            : AppLocalization.string(draft.action.title)
+        return AppLocalization.format("%@ → %@ → %@", source, targetWithPort, action)
     }
 
     private func applicationLabel(_ candidate: ApplicationCaptureCandidate) -> String {
@@ -883,7 +1030,11 @@ struct CaptureRuleEditorSheet: View {
             return candidate.displayName
         }
         let processes = candidate.runningProcessIdentifiers.count
-        return "\(candidate.displayName) · \(processes) running"
+        return AppLocalization.format(
+            "%@ · %d running",
+            candidate.displayName,
+            processes
+        )
     }
 
     private func applicationIcon(_ candidate: ApplicationCaptureCandidate) -> NSImage {
@@ -908,7 +1059,10 @@ struct CaptureRuleEditorSheet: View {
             }
             submissionError = failures.isEmpty
                 ? nil
-                : "Some applications could not be added: \(failures.joined(separator: "; "))"
+                : AppLocalization.format(
+                    "Some applications could not be added: %@",
+                    failures.joined(separator: "; ")
+                )
         } catch {
             submissionError = error.localizedDescription
         }
@@ -1094,9 +1248,14 @@ private struct AppRoutingProfileQuickManager: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Profiles")
+                Text(AppLocalization.string("Profiles"))
                     .font(.headline)
-                Text("Default Profile is always available on Mixed \(model.profileRuntimePlan.defaultMixedPort). Open a real Profile's own port to target it explicitly.")
+                Text(
+                    AppLocalization.format(
+                        "Default Profile is always available on Mixed %@. Open a real Profile's own port to target it explicitly.",
+                        String(model.profileRuntimePlan.defaultMixedPort)
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1110,16 +1269,21 @@ private struct AppRoutingProfileQuickManager: View {
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Default Profile")
+                    Text(AppLocalization.string("Default Profile"))
                         .fontWeight(.medium)
                     Text(defaultSourceTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("Mixed \(model.profileRuntimePlan.defaultMixedPort)")
+                Text(
+                    AppLocalization.format(
+                        "Mixed %@",
+                        String(model.profileRuntimePlan.defaultMixedPort)
+                    )
+                )
                     .font(.caption.monospacedDigit())
-                Button("Edit…") {
+                Button(AppLocalization.string("Edit…")) {
                     showingDefaultPortSettings = true
                 }
                 .controlSize(.small)
@@ -1147,7 +1311,11 @@ private struct AppRoutingProfileQuickManager: View {
 
             Divider()
 
-            Text("Changes apply immediately; this rule draft stays open.")
+            Text(
+                AppLocalization.string(
+                    "Changes apply immediately; this rule draft stays open."
+                )
+            )
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1170,8 +1338,8 @@ private struct AppRoutingProfileQuickManager: View {
     private var defaultSourceTitle: String {
         guard let activeProfileID = model.activeProfileID,
               let profile = model.profiles.first(where: { $0.id == activeProfileID })
-        else { return "No backing Profile selected" }
-        return "Uses \(profile.name)"
+        else { return AppLocalization.string("No backing Profile selected") }
+        return AppLocalization.format("Uses %@", profile.name)
     }
 }
 
@@ -1204,11 +1372,18 @@ private struct AppRoutingProfileQuickRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isDefault || isSaving || !model.canPerform(.activateProfile(profile.id)))
-                .help(isDefault ? "Default profile" : "Make \(profile.name) the default")
+                .help(
+                    isDefault
+                        ? AppLocalization.string("Default profile")
+                        : AppLocalization.format("Make %@ the default", profile.name)
+                )
                 .accessibilityLabel(
                     isDefault
-                        ? "\(profile.name), default profile"
-                        : "Make \(profile.name) the default profile"
+                        ? AppLocalization.format("%@, default profile", profile.name)
+                        : AppLocalization.format(
+                            "Make %@ the default profile",
+                            profile.name
+                        )
                 )
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -1217,27 +1392,38 @@ private struct AppRoutingProfileQuickRow: View {
                             .fontWeight(.medium)
                             .lineLimit(1)
                         if isSelected {
-                            Text("Selected")
+                            Text(AppLocalization.string("Selected"))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Text(isDefault ? "Backs Default Profile · \(runtimeStatusTitle)" : runtimeStatusTitle)
+                    Text(
+                        isDefault
+                            ? AppLocalization.format(
+                                "Backs Default Profile · %@",
+                                runtimeStatusTitle
+                            )
+                            : runtimeStatusTitle
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer(minLength: 8)
 
-                Toggle("Mixed port", isOn: runtimeEnabled)
+                Toggle(AppLocalization.string("Mixed port"), isOn: runtimeEnabled)
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .disabled(isSaving || !model.canPerform(.updateProfile(profile.id)))
-                    .help(isRuntimeEnabled ? "Close this Profile's Mixed port" : "Open this Profile's Mixed port")
+                    .help(
+                        isRuntimeEnabled
+                            ? AppLocalization.string("Close this Profile's Mixed port")
+                            : AppLocalization.string("Open this Profile's Mixed port")
+                    )
 
                 TextField(
-                    "Port",
+                    AppLocalization.string("Port"),
                     value: $mixedPort,
                     format: .number.grouping(.never)
                 )
@@ -1260,7 +1446,7 @@ private struct AppRoutingProfileQuickRow: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(!portNeedsSaving || portValidationMessage != nil || isSaving)
-                .help("Apply Mixed port")
+                .help(AppLocalization.string("Apply Mixed port"))
                 .accessibilityLabel(AppLocalization.string("Apply Mixed port"))
             }
 
@@ -1294,11 +1480,14 @@ private struct AppRoutingProfileQuickRow: View {
 
     private var runtimeStatusTitle: String {
         guard let session = model.profileSessionSpec(for: profile.id) else {
-            return "Mixed port off"
+            return AppLocalization.string("Mixed port off")
         }
         return session.enabled
-            ? "Mixed \(session.mixedPort) on"
-            : "Mixed port off · \(session.mixedPort) reserved"
+            ? AppLocalization.format("Mixed %@ on", String(session.mixedPort))
+            : AppLocalization.format(
+                "Mixed port off · %@ reserved",
+                String(session.mixedPort)
+            )
     }
 
     private var runtimeEnabled: Binding<Bool> {
@@ -1333,7 +1522,7 @@ private struct AppRoutingProfileQuickRow: View {
     private var portValidationMessage: String? {
         (1...65_535).contains(mixedPort)
             ? nil
-            : "Use a port from 1 to 65535."
+            : AppLocalization.string("Use a port from 1 to 65535.")
     }
 
     private func makeDefault() {

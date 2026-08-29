@@ -17,7 +17,9 @@ struct AppRoutingRuleEvidencePresentation: Equatable {
     static func make(for activity: AppRoutingActivity) -> Self {
         guard let evidence = activity.ruleEvidence else {
             return Self(
-                summary: "This activity was recorded before detailed match evidence was available.",
+                summary: AppLocalization.string(
+                    "This activity was recorded before detailed match evidence was available."
+                ),
                 rows: [],
                 consequence: legacyConsequence(for: activity),
                 symbol: "questionmark.circle"
@@ -27,7 +29,9 @@ struct AppRoutingRuleEvidencePresentation: Equatable {
         switch evidence.outcome {
         case .matchedRule:
             return Self(
-                summary: "These are the exact alternatives that matched inside each rule field. The fields themselves were combined with AND.",
+                summary: AppLocalization.string(
+                    "These are the exact alternatives that matched inside each rule field. The fields themselves were combined with AND."
+                ),
                 rows: matchedRows(evidence),
                 consequence: nil,
                 symbol: "checkmark.seal.fill"
@@ -36,35 +40,45 @@ struct AppRoutingRuleEvidencePresentation: Equatable {
             return Self(
                 summary: builtInBypassSummary(evidence.builtInBypassReason),
                 rows: [],
-                consequence: "The built-in safety rule took precedence over user rules and sent the flow Direct.",
+                consequence: AppLocalization.string(
+                    "The built-in safety rule took precedence over user rules and sent the flow Direct."
+                ),
                 symbol: "shield.checkered"
             )
         case .defaultDirect:
             return Self(
-                summary: "No enabled App Routing rule matched this flow.",
+                summary: AppLocalization.string("No enabled App Routing rule matched this flow."),
                 rows: [],
-                consequence: "The built-in default applied Direct routing.",
+                consequence: AppLocalization.string("The built-in default applied Direct routing."),
                 symbol: "arrow.right.circle"
             )
         case .captureDisabled:
             return Self(
-                summary: "App Routing was disabled when this flow arrived.",
+                summary: AppLocalization.string("App Routing was disabled when this flow arrived."),
                 rows: [],
-                consequence: "Rules were not evaluated and the flow was handed back to macOS.",
+                consequence: AppLocalization.string(
+                    "Rules were not evaluated and the flow was handed back to macOS."
+                ),
                 symbol: "pause.circle"
             )
         case .configurationUnavailable:
             return Self(
-                summary: "The Network Extension could not load a validated rule snapshot.",
+                summary: AppLocalization.string(
+                    "The Network Extension could not load a validated rule snapshot."
+                ),
                 rows: [],
-                consequence: "Rules were not evaluated and the flow was handed back to macOS (fail-open).",
+                consequence: AppLocalization.string(
+                    "Rules were not evaluated and the flow was handed back to macOS (fail-open)."
+                ),
                 symbol: "doc.badge.exclamationmark"
             )
         case .contextUnavailable:
             return Self(
                 summary: contextUnavailableSummary(evidence.contextUnavailableReason),
                 rows: [],
-                consequence: "The source or destination could not be trusted as complete, so rules were not evaluated and the flow was handed back to macOS (fail-open).",
+                consequence: AppLocalization.string(
+                    "The source or destination could not be trusted as complete, so rules were not evaluated and the flow was handed back to macOS (fail-open)."
+                ),
                 symbol: "person.crop.circle.badge.questionmark"
             )
         }
@@ -72,26 +86,40 @@ struct AppRoutingRuleEvidencePresentation: Equatable {
 
     private static func matchedRows(_ evidence: CaptureRuleDecisionEvidence) -> [Row] {
         [
-            evidence.source.map { Row(title: "Source", value: sourceDescription($0)) },
-            evidence.destination.map { Row(title: "Destination", value: destinationDescription($0)) },
-            evidence.transportProtocol.map { Row(title: "Protocol", value: protocolDescription($0)) },
-            evidence.destinationPort.map { Row(title: "Port", value: portDescription($0)) },
+            evidence.source.map {
+                Row(title: AppLocalization.string("Source"), value: sourceDescription($0))
+            },
+            evidence.destination.map {
+                Row(title: AppLocalization.string("Destination"), value: destinationDescription($0))
+            },
+            evidence.transportProtocol.map {
+                Row(title: AppLocalization.string("Protocol"), value: protocolDescription($0))
+            },
+            evidence.destinationPort.map {
+                Row(title: AppLocalization.string("Port"), value: portDescription($0))
+            },
         ].compactMap { $0 }
     }
 
     private static func sourceDescription(_ source: RuleSourceMatchEvidence) -> String {
         switch source {
         case .unconstrained:
-            "Any application or process (no source condition)"
+            AppLocalization.string("Any application or process (no source condition)")
         case let .application(application):
             joined(
-                "Exact signed application identity (code-signing requirement verified)",
+                AppLocalization.string(
+                    "Exact signed application identity (code-signing requirement verified)"
+                ),
                 labeled("Bundle", application.bundleIdentifier),
                 labeled("Signing ID", application.signingIdentifier),
                 labeled("Team", application.teamIdentifier)
             )
         case let .applicationIdentifierPattern(pattern):
-            "Identifier pattern \(quoted(pattern.pattern)) matched the \(fieldName(pattern.matchedField)); this is a name/pattern match, not an exact signature identity"
+            AppLocalization.format(
+                "Identifier pattern %@ matched the %@; this is a name/pattern match, not an exact signature identity",
+                quoted(pattern.pattern),
+                fieldName(pattern.matchedField)
+            )
         case let .executable(executable):
             joined(
                 assuranceDescription(executable.assurance),
@@ -99,79 +127,101 @@ struct AppRoutingRuleEvidencePresentation: Equatable {
             )
         case let .processInstance(process):
             joined(
-                "Process \(process.processIdentifier)",
+                AppLocalization.format(
+                    "Process %@",
+                    String(process.processIdentifier)
+                ),
                 assuranceDescription(process.assurance),
                 process.canonicalExecutablePath
             )
         case let .userID(userID):
-            "Exact user ID \(userID); this identifies the account, not one signed application"
+            AppLocalization.format(
+                "Exact user ID %@; this identifies the account, not one signed application",
+                String(userID)
+            )
         }
     }
 
     private static func destinationDescription(_ destination: RuleDestinationMatchEvidence) -> String {
         switch destination {
         case .unconstrained:
-            "Any host or IP (no destination condition)"
+            AppLocalization.string("Any host or IP (no destination condition)")
         case let .ip(address):
-            "Exact IP \(address.presentation)"
+            AppLocalization.format("Exact IP %@", address.presentation)
         case let .network(network):
-            "CIDR \(network.presentation)"
+            AppLocalization.format("CIDR %@", network.presentation)
         case let .host(host):
             switch host.kind {
-            case .exact: "Exact host \(host.value)"
-            case .suffix: "Host suffix \(host.value) (the base host or a subdomain)"
+            case .exact:
+                AppLocalization.format("Exact host %@", host.value)
+            case .suffix:
+                AppLocalization.format(
+                    "Host suffix %@ (the base host or a subdomain)",
+                    host.value
+                )
             }
         case let .hostPattern(pattern):
-            "Hostname pattern \(quoted(pattern.pattern))"
+            AppLocalization.format("Hostname pattern %@", quoted(pattern.pattern))
         }
     }
 
     private static func protocolDescription(_ transportProtocol: RuleProtocolMatchEvidence) -> String {
         switch transportProtocol {
-        case .unconstrained: "TCP or UDP (no protocol condition)"
-        case let .exact(value): "Exact protocol \(value.rawValue.uppercased())"
+        case .unconstrained:
+            AppLocalization.string("TCP or UDP (no protocol condition)")
+        case let .exact(value):
+            AppLocalization.format("Exact protocol %@", value.rawValue.uppercased())
         }
     }
 
     private static func portDescription(_ port: RulePortMatchEvidence) -> String {
         switch port {
         case .unconstrained:
-            "Any destination port (no port condition)"
+            AppLocalization.string("Any destination port (no port condition)")
         case let .range(range) where range.lowerBound == range.upperBound:
-            "Exact destination port \(range.lowerBound)"
+            AppLocalization.format(
+                "Exact destination port %@",
+                String(range.lowerBound)
+            )
         case let .range(range):
-            "Destination port range \(range.lowerBound)–\(range.upperBound)"
+            AppLocalization.format(
+                "Destination port range %@–%@",
+                String(range.lowerBound),
+                String(range.upperBound)
+            )
         }
     }
 
     private static func assuranceDescription(_ assurance: RuleSourceIdentityAssurance) -> String {
         switch assurance {
         case .verifiedCodeSignatureRequirement:
-            "Exact signed application identity"
+            AppLocalization.string("Exact signed application identity")
         case .identifierPattern:
-            "Application identifier pattern"
+            AppLocalization.string("Application identifier pattern")
         case .exactExecutablePath:
-            "Exact executable path only (no signature or hash constraint)"
+            AppLocalization.string("Exact executable path only (no signature or hash constraint)")
         case .exactExecutablePathAndCodeSignatureRequirement:
-            "Exact executable path and verified code-signing requirement"
+            AppLocalization.string("Exact executable path and verified code-signing requirement")
         case .exactExecutablePathAndSHA256:
-            "Exact executable path and SHA-256"
+            AppLocalization.string("Exact executable path and SHA-256")
         case .exactExecutablePathCodeSignatureRequirementAndSHA256:
-            "Exact executable path, verified code-signing requirement, and SHA-256"
+            AppLocalization.string(
+                "Exact executable path, verified code-signing requirement, and SHA-256"
+            )
         case .exactAuditToken:
-            "Exact running process identity verified by audit token"
+            AppLocalization.string("Exact running process identity verified by audit token")
         case .exactProcessStartTimeAndExecutablePath:
-            "Exact PID, process start time, and executable path"
+            AppLocalization.string("Exact PID, process start time, and executable path")
         case .exactUserIdentifier:
-            "Exact user ID"
+            AppLocalization.string("Exact user ID")
         }
     }
 
     private static func fieldName(_ field: RuleApplicationIdentifierField) -> String {
         switch field {
-        case .bundleIdentifier: "bundle identifier"
-        case .signingIdentifier: "signing identifier"
-        case .executableName: "executable name"
+        case .bundleIdentifier: AppLocalization.string("bundle identifier")
+        case .signingIdentifier: AppLocalization.string("signing identifier")
+        case .executableName: AppLocalization.string("executable name")
         }
     }
 
@@ -180,54 +230,64 @@ struct AppRoutingRuleEvidencePresentation: Equatable {
     ) -> String {
         switch reason {
         case .missingSourceApplicationAuditToken:
-            "macOS did not provide a source application audit token."
+            AppLocalization.string("macOS did not provide a source application audit token.")
         case .sourceIdentityResolutionFailed:
-            "The source process identity or its code signature could not be resolved."
+            AppLocalization.string(
+                "The source process identity or its code signature could not be resolved."
+            )
         case .sourceIdentityAuditTokenMismatch:
-            "The resolved process identity did not belong to the flow's audit token."
+            AppLocalization.string(
+                "The resolved process identity did not belong to the flow's audit token."
+            )
         case .sourceSigningIdentifierMismatch:
-            "The flow metadata signing identifier disagreed with the verified running code."
+            AppLocalization.string(
+                "The flow metadata signing identifier disagreed with the verified running code."
+            )
         case .emptyRemoteHost:
-            "The flow did not provide a destination host."
+            AppLocalization.string("The flow did not provide a destination host.")
         case .invalidRemotePort:
-            "The flow did not provide a valid destination port."
+            AppLocalization.string("The flow did not provide a valid destination port.")
         case .unsupportedRemoteEndpoint:
-            "The flow used a destination endpoint type that App Routing cannot match."
+            AppLocalization.string(
+                "The flow used a destination endpoint type that App Routing cannot match."
+            )
         case nil:
-            "The trusted rule context was unavailable."
+            AppLocalization.string("The trusted rule context was unavailable.")
         }
     }
 
     private static func builtInBypassSummary(_ reason: BuiltInBypassReason?) -> String {
         switch reason {
         case .trustedMClashComponent:
-            "The source is an exactly verified MClash component."
+            AppLocalization.string("The source is an exactly verified MClash component.")
         case .loopback:
-            "The destination is a loopback address."
+            AppLocalization.string("The destination is a loopback address.")
         case .linkLocal:
-            "The destination is a link-local address."
+            AppLocalization.string("The destination is a link-local address.")
         case .multicast:
-            "The destination is a multicast address."
+            AppLocalization.string("The destination is a multicast address.")
         case .unspecifiedAddress:
-            "The destination is an unspecified address."
+            AppLocalization.string("The destination is an unspecified address.")
         case nil:
-            "A built-in safety bypass matched this flow."
+            AppLocalization.string("A built-in safety bypass matched this flow.")
         }
     }
 
     private static func legacyConsequence(for activity: AppRoutingActivity) -> String {
         switch activity.cause {
         case .contextUnavailable:
-            "Rules were not evaluated and the flow was handed back to macOS (fail-open)."
+            AppLocalization.string(
+                "Rules were not evaluated and the flow was handed back to macOS (fail-open)."
+            )
         case .captureDisabled, .configurationUnavailable:
-            "The flow was handed back to macOS without a rule match."
+            AppLocalization.string("The flow was handed back to macOS without a rule match.")
         case .rule, .mihomoUnavailable:
-            "The recorded rule ID and outcome remain available above."
+            AppLocalization.string("The recorded rule ID and outcome remain available above.")
         }
     }
 
     private static func labeled(_ label: String, _ value: String?) -> String? {
-        value.map { "\(label) \($0)" }
+        value.map { AppLocalization.format("%@ %@", AppLocalization.string(label), $0) }
     }
 
     private static func joined(_ values: String?...) -> String {
