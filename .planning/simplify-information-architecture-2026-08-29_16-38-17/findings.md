@@ -55,6 +55,8 @@
 - 最终静态检查确认八个语言包均为 785 个唯一非空 key；43 个格式化 key 的占位符一致，103 个字面量 `AppLocalization` key 与本轮新增的 61 个 SwiftUI 静态 key 均存在。
 - 本轮删除的旧 Connections history、App Routing 诊断卡片和 Menu Bar 未使用 helper 已无引用；`git diff --check` 通过。
 - `ReleaseNotes/1.3.7.md` 随实现提交，合并提交可直接作为 `v1.3.7` tag 目标，无需另造发布提交。
+- 首轮 preflight 编译发现 `OverviewConnectionDetails.connectionStatus` 在前置 `if` 后缺少显式 `return`；在共享 getter 增加一处 `return switch` 即可覆盖所有 core state，无需逐 case 修改。
+- 同轮 build 在刷新 mihomo GEO 数据时收到五次 HTTP 403；GitHub API 配额仍为 5000/5000，随后对 API 与 raw 文件的只读请求均返回 200，证据更符合临时外部下载失败而非仓库配置错误。
 
 ## 参考指针
 

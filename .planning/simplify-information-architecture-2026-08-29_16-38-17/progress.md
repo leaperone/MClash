@@ -2,7 +2,7 @@
 
 - 任务 ID：`simplify-information-architecture-2026-08-29_16-38-17`
 - 创建时间：`2026-08-29_16-38-17`
-- 当前状态：`delivery_ready`
+- 当前状态：`preflight_revalidation`
 
 ## 已完成
 
@@ -31,6 +31,7 @@
 - 已完成辅助 Sheet 增量：Rule Editor 的 Sources/Destinations 渐进披露、Preview 移入可增长 footer；Listener Port 删除重复 footer 操作；Dedicated Ports 空态提供 Add 且非默认路由进入 Advanced；Proxifier Import 显示 ready/warning/skipped 与内联 note；Node Picker 补无结果空态并改用 Test Latencies。
 - 已完成八语言收敛：每种语言 785 个唯一非空 key；格式占位符、`AppLocalization` 字面量与本轮新增 SwiftUI 静态文案均已核对。
 - 已补充 `ReleaseNotes/1.3.7.md`，发布说明只描述本轮已实现的信息架构、渐进披露与无障碍改进。
+- preflight 首轮发现 Overview 状态 getter 缺少显式 return，已用一行 `return switch` 修复；外部 GEO 下载 403 随后恢复为 HTTP 200。
 
 ## 验证结果
 
@@ -52,9 +53,13 @@
 | 最终 diff | `git diff --check` 无空白错误 | 通过 |
 | 远端主分支 | GitHub API 返回 `main@216d019f`；与任务基线一致 | 通过 |
 | SSH fetch | `Connection closed by UNKNOWN port 65535`；未修改分支，改用 GitHub API 核对 | 外部通道失败 |
+| Preflight 第 1 轮 check | Overview `connectionStatus` 缺少显式 `return` | 失败，已修复待全量重跑 |
+| Preflight 第 1 轮 build | mihomo GEO API 下载五次 HTTP 403；随后 API/raw 只读请求均恢复 200 | 外部失败，待全量重跑 |
 
 ## 错误与恢复
 
 | 错误 | 尝试 | 解决方式 |
 |---|---:|---|
 | `Reset to 100%` 被通用 printf 正则误识别为占位符 | 1 | 将占位符一致性限定到英文基准确有格式参数的 43 个 key；结果全绿 |
+| Overview 状态 getter 编译缺少 return | 1 | 增加一处 `return switch`，所有 core state 共用同一返回路径 |
+| GEO 数据刷新收到 HTTP 403 | 1 | 核对 GitHub API 配额未耗尽，API 与 raw URL 随后恢复 200；不改下载管道，重跑验证 |

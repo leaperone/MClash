@@ -429,7 +429,7 @@ private struct OverviewConnectionDetails: View {
 
     private var connectionStatus: String {
         if model.preparationInProgress { return AppLocalization.string("Preparing") }
-        switch model.coreState {
+        return switch model.coreState {
         case .stopped: AppLocalization.string("Stopped")
         case .validating: AppLocalization.string("Checking")
         case .starting: AppLocalization.string("Starting")
