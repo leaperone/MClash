@@ -96,11 +96,11 @@ final class AppModel {
 
         var freshnessDescription: String {
             switch self {
-            case .traffic: "traffic rate"
-            case .connections: "connection"
-            case .logs: "log"
-            case .proxies: "proxy state"
-            case .appRouting: "App Routing activity"
+            case .traffic: AppLocalization.string("traffic rate")
+            case .connections: AppLocalization.string("connection")
+            case .logs: AppLocalization.string("log")
+            case .proxies: AppLocalization.string("proxy state")
+            case .appRouting: AppLocalization.string("App Routing activity")
             }
         }
     }
@@ -839,7 +839,9 @@ final class AppModel {
                         component: .applicationState,
                         occurredAt: Date(),
                         reason: error.localizedDescription,
-                        recoverySuggestion: "Restore access to the user Application Support folder, then relaunch MClash."
+                        recoverySuggestion: AppLocalization.string(
+                            "Restore access to the user Application Support folder, then relaunch MClash."
+                        )
                     )
                 )
             }
@@ -856,7 +858,9 @@ final class AppModel {
                         component: .applicationState,
                         occurredAt: Date(),
                         reason: error.localizedDescription,
-                        recoverySuggestion: "Restore read and write access to the MClash State folder, then relaunch MClash."
+                        recoverySuggestion: AppLocalization.string(
+                            "Restore read and write access to the MClash State folder, then relaunch MClash."
+                        )
                     )
                 )
             }
@@ -872,7 +876,10 @@ final class AppModel {
                             component: .profiles,
                             occurredAt: Date(),
                             reason: error.localizedDescription,
-                            recoverySuggestion: "Restore read and write access to \(layout.profilesDirectory.path), then relaunch MClash."
+                            recoverySuggestion: AppLocalization.format(
+                                "Restore read and write access to %@, then relaunch MClash.",
+                                layout.profilesDirectory.path
+                            )
                         )
                     )
                 }
@@ -890,7 +897,9 @@ final class AppModel {
                         component: .runtimeOverrides,
                         occurredAt: Date(),
                         reason: error.localizedDescription,
-                        recoverySuggestion: "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                        recoverySuggestion: AppLocalization.string(
+                            "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                        )
                     )
                 )
             }
@@ -906,7 +915,9 @@ final class AppModel {
                         component: .systemProxySettings,
                         occurredAt: Date(),
                         reason: error.localizedDescription,
-                        recoverySuggestion: "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                        recoverySuggestion: AppLocalization.string(
+                            "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                        )
                     )
                 )
             }
@@ -922,7 +933,9 @@ final class AppModel {
                         component: .appRoutingSettings,
                         occurredAt: Date(),
                         reason: error.localizedDescription,
-                        recoverySuggestion: "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                        recoverySuggestion: AppLocalization.string(
+                            "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                        )
                     )
                 )
             }
@@ -997,7 +1010,9 @@ final class AppModel {
                         recordStorageFailure(
                             component: .runtimeOverrides,
                             error: error,
-                            recoverySuggestion: "Restore or remove the invalid runtime settings document, then relaunch MClash."
+                            recoverySuggestion: AppLocalization.string(
+                                "Restore or remove the invalid runtime settings document, then relaunch MClash."
+                            )
                         )
                         throw error
                     }
@@ -1010,7 +1025,9 @@ final class AppModel {
                         recordStorageFailure(
                             component: .systemProxySettings,
                             error: error,
-                            recoverySuggestion: "Restore or remove the invalid system proxy settings document, then relaunch MClash."
+                            recoverySuggestion: AppLocalization.string(
+                                "Restore or remove the invalid system proxy settings document, then relaunch MClash."
+                            )
                         )
                         throw error
                     }
@@ -1023,7 +1040,9 @@ final class AppModel {
                         recordStorageFailure(
                             component: .appRoutingSettings,
                             error: error,
-                            recoverySuggestion: "Restore or remove the invalid App Routing settings document, then relaunch MClash."
+                            recoverySuggestion: AppLocalization.string(
+                                "Restore or remove the invalid App Routing settings document, then relaunch MClash."
+                            )
                         )
                         throw error
                     }
@@ -1036,7 +1055,9 @@ final class AppModel {
                     recordStorageFailure(
                         component: .profiles,
                         error: error,
-                        recoverySuggestion: "Restore read access to the Profiles and State folders, then relaunch MClash."
+                        recoverySuggestion: AppLocalization.string(
+                            "Restore read access to the Profiles and State folders, then relaunch MClash."
+                        )
                     )
                     throw error
                 }
@@ -1152,12 +1173,12 @@ final class AppModel {
 
     var statusTitle: String {
         switch coreState {
-        case .stopped: "Disconnected"
-        case .validating: "Checking configuration"
-        case .starting: "Connecting"
-        case .running: "Connected"
-        case .stopping: "Disconnecting"
-        case .failed: "Needs attention"
+        case .stopped: AppLocalization.string("Disconnected")
+        case .validating: AppLocalization.string("Checking configuration")
+        case .starting: AppLocalization.string("Connecting")
+        case .running: AppLocalization.string("Connected")
+        case .stopping: AppLocalization.string("Disconnecting")
+        case .failed: AppLocalization.string("Needs attention")
         }
     }
 
@@ -1335,13 +1356,15 @@ final class AppModel {
         defer { end(.importProfile) }
 
         guard let profileStore else {
-            errorMessage = "The profile store could not be initialized."
+            errorMessage = AppLocalization.string(
+                "The profile store could not be initialized."
+            )
             return
         }
 
         let panel = NSOpenPanel()
-        panel.title = "Import a mihomo profile"
-        panel.prompt = "Import"
+        panel.title = AppLocalization.string("Import a mihomo profile")
+        panel.prompt = AppLocalization.string("Import")
         panel.allowedContentTypes = [.yaml]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -1374,7 +1397,10 @@ final class AppModel {
         guard !data.isEmpty,
               data.count <= MClashAutomationProtocol.maximumInlineProfileSize else {
             throw AppModelError.profileActivationFailed(
-                "The imported profile must be between 1 byte and \(MClashAutomationProtocol.maximumInlineProfileSize) bytes."
+                AppLocalization.format(
+                    "The imported profile must be between 1 byte and %@ bytes.",
+                    String(MClashAutomationProtocol.maximumInlineProfileSize)
+                )
             )
         }
 
@@ -1382,7 +1408,9 @@ final class AppModel {
         guard !safeName.isEmpty, safeName.utf8.count <= 128,
               safeName.lowercased().hasSuffix(".yaml") || safeName.lowercased().hasSuffix(".yml") else {
             throw AppModelError.profileActivationFailed(
-                "The imported profile filename must end in .yaml or .yml."
+                AppLocalization.string(
+                    "The imported profile filename must end in .yaml or .yml."
+                )
             )
         }
         let stagingDirectory = profileLayout.rootDirectory
@@ -1509,7 +1537,11 @@ final class AppModel {
                 profileLayout: profileLayout
             )
         } catch {
-            let message = "\(activationError.localizedDescription) Rolling back the newly created profile failed: \(error.localizedDescription)"
+            let message = AppLocalization.format(
+                "%@ Rolling back the newly created profile failed: %@",
+                activationError.localizedDescription,
+                error.localizedDescription
+            )
             throw AppModelError.profileActivationFailed(message)
         }
         throw activationError
@@ -1529,7 +1561,10 @@ final class AppModel {
         }
         guard await coreFleet.stop(profileID: profileID) else {
             throw AppModelError.profileActivationFailed(
-                "\(profileDisplayName(profileID)) could not be stopped before removal."
+                AppLocalization.format(
+                    "%@ could not be stopped before removal.",
+                    profileDisplayName(profileID)
+                )
             )
         }
         auxiliaryCoreStates = await coreFleet.states()
@@ -1565,7 +1600,11 @@ final class AppModel {
             }
             if let restorationFailure {
                 throw AppModelError.profileActivationFailed(
-                    "\(error.localizedDescription) Restoring the previous profile runtime plan also failed: \(restorationFailure.localizedDescription)"
+                    AppLocalization.format(
+                        "%@ Restoring the previous profile runtime plan also failed: %@",
+                        error.localizedDescription,
+                        restorationFailure.localizedDescription
+                    )
                 )
             }
             throw error
@@ -1669,7 +1708,9 @@ final class AppModel {
             do {
                 notificationsEnabled = try await notificationCenter.requestAuthorization()
                 if !notificationsEnabled {
-                    errorMessage = "macOS notification permission was not granted."
+                    errorMessage = AppLocalization.string(
+                        "macOS notification permission was not granted."
+                    )
                 }
             } catch {
                 notificationsEnabled = false
@@ -1689,13 +1730,15 @@ final class AppModel {
         guard begin(.exportBackup) else { return false }
         defer { end(.exportBackup) }
         guard let profileLayout else {
-            errorMessage = "The application state directory is unavailable."
+            errorMessage = AppLocalization.string(
+                "The application state directory is unavailable."
+            )
             return false
         }
 
         let panel = NSSavePanel()
-        panel.title = "Export MClash Backup"
-        panel.prompt = "Export"
+        panel.title = AppLocalization.string("Export MClash Backup")
+        panel.prompt = AppLocalization.string("Export")
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = "MClash-\(Date().ISO8601Format().prefix(10)).mclashbackup"
         guard panel.runModal() == .OK, let destinationURL = panel.url else { return nil }
@@ -1718,13 +1761,15 @@ final class AppModel {
         guard begin(.restoreBackup) else { return false }
         defer { end(.restoreBackup) }
         guard let profileLayout, let profileStore else {
-            errorMessage = "The application state directory is unavailable."
+            errorMessage = AppLocalization.string(
+                "The application state directory is unavailable."
+            )
             return false
         }
 
         let panel = NSOpenPanel()
-        panel.title = "Restore MClash Backup"
-        panel.prompt = "Restore"
+        panel.title = AppLocalization.string("Restore MClash Backup")
+        panel.prompt = AppLocalization.string("Restore")
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
@@ -1759,7 +1804,9 @@ final class AppModel {
                 if isConnected || isBusy || networkCaptureIsActive {
                     if !(await performDisconnect()) {
                         rollbackFailures.append(
-                            "the restored runtime could not be fully stopped"
+                            AppLocalization.string(
+                                "the restored runtime could not be fully stopped"
+                            )
                         )
                     }
                 }
@@ -1850,12 +1897,16 @@ final class AppModel {
         guard shouldReconnect else { return }
         guard activeConfigURL != nil else {
             throw AppModelError.profileActivationFailed(
-                "The restored backup does not contain an active profile to reconnect."
+                AppLocalization.string(
+                    "The restored backup does not contain an active profile to reconnect."
+                )
             )
         }
         guard await performConnect() else {
             throw AppModelError.profileActivationFailed(
-                "The restored profile runtime could not be started."
+                AppLocalization.string(
+                    "The restored profile runtime could not be started."
+                )
             )
         }
         if networkCapturePreferences.enabled {
@@ -1868,7 +1919,9 @@ final class AppModel {
             case .on, .off, .waitingForConnection, .enabling,
                  .awaitingUserApproval, .disabling, .failed:
                 throw AppModelError.profileActivationFailed(
-                    "The restored App Routing configuration could not be activated."
+                    AppLocalization.string(
+                        "The restored App Routing configuration could not be activated."
+                    )
                 )
             }
         } else if shouldRestoreSystemProxy {
@@ -1950,10 +2003,14 @@ final class AppModel {
                 return
             }
 
-            let activationFailure = errorMessage ?? "The new profile could not be started."
+            let activationFailure = errorMessage ?? AppLocalization.string(
+                "The new profile could not be started."
+            )
             guard await stopCore() else {
                 let stopFailure = errorMessage
-                    ?? "The candidate proxy core could not be confirmed stopped."
+                    ?? AppLocalization.string(
+                        "The candidate proxy core could not be confirmed stopped."
+                    )
                 let message = "\(activationFailure) \(stopFailure)"
                 errorMessage = message
                 appendSupervisorLog(message)
@@ -1990,11 +2047,17 @@ final class AppModel {
                         await performEnableSystemProxy()
                     }
                     let restoration = restoredPreviousSession
-                        ? "The previous profile was restored."
-                        : "The previous profile also could not be restarted."
+                        ? AppLocalization.string("The previous profile was restored.")
+                        : AppLocalization.string(
+                            "The previous profile also could not be restarted."
+                        )
                     errorMessage = "\(activationFailure) \(restoration)"
                 } catch {
-                    errorMessage = "\(activationFailure) Restoring the previous profile failed: \(error.localizedDescription)"
+                    errorMessage = AppLocalization.format(
+                        "%@ Restoring the previous profile failed: %@",
+                        activationFailure,
+                        error.localizedDescription
+                    )
                 }
                 appendSupervisorLog(errorMessage ?? activationFailure)
             } else {
@@ -2195,7 +2258,9 @@ final class AppModel {
                 runtimeSettingsApplyState = .restarting
                 guard await performConnect() else {
                     throw AppModelError.profileActivationFailed(
-                        errorMessage ?? "The updated runtime configuration could not be started."
+                        errorMessage ?? AppLocalization.string(
+                            "The updated runtime configuration could not be started."
+                        )
                     )
                 }
             }
@@ -2210,7 +2275,9 @@ final class AppModel {
                 await performEnableSystemProxy()
                 guard systemProxyState == .on else {
                     throw AppModelError.profileActivationFailed(
-                        errorMessage ?? "The macOS system proxy could not be restored after restarting the core."
+                        errorMessage ?? AppLocalization.string(
+                            "The macOS system proxy could not be restored after restarting the core."
+                        )
                     )
                 }
             }
@@ -2230,7 +2297,13 @@ final class AppModel {
             profileRuntimePlan = previousRuntimePlan
             let primaryMessage = error.localizedDescription
             let restorationFailures = await Task { @MainActor [weak self] in
-                guard let self else { return ["MClash closed before rollback completed."] }
+                guard let self else {
+                    return [
+                        AppLocalization.string(
+                            "MClash closed before rollback completed."
+                        )
+                    ]
+                }
                 return await self.rollbackRuntimeOverrides(
                     previousOverrides,
                     previousRuntimePlan: previousRuntimePlan,
@@ -2240,9 +2313,11 @@ final class AppModel {
                 )
             }.value
             let restorationMessage = restorationFailures.isEmpty
-                ? "The previous runtime settings were restored."
-                : "Restoring the previous runtime settings failed: "
-                    + restorationFailures.joined(separator: " ")
+                ? AppLocalization.string("The previous runtime settings were restored.")
+                : AppLocalization.format(
+                    "Restoring the previous runtime settings failed: %@",
+                    restorationFailures.joined(separator: " ")
+                )
             let message = "\(primaryMessage) \(restorationMessage)"
             errorMessage = message
             runtimeSettingsApplyState = .failed(message)
@@ -2326,7 +2401,9 @@ final class AppModel {
                 runtimeSettingsApplyState = .restarting
                 guard await performDisconnect() else {
                     throw AppModelError.profileActivationFailed(
-                        "The running cores could not stop before the routing ports changed."
+                        AppLocalization.string(
+                            "The running cores could not stop before the routing ports changed."
+                        )
                     )
                 }
             }
@@ -2339,7 +2416,9 @@ final class AppModel {
             if shouldRestart {
                 guard await performConnect() else {
                     throw AppModelError.profileActivationFailed(
-                        errorMessage ?? "The updated routing ports could not be started."
+                        errorMessage ?? AppLocalization.string(
+                            "The updated routing ports could not be started."
+                        )
                     )
                 }
             }
@@ -2351,7 +2430,9 @@ final class AppModel {
                 guard systemProxyState == .on else {
                     throw AppModelError.profileActivationFailed(
                         errorMessage
-                            ?? "The macOS system proxy could not be restored after restarting the cores."
+                            ?? AppLocalization.string(
+                                "The macOS system proxy could not be restored after restarting the cores."
+                            )
                     )
                 }
             }
@@ -2378,9 +2459,11 @@ final class AppModel {
                 shouldRestoreSystemProxy: shouldRestoreSystemProxy
             )
             let recovery = failures.isEmpty
-                ? "The previous routing ports were restored."
-                : "Restoring the previous routing ports failed: "
-                    + failures.joined(separator: " ")
+                ? AppLocalization.string("The previous routing ports were restored.")
+                : AppLocalization.format(
+                    "Restoring the previous routing ports failed: %@",
+                    failures.joined(separator: " ")
+                )
             let message = "\(primaryMessage) \(recovery)"
             errorMessage = message
             runtimeSettingsApplyState = .failed(message)
@@ -2435,7 +2518,12 @@ final class AppModel {
         do {
             try await runtimeOverrideCoordinator.save(previousOverrides)
         } catch {
-            failures.append("The previous override document could not be saved: \(error.localizedDescription)")
+            failures.append(
+                AppLocalization.format(
+                    "The previous override document could not be saved: %@",
+                    error.localizedDescription
+                )
+            )
         }
         runtimeOverrides = previousOverrides
         profileRuntimePlan = previousRuntimePlan
@@ -2443,7 +2531,10 @@ final class AppModel {
             try await profileRuntimePlanStore?.save(previousRuntimePlan)
         } catch {
             failures.append(
-                "The previous profile runtime plan could not be saved: \(error.localizedDescription)"
+                AppLocalization.format(
+                    "The previous profile runtime plan could not be saved: %@",
+                    error.localizedDescription
+                )
             )
         }
 
@@ -2451,16 +2542,24 @@ final class AppModel {
             let disconnected = await performDisconnect()
             if !disconnected {
                 failures.append(
-                    "The candidate core could not be stopped safely: "
-                        + (errorMessage ?? "No additional error was reported.")
+                    AppLocalization.format(
+                        "The candidate core could not be stopped safely: %@",
+                        errorMessage ?? AppLocalization.string(
+                            "No additional error was reported."
+                        )
+                    )
                 )
                 return failures
             }
         } else {
             guard await stopCore() else {
                 failures.append(
-                    "The candidate core could not be stopped safely: "
-                        + (errorMessage ?? "No additional error was reported.")
+                    AppLocalization.format(
+                        "The candidate core could not be stopped safely: %@",
+                        errorMessage ?? AppLocalization.string(
+                            "No additional error was reported."
+                        )
+                    )
                 )
                 return failures
             }
@@ -2477,15 +2576,24 @@ final class AppModel {
             activeConfigURL = activation.configurationURL
             profiles = try await profileStore.profiles()
         } catch {
-            failures.append("The previous runtime configuration could not be activated: \(error.localizedDescription)")
+            failures.append(
+                AppLocalization.format(
+                    "The previous runtime configuration could not be activated: %@",
+                    error.localizedDescription
+                )
+            )
             return failures
         }
 
         if shouldReconnect {
             guard await performConnect() else {
                 failures.append(
-                    "The previous core session could not be restarted: "
-                        + (errorMessage ?? "No additional error was reported.")
+                    AppLocalization.format(
+                        "The previous core session could not be restarted: %@",
+                        errorMessage ?? AppLocalization.string(
+                            "No additional error was reported."
+                        )
+                    )
                 )
                 return failures
             }
@@ -2495,8 +2603,12 @@ final class AppModel {
             await performEnableSystemProxy()
             if systemProxyState != .on {
                 failures.append(
-                    "The macOS system proxy could not be re-enabled: "
-                        + (errorMessage ?? "No additional error was reported.")
+                    AppLocalization.format(
+                        "The macOS system proxy could not be re-enabled: %@",
+                        errorMessage ?? AppLocalization.string(
+                            "No additional error was reported."
+                        )
+                    )
                 )
             }
         }
@@ -2700,7 +2812,9 @@ final class AppModel {
 
     func profileRemovalBlockReason(for profileID: ProfileID) -> String? {
         if profileID == activeProfileID {
-            return "Activate another default profile before deleting this one."
+            return AppLocalization.string(
+                "Activate another default profile before deleting this one."
+            )
         }
         if networkCapturePreferences.snapshot.rules.contains(where: { rule in
             guard rule.enabled,
@@ -2708,10 +2822,14 @@ final class AppModel {
                   let target = route.routingProfileID else { return false }
             return target.uuid == profileID.rawValue
         }) {
-            return "Change or disable the App Routing rules that use this profile before deleting it."
+            return AppLocalization.string(
+                "Change or disable the App Routing rules that use this profile before deleting it."
+            )
         }
         if profileSessionSpec(for: profileID)?.enabled == true {
-            return "Turn off this profile's App Routing session before deleting it."
+            return AppLocalization.string(
+                "Turn off this profile's App Routing session before deleting it."
+            )
         }
         return nil
     }
@@ -2777,7 +2895,9 @@ final class AppModel {
         }
         guard activeConfigURL != nil else {
             selection = .profiles
-            errorMessage = "Add or select a profile before connecting."
+            errorMessage = AppLocalization.string(
+                "Add or select a profile before connecting."
+            )
             return false
         }
 
@@ -2928,7 +3048,9 @@ final class AppModel {
         let auxiliaryStops = await coreFleet.stopAll()
         auxiliaryCoreStates = await coreFleet.states()
         guard auxiliaryStops.values.allSatisfy({ $0 }) else {
-            errorMessage = "One or more auxiliary profile cores could not be confirmed stopped."
+            errorMessage = AppLocalization.string(
+                "One or more auxiliary profile cores could not be confirmed stopped."
+            )
             return false
         }
         return await stopCore()
@@ -2942,7 +3064,9 @@ final class AppModel {
             if case let .failed(message) = coreState {
                 errorMessage = message
             } else {
-                errorMessage = "The proxy core could not be confirmed stopped."
+                errorMessage = AppLocalization.string(
+                    "The proxy core could not be confirmed stopped."
+                )
             }
             return false
         }
@@ -2984,7 +3108,9 @@ final class AppModel {
         guard let apiClient,
               let groupModel = proxiesByName[group],
               groupModel.groupBehavior?.supportsSelectionUpdate == true else {
-            errorMessage = "This proxy group is selected automatically for each connection."
+            errorMessage = AppLocalization.string(
+                "This proxy group is selected automatically for each connection."
+            )
             return false
         }
         let generation = controllerGeneration
@@ -3009,7 +3135,9 @@ final class AppModel {
         guard let apiClient,
               let groupModel = proxiesByName[group],
               groupModel.groupBehavior?.supportsClearingOverride == true else {
-            errorMessage = "This proxy group does not have an automatic override to clear."
+            errorMessage = AppLocalization.string(
+                "This proxy group does not have an automatic override to clear."
+            )
             return false
         }
         let generation = controllerGeneration
@@ -3330,7 +3458,9 @@ final class AppModel {
         let groupModel = snapshot.proxiesByName[group],
         groupModel.groupBehavior?.supportsSelectionUpdate == true,
         groupModel.all.contains(proxy) else {
-            errorMessage = "This proxy group cannot select that proxy."
+            errorMessage = AppLocalization.string(
+                "This proxy group cannot select that proxy."
+            )
             return false
         }
         do {
@@ -3365,7 +3495,9 @@ final class AppModel {
         ),
         snapshot.proxiesByName[group]?
             .groupBehavior?.supportsClearingOverride == true else {
-            errorMessage = "This proxy group does not have an automatic override to clear."
+            errorMessage = AppLocalization.string(
+                "This proxy group does not have an automatic override to clear."
+            )
             return false
         }
         do {
@@ -3870,7 +4002,9 @@ final class AppModel {
                     .updateRuntimeConfiguration(configuration)
                 guard updateOutcome == .running else {
                     throw AppModelError.profileActivationFailed(
-                        "The live App Routing update did not reach a verified running state."
+                        AppLocalization.string(
+                            "The live App Routing update did not reach a verified running state."
+                        )
                     )
                 }
                 networkCaptureState = .on(revision: configuration.revision)
@@ -3917,7 +4051,9 @@ final class AppModel {
             if wasConnected || enabled {
                 guard await performConnect() else {
                     throw AppModelError.profileActivationFailed(
-                        errorMessage ?? "The core could not restart with network capture settings."
+                        errorMessage ?? AppLocalization.string(
+                            "The core could not restart with network capture settings."
+                        )
                     )
                 }
             } else {
@@ -3940,12 +4076,17 @@ final class AppModel {
                     return
                 case let .failed(message):
                     throw AppModelError.profileActivationFailed(
-                        "App Routing activation failed verification: \(message)"
+                        AppLocalization.format(
+                            "App Routing activation failed verification: %@",
+                            message
+                        )
                     )
                 case .on, .waitingForConnection, .enabling, .awaitingUserApproval,
                      .off, .disabling:
                     throw AppModelError.profileActivationFailed(
-                        "App Routing did not reach a verified running state."
+                        AppLocalization.string(
+                            "App Routing did not reach a verified running state."
+                        )
                     )
                 }
             } else {
@@ -3980,7 +4121,10 @@ final class AppModel {
                 )
             } catch {
                 rollbackFailures.append(
-                    "saved App Routing settings: \(error.localizedDescription)"
+                    AppLocalization.format(
+                        "saved App Routing settings: %@",
+                        error.localizedDescription
+                    )
                 )
             }
 
@@ -3988,7 +4132,10 @@ final class AppModel {
                 guard rollbackFailures.isEmpty else {
                     let transactionError = NetworkCaptureTransactionFailure(
                         updateReason: primaryError.localizedDescription,
-                        rollbackReason: "The previous durable rules could not be restored without stopping Mihomo: \(rollbackFailures.joined(separator: "; "))"
+                        rollbackReason: AppLocalization.format(
+                            "The previous durable rules could not be restored without stopping Mihomo: %@",
+                            rollbackFailures.joined(separator: "; ")
+                        )
                     )
                     networkCaptureRollbackFailure = transactionError.localizedDescription
                     networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
@@ -4012,7 +4159,9 @@ final class AppModel {
                     )
                     guard let listener = networkExtensionMihomoListener else {
                         throw AppModelError.profileActivationFailed(
-                            "The previous private App Routing listener could not be restored."
+                            AppLocalization.string(
+                                "The previous private App Routing listener could not be restored."
+                            )
                         )
                     }
                     let rollbackConfiguration = try NetworkExtensionRuntimeConfiguration(
@@ -4024,7 +4173,9 @@ final class AppModel {
                         .updateRuntimeConfiguration(rollbackConfiguration)
                     guard rollbackOutcome == .running else {
                         throw AppModelError.profileActivationFailed(
-                            "The previous App Routing revision did not return to a running state."
+                            AppLocalization.string(
+                                "The previous App Routing revision did not return to a running state."
+                            )
                         )
                     }
                     networkCaptureState = .on(
@@ -4044,7 +4195,10 @@ final class AppModel {
                 } catch {
                     let transactionError = NetworkCaptureTransactionFailure(
                         updateReason: primaryError.localizedDescription,
-                        rollbackReason: "Live rollback failed without stopping Mihomo: \(error.localizedDescription)"
+                        rollbackReason: AppLocalization.format(
+                            "Live rollback failed without stopping Mihomo: %@",
+                            error.localizedDescription
+                        )
                     )
                     networkCaptureRollbackFailure = transactionError.localizedDescription
                     networkCaptureChangeReceipt = NetworkCaptureChangeReceipt(
@@ -4064,7 +4218,9 @@ final class AppModel {
                 let disconnected = await performDisconnect()
                 if !disconnected {
                     rollbackFailures.append(
-                        "running core: could not stop it before restoration"
+                        AppLocalization.string(
+                            "running core: could not stop it before restoration"
+                        )
                     )
                 }
             }
@@ -4084,7 +4240,10 @@ final class AppModel {
                 profiles = try await profileStore.profiles()
             } catch {
                 rollbackFailures.append(
-                    "active profile: \(error.localizedDescription)"
+                    AppLocalization.format(
+                        "active profile: %@",
+                        error.localizedDescription
+                    )
                 )
             }
 
@@ -4092,7 +4251,12 @@ final class AppModel {
                 let reconnected = await performConnect()
                 if !reconnected {
                     rollbackFailures.append(
-                        "mihomo core: \(errorMessage ?? "the previous session could not be restarted")"
+                        AppLocalization.format(
+                            "mihomo core: %@",
+                            errorMessage ?? AppLocalization.string(
+                                "the previous session could not be restarted"
+                            )
+                        )
                     )
                 }
             }
@@ -4100,7 +4264,9 @@ final class AppModel {
             if systemProxyWasOn {
                 if networkCapturePreferences.enabled {
                     rollbackFailures.append(
-                        "System Proxy: App Routing remained enabled, so restoring the mutually exclusive proxy would be unsafe"
+                        AppLocalization.string(
+                            "System Proxy: App Routing remained enabled, so restoring the mutually exclusive proxy would be unsafe"
+                        )
                     )
                 } else {
                     await performEnableSystemProxy()
@@ -4110,7 +4276,12 @@ final class AppModel {
                         )
                     } else {
                         rollbackFailures.append(
-                            "System Proxy: \(errorMessage ?? "the previous macOS proxy could not be re-enabled and verified")"
+                            AppLocalization.format(
+                                "System Proxy: %@",
+                                errorMessage ?? AppLocalization.string(
+                                    "the previous macOS proxy could not be re-enabled and verified"
+                                )
+                            )
                         )
                     }
                 }
@@ -4282,7 +4453,10 @@ final class AppModel {
             dnsProxyRuntimeError = message
             dnsProxyAutomaticallyDisabled = true
         }
-        errorMessage = "App Routing couldn’t start: \(message)"
+        errorMessage = AppLocalization.format(
+            "App Routing couldn’t start: %@",
+            message
+        )
         appendSupervisorLog("Network Extension activation failed: \(message)")
     }
 
@@ -4407,15 +4581,21 @@ final class AppModel {
         if case .on = systemProxyState { return }
         if case .enabling = systemProxyState { return }
         guard !networkCapturePreferences.enabled else {
-            errorMessage = "Turn off per-application network capture before enabling the macOS system proxy."
+            errorMessage = AppLocalization.string(
+                "Turn off per-application network capture before enabling the macOS system proxy."
+            )
             return
         }
         guard isConnected, runtimeConfig != nil else {
-            errorMessage = "Connect the core before enabling the macOS system proxy."
+            errorMessage = AppLocalization.string(
+                "Connect the core before enabling the macOS system proxy."
+            )
             return
         }
         guard let profileLayout else {
-            errorMessage = "The application state directory is unavailable."
+            errorMessage = AppLocalization.string(
+                "The application state directory is unavailable."
+            )
             return
         }
 
@@ -4567,7 +4747,11 @@ final class AppModel {
             let updateError = error
             guard !shutdownInProgress else {
                 systemProxyState = hasSystemProxySnapshot
-                    ? .failed("System proxy settings update was interrupted by shutdown.")
+                    ? .failed(
+                        AppLocalization.string(
+                            "System proxy settings update was interrupted by shutdown."
+                        )
+                    )
                     : .off
                 throw CancellationError()
             }
@@ -4645,7 +4829,7 @@ final class AppModel {
     func verifySystemProxyGuardNow() async throws {
         guard systemProxyEnabled else {
             throw AppModelError.profileActivationFailed(
-                "The macOS System Proxy is not enabled."
+                AppLocalization.string("The macOS System Proxy is not enabled.")
             )
         }
         guard let endpoints = currentSystemProxyEndpoints() else {
@@ -4788,7 +4972,11 @@ final class AppModel {
             appendSupervisorLog("System proxy guard could not verify settings: \(reason)")
         }
         if count >= Self.systemProxyGuardFailureThreshold {
-            let message = "MClash could not verify or restore the macOS system proxy after \(count) consecutive attempts. Last error: \(reason)"
+            let message = AppLocalization.format(
+                "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@",
+                String(count),
+                reason
+            )
             systemProxyState = .failed(message)
             if count == Self.systemProxyGuardFailureThreshold {
                 appendSupervisorLog(message)
@@ -4799,7 +4987,9 @@ final class AppModel {
     @discardableResult
     private func performSystemProxyRestore() async -> Bool {
         guard let profileLayout else {
-            let message = "The application state directory is unavailable."
+            let message = AppLocalization.string(
+                "The application state directory is unavailable."
+            )
             systemProxyState = .failed(message)
             errorMessage = message
             return false
@@ -4841,7 +5031,9 @@ final class AppModel {
         systemProxyGuardTask?.cancel()
         systemProxyGuardTask = nil
         guard await cancelStartupPreparation(timeout: 30) else {
-            let message = "MClash is still finishing startup activation. Quit was cancelled so macOS network state cannot be abandoned mid-transaction."
+            let message = AppLocalization.string(
+                "MClash is still finishing startup activation. Quit was cancelled so macOS network state cannot be abandoned mid-transaction."
+            )
             errorMessage = message
             appendSupervisorLog(message)
             shutdownInProgress = false
@@ -4851,7 +5043,9 @@ final class AppModel {
             return false
         }
         guard await waitForNetworkOperationsToSettle() else {
-            let message = "MClash is still finishing a network settings transaction. Quit was cancelled so that transaction cannot restart a provider or core after cleanup."
+            let message = AppLocalization.string(
+                "MClash is still finishing a network settings transaction. Quit was cancelled so that transaction cannot restart a provider or core after cleanup."
+            )
             errorMessage = message
             appendSupervisorLog(message)
             shutdownInProgress = false
@@ -4894,8 +5088,13 @@ final class AppModel {
                 .sorted()
                 .joined(separator: ", ")
             let message = failedProfiles.isEmpty
-                ? "One or more auxiliary profile sessions could not be stopped."
-                : "These auxiliary profile sessions could not be stopped: \(failedProfiles)."
+                ? AppLocalization.string(
+                    "One or more auxiliary profile sessions could not be stopped."
+                )
+                : AppLocalization.format(
+                    "These auxiliary profile sessions could not be stopped: %@.",
+                    failedProfiles
+                )
             errorMessage = message
             appendSupervisorLog(message)
             shutdownInProgress = false
@@ -5172,7 +5371,10 @@ final class AppModel {
             guard operationGeneration == trafficHistoryPersistenceOperationGeneration,
                   trafficHistoryPersistenceChoice == .persistent else { return }
             markPersistentTrafficHistoryUnavailable(
-                "MClash could not update the traffic history retention period: \(error.localizedDescription)"
+                AppLocalization.format(
+                    "MClash could not update the traffic history retention period: %@",
+                    error.localizedDescription
+                )
             )
         }
     }
@@ -5269,7 +5471,10 @@ final class AppModel {
             trafficHistoryClearInProgress = false
             scheduleFlowLedgerRefresh(neededForAccounting: true)
             markPersistentTrafficHistoryUnavailable(
-                "MClash could not clear the persistent traffic history: \(error.localizedDescription)"
+                AppLocalization.format(
+                    "MClash could not clear the persistent traffic history: %@",
+                    error.localizedDescription
+                )
             )
             return false
         }
@@ -5300,7 +5505,10 @@ final class AppModel {
                 return
             }
             markPersistentTrafficHistoryUnavailable(
-                "MClash could not read the persistent traffic history: \(error.localizedDescription)"
+                AppLocalization.format(
+                    "MClash could not read the persistent traffic history: %@",
+                    error.localizedDescription
+                )
             )
         }
     }
@@ -5358,7 +5566,9 @@ final class AppModel {
               allowDuringClear || !trafficHistoryClearInProgress else { return }
         guard let profileLayout else {
             markPersistentTrafficHistoryUnavailable(
-                "The MClash Application Support directory is unavailable."
+                AppLocalization.string(
+                    "The MClash Application Support directory is unavailable."
+                )
             )
             return
         }
@@ -5396,7 +5606,10 @@ final class AppModel {
             } catch {
                 guard isCurrentOperation() else { return }
                 markPersistentTrafficHistoryUnavailable(
-                    "MClash opened traffic history but could not verify it: \(error.localizedDescription)"
+                    AppLocalization.format(
+                        "MClash opened traffic history but could not verify it: %@",
+                        error.localizedDescription
+                    )
                 )
             }
         case let .unavailable(reason):
@@ -5419,15 +5632,27 @@ final class AppModel {
     ) -> String {
         switch reason {
         case .cannotCreatePrivateDirectory:
-            "MClash could not create its private TrafficHistory directory."
+            AppLocalization.string(
+                "MClash could not create its private TrafficHistory directory."
+            )
         case .cannotOpenDatabase:
-            "MClash could not open its local traffic history database."
+            AppLocalization.string(
+                "MClash could not open its local traffic history database."
+            )
         case .corruptedDatabase:
-            "The local traffic history database failed its integrity check. It was left untouched for recovery."
+            AppLocalization.string(
+                "The local traffic history database failed its integrity check. It was left untouched for recovery."
+            )
         case let .newerSchema(found, supported):
-            "Traffic history uses schema \(found), but this version of MClash supports schema \(supported). The database was left untouched."
+            AppLocalization.format(
+                "Traffic history uses schema %@, but this version of MClash supports schema %@. The database was left untouched.",
+                String(found),
+                String(supported)
+            )
         case .migrationFailed:
-            "MClash could not migrate the local traffic history database. It was left untouched."
+            AppLocalization.string(
+                "MClash could not migrate the local traffic history database. It was left untouched."
+            )
         }
     }
 
@@ -5477,7 +5702,7 @@ final class AppModel {
                     Task { [notificationCenter] in
                         await notificationCenter.post(
                             identifier: "mclash-core-failed",
-                            title: "MClash Needs Attention",
+                            title: AppLocalization.string("MClash Needs Attention"),
                             body: message
                         )
                     }
@@ -6078,8 +6303,11 @@ final class AppModel {
                 "Closed existing \(profileDisplayName(profileID)) connections after the routing selection changed."
             )
         } catch {
-            let message =
-                "\(profileDisplayName(profileID)) routing changed, but existing connections could not be closed: \(error.localizedDescription)"
+            let message = AppLocalization.format(
+                "%@ routing changed, but existing connections could not be closed: %@",
+                profileDisplayName(profileID),
+                error.localizedDescription
+            )
             errorMessage = message
             appendSupervisorLog(message)
         }
@@ -6096,7 +6324,10 @@ final class AppModel {
             appendSupervisorLog("Closed existing connections after the routing selection changed.")
         } catch {
             guard generation == controllerGeneration, isConnected else { return }
-            let message = "Routing changed, but existing connections could not be closed: \(error.localizedDescription)"
+            let message = AppLocalization.format(
+                "Routing changed, but existing connections could not be closed: %@",
+                error.localizedDescription
+            )
             errorMessage = message
             appendSupervisorLog(message)
         }
@@ -6134,7 +6365,12 @@ final class AppModel {
             guard !Task.isCancelled,
                   generation == controllerGeneration,
                   isConnected else { return }
-            failures.append("Proxy providers: \(error.localizedDescription)")
+            failures.append(
+                AppLocalization.format(
+                    "Proxy providers: %@",
+                    error.localizedDescription
+                )
+            )
         }
 
         do {
@@ -6150,7 +6386,12 @@ final class AppModel {
             guard !Task.isCancelled,
                   generation == controllerGeneration,
                   isConnected else { return }
-            failures.append("Rule providers: \(error.localizedDescription)")
+            failures.append(
+                AppLocalization.format(
+                    "Rule providers: %@",
+                    error.localizedDescription
+                )
+            )
         }
 
         guard !Task.isCancelled,
@@ -6321,7 +6562,11 @@ final class AppModel {
                   now.timeIntervalSince(lastReceivedAt) > deadline else {
                 continue
             }
-            let reason = "No \(stream.freshnessDescription) sample was received for more than \(Int(deadline)) seconds."
+            let reason = AppLocalization.format(
+                "No %@ sample was received for more than %@ seconds.",
+                stream.freshnessDescription,
+                String(Int(deadline))
+            )
             health.becameStale(reason: reason, at: now)
             liveStreamHealth[stream] = health
             degradedStreams.insert(stream)
@@ -7486,7 +7731,9 @@ final class AppModel {
                     code: 0,
                     userInfo: [
                         NSLocalizedDescriptionKey:
-                            "DNS Provider runtime status is unavailable"
+                            AppLocalization.string(
+                                "DNS Provider runtime status is unavailable"
+                            )
                     ]
                 )
             }
@@ -7496,7 +7743,12 @@ final class AppModel {
                     code: 1,
                     userInfo: [
                         NSLocalizedDescriptionKey:
-                            "DNS Provider revision \(status.revision) is \(status.phase.rawValue) and backendReady=\(status.backendReady)"
+                            AppLocalization.format(
+                                "DNS Provider revision %@ is %@ and backendReady=%@",
+                                String(status.revision),
+                                status.phase.rawValue,
+                                String(status.backendReady)
+                            )
                     ]
                 )
             }
@@ -7539,7 +7791,10 @@ final class AppModel {
                 return
             }
             dnsProxyAutomaticallyDisabled = true
-            let message = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: \(runtimeFailure.localizedDescription)"
+            let message = AppLocalization.format(
+                "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@",
+                runtimeFailure.localizedDescription
+            )
             dnsProxyRuntimeError = message
             networkCaptureState = .failed(message)
             appendSupervisorLog(message)
@@ -7548,7 +7803,11 @@ final class AppModel {
                 generation: dnsMonitorGeneration,
                 expectedRevision: expectedRevision
             ) else { return }
-            let message = "DNS Routing became unverified and MClash could not confirm that the coupled App Routing data plane shut down safely. Runtime error: \(runtimeFailure.localizedDescription) Shutdown error: \(shutdownFailure.localizedDescription)"
+            let message = AppLocalization.format(
+                "DNS Routing became unverified and MClash could not confirm that the coupled App Routing data plane shut down safely. Runtime error: %@ Shutdown error: %@",
+                runtimeFailure.localizedDescription,
+                shutdownFailure.localizedDescription
+            )
             dnsProxyRuntimeError = message
             networkCaptureState = .failed(message)
             appendSupervisorLog(message)
@@ -8061,7 +8320,10 @@ final class AppModel {
                     }
                     self.trafficHistoryPersistTask = nil
                     self.markPersistentTrafficHistoryUnavailable(
-                        "MClash could not write the persistent traffic history: \(error.localizedDescription)"
+                        AppLocalization.format(
+                            "MClash could not write the persistent traffic history: %@",
+                            error.localizedDescription
+                        )
                     )
                     return
                 }
@@ -8484,13 +8746,13 @@ final class AppModel {
         guard let url else { return message }
         var redacted = message.replacingOccurrences(
             of: url.absoluteString,
-            with: "the subscription endpoint",
+            with: AppLocalization.string("the subscription endpoint"),
             options: .caseInsensitive
         )
         if let host = url.host, !host.isEmpty {
             redacted = redacted.replacingOccurrences(
                 of: host,
-                with: "the subscription host",
+                with: AppLocalization.string("the subscription host"),
                 options: .caseInsensitive
             )
         }
@@ -8687,7 +8949,10 @@ final class AppModel {
             recordStorageFailure(
                 component: .profileRuntimePlan,
                 error: AppModelError.profileActivationFailed(reason),
-                recoverySuggestion: "MClash preserved the invalid document at \(quarantinedURL.path) and regenerated a safe plan for the current default profile. Review the per-profile Mixed ports before re-enabling auxiliary sessions."
+                recoverySuggestion: AppLocalization.format(
+                    "MClash preserved the invalid document at %@ and regenerated a safe plan for the current default profile. Review the per-profile Mixed ports before re-enabling auxiliary sessions.",
+                    quarantinedURL.path
+                )
             )
             appendSupervisorLog(
                 "Invalid profile runtime plan was quarantined at \(quarantinedURL.path)."
@@ -8820,7 +9085,9 @@ final class AppModel {
             if profileID == activeProfileID, wasConnected {
                 guard await performDisconnect() else {
                     throw AppModelError.profileActivationFailed(
-                        "The active core could not stop before its Mixed port changed."
+                        AppLocalization.string(
+                            "The active core could not stop before its Mixed port changed."
+                        )
                     )
                 }
             }
@@ -8840,7 +9107,9 @@ final class AppModel {
             if profileID == activeProfileID, wasConnected {
                 guard await performConnect() else {
                     throw AppModelError.profileActivationFailed(
-                        "The active core could not restart on its new Mixed port."
+                        AppLocalization.string(
+                            "The active core could not restart on its new Mixed port."
+                        )
                     )
                 }
                 if systemProxyWasOn {
@@ -8848,7 +9117,9 @@ final class AppModel {
                     guard systemProxyState == .on else {
                         throw AppModelError.profileActivationFailed(
                             errorMessage
-                                ?? "The macOS system proxy could not be restored after the port change."
+                                ?? AppLocalization.string(
+                                    "The macOS system proxy could not be restored after the port change."
+                                )
                         )
                     }
                 }
@@ -8861,14 +9132,19 @@ final class AppModel {
                 try await store.save(previousPlan)
             } catch {
                 rollbackFailures.append(
-                    "the previous profile runtime plan could not be saved: \(error.localizedDescription)"
+                    AppLocalization.format(
+                        "the previous profile runtime plan could not be saved: %@",
+                        error.localizedDescription
+                    )
                 )
             }
 
             if profileID == activeProfileID, isConnected || isBusy {
                 if !(await performDisconnect()) {
                     rollbackFailures.append(
-                        "the candidate core could not be stopped before rollback"
+                        AppLocalization.string(
+                            "the candidate core could not be stopped before rollback"
+                        )
                     )
                 }
             }
@@ -8887,21 +9163,28 @@ final class AppModel {
                     activeConfigURL = rollback.configurationURL
                     if wasConnected, !(await performConnect()) {
                         rollbackFailures.append(
-                            "the previous active profile could not be reconnected"
+                            AppLocalization.string(
+                                "the previous active profile could not be reconnected"
+                            )
                         )
                     }
                     if wasConnected, systemProxyWasOn {
                         await performEnableSystemProxy()
                         if systemProxyState != .on {
                             rollbackFailures.append(
-                                "the previous macOS system proxy could not be restored"
+                                AppLocalization.string(
+                                    "the previous macOS system proxy could not be restored"
+                                )
                             )
                         }
                     }
                 }
             } catch {
                 rollbackFailures.append(
-                    "the previous profile runtime could not be restored: \(error.localizedDescription)"
+                    AppLocalization.format(
+                        "the previous profile runtime could not be restored: %@",
+                        error.localizedDescription
+                    )
                 )
             }
 
@@ -9279,7 +9562,10 @@ final class AppModel {
                 "\(profileDisplayName($0.key)): \($0.value)"
             }.joined(separator: "; ")
             throw AppModelError.profileActivationFailed(
-                "One or more profile sessions could not start: \(detail)"
+                AppLocalization.format(
+                    "One or more profile sessions could not start: %@",
+                    detail
+                )
             )
         }
 
@@ -9290,7 +9576,10 @@ final class AppModel {
                         for: spec.profileID
                     ) else {
                         throw AppModelError.profileActivationFailed(
-                            "\(profileDisplayName(spec.profileID)) did not reach a running state."
+                            AppLocalization.format(
+                                "%@ did not reach a running state.",
+                                profileDisplayName(spec.profileID)
+                            )
                         )
                     }
                     let client = try MihomoAPIClient(
@@ -9456,7 +9745,9 @@ final class AppModel {
               let previousPayload = String(data: previousData, encoding: .utf8)
         else {
             throw AppModelError.profileActivationFailed(
-                "The generated Mihomo configuration is not valid UTF-8."
+                AppLocalization.string(
+                    "The generated Mihomo configuration is not valid UTF-8."
+                )
             )
         }
 
@@ -9489,7 +9780,10 @@ final class AppModel {
                 try await replacer.rollback(receipt)
             } catch {
                 rollbackFailures.append(
-                    "runtime file: \(error.localizedDescription)"
+                    AppLocalization.format(
+                        "runtime file: %@",
+                        error.localizedDescription
+                    )
                 )
             }
             do {
@@ -9500,7 +9794,10 @@ final class AppModel {
                 _ = try await client.fetchConfig()
             } catch {
                 rollbackFailures.append(
-                    "Mihomo controller: \(error.localizedDescription)"
+                    AppLocalization.format(
+                        "Mihomo controller: %@",
+                        error.localizedDescription
+                    )
                 )
             }
             if !rollbackFailures.isEmpty {
@@ -9928,49 +10225,104 @@ private enum AppModelError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .profileStoreUnavailable:
-            "The MClash profile store is unavailable."
+            AppLocalization.string("The MClash profile store is unavailable.")
         case .operationInProgress:
-            "This operation is already in progress."
+            AppLocalization.string("This operation is already in progress.")
         case let .streamEnded(name):
-            "\(name) stream ended unexpectedly."
+            AppLocalization.format(
+                "%@ stream ended unexpectedly.",
+                AppLocalization.string(name)
+            )
         case .systemProxyRestoreFailed:
-            "MClash could not restore the previous macOS proxy settings, so the running core was left active."
+            AppLocalization.string(
+                "MClash could not restore the previous macOS proxy settings, so the running core was left active."
+            )
         case .networkCaptureDisableFailed:
-            "MClash could not stop Network Extension capture, so the mihomo core was left active."
+            AppLocalization.string(
+                "MClash could not stop Network Extension capture, so the mihomo core was left active."
+            )
         case let .secureRandomGenerationFailed(status):
-            "MClash could not generate private Network Extension credentials (OSStatus \(status))."
+            AppLocalization.format(
+                "MClash could not generate private Network Extension credentials (OSStatus %@).",
+                String(status)
+            )
         case let .profileActivationFailed(message):
             message
         case .localProxyPortsUnavailable:
-            "The active profile does not expose a usable Mixed proxy port."
+            AppLocalization.string(
+                "The active profile does not expose a usable Mixed proxy port."
+            )
         case let .localProxyOverrideRejected(port):
-            "mihomo did not accept MClash's temporary local proxy port \(port)."
+            AppLocalization.format(
+                "mihomo did not accept MClash's temporary local proxy port %@.",
+                String(port)
+            )
         case .explicitLocalProxyListenersIncomplete:
-            "The requested Mixed proxy port is missing from the runtime configuration."
+            AppLocalization.string(
+                "The requested Mixed proxy port is missing from the runtime configuration."
+            )
         case let .explicitLocalProxyListenersUnavailable(ports):
-            "The requested local proxy listener did not start on \(ports.map(String.init).joined(separator: ", ")). Choose available ports and try again."
+            AppLocalization.format(
+                "The requested local proxy listener did not start on %@. Choose available ports and try again.",
+                ports.map(String.init).joined(separator: ", ")
+            )
         case let .explicitLocalProxyListenerRejected(field, requested, actual):
-            "mihomo did not apply the requested \(field) listener port \(requested); it reported \(actual)."
+            AppLocalization.format(
+                "mihomo did not apply the requested %@ listener port %@; it reported %@.",
+                field,
+                String(requested),
+                String(actual)
+            )
         case .systemProxyGuardVerificationFailed:
-            "The macOS system proxy still did not match MClash after reapplying it."
+            AppLocalization.string(
+                "The macOS system proxy still did not match MClash after reapplying it."
+            )
         case let .tooManyNetworkCaptureRoutes(actual, maximum):
-            "App Routing requests \(actual) distinct Mihomo route targets; the safe maximum is \(maximum)."
+            AppLocalization.format(
+                "App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@.",
+                String(actual),
+                String(maximum)
+            )
         case .primaryProfileCannotBeDisabled:
-            "The current default profile must remain enabled."
+            AppLocalization.string("The current default profile must remain enabled.")
         case let .profileRequiredByAppRouting(name):
-            "\(name) is still used by an enabled App Routing rule. Change or disable that rule first."
+            AppLocalization.format(
+                "%@ is still used by an enabled App Routing rule. Change or disable that rule first.",
+                name
+            )
         case let .appRoutingProfileUnavailable(identifier):
-            "App Routing targets profile \(identifier), but that profile is no longer available."
+            AppLocalization.format(
+                "App Routing targets profile %@, but that profile is no longer available.",
+                identifier
+            )
         case let .profileMixedPortDisabled(name):
-            "\(name) is selected by App Routing, but its Mixed port is off. Open the Mixed port or choose another profile."
+            AppLocalization.format(
+                "%@ is selected by App Routing, but its Mixed port is off. Open the Mixed port or choose another profile.",
+                name
+            )
         case let .profileMixedPortUnavailable(name, port):
-            "\(name) cannot start because Mixed port \(port) is already in use."
+            AppLocalization.format(
+                "%@ cannot start because Mixed port %@ is already in use.",
+                name,
+                String(port)
+            )
         case let .primaryListenerPortConflict(ports):
-            "The default profile cannot start because its Redirect, TProxy, DNS, or custom listener conflicts with another Profile session on port \(ports.map(String.init).joined(separator: ", ")). Choose distinct ports and try again."
+            AppLocalization.format(
+                "The default profile cannot start because its Redirect, TProxy, DNS, or custom listener conflicts with another Profile session on port %@. Choose distinct ports and try again.",
+                ports.map(String.init).joined(separator: ", ")
+            )
         case let .routeListenerPortUnavailable(name, port):
-            "Routing port “\(name)” cannot start because port \(port) is already in use."
+            AppLocalization.format(
+                "Routing port “%@” cannot start because port %@ is already in use.",
+                name,
+                String(port)
+            )
         case let .routeListenerTargetUnavailable(name, target):
-            "Routing port “\(name)” points to “\(target)”, which is not available in its Profile."
+            AppLocalization.format(
+                "Routing port “%@” points to “%@”, which is not available in its Profile.",
+                name,
+                target
+            )
         }
     }
 }
@@ -9980,7 +10332,11 @@ private struct SystemProxyPreferenceRollbackFailure: LocalizedError {
     let rollbackReason: String
 
     var errorDescription: String? {
-        "The new macOS system proxy settings could not be verified, and MClash could not restore the previous settings. Update error: \(updateReason) Rollback error: \(rollbackReason)"
+        AppLocalization.format(
+            "The new macOS system proxy settings could not be verified, and MClash could not restore the previous settings. Update error: %@ Rollback error: %@",
+            updateReason,
+            rollbackReason
+        )
     }
 }
 
@@ -9989,7 +10345,11 @@ private struct NetworkCaptureTransactionFailure: LocalizedError {
     let rollbackReason: String
 
     var errorDescription: String? {
-        "The App Routing change failed and MClash could not completely restore the previous network state. Update error: \(updateReason) Recovery error: \(rollbackReason)"
+        AppLocalization.format(
+            "The App Routing change failed and MClash could not completely restore the previous network state. Update error: %@ Recovery error: %@",
+            updateReason,
+            rollbackReason
+        )
     }
 }
 
@@ -9998,7 +10358,11 @@ private struct BackupRestoreTransactionFailure: LocalizedError {
     let rollbackReason: String
 
     var errorDescription: String? {
-        "The backup could not be activated and MClash could not completely restore the previous runtime. Restore error: \(updateReason) Recovery error: \(rollbackReason)"
+        AppLocalization.format(
+            "The backup could not be activated and MClash could not completely restore the previous runtime. Restore error: %@ Recovery error: %@",
+            updateReason,
+            rollbackReason
+        )
     }
 }
 
@@ -10020,9 +10384,23 @@ private enum AppRoutingProviderRuntimeError: LocalizedError {
             captureEnabled,
             providerMessage
         ):
-            let providerDetail = providerMessage.flatMap { $0.isEmpty ? nil : $0 }
-                .map { " Provider message: \($0)" } ?? ""
-            return "Provider reported running=\(running), captureEnabled=\(captureEnabled), revision=\(actualRevision); expected running=true, captureEnabled=true, revision=\(expectedRevision).\(providerDetail)"
+            if let providerMessage = providerMessage.flatMap({ $0.isEmpty ? nil : $0 }) {
+                return AppLocalization.format(
+                    "Provider reported running=%@, captureEnabled=%@, revision=%@; expected running=true, captureEnabled=true, revision=%@. Provider message: %@",
+                    String(running),
+                    String(captureEnabled),
+                    String(actualRevision),
+                    String(expectedRevision),
+                    providerMessage
+                )
+            }
+            return AppLocalization.format(
+                "Provider reported running=%@, captureEnabled=%@, revision=%@; expected running=true, captureEnabled=true, revision=%@.",
+                String(running),
+                String(captureEnabled),
+                String(actualRevision),
+                String(expectedRevision)
+            )
         }
     }
 }
