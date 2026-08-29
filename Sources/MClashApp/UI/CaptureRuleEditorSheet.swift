@@ -734,9 +734,9 @@ struct CaptureRuleEditorSheet: View {
                 Text(
                     AppLocalization.format(
                         "Showing %@–%@ of %@ %@",
-                        String(first),
-                        String(last),
-                        totalCount.formatted(),
+                        AppLocalization.number(first),
+                        AppLocalization.number(last),
+                        AppLocalization.number(totalCount),
                         localizedLabel
                     )
                 )

@@ -127,7 +127,7 @@ struct SettingsView: View {
                                     .hour()
                                     .minute()
                                     .second()
-                                    .locale(.autoupdatingCurrent)
+                                    .locale(AppLocalization.selectedLocale)
                             )
                         )
                     }
@@ -145,7 +145,7 @@ struct SettingsView: View {
                                     .hour()
                                     .minute()
                                     .second()
-                                    .locale(.autoupdatingCurrent)
+                                    .locale(AppLocalization.selectedLocale)
                             )
                         )
                     }
@@ -174,7 +174,7 @@ struct SettingsView: View {
                                         .hour()
                                         .minute()
                                         .second()
-                                        .locale(.autoupdatingCurrent)
+                                        .locale(AppLocalization.selectedLocale)
                                 )
                             )
                         }

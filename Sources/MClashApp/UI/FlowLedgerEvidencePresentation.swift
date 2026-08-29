@@ -20,7 +20,9 @@ enum FlowLedgerAssociationPresentation {
             )
         case let .destinationAndStartTime(connectionID, difference):
             let delta = difference.formatted(
-                .number.precision(.fractionLength(2))
+                .number
+                    .precision(.fractionLength(2))
+                    .locale(AppLocalization.selectedLocale)
             )
             return AppLocalization.format(
                 "Probable only · same destination and protocol · start time Δ%@s · %@",

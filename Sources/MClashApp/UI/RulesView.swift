@@ -318,7 +318,11 @@ private struct RuleTableSurface: Equatable, View {
                         Text(
                             AppLocalization.format(
                                 "Hits %@",
-                                hitCount.formatted(.number.grouping(.automatic))
+                                hitCount.formatted(
+                                    .number
+                                        .grouping(.automatic)
+                                        .locale(AppLocalization.selectedLocale)
+                                )
                             )
                         )
                             .monospacedDigit()

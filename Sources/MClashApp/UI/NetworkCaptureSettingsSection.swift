@@ -1351,12 +1351,8 @@ struct AppRoutingView: View {
         )
     }
 
-    private func formattedActivityBytes(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
-    }
-
     private func formattedActivityRate(_ bytesPerSecond: UInt64) -> String {
-        "\(formattedActivityBytes(bytesPerSecond))/s"
+        formattedByteRate(Int64(clamping: bytesPerSecond))
     }
 
     private var rules: [CaptureRule] {
@@ -1913,15 +1909,21 @@ private struct AppRoutingFlowInspector: View {
                         )
                         if let uploadDatagrams = activity.uploadDatagrams,
                            let downloadDatagrams = activity.downloadDatagrams {
+                            let uploaded = uploadDatagrams.formatted(
+                                .number.locale(AppLocalization.selectedLocale)
+                            )
+                            let downloaded = downloadDatagrams.formatted(
+                                .number.locale(AppLocalization.selectedLocale)
+                            )
                             detailRow(
                                 AppLocalization.string("Datagrams"),
-                                value: "↑ \(uploadDatagrams.formatted()) · ↓ \(downloadDatagrams.formatted())"
+                                value: "↑ \(uploaded) · ↓ \(downloaded)"
                             )
                         }
                         if let dropped = activity.droppedDatagrams, dropped > 0 {
                             detailRow(
                                 AppLocalization.string("Dropped datagrams"),
-                                value: dropped.formatted()
+                                value: dropped.formatted(.number.locale(AppLocalization.selectedLocale))
                             )
                         }
                         if isUnmeasuredAfterHandoff {
@@ -1956,22 +1958,24 @@ private struct AppRoutingFlowInspector: View {
                         detailRow(AppLocalization.string("Relay"), value: relayStateTitle)
                         detailRow(
                             AppLocalization.string("Started"),
-                            value: activity.startedAt.formatted(date: .abbreviated, time: .standard)
+                            value: AppLocalization.date(activity.startedAt)
                         )
                         if let endedAt = activity.endedAt {
                             detailRow(
                                 AppLocalization.string("Ended"),
-                                value: endedAt.formatted(date: .abbreviated, time: .standard)
+                                value: AppLocalization.date(endedAt)
                             )
                             detailRow(
                                 AppLocalization.string("Duration"),
-                                value: Duration.seconds(endedAt.timeIntervalSince(activity.startedAt)).formatted()
+                                value: Duration.seconds(endedAt.timeIntervalSince(activity.startedAt)).formatted(
+                                    .units().locale(AppLocalization.selectedLocale)
+                                )
                             )
                         }
                         if let lastPayloadAt = activity.lastPayloadAt {
                             detailRow(
                                 AppLocalization.string("Last payload"),
-                                value: lastPayloadAt.formatted(date: .abbreviated, time: .standard)
+                                value: AppLocalization.date(lastPayloadAt)
                             )
                         }
                         detailRow(
@@ -2171,7 +2175,7 @@ private struct AppRoutingFlowInspector: View {
     private func measurementTitle(_ measurement: FlowLedgerByteMeasurement) -> String {
         switch measurement {
         case let .exact(bytes):
-            ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+            formattedByteCount(Int64(clamping: bytes))
         case .notMeasuredAfterHandoff:
             AppLocalization.string("Not measured after handoff")
         case .notApplicable:

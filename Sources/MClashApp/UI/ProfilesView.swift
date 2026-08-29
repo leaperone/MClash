@@ -825,7 +825,7 @@ private struct EditProfileView: View {
                             .year()
                             .month(.abbreviated)
                             .day()
-                            .locale(.autoupdatingCurrent)
+                            .locale(AppLocalization.selectedLocale)
                     )
                 )
             )

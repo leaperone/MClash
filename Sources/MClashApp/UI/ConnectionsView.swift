@@ -336,7 +336,9 @@ struct ConnectionsView: View {
     }
 
     private func historyCompactDetail(_ entry: FlowLedgerEntry) -> String {
-        let ended = entry.endedAt?.formatted(date: .omitted, time: .shortened) ?? "—"
+        let ended = entry.endedAt.map {
+            AppLocalization.date($0, dateStyle: .omitted, timeStyle: .shortened)
+        } ?? "—"
         return "\(historyRouteTitle(entry)) · \(profileTitle(entry.trafficTarget)) · \(ended)"
     }
 
@@ -347,7 +349,7 @@ struct ConnectionsView: View {
             historyRuleHelp(entry),
             historyRouteHelp(entry),
             profileTitle(entry.trafficTarget),
-            entry.endedAt?.formatted(date: .abbreviated, time: .standard) ?? "—"
+            entry.endedAt.map { AppLocalization.date($0) } ?? "—"
         )
     }
 
@@ -1730,7 +1732,7 @@ private func joined(_ values: [String]?, separator: String) -> String? {
 
 private func formattedConnectionStart(_ value: String) -> String {
     let date = RuntimeTimestampParser.date(from: value)
-    return date?.formatted(date: .abbreviated, time: .standard) ?? value
+    return date.map { AppLocalization.date($0) } ?? value
 }
 
 private func formattedLedgerBytes(_ value: UInt64) -> String {
