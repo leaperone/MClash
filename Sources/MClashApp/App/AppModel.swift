@@ -9863,7 +9863,7 @@ final class AppModel {
         for profileID: ProfileID
     ) -> [ProfileRouteListenerSpec] {
         if unifiedConfigurationEnabled { return [] }
-        profileRuntimePlan.routeListeners.filter { $0.profileID == profileID }
+        return profileRuntimePlan.routeListeners.filter { $0.profileID == profileID }
     }
 
     func setProfileMixedPortEnabled(

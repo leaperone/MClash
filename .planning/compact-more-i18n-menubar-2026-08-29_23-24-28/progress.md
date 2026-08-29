@@ -2,7 +2,7 @@
 
 - 任务 ID：`compact-more-i18n-menubar-2026-08-29_23-24-28`
 - 创建时间：`2026-08-29_23-24-28`
-- 当前状态：`ready_for_preflight`
+- 当前状态：`preflight_build_fix`
 
 ## 已完成
 
@@ -56,3 +56,4 @@
 | Push 前出现并行 `v1.4.0` tag 与 Configuration 页面 | 1 | 合入最新 main、把 Release Notes 调整为 `1.4.1`，重新执行新增页面与 catalog 审计 |
 | 收敛期间 `v1.4.1` 被 diagnostics 测试修复占用 | 1 | 版本顺延为 `v1.4.2`，先吸收最新 main 并等待上一版 Release 完成 |
 | 收敛期间 `v1.4.2` 被 compiled Workspace runtime 修复占用 | 1 | 版本顺延为 `v1.4.3`，先吸收 PR #34 并等待上一版 Release 完成 |
+| Preflight 首次 check 暴露 Swift 多语句函数缺少显式 return | 1 | 在 `profileRouteListeners(for:)` legacy 分支补 `return`，重新从 Phase 0 固定 base 并重跑全部门禁 |
