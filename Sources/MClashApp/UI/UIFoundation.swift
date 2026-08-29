@@ -45,6 +45,7 @@ func formattedByteCount(
     _ value: Int64,
     style: ByteCountFormatStyle.Style = .file
 ) -> String {
+    guard value > 0 else { return "0 B" }
     max(0, value).formatted(
         .byteCount(style: style, spellsOutZero: false)
             .locale(AppLocalization.selectedLocale)
