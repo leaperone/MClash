@@ -7,7 +7,6 @@ struct MenuBarContent: View {
     @State private var pickerGroupName: String?
     @State private var contentIsVisible = false
     @State private var retainedPopoverHeight: CGFloat = 410
-    @State private var routingOptionsExpanded = false
 
     var body: some View {
         Group {
@@ -307,64 +306,62 @@ struct MenuBarContent: View {
     }
 
     private var connectedControls: some View {
-        DisclosureGroup("Routing Options", isExpanded: $routingOptionsExpanded) {
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle(
-                    "macOS System Proxy",
-                    isOn: Binding(
-                        get: { model.pendingSystemProxyEnabled ?? model.systemProxyEnabled },
-                        set: { enabled in Task { await model.setSystemProxyEnabled(enabled) } }
-                    )
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(
+                "macOS System Proxy",
+                isOn: Binding(
+                    get: { model.pendingSystemProxyEnabled ?? model.systemProxyEnabled },
+                    set: { enabled in Task { await model.setSystemProxyEnabled(enabled) } }
                 )
+            )
+            .disabled(
+                !model.controllerIsReady
+                    || !model.canPerform(.changeSystemProxy)
+                    || model.networkCapturePreferences.enabled
+            )
+            .help(
+                model.networkCapturePreferences.enabled
+                    ? "App Routing is active. Turn it off before enabling the mutually exclusive macOS System Proxy."
+                    : "Route compatible macOS applications through MClash's local proxy listeners."
+            )
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Routing Mode")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Routing Mode", selection: modeBinding) {
+                    Text("Rule").tag("rule")
+                    Text("Global").tag("global")
+                    Text("Direct").tag("direct")
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
                 .disabled(
                     !model.controllerIsReady
-                        || !model.canPerform(.changeSystemProxy)
-                        || model.networkCapturePreferences.enabled
+                        || !model.canPerform(.changeMode)
                 )
-                .help(
-                    model.networkCapturePreferences.enabled
-                        ? "App Routing is active. Turn it off before enabling the mutually exclusive macOS System Proxy."
-                        : "Route compatible macOS applications through MClash's local proxy listeners."
-                )
+            }
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Routing Mode")
+            if model.pendingMode != nil || model.pendingSystemProxyEnabled != nil {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(pendingRoutingTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    Picker("Routing Mode", selection: modeBinding) {
-                        Text("Rule").tag("rule")
-                        Text("Global").tag("global")
-                        Text("Direct").tag("direct")
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .disabled(
-                        !model.controllerIsReady
-                            || !model.canPerform(.changeMode)
-                    )
                 }
-
-                if model.pendingMode != nil || model.pendingSystemProxyEnabled != nil {
-                    HStack(spacing: 7) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(pendingRoutingTitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if !quickRouteGroups.isEmpty {
-                    quickRoutes
-                }
-
-                Button("Manage All Routes…") {
-                    showMainWindow(destination: .proxies)
-                }
-                .controlSize(.small)
             }
-            .padding(.top, 8)
+            if !quickRouteGroups.isEmpty {
+                quickRoutes
+            }
+
+            Button("Manage All Routes…") {
+                showMainWindow(destination: .proxies)
+            }
+            .controlSize(.small)
         }
+        .padding(.top, 8)
         .font(.callout)
     }
 
