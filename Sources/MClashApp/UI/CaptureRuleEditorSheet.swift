@@ -4,6 +4,19 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CaptureRuleEditorSheet: View {
+    private enum FocusField: Hashable {
+        case identifier
+        case applicationIdentifier
+        case domain
+        case network
+        case routingProfile
+        case executablePath
+        case userID
+        case transport
+        case portRange
+        case policyGroup
+    }
+
     @Bindable private var model: AppModel
     @Binding private var isPresented: Bool
     @Binding private var draft: CaptureRuleDraft
@@ -15,6 +28,7 @@ struct CaptureRuleEditorSheet: View {
     private let onCommit: @MainActor (CaptureRule) -> Void
 
     @State private var submissionError: String?
+    @State private var attemptedSubmission = false
     @State private var showingApplicationImporter = false
     @State private var showsAdvancedOptions: Bool
     @State private var domainDestinationPage = 0
@@ -22,6 +36,7 @@ struct CaptureRuleEditorSheet: View {
     @State private var applicationToAddID: String?
     @State private var processToAddID: String?
     @State private var showingProfileManager = false
+    @FocusState private var focusedField: FocusField?
 
     private static let destinationPageSize = 50
 
@@ -107,8 +122,7 @@ struct CaptureRuleEditorSheet: View {
                     commit()
                 }
                 .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(currentValidationError != nil)
+                .buttonStyle(.borderedProminent)
             }
             .padding(.horizontal, 24)
             .frame(height: 58)
@@ -139,6 +153,7 @@ struct CaptureRuleEditorSheet: View {
         Section("Rule") {
             TextField("Name", text: $draft.identifier)
                 .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .identifier)
 
             Toggle("Enabled", isOn: $draft.enabled)
         }
@@ -165,6 +180,7 @@ struct CaptureRuleEditorSheet: View {
                     .lineLimit(1 ... 3)
                     .onSubmit(addApplicationIdentifiers)
                     .accessibilityLabel("Application and process identifiers")
+                    .focused($focusedField, equals: .applicationIdentifier)
 
                     Button("Add", action: addApplicationIdentifiers)
                         .disabled(draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -296,6 +312,7 @@ struct CaptureRuleEditorSheet: View {
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1 ... 3)
                     .onSubmit(addDomains)
+                    .focused($focusedField, equals: .domain)
 
                     Button("Add", action: addDomains)
                         .disabled(draft.domainInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -335,6 +352,7 @@ struct CaptureRuleEditorSheet: View {
                     .font(.body.monospaced())
                     .lineLimit(1 ... 3)
                     .onSubmit(addNetworks)
+                    .focused($focusedField, equals: .network)
 
                     Button("Add", action: addNetworks)
                         .disabled(draft.networkInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -394,6 +412,7 @@ struct CaptureRuleEditorSheet: View {
                             }
                         }
                         .labelsHidden()
+                        .focused($focusedField, equals: .routingProfile)
 
                         Button {
                             showingProfileManager.toggle()
@@ -423,6 +442,7 @@ struct CaptureRuleEditorSheet: View {
                 if availableMihomoGroups.isEmpty {
                     TextField("Policy group", text: $draft.mihomoGroup)
                         .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .policyGroup)
                 } else {
                     Picker("Policy group", selection: $draft.mihomoGroup) {
                         Text("Choose a group").tag("")
@@ -430,6 +450,7 @@ struct CaptureRuleEditorSheet: View {
                             Text(group).tag(group)
                         }
                     }
+                    .focused($focusedField, equals: .policyGroup)
                 }
             }
 
@@ -453,10 +474,12 @@ struct CaptureRuleEditorSheet: View {
                         .textFieldStyle(.roundedBorder)
                         .font(.body.monospaced())
                         .textContentType(.none)
+                        .focused($focusedField, equals: .executablePath)
 
                     TextField("User ID (optional)", text: $draft.userID)
                         .textFieldStyle(.roundedBorder)
                         .monospacedDigit()
+                        .focused($focusedField, equals: .userID)
 
                     Divider()
 
@@ -464,6 +487,7 @@ struct CaptureRuleEditorSheet: View {
                         HStack(spacing: 18) {
                             Toggle("TCP", isOn: $draft.matchesTCP)
                                 .toggleStyle(.checkbox)
+                                .focused($focusedField, equals: .transport)
                             Toggle("UDP", isOn: $draft.matchesUDP)
                                 .toggleStyle(.checkbox)
                         }
@@ -472,6 +496,7 @@ struct CaptureRuleEditorSheet: View {
                     TextField("Ports or ranges (optional)", text: $draft.portRange)
                         .textFieldStyle(.roundedBorder)
                         .monospacedDigit()
+                        .focused($focusedField, equals: .portRange)
 
                     Text("Separate multiple ports or ranges with commas or semicolons, for example 80; 443; 8000-9000.")
                         .font(.caption)
@@ -687,15 +712,22 @@ struct CaptureRuleEditorSheet: View {
     }
 
     private var visibleError: String? {
+        if let submissionError { return submissionError }
+        guard attemptedSubmission else { return nil }
         if existingRuleIDs.contains(normalizedRuleName) {
-            return "A rule named \(normalizedRuleName) already exists."
+            return AppLocalization.format(
+                "A rule named %@ already exists.",
+                normalizedRuleName
+            )
         }
         if routesThroughMihomo,
            let selected = draft.routingProfileID,
            !selectableRoutingProfiles.contains(where: { $0.id == selected }) {
-            return "Open this profile's Mixed port or choose another profile."
+            return AppLocalization.string(
+                "Open this profile's Mixed port or choose another profile."
+            )
         }
-        return submissionError ?? draft.validationMessage
+        return draft.validationMessage
     }
 
     private var actionHelp: String {
@@ -920,15 +952,69 @@ struct CaptureRuleEditorSheet: View {
     }
 
     private func commit() {
+        attemptedSubmission = true
         do {
             guard !existingRuleIDs.contains(normalizedRuleName) else {
-                throw CaptureRuleDraftError.invalidIdentifier
+                submissionError = nil
+                focusedField = .identifier
+                return
+            }
+            guard !routesThroughMihomo
+                || draft.routingProfileID == nil
+                || selectableRoutingProfiles.contains(where: { $0.id == draft.routingProfileID })
+            else {
+                submissionError = AppLocalization.string(
+                    "Open this profile's Mixed port or choose another profile."
+                )
+                focusedField = .routingProfile
+                return
             }
             let rule = try draft.makeRule()
             onCommit(rule)
             isPresented = false
         } catch {
             submissionError = error.localizedDescription
+            focus(for: error)
+        }
+    }
+
+    private func focus(for error: Error) {
+        guard let draftError = error as? CaptureRuleDraftError else {
+            focusedField = .identifier
+            return
+        }
+
+        switch draftError {
+        case .invalidIdentifier,
+             .unsupportedExistingRule,
+             .invalidCaptureRule:
+            focusedField = .identifier
+        case .invalidApplicationPattern:
+            focusedField = .applicationIdentifier
+        case .invalidExecutablePath:
+            revealAdvancedOptionsAndFocus(.executablePath)
+        case .invalidUserID:
+            revealAdvancedOptionsAndFocus(.userID)
+        case .invalidIPAddress, .invalidNetwork:
+            focusedField = .network
+        case .invalidDomain:
+            focusedField = .domain
+        case .noTransportProtocol:
+            revealAdvancedOptionsAndFocus(.transport)
+        case .invalidPortRange:
+            revealAdvancedOptionsAndFocus(.portRange)
+        case .noMatchCriteria:
+            focusedField = .applicationIdentifier
+        case .missingMihomoGroup:
+            focusedField = .policyGroup
+        }
+    }
+
+    private func revealAdvancedOptionsAndFocus(_ field: FocusField) {
+        showsAdvancedOptions = true
+        Task { @MainActor in
+            await Task.yield()
+            focusedField = field
         }
     }
 
@@ -955,6 +1041,7 @@ private struct AppRoutingProfileQuickManager: View {
                 Text("Default Profile is always available on Mixed \(model.profileRuntimePlan.defaultMixedPort). Open a real Profile's own port to target it explicitly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(14)
 
@@ -1005,9 +1092,15 @@ private struct AppRoutingProfileQuickManager: View {
             Text("Changes apply immediately; this rule draft stays open.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(12)
         }
-        .frame(width: 460, height: min(520, CGFloat(model.profiles.count * 76 + 190)))
+        .frame(minWidth: 360, idealWidth: 460, maxWidth: 640)
+        .frame(
+            minHeight: 250,
+            idealHeight: min(520, CGFloat(model.profiles.count * 76 + 230)),
+            maxHeight: 520
+        )
         .sheet(isPresented: $showingDefaultPortSettings) {
             ListenerPortSettingsEditor(
                 model: model,
@@ -1110,6 +1203,7 @@ private struct AppRoutingProfileQuickRow: View {
                 .buttonStyle(.borderless)
                 .disabled(!portNeedsSaving || portValidationMessage != nil || isSaving)
                 .help("Apply Mixed port")
+                .accessibilityLabel(AppLocalization.string("Apply Mixed port"))
             }
 
             if let message = errorMessage ?? portValidationMessage {

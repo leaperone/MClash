@@ -152,6 +152,7 @@ struct ProfileRouteListenerSettingsEditor: View {
                     Image(systemName: "plus")
                 }
                 .help("Add Routing Port")
+                .accessibilityLabel(AppLocalization.string("Add Routing Port"))
                 .disabled(model.profiles.isEmpty || isSaving)
 
                 Button {
@@ -160,6 +161,7 @@ struct ProfileRouteListenerSettingsEditor: View {
                     Image(systemName: "minus")
                 }
                 .help("Remove Routing Port")
+                .accessibilityLabel(AppLocalization.string("Remove Routing Port"))
                 .disabled(selection == nil || isSaving)
 
                 Spacer()

@@ -22,7 +22,7 @@ struct AttentionView: View {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("\(model.operationalIssues.count) active \(model.operationalIssues.count == 1 ? "issue" : "issues")")
+                                Text(activeIssueTitle)
                                     .font(.title2.weight(.semibold))
                                 Text("Each item explains what is affected and how to recover it.")
                                     .font(.callout)
@@ -51,6 +51,14 @@ struct AttentionView: View {
         }
         .navigationTitle("Attention")
         .mclashPageSurface()
+    }
+
+    private var activeIssueTitle: String {
+        let count = model.operationalIssues.count
+        return AppLocalization.format(
+            count == 1 ? "%@ active issue" : "%@ active issues",
+            formattedCount(count)
+        )
     }
 
     private func perform(_ action: OperationalIssue.Action) {
@@ -110,9 +118,9 @@ private struct OperationalIssueCard: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 8) {
-                    Text(issue.title)
+                    Text(issue.localizedTitle)
                         .font(.headline)
-                    Text(issue.subsystem.rawValue)
+                    Text(issue.subsystem.localizedTitle)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 7)
@@ -120,7 +128,7 @@ private struct OperationalIssueCard: View {
                         .background(.quaternary, in: Capsule())
                 }
 
-                Text(issue.consequence)
+                Text(issue.localizedConsequence)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -139,7 +147,7 @@ private struct OperationalIssueCard: View {
                 }
 
                 HStack(spacing: 8) {
-                    if let title = issue.primaryActionTitle,
+                    if let title = issue.localizedPrimaryActionTitle,
                        let action = issue.primaryAction {
                         Button {
                             perform(action)
@@ -157,7 +165,7 @@ private struct OperationalIssueCard: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(pendingAction != nil)
                     }
-                    if let title = issue.secondaryActionTitle,
+                    if let title = issue.localizedSecondaryActionTitle,
                        let action = issue.secondaryAction {
                         Button(title) { perform(action) }
                             .disabled(pendingAction != nil)

@@ -859,7 +859,7 @@ private struct EditProfileView: View {
             }
         }
         .padding(24)
-        .frame(width: 520)
+        .frame(minWidth: 420, idealWidth: 520, maxWidth: 680)
         .interactiveDismissDisabled(isSubmitting)
         .onAppear { focusedField = .name }
         .onDisappear { submissionTask?.cancel() }
@@ -1042,12 +1042,12 @@ private struct AddSubscriptionView: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
-                .disabled(!canSubmit)
+                .disabled(isSubmitting || !model.canPerform(.addRemoteProfile))
                 .accessibilityIdentifier("subscription.submit")
             }
         }
         .padding(24)
-        .frame(width: 520)
+        .frame(minWidth: 420, idealWidth: 520, maxWidth: 680)
         .interactiveDismissDisabled(isSubmitting)
         .onAppear { focusedField = .name }
         .onChange(of: name) { _, _ in
@@ -1101,13 +1101,6 @@ private struct AddSubscriptionView: View {
         if normalizedAddress.isEmpty { return "Enter the subscription address." }
         if validatedURL == nil { return "Use a complete HTTP or HTTPS address." }
         return nil
-    }
-
-    private var canSubmit: Bool {
-        !isSubmitting
-            && !normalizedName.isEmpty
-            && validatedURL != nil
-            && model.canPerform(.addRemoteProfile)
     }
 
     private func submit() {
