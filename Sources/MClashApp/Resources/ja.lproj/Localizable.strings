@@ -752,6 +752,8 @@
 "Starting" = "起動中";
 "Stopped" = "停止済み";
 "Stopping" = "停止中";
+"Subscription Details" = "サブスクリプションの詳細";
+"Expires %@" = "%@ に期限切れ";
 "Subscription usage" = "購読の使用量";
 "Test Latencies" = "遅延をテスト";
 "Test Provider" = "プロバイダをテスト";

@@ -32,6 +32,7 @@
 - 已完成八语言收敛：每种语言 785 个唯一非空 key；格式占位符、`AppLocalization` 字面量与本轮新增 SwiftUI 静态文案均已核对。
 - 已补充 `ReleaseNotes/1.3.7.md`，发布说明只描述本轮已实现的信息架构、渐进披露与无障碍改进。
 - preflight 首轮发现 Overview 状态 getter 缺少显式 return，已用一行 `return switch` 修复；外部 GEO 下载 403 随后恢复为 HTTP 200。
+- preflight 第二轮完整测试与签名构建通过；独立 reviewer 的三个 P2 已按原有菜单、表单与本地化 seam 最小修复，等待全量重跑。
 
 ## 验证结果
 
@@ -55,6 +56,10 @@
 | SSH fetch | `Connection closed by UNKNOWN port 65535`；未修改分支，改用 GitHub API 核对 | 外部通道失败 |
 | Preflight 第 1 轮 check | Overview `connectionStatus` 缺少显式 `return` | 失败，已修复待全量重跑 |
 | Preflight 第 1 轮 build | mihomo GEO API 下载五次 HTTP 403；随后 API/raw 只读请求均恢复 200 | 外部失败，待全量重跑 |
+| Preflight 第 2 轮 check | App 392、Shared 114、Extension 29、Automation 5、release-script 3 | 通过 |
+| Preflight 第 2 轮 build | GEO 校验/smoke 与 App、System Extension、mihomo、CLI、Sparkle 签名验证 | 通过 |
+| Preflight 第 2 轮 merge probe | 固定 `main@216d019f`，退出 0、零冲突 | 通过 |
+| Preflight 第 2 轮 review | 0 个 P0/P1；3 个 P2 能力回归 | 需修改，已修复待全量重跑 |
 
 ## 错误与恢复
 
@@ -63,3 +68,6 @@
 | `Reset to 100%` 被通用 printf 正则误识别为占位符 | 1 | 将占位符一致性限定到英文基准确有格式参数的 43 个 key；结果全绿 |
 | Overview 状态 getter 编译缺少 return | 1 | 增加一处 `return switch`，所有 core state 共用同一返回路径 |
 | GEO 数据刷新收到 HTTP 403 | 1 | 核对 GitHub API 配额未耗尽，API 与 raw URL 随后恢复 200；不改下载管道，重跑验证 |
+| 单 Profile 无 Profile Scope 入口 | 1 | Picker 始终保留在 More 菜单，默认页面密度不变 |
+| 关闭已有 Mixed Port 后绕过本地端口校验 | 1 | 校验条件与 runtime 提交条件对齐，保留错误聚焦与公告 |
+| 订阅额度/到期信息无 UI 消费者 | 1 | 在远程 Profile 的 Updates 中按数据存在显示折叠详情 |

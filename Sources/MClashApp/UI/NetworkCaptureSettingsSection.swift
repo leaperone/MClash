@@ -459,16 +459,14 @@ struct AppRoutingView: View {
         HStack(spacing: 10) {
             Menu {
                 Toggle("Include DNS with App Routing", isOn: dnsEnabled)
-                if showsProfileScope {
-                    Picker("Profile Scope", selection: $profileScope) {
-                        Text("All Profiles").tag(ProfileScope.all)
-                        Text("Default Profile").tag(ProfileScope.defaultProfile)
-                        ForEach(model.profiles) { profile in
-                            Text(profile.name)
-                                .tag(ProfileScope.profile(profile.id))
-                        }
-                        Text("Direct / System").tag(ProfileScope.system)
+                Picker("Profile Scope", selection: $profileScope) {
+                    Text("All Profiles").tag(ProfileScope.all)
+                    Text("Default Profile").tag(ProfileScope.defaultProfile)
+                    ForEach(model.profiles) { profile in
+                        Text(profile.name)
+                            .tag(ProfileScope.profile(profile.id))
                     }
+                    Text("Direct / System").tag(ProfileScope.system)
                 }
                 Divider()
                 if !model.operationalIssues.isEmpty {
@@ -489,10 +487,6 @@ struct AppRoutingView: View {
                         || !model.canPerform(.changeNetworkCapture)
                 )
         }
-    }
-
-    private var showsProfileScope: Bool {
-        model.profiles.count > 1 || profileScope != .all
     }
 
     private var compactStatusMessage: String {

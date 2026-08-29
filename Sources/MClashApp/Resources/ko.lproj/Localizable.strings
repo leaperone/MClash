@@ -751,6 +751,8 @@
 "Starting" = "시작 중";
 "Stopped" = "중지됨";
 "Stopping" = "중지 중";
+"Subscription Details" = "구독 세부 정보";
+"Expires %@" = "%@에 만료";
 "Subscription usage" = "구독 사용량";
 "Test Latencies" = "지연 시간 테스트";
 "Test Provider" = "제공자 테스트";

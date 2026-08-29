@@ -635,6 +635,15 @@ private struct EditProfileView: View {
                     Section("Updates") {
                         Toggle("Update automatically", isOn: $automaticUpdatesEnabled)
                             .disabled(isSubmitting)
+
+                        if let subscriptionDetails {
+                            DisclosureGroup("Subscription Details") {
+                                Text(subscriptionDetails)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
                 }
 
@@ -741,6 +750,29 @@ private struct EditProfileView: View {
         return remote
     }
 
+    private var subscriptionDetails: String? {
+        guard let usage = remoteMetadata?.usage else { return nil }
+        var details: [String] = []
+        if let used = usage.used, let total = usage.total, total > 0 {
+            details.append(
+                AppLocalization.format(
+                    "Used %@ of %@",
+                    formattedByteCount(used, style: .binary),
+                    formattedByteCount(total, style: .binary)
+                )
+            )
+        }
+        if let expiresAt = usage.expiresAt {
+            details.append(
+                AppLocalization.format(
+                    "Expires %@",
+                    expiresAt.formatted(date: .abbreviated, time: .omitted)
+                )
+            )
+        }
+        return details.isEmpty ? nil : details.joined(separator: " · ")
+    }
+
     private var normalizedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -760,7 +792,8 @@ private struct EditProfileView: View {
     private var validationMessage: String? {
         if normalizedName.isEmpty { return "Enter a profile name." }
         if isRemote, validatedURL == nil { return "Use a complete HTTP or HTTPS subscription address." }
-        if runtimeEnabled, !(1...65_535).contains(mixedPort) {
+        if (model.profileSessionSpec(for: profile.id) != nil || runtimeEnabled)
+            && !(1...65_535).contains(mixedPort) {
             return "Use a Mixed port from 1 to 65535."
         }
         return nil

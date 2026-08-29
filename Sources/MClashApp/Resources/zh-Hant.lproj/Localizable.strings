@@ -751,6 +751,8 @@
 "Starting" = "正在啟動";
 "Stopped" = "已停止";
 "Stopping" = "正在停止";
+"Subscription Details" = "訂閱詳情";
+"Expires %@" = "到期時間：%@";
 "Subscription usage" = "訂閱用量";
 "Test Latencies" = "測試延遲";
 "Test Provider" = "測試提供者";

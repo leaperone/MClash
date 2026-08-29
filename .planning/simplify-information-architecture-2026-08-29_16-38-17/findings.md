@@ -57,6 +57,8 @@
 - `ReleaseNotes/1.3.7.md` 随实现提交，合并提交可直接作为 `v1.3.7` tag 目标，无需另造发布提交。
 - 首轮 preflight 编译发现 `OverviewConnectionDetails.connectionStatus` 在前置 `if` 后缺少显式 `return`；在共享 getter 增加一处 `return switch` 即可覆盖所有 core state，无需逐 case 修改。
 - 同轮 build 在刷新 mihomo GEO 数据时收到五次 HTTP 403；GitHub API 配额仍为 5000/5000，随后对 API 与 raw 文件的只读请求均返回 200，证据更符合临时外部下载失败而非仓库配置错误。
+- 第二轮 preflight 的 check/build 已通过，但独立完整 diff 审查发现三个 P2 能力回归：单 Profile 时 More 菜单隐藏真实有效的 Profile/Direct scope；关闭已有 Mixed Port 后本地验证条件与实际提交条件不一致；Profile 订阅额度/到期数据仍被解析持久化却失去全部 UI 入口。
+- 最小修复保持低密度目标：Profile Scope 始终留在既有 More 菜单；端口验证与 `updateProfileRuntime` 的提交条件对齐；订阅额度与到期日仅在 Edit Profile 的 Updates 中按数据存在显示折叠项，不恢复列表常驻文本。
 
 ## 参考指针
 

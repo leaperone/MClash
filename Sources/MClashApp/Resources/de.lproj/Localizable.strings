@@ -752,6 +752,8 @@
 "Starting" = "Wird gestartet";
 "Stopped" = "Gestoppt";
 "Stopping" = "Wird gestoppt";
+"Subscription Details" = "Abonnementdetails";
+"Expires %@" = "Läuft am %@ ab";
 "Subscription usage" = "Abonnementnutzung";
 "Test Latencies" = "Latenzen testen";
 "Test Provider" = "Anbieter testen";
