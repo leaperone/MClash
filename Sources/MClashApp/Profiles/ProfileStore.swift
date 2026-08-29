@@ -558,25 +558,43 @@ extension ProfileStoreError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .profileNotFound(id):
-            "Profile \(id.description) was not found."
+            AppLocalization.format(
+                "Profile %@ was not found.",
+                id.description
+            )
         case let .profileIsNotRemote(id):
-            "Profile \(id.description) is not a remote subscription."
+            AppLocalization.format(
+                "Profile %@ is not a remote subscription.",
+                id.description
+            )
         case let .cannotRemoveActiveProfile(id):
-            "Profile \(id.description) is active and cannot be removed."
+            AppLocalization.format(
+                "Profile %@ is active and cannot be removed.",
+                id.description
+            )
         case .importSourceMissing:
-            "The selected profile file does not exist."
+            AppLocalization.string("The selected profile file does not exist.")
         case .unsupportedFileExtension:
-            "MClash can import .yaml and .yml profile files."
+            AppLocalization.string(
+                "MClash can import .yaml and .yml profile files."
+            )
         case .invalidSubscriptionURL:
-            "The subscription URL must use HTTP or HTTPS."
+            AppLocalization.string(
+                "The subscription URL must use HTTP or HTTPS."
+            )
         case let .unexpectedHTTPStatus(status):
-            "The subscription server returned HTTP \(status)."
+            AppLocalization.format(
+                "The subscription server returned HTTP %@.",
+                AppLocalization.number(status)
+            )
         case .emptyConfiguration:
-            "The profile configuration is empty."
+            AppLocalization.string("The profile configuration is empty.")
         case .emptyProfileName:
-            "Enter a name for the profile."
+            AppLocalization.string("Enter a name for the profile.")
         case .invalidUpdateInterval:
-            "Subscription update intervals must be between 1 and 8,760 hours."
+            AppLocalization.string(
+                "Subscription update intervals must be between 1 and 8,760 hours."
+            )
         }
     }
 }

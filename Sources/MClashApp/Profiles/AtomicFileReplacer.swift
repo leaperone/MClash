@@ -174,11 +174,11 @@ extension AtomicFileReplacementError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .stagedFileMissing:
-            "The staged configuration file is missing."
+            AppLocalization.string("The staged configuration file is missing.")
         case .backupMissing:
-            "The previous configuration backup is missing."
+            AppLocalization.string("The previous configuration backup is missing.")
         case .unknownTransaction:
-            "The configuration transaction is no longer active."
+            AppLocalization.string("The configuration transaction is no longer active.")
         }
     }
 }

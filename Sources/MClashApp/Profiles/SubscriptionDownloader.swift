@@ -156,9 +156,14 @@ extension SubscriptionDownloadError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .nonHTTPResponse:
-            "The subscription server did not return an HTTP response."
+            AppLocalization.string(
+                "The subscription server did not return an HTTP response."
+            )
         case let .responseTooLarge(limit):
-            "The subscription response exceeded the \(limit)-byte safety limit."
+            AppLocalization.format(
+                "The subscription response exceeded the %@-byte safety limit.",
+                AppLocalization.number(limit)
+            )
         }
     }
 }

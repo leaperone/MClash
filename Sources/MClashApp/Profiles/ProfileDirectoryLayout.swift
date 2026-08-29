@@ -109,6 +109,6 @@ public enum ProfileDirectoryLayoutError: Error, Equatable, Sendable {
 
 extension ProfileDirectoryLayoutError: LocalizedError {
     public var errorDescription: String? {
-        "The profile storage identifier is invalid."
+        AppLocalization.string("The profile storage identifier is invalid.")
     }
 }
