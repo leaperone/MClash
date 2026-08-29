@@ -116,7 +116,7 @@ struct ProxifierRuleImporter: Sendable {
         for (index, definition) in document.rules.enumerated() {
             let originalName = Self.normalizedRuleName(definition.name)
             let baseName = originalName.isEmpty
-                ? AppLocalization.format("Imported Rule %d", index + 1)
+                ? "Imported Rule \(index + 1)"
                 : originalName
             let importedName = uniqueName(baseName, occupiedNames: &occupiedNames)
             let (offset, offsetOverflow) = (index + 1).multipliedReportingOverflow(by: 10)

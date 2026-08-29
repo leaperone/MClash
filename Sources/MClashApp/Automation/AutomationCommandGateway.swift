@@ -140,7 +140,7 @@ final class AutomationCommandGateway {
                 error: AutomationRPCError(
                     code: -32603,
                     type: "operation_failed",
-                    message: redactedDiagnosticText(error.localizedDescription),
+                    message: "The operation failed",
                     retryable: false
                 )
             )
@@ -627,11 +627,13 @@ final class AutomationCommandGateway {
             let input = try await proxifierInput(request)
             let existingRules = model.networkCapturePreferences.snapshot.rules
             let plan = try await Task.detached(priority: .userInitiated) {
-                try ProxifierRuleImporter().makePlan(
-                    data: input.data,
-                    sourceName: input.sourceName,
-                    existingRules: existingRules
-                )
+                try AppLocalization.withLanguage(.english) {
+                    try ProxifierRuleImporter().makePlan(
+                        data: input.data,
+                        sourceName: input.sourceName,
+                        existingRules: existingRules
+                    )
+                }
             }.value
             return try proxifierPlan(plan, request: request)
         case "appRouting.proxifier.import":
@@ -653,11 +655,13 @@ final class AutomationCommandGateway {
             let input = try await proxifierInput(request)
             let existingRules = model.networkCapturePreferences.snapshot.rules
             let plan = try await Task.detached(priority: .userInitiated) {
-                try ProxifierRuleImporter().makePlan(
-                    data: input.data,
-                    sourceName: input.sourceName,
-                    existingRules: existingRules
-                )
+                try AppLocalization.withLanguage(.english) {
+                    try ProxifierRuleImporter().makePlan(
+                        data: input.data,
+                        sourceName: input.sourceName,
+                        existingRules: existingRules
+                    )
+                }
             }.value
             let byID = Dictionary(uniqueKeysWithValues: plan.items.map { ($0.id, $0) })
             let selectedRules = try selectedIDs.map { id -> CaptureRule in
@@ -1170,10 +1174,7 @@ final class AutomationCommandGateway {
         _ fallbackMessage: String
     ) throws {
         guard condition else {
-            throw GatewayError.operationFailed(
-                model.errorMessage ?? fallbackMessage,
-                true
-            )
+            throw GatewayError.operationFailed(fallbackMessage, true)
         }
     }
 
@@ -1186,8 +1187,8 @@ final class AutomationCommandGateway {
               receipt.completedAt >= startedAt else {
             throw GatewayError.operationFailed("The provider operation did not run", true)
         }
-        if case let .failed(message) = receipt.outcome {
-            throw GatewayError.operationFailed(message, true)
+        if case .failed = receipt.outcome {
+            throw GatewayError.operationFailed("The provider operation failed", true)
         }
     }
 
