@@ -2,7 +2,7 @@
 
 - 任务 ID：`integration-localization-link-2026-08-30_06-26-43`
 - 创建时间：`2026-08-30_06-26-43`
-- 当前状态：`verification_complete`
+- 当前状态：`delivery_ready`
 
 ## 已完成
 
@@ -13,7 +13,7 @@
 
 ## 进行中
 
-- 完成交付收敛、commit、PR 与 preflight。
+- 已完成实现与验证；等待最终 preflight、squash merge 与 tag 发布。
 
 ## 修改文件
 
