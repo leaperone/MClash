@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var model: AppModel
     @Bindable var applicationUpdater: ApplicationUpdater
+    @State private var advancedSettingsExpanded = false
     @State private var coreDetailsExpanded = false
     @State private var showingListenerPortSettings = false
     @State private var showingProfileRouteListenerSettings = false
@@ -15,7 +16,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Appearance") {
+            Section("General") {
                 Picker("Language", selection: $appLanguageRawValue) {
                     ForEach(AppLanguage.allCases) { language in
                         if language == .system {
@@ -29,15 +30,10 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                Text("MClash updates its interface language immediately. System dialogs continue to follow macOS.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Startup") {
                 Toggle("Open MClash at login", isOn: launchAtLoginBinding)
-                Toggle("Open quietly at login", isOn: $model.openAtLoginSilently)
-                    .disabled(!model.launchAtLogin)
+                if model.launchAtLogin {
+                    Toggle("Open quietly at login", isOn: $model.openAtLoginSilently)
+                }
                 if model.launchAtLoginRequiresApproval {
                     HStack {
                         Label("macOS approval is required before MClash can open at login.", systemImage: "exclamationmark.triangle.fill")
@@ -51,196 +47,123 @@ struct SettingsView: View {
                 }
                 Toggle("Restore the last connected session when MClash opens", isOn: $model.autoConnectOnLaunch)
                 Toggle("Lightweight mode", isOn: $model.lightweightMode)
-                Text("While MClash is hidden, Lightweight mode pauses live traffic, connection, and App Routing updates, hides the Dock icon, and keeps only Open and Quit in the menu bar. Proxying, DNS routing, subscription updates, and recovery stay active.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle(
-                    "Enable App Routing automatically after connecting",
-                    isOn: Binding(
-                        get: {
-                            model.pendingNetworkCaptureEnabled
-                                ?? model.networkCapturePreferences.enabled
-                        },
-                        set: { enabled in
-                            Task { await model.setNetworkCaptureEnabled(enabled) }
-                        }
-                    )
-                )
-                .disabled(
-                    model.pendingNetworkCaptureEnabled != nil
-                        || !model.canPerform(.changeNetworkCapture)
-                )
-
-                Toggle(
-                    "Show proxy status in the menu bar",
-                    isOn: Binding(
-                        get: { model.menuBarDisplayStyle == .proxyStatus },
-                        set: { enabled in
-                            model.menuBarDisplayStyle = enabled ? .proxyStatus : .logo
-                        }
-                    )
-                )
-                .disabled(model.lightweightMode)
-                Text("Proxy Status uses three fixed-width fields for download, upload, and connections. Network Icon uses less background telemetry.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if model.lightweightMode {
+                    Text("When hidden, MClash pauses live interface updates while proxying and recovery stay active.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    DisclosureGroup("Menu Bar") {
+                        Toggle(
+                            "Show proxy status in the menu bar",
+                            isOn: Binding(
+                                get: { model.menuBarDisplayStyle == .proxyStatus },
+                                set: { enabled in
+                                    model.menuBarDisplayStyle = enabled ? .proxyStatus : .logo
+                                }
+                            )
+                        )
+                        Text("Turn this off to use the quieter network icon.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section("Routing & macOS Proxy") {
-                Toggle("Enable macOS system proxy when connecting", isOn: $model.autoEnableSystemProxy)
-                    .disabled(model.networkCapturePreferences.enabled)
-                if model.networkCapturePreferences.enabled {
-                    Text("App Routing is enabled and takes precedence over the mutually exclusive macOS System Proxy.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Toggle(
-                    "Close existing connections after changing mode or node",
-                    isOn: $model.closeConnectionsOnRoutingChange
+                LabeledContent("App Routing", value: AppLocalization.string(appRoutingStatus))
+                LabeledContent(
+                    "macOS System Proxy",
+                    value: AppLocalization.string(systemProxyStatus)
                 )
-
-                LabeledContent("Current status", value: systemProxyStatus)
-                if let verifiedAt = model.systemProxyGuardLastVerifiedAt {
-                    LabeledContent(
-                        "Last macOS verification",
-                        value: verifiedAt.formatted(.relative(presentation: .named))
-                    )
-                    .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
-                }
-                if model.systemProxyEnabled {
-                    LabeledContent(
-                        "Guard",
-                        value: model.systemProxyPreferences.guardEnabled
-                            ? "Active · every \(model.systemProxyPreferences.guardIntervalSeconds)s"
-                            : "Paused"
-                    )
-                    if let repairedAt = model.systemProxyGuardLastRepairedAt {
-                        LabeledContent(
-                            "External changes repaired",
-                            value: "\(model.systemProxyGuardRepairCount) · last \(repairedAt.formatted(.relative(presentation: .named)))"
-                        )
-                        .help(repairedAt.formatted(date: .abbreviated, time: .standard))
-                    }
-                    Button(
-                        model.systemProxyPreferences.guardEnabled
-                            ? "Pause Proxy Guard"
-                            : "Resume Proxy Guard"
-                    ) {
-                        Task {
-                            await model.setSystemProxyGuardPaused(
-                                model.systemProxyPreferences.guardEnabled
-                            )
-                        }
-                    }
-                    .disabled(!model.canPerform(.changeSystemProxySettings))
-                }
+                appRoutingFeedback
                 systemProxySettingsFeedback
 
-                Button("Bypass & Guard Settings…") {
-                    showingSystemProxySettings = true
-                }
-                .disabled(!model.canPerform(.changeSystemProxySettings))
-            }
-
-            Section("App Routing") {
-                LabeledContent("Current status", value: appRoutingStatus)
-                if let verifiedAt = model.appRoutingProviderLastVerifiedAt {
-                    LabeledContent(
-                        "Provider revision verified",
-                        value: verifiedAt.formatted(.relative(presentation: .named))
-                    )
-                    .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
-                }
-                appRoutingFeedback
-                LabeledContent(
-                    "Rules",
-                    value: "\(model.networkCapturePreferences.snapshot.rules.count)"
-                )
                 Button("Manage App Routing…") {
                     model.selection = .appRouting
                 }
-                Text("Choose which applications, processes, destinations, and ports are handled by Mihomo.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
 
-            Section("Local Proxy") {
-                if let endpoint = model.localListenerEndpoints.first {
-                    listenerAddressRow(endpoint)
-                } else {
-                    Text(
-                        model.isConnected
-                            ? "No local listener is currently available."
-                            : "Connect the active profile to see its live listener addresses."
-                    )
-                    .foregroundStyle(.secondary)
-                }
-
-                Button(model.isConnected ? "Edit Ports & Restart…" : "Edit Ports…") {
-                    showingListenerPortSettings = true
-                }
-                .disabled(!model.canPerform(.changeRuntimeSettings))
-
-                runtimeSettingsFeedback
-
-                Text("MClash exposes one Mixed port that accepts HTTP, HTTPS proxy, and SOCKS5 clients. Port changes are validated and automatically restart a running core.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Dedicated Proxy Ports") {
-                if model.profileRuntimePlan.routeListeners.isEmpty {
-                    Text("No dedicated ports are configured.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(model.profileRuntimePlan.routeListeners) { listener in
-                        LabeledContent {
-                            HStack(spacing: 8) {
-                                Text(listener.protocolType.title)
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.quaternary, in: Capsule())
-                                if dedicatedPortIsLive(listener) {
-                                    CopyableValueButton(
-                                        value: "127.0.0.1:\(listener.port)",
-                                        accessibilityName: "\(listener.name) proxy address"
-                                    )
-                                } else if listener.enabled {
-                                    Text("Unavailable")
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text("Disabled")
-                                        .foregroundStyle(.secondary)
-                                }
+                DisclosureGroup("Connection Behavior") {
+                    Toggle(
+                        "Enable App Routing automatically after connecting",
+                        isOn: Binding(
+                            get: {
+                                model.pendingNetworkCaptureEnabled
+                                    ?? model.networkCapturePreferences.enabled
+                            },
+                            set: { enabled in
+                                Task { await model.setNetworkCaptureEnabled(enabled) }
                             }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(listener.name)
-                                Text(dedicatedPortRouteSummary(listener))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        )
+                    )
+                    .disabled(
+                        model.pendingNetworkCaptureEnabled != nil
+                            || !model.canPerform(.changeNetworkCapture)
+                    )
+
+                    Toggle("Enable macOS system proxy when connecting", isOn: $model.autoEnableSystemProxy)
+                        .disabled(model.networkCapturePreferences.enabled)
+                    if model.networkCapturePreferences.enabled {
+                        Text("App Routing takes precedence over the macOS System Proxy.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Toggle(
+                        "Close existing connections after changing mode or node",
+                        isOn: $model.closeConnectionsOnRoutingChange
+                    )
+
+                    if let verifiedAt = model.systemProxyGuardLastVerifiedAt {
+                        LabeledContent(
+                            "Last macOS verification",
+                            value: verifiedAt.formatted(.relative(presentation: .named))
+                        )
+                        .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
+                    }
+                    if let verifiedAt = model.appRoutingProviderLastVerifiedAt {
+                        LabeledContent(
+                            "App Routing provider verified",
+                            value: verifiedAt.formatted(.relative(presentation: .named))
+                        )
+                        .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
+                    }
+                    if model.systemProxyEnabled {
+                        LabeledContent(
+                            "Proxy Guard",
+                            value: AppLocalization.string(
+                                model.systemProxyPreferences.guardEnabled ? "Active" : "Paused"
+                            )
+                        )
+                        if let repairedAt = model.systemProxyGuardLastRepairedAt {
+                            LabeledContent(
+                                "External changes repaired",
+                                value: AppLocalization.format(
+                                    "%d · last %@",
+                                    model.systemProxyGuardRepairCount,
+                                    repairedAt.formatted(.relative(presentation: .named))
+                                )
+                            )
+                            .help(repairedAt.formatted(date: .abbreviated, time: .standard))
+                        }
+                        Button(
+                            model.systemProxyPreferences.guardEnabled
+                                ? "Pause Proxy Guard"
+                                : "Resume Proxy Guard"
+                        ) {
+                            Task {
+                                await model.setSystemProxyGuardPaused(
+                                    model.systemProxyPreferences.guardEnabled
+                                )
                             }
                         }
+                        .disabled(!model.canPerform(.changeSystemProxySettings))
                     }
-                }
 
-                Button(
-                    model.isConnected
-                        ? "Manage Dedicated Ports & Restart…"
-                        : "Manage Dedicated Ports…"
-                ) {
-                    showingProfileRouteListenerSettings = true
+                    Button("Edit Bypass & Guard…") {
+                        showingSystemProxySettings = true
+                    }
+                    .disabled(!model.canPerform(.changeSystemProxySettings))
                 }
-                .disabled(
-                    model.profiles.isEmpty
-                        || !model.canPerform(.changeRuntimeSettings)
-                )
-
-                Text("Each port is bound to one Profile and can follow its rules, start at a named sub-rule, or use a fixed policy group or node.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             if let applicationSettingsError {
@@ -249,27 +172,6 @@ struct SettingsView: View {
                         .font(.callout)
                         .foregroundStyle(.red)
                 }
-            }
-
-            Section("Profiles & Backup") {
-                LabeledContent("Active profile", value: activeProfileName)
-                Button("Manage Profiles…") {
-                    model.selection = .profiles
-                }
-                HStack {
-                    Button("Export Backup…") {
-                        Task { await model.exportBackup() }
-                    }
-                    .disabled(!model.canPerform(.exportBackup))
-
-                    Button("Restore Backup…") {
-                        Task { await model.restoreBackup() }
-                    }
-                    .disabled(!model.canPerform(.restoreBackup))
-                }
-                Text("Backups are unencrypted and may contain subscription URLs and proxy credentials. Store them securely. Runtime caches and macOS proxy recovery snapshots are excluded.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section("Updates & Notifications") {
@@ -298,47 +200,77 @@ struct SettingsView: View {
                     )
                 )
                 .disabled(!model.canPerform(.changeApplicationSettings))
-                HStack {
-                    Button("Check for Updates…") {
-                        applicationUpdater.checkForUpdates()
-                    }
-                    .disabled(!applicationUpdater.canCheckForUpdates)
+                Button("Check for Updates…") {
+                    applicationUpdater.checkForUpdates()
                 }
-                Text("Updates are verified by Sparkle and Apple code signing. Before replacing the app, MClash safely restores the macOS system proxy and stops its core.")
+                .disabled(!applicationUpdater.canCheckForUpdates)
+                Text("Updates are signed and restore macOS proxy settings before installation.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Advanced") {
-                Button("Runtime Configuration…") {
-                    showingRuntimeSettings = true
-                }
-                .disabled(!model.canPerform(.changeRuntimeSettings))
-
-                Text("Override network, DNS, routing rules, process lookup, interface, concurrency, and core logging without modifying the subscription file.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                DisclosureGroup("Core Details", isExpanded: $coreDetailsExpanded) {
-                    LabeledContent("Distribution", value: "Bundled mihomo Alpha")
-                    LabeledContent(
-                        "Version",
-                        value: model.runningSession?.version ?? "Verified during build"
-                    )
-                    LabeledContent("Controller") {
-                        if let controllerAddress {
-                            CopyableValueButton(
-                                value: controllerAddress,
-                                accessibilityName: "controller address"
-                            )
-                        } else {
-                            Text("Assigned when connecting")
-                                .foregroundStyle(.secondary)
-                        }
+            Section {
+                DisclosureGroup("Advanced", isExpanded: $advancedSettingsExpanded) {
+                    Button(model.isConnected ? "Edit Ports & Restart…" : "Edit Ports…") {
+                        showingListenerPortSettings = true
                     }
-                    Text("The controller credential is generated in memory for each app launch. MClash does not request Keychain access when connecting.")
+                    .disabled(!model.canPerform(.changeRuntimeSettings))
+
+                    Button(
+                        model.isConnected
+                            ? "Manage Dedicated Ports & Restart…"
+                            : "Manage Dedicated Ports…"
+                    ) {
+                        showingProfileRouteListenerSettings = true
+                    }
+                    .disabled(
+                        model.profiles.isEmpty
+                            || !model.canPerform(.changeRuntimeSettings)
+                    )
+
+                    runtimeSettingsFeedback
+
+                    HStack {
+                        Button("Export Backup…") {
+                            Task { await model.exportBackup() }
+                        }
+                        .disabled(!model.canPerform(.exportBackup))
+
+                        Button("Restore Backup…") {
+                            Task { await model.restoreBackup() }
+                        }
+                        .disabled(!model.canPerform(.restoreBackup))
+                    }
+                    Text("Backups may contain subscription URLs and proxy credentials. Store them securely.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Button("Edit Runtime Configuration…") {
+                        showingRuntimeSettings = true
+                    }
+                    .disabled(!model.canPerform(.changeRuntimeSettings))
+
+                    DisclosureGroup("Core Details", isExpanded: $coreDetailsExpanded) {
+                        LabeledContent("Distribution", value: "Bundled mihomo Alpha")
+                        LabeledContent(
+                            "Version",
+                            value: model.runningSession?.version ?? "Verified during build"
+                        )
+                        LabeledContent("Controller") {
+                            if let controllerAddress {
+                                CopyableValueButton(
+                                    value: controllerAddress,
+                                    accessibilityName: "controller address"
+                                )
+                            } else {
+                                Text("Assigned when connecting")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Text("The controller credential is generated in memory for each app launch.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -372,11 +304,6 @@ struct SettingsView: View {
                 isPresented: $showingSystemProxySettings
             )
         }
-    }
-
-    private var activeProfileName: String {
-        guard let activeProfileID = model.activeProfileID else { return "None" }
-        return model.profiles.first(where: { $0.id == activeProfileID })?.name ?? "Active profile"
     }
 
     private var controllerAddress: String? {
@@ -418,49 +345,6 @@ struct SettingsView: View {
                     .help(message)
             }
         }
-    }
-
-    private func listenerAddressRow(_ endpoint: AppModel.LocalListenerEndpoint) -> some View {
-        LabeledContent(endpoint.kind.presentationTitle) {
-            HStack(spacing: 8) {
-                Text(endpoint.source.presentationTitle)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
-                CopyableValueButton(
-                    value: endpoint.address,
-                    accessibilityName: "\(endpoint.kind.presentationTitle) proxy address"
-                )
-            }
-        }
-    }
-
-    private func dedicatedPortRouteSummary(
-        _ listener: ProfileRouteListenerSpec
-    ) -> String {
-        let profile = model.profiles.first(where: { $0.id == listener.profileID })?.name
-            ?? "Unavailable Profile"
-        let route: String = switch listener.target {
-        case .profileRules: "Profile Rules"
-        case let .subRule(name): "Sub-rule · \(name)"
-        case .global: "GLOBAL"
-        case let .policyGroup(name): "Policy Group · \(name)"
-        case let .proxyNode(name): "Proxy Node · \(name)"
-        }
-        return "\(profile) · \(route)"
-    }
-
-    private func dedicatedPortIsLive(
-        _ listener: ProfileRouteListenerSpec
-    ) -> Bool {
-        guard listener.enabled, model.isConnected else { return false }
-        if listener.profileID == model.activeProfileID { return true }
-        if case .running = model.auxiliaryCoreStates[listener.profileID] {
-            return true
-        }
-        return false
     }
 
     @ViewBuilder
@@ -582,6 +466,7 @@ private struct SystemProxySettingsEditor: View {
     @State private var guardEnabled: Bool
     @State private var guardIntervalSeconds: Int
     @State private var customBypassText: String
+    @State private var customBypassExpanded = false
     @State private var saveTask: Task<Void, Never>?
     @State private var errorMessage: String?
 
@@ -594,6 +479,9 @@ private struct SystemProxySettingsEditor: View {
         _guardIntervalSeconds = State(initialValue: preferences.guardIntervalSeconds)
         _customBypassText = State(
             initialValue: preferences.customBypassDomains.joined(separator: "\n")
+        )
+        _customBypassExpanded = State(
+            initialValue: !preferences.customBypassDomains.isEmpty
         )
     }
 
@@ -609,8 +497,10 @@ private struct SystemProxySettingsEditor: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Custom domains or patterns")
+                    DisclosureGroup(
+                        "Custom domains or patterns",
+                        isExpanded: $customBypassExpanded
+                    ) {
                         TextEditor(text: $customBypassText)
                             .font(.body.monospaced())
                             .frame(minHeight: 110)
@@ -719,11 +609,36 @@ private struct RuntimeSettingsEditor: View {
     @State private var overrides: RuntimeOverrides
     @State private var saveTask: Task<Void, Never>?
     @State private var errorMessage: String?
+    @State private var portsExpanded = false
+    @State private var networkExpanded = false
+    @State private var coreExpanded = false
+    @State private var dnsExpanded = false
+    @State private var rulesExpanded = false
 
     init(model: AppModel, isPresented: Binding<Bool>) {
         self.model = model
         _isPresented = isPresented
-        _overrides = State(initialValue: model.runtimeOverrides)
+        let overrides = model.runtimeOverrides
+        _overrides = State(initialValue: overrides)
+        _portsExpanded = State(
+            initialValue: overrides.ports.redirPort != nil
+                || overrides.ports.tproxyPort != nil
+        )
+        _networkExpanded = State(
+            initialValue: overrides.allowLAN != nil
+                || overrides.bindAddress != nil
+                || overrides.ipv6 != nil
+                || overrides.sniffing != nil
+                || overrides.tcpConcurrent != nil
+                || overrides.interfaceName != nil
+        )
+        _coreExpanded = State(
+            initialValue: overrides.findProcessMode != nil || overrides.logLevel != nil
+        )
+        _dnsExpanded = State(initialValue: overrides.dns != nil)
+        _rulesExpanded = State(
+            initialValue: overrides.prependRules != nil || overrides.appendRules != nil
+        )
     }
 
     var body: some View {
@@ -737,120 +652,130 @@ private struct RuntimeSettingsEditor: View {
             }
 
             Form {
-                Section("Transparent Proxy Ports") {
-                    OptionalPortField("Redirect", value: $overrides.ports.redirPort, suggestedValue: 0)
-                    OptionalPortField("TProxy", value: $overrides.ports.tproxyPort, suggestedValue: 0)
-                    Text("The Mixed port is configured from Local Proxy settings. Separate HTTP and SOCKS5 listeners are disabled by MClash.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Network") {
-                    OptionalBooleanPicker("Allow LAN", value: $overrides.allowLAN)
-                    OptionalStringField(
-                        "Bind address",
-                        value: $overrides.bindAddress,
-                        suggestedValue: "*"
-                    )
-                    OptionalBooleanPicker("IPv6", value: $overrides.ipv6)
-                    OptionalBooleanPicker("Sniffing", value: $overrides.sniffing)
-                    OptionalBooleanPicker("TCP concurrent dialing", value: $overrides.tcpConcurrent)
-                    OptionalStringField(
-                        "Outbound interface",
-                        value: $overrides.interfaceName,
-                        suggestedValue: "en0"
-                    )
-                }
-
-                Section("Core") {
-                    Picker("Process lookup", selection: $overrides.findProcessMode) {
-                        Text("Use Profile").tag(nil as String?)
-                        Text("Strict").tag("strict" as String?)
-                        Text("Always").tag("always" as String?)
-                        Text("Off").tag("off" as String?)
-                    }
-                    Picker("Log level", selection: $overrides.logLevel) {
-                        Text("Use Profile").tag(nil as String?)
-                        ForEach(MihomoLogLevel.allCases, id: \.rawValue) { level in
-                            Text(level.rawValue.capitalized).tag(level.rawValue as String?)
-                        }
-                    }
-                }
-
-                Section("DNS") {
-                    Toggle("Override the profile DNS section", isOn: dnsOverrideEnabled)
-                    if overrides.dns != nil {
-                        Text("This replaces the complete DNS section; fields left on Use Default use mihomo defaults, not values from the profile.")
+                Section {
+                    DisclosureGroup("Transparent Proxy Ports", isExpanded: $portsExpanded) {
+                        OptionalPortField("Redirect", value: $overrides.ports.redirPort, suggestedValue: 0)
+                        OptionalPortField("TProxy", value: $overrides.ports.tproxyPort, suggestedValue: 0)
+                        Text("The Mixed port is configured from Local Proxy settings. Separate HTTP and SOCKS5 listeners are disabled by MClash.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        OptionalBooleanPicker("DNS service", value: dnsBinding(\.enable))
+                    }
+                }
+
+                Section {
+                    DisclosureGroup("Network", isExpanded: $networkExpanded) {
+                        OptionalBooleanPicker("Allow LAN", value: $overrides.allowLAN)
                         OptionalStringField(
-                            "Listen address",
-                            value: dnsBinding(\.listen),
-                            suggestedValue: "0.0.0.0:1053"
+                            "Bind address",
+                            value: $overrides.bindAddress,
+                            suggestedValue: "*"
                         )
-                        OptionalBooleanPicker("DNS IPv6", value: dnsBinding(\.ipv6))
-                        Picker("Enhanced mode", selection: dnsBinding(\.enhancedMode)) {
-                            Text("Use Default").tag(nil as RuntimeDNSEnhancedMode?)
-                            Text("Fake IP").tag(RuntimeDNSEnhancedMode.fakeIP as RuntimeDNSEnhancedMode?)
-                            Text("Redir Host").tag(RuntimeDNSEnhancedMode.redirHost as RuntimeDNSEnhancedMode?)
+                        OptionalBooleanPicker("IPv6", value: $overrides.ipv6)
+                        OptionalBooleanPicker("Sniffing", value: $overrides.sniffing)
+                        OptionalBooleanPicker("TCP concurrent dialing", value: $overrides.tcpConcurrent)
+                        OptionalStringField(
+                            "Outbound interface",
+                            value: $overrides.interfaceName,
+                            suggestedValue: "en0"
+                        )
+                    }
+                }
+
+                Section {
+                    DisclosureGroup("Core", isExpanded: $coreExpanded) {
+                        Picker("Process lookup", selection: $overrides.findProcessMode) {
+                            Text("Use Profile").tag(nil as String?)
+                            Text("Strict").tag("strict" as String?)
+                            Text("Always").tag("always" as String?)
+                            Text("Off").tag("off" as String?)
                         }
-                        OptionalStringField(
-                            "Fake IP range",
-                            value: dnsBinding(\.fakeIPRange),
-                            suggestedValue: "198.18.0.1/16"
-                        )
-                        OptionalBooleanPicker("Respect routing rules", value: dnsBinding(\.respectRules))
-                        OptionalBooleanPicker("Use configured hosts", value: dnsBinding(\.useHosts))
-                        OptionalBooleanPicker("Use system hosts", value: dnsBinding(\.useSystemHosts))
-                        OptionalBooleanPicker("Prefer HTTP/3", value: dnsBinding(\.preferH3))
+                        Picker("Log level", selection: $overrides.logLevel) {
+                            Text("Use Profile").tag(nil as String?)
+                            ForEach(MihomoLogLevel.allCases, id: \.rawValue) { level in
+                                Text(level.rawValue.capitalized).tag(level.rawValue as String?)
+                            }
+                        }
+                    }
+                }
+
+                Section {
+                    DisclosureGroup("DNS", isExpanded: $dnsExpanded) {
+                        Toggle("Override the profile DNS section", isOn: dnsOverrideEnabled)
+                        if overrides.dns != nil {
+                            Text("This replaces the complete DNS section; fields left on Use Default use mihomo defaults, not values from the profile.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            OptionalBooleanPicker("DNS service", value: dnsBinding(\.enable))
+                            OptionalStringField(
+                                "Listen address",
+                                value: dnsBinding(\.listen),
+                                suggestedValue: "0.0.0.0:1053"
+                            )
+                            OptionalBooleanPicker("DNS IPv6", value: dnsBinding(\.ipv6))
+                            Picker("Enhanced mode", selection: dnsBinding(\.enhancedMode)) {
+                                Text("Use Default").tag(nil as RuntimeDNSEnhancedMode?)
+                                Text("Fake IP").tag(RuntimeDNSEnhancedMode.fakeIP as RuntimeDNSEnhancedMode?)
+                                Text("Redir Host").tag(RuntimeDNSEnhancedMode.redirHost as RuntimeDNSEnhancedMode?)
+                            }
+                            OptionalStringField(
+                                "Fake IP range",
+                                value: dnsBinding(\.fakeIPRange),
+                                suggestedValue: "198.18.0.1/16"
+                            )
+                            OptionalBooleanPicker("Respect routing rules", value: dnsBinding(\.respectRules))
+                            OptionalBooleanPicker("Use configured hosts", value: dnsBinding(\.useHosts))
+                            OptionalBooleanPicker("Use system hosts", value: dnsBinding(\.useSystemHosts))
+                            OptionalBooleanPicker("Prefer HTTP/3", value: dnsBinding(\.preferH3))
+                            OptionalStringListField(
+                                "Default nameservers",
+                                value: dnsBinding(\.defaultNameserver),
+                                suggestedValues: ["223.5.5.5", "1.1.1.1"]
+                            )
+                            OptionalStringListField(
+                                "Nameservers",
+                                value: dnsBinding(\.nameserver),
+                                suggestedValues: ["https://1.1.1.1/dns-query"]
+                            )
+                            OptionalStringListField(
+                                "Fallback nameservers",
+                                value: dnsBinding(\.fallback),
+                                suggestedValues: []
+                            )
+                            OptionalStringListField(
+                                "Proxy nameservers",
+                                value: dnsBinding(\.proxyServerNameserver),
+                                suggestedValues: ["https://1.1.1.1/dns-query"]
+                            )
+                            OptionalStringListField(
+                                "Direct nameservers",
+                                value: dnsBinding(\.directNameserver),
+                                suggestedValues: ["system"]
+                            )
+                            OptionalStringListField(
+                                "Fake IP filter",
+                                value: dnsBinding(\.fakeIPFilter),
+                                suggestedValues: ["*.lan", "+.local"]
+                            )
+                        }
+                    }
+                }
+
+                Section {
+                    DisclosureGroup("Rule Overrides", isExpanded: $rulesExpanded) {
+                        Text("Prepend rules take priority over profile rules; append rules run after them. Each rule must occupy one line.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         OptionalStringListField(
-                            "Default nameservers",
-                            value: dnsBinding(\.defaultNameserver),
-                            suggestedValues: ["223.5.5.5", "1.1.1.1"]
-                        )
-                        OptionalStringListField(
-                            "Nameservers",
-                            value: dnsBinding(\.nameserver),
-                            suggestedValues: ["https://1.1.1.1/dns-query"]
-                        )
-                        OptionalStringListField(
-                            "Fallback nameservers",
-                            value: dnsBinding(\.fallback),
+                            "Prepend rules",
+                            value: $overrides.prependRules,
                             suggestedValues: []
                         )
                         OptionalStringListField(
-                            "Proxy nameservers",
-                            value: dnsBinding(\.proxyServerNameserver),
-                            suggestedValues: ["https://1.1.1.1/dns-query"]
-                        )
-                        OptionalStringListField(
-                            "Direct nameservers",
-                            value: dnsBinding(\.directNameserver),
-                            suggestedValues: ["system"]
-                        )
-                        OptionalStringListField(
-                            "Fake IP filter",
-                            value: dnsBinding(\.fakeIPFilter),
-                            suggestedValues: ["*.lan", "+.local"]
+                            "Append rules",
+                            value: $overrides.appendRules,
+                            suggestedValues: []
                         )
                     }
-                }
-
-                Section("Rule Overrides") {
-                    Text("Prepend rules take priority over profile rules; append rules run after them. Each rule must occupy one line.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    OptionalStringListField(
-                        "Prepend rules",
-                        value: $overrides.prependRules,
-                        suggestedValues: []
-                    )
-                    OptionalStringListField(
-                        "Append rules",
-                        value: $overrides.appendRules,
-                        suggestedValues: []
-                    )
                 }
             }
             .formStyle(.grouped)
@@ -972,7 +897,7 @@ private struct OptionalBooleanPicker: View {
     }
 
     var body: some View {
-        Picker(title, selection: $value) {
+        Picker(AppLocalization.string(title), selection: $value) {
             Text("Use Profile").tag(nil as Bool?)
             Text("Enabled").tag(true as Bool?)
             Text("Disabled").tag(false as Bool?)
@@ -993,12 +918,15 @@ private struct OptionalPortField: View {
 
     var body: some View {
         HStack {
-            Toggle(title, isOn: overrideEnabled)
+            Toggle(AppLocalization.string(title), isOn: overrideEnabled)
             Spacer()
             TextField("Port", value: concreteValue, format: .number)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 90)
                 .disabled(value == nil)
+                .accessibilityLabel(
+                    AppLocalization.format("%@ port", AppLocalization.string(title))
+                )
         }
     }
 
@@ -1030,12 +958,13 @@ private struct OptionalStringField: View {
 
     var body: some View {
         HStack {
-            Toggle(title, isOn: overrideEnabled)
+            Toggle(AppLocalization.string(title), isOn: overrideEnabled)
             Spacer()
             TextField("Value", text: concreteValue)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 180)
                 .disabled(value == nil)
+                .accessibilityLabel(AppLocalization.string(title))
         }
     }
 

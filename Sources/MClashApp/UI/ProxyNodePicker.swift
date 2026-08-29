@@ -26,9 +26,10 @@ struct ProxyNodePicker: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Label("Test All", systemImage: "speedometer")
+                        Label("Test Latencies", systemImage: "speedometer")
                     }
                 }
+                .accessibilityLabel(AppLocalization.string("Test Latencies"))
                 .disabled(model.networkStateTransitionInProgress)
             }
             .padding(14)
@@ -79,14 +80,22 @@ struct ProxyNodePicker: View {
                 )
             }
             .searchable(text: $searchText, prompt: "Search nodes")
+            .overlay {
+                if !normalizedSearchText.isEmpty, filteredNodes.isEmpty {
+                    ContentUnavailableView.search(text: normalizedSearchText)
+                }
+            }
         }
         .frame(minWidth: 340, idealWidth: 400, maxWidth: 480, minHeight: 360, idealHeight: 440)
     }
 
     private var filteredNodes: [String] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return group.all }
-        return group.all.filter { $0.localizedCaseInsensitiveContains(query) }
+        guard !normalizedSearchText.isEmpty else { return group.all }
+        return group.all.filter { $0.localizedCaseInsensitiveContains(normalizedSearchText) }
+    }
+
+    private var normalizedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func delayColor(_ delay: Int) -> Color {

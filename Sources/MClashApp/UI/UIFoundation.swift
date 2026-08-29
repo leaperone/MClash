@@ -203,6 +203,7 @@ struct CopyableValueButton: View {
             .foregroundStyle(usesSecondaryStyle ? Color.secondary : Color.primary)
             .padding(.horizontal, 5)
             .padding(.vertical, 3)
+            .frame(minHeight: 24)
             .contentShape(Rectangle())
             .background(
                 copied ? Color.green.opacity(0.12) : Color.clear,
@@ -227,6 +228,14 @@ struct CopyableValueButton: View {
 
         resetTask?.cancel()
         copied = true
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: AppLocalization.format("Copied %@", accessibilityName),
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
         resetTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled else { return }

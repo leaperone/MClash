@@ -5,40 +5,39 @@ import SwiftUI
 /// visible and retain their own recovery action.
 struct AttentionView: View {
     @Bindable var model: AppModel
-    @State private var pendingAction: OperationalIssue.Action?
+    @State private var pendingIssueID: String?
 
     var body: some View {
         Group {
             if model.operationalIssues.isEmpty {
-                ContentUnavailableView(
-                    "Everything Looks Good",
-                    systemImage: "checkmark.circle.fill",
-                    description: Text(
-                        "MClash has no active operational issues. Live status remains visible in Overview."
-                    )
-                )
+                ContentUnavailableView {
+                    Label("Everything Looks Good", systemImage: "checkmark.circle.fill")
+                } description: {
+                    Text("MClash has no active operational issues. Live status remains visible in Overview.")
+                } actions: {
+                    Button("Back to Overview") { model.selection = .overview }
+                        .buttonStyle(.borderedProminent)
+                }
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .firstTextBaseline) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(activeIssueTitle)
-                                    .font(.title2.weight(.semibold))
-                                Text("Each item explains what is affected and how to recover it.")
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("View Logs") { model.selection = .logs }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(activeIssueTitle)
+                                .font(.title2.weight(.semibold))
+                            Text("Start with the first item. Technical details are available when needed.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
                         .padding(.bottom, 4)
 
-                        ForEach(model.operationalIssues) { issue in
+                        ForEach(Array(model.operationalIssues.enumerated()), id: \.element.id) { index, issue in
                             OperationalIssueCard(
                                 issue: issue,
-                                pendingAction: pendingAction
+                                isPrimary: index == 0,
+                                isWorking: pendingIssueID == issue.id,
+                                actionsDisabled: pendingIssueID != nil
                             ) { action in
-                                perform(action)
+                                perform(action, for: issue.id)
                             }
                         }
                     }
@@ -51,6 +50,15 @@ struct AttentionView: View {
         }
         .navigationTitle("Attention")
         .mclashPageSurface()
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    model.selection = .logs
+                } label: {
+                    Label("View Logs", systemImage: "text.alignleft")
+                }
+            }
+        }
     }
 
     private var activeIssueTitle: String {
@@ -61,32 +69,32 @@ struct AttentionView: View {
         )
     }
 
-    private func perform(_ action: OperationalIssue.Action) {
+    private func perform(_ action: OperationalIssue.Action, for issueID: String) {
         switch action {
         case .reconnect:
-            guard pendingAction == nil else { return }
-            pendingAction = action
+            guard pendingIssueID == nil else { return }
+            pendingIssueID = issueID
             Task {
                 if model.isConnected || model.isBusy {
                     await model.restartConnection()
                 } else {
                     await model.connect()
                 }
-                pendingAction = nil
+                pendingIssueID = nil
             }
         case .restoreSystemProxy:
-            guard pendingAction == nil else { return }
-            pendingAction = action
+            guard pendingIssueID == nil else { return }
+            pendingIssueID = issueID
             Task {
                 await model.disableSystemProxy()
-                pendingAction = nil
+                pendingIssueID = nil
             }
         case .retryAppRouting:
-            guard pendingAction == nil else { return }
-            pendingAction = action
+            guard pendingIssueID == nil else { return }
+            pendingIssueID = issueID
             Task {
                 await model.retryNetworkCaptureActivation()
-                pendingAction = nil
+                pendingIssueID = nil
             }
         case .openAppRouting:
             model.selection = .appRouting
@@ -104,7 +112,9 @@ struct AttentionView: View {
 
 private struct OperationalIssueCard: View {
     let issue: OperationalIssue
-    let pendingAction: OperationalIssue.Action?
+    let isPrimary: Bool
+    let isWorking: Bool
+    let actionsDisabled: Bool
     let perform: (OperationalIssue.Action) -> Void
     @State private var showsTechnicalDetail = false
 
@@ -146,30 +156,9 @@ private struct OperationalIssueCard: View {
                     .font(.caption)
                 }
 
-                HStack(spacing: 8) {
-                    if let title = issue.localizedPrimaryActionTitle,
-                       let action = issue.primaryAction {
-                        Button {
-                            perform(action)
-                        } label: {
-                            if pendingAction == action {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("Working…")
-                                }
-                            } else {
-                                Text(title)
-                            }
-                        }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(pendingAction != nil)
-                    }
-                    if let title = issue.localizedSecondaryActionTitle,
-                       let action = issue.secondaryAction {
-                        Button(title) { perform(action) }
-                            .disabled(pendingAction != nil)
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { issueActions }
+                    VStack(alignment: .leading, spacing: 8) { issueActions }
                 }
                 .controlSize(.small)
                 .padding(.top, 2)
@@ -187,6 +176,52 @@ private struct OperationalIssueCard: View {
                 .stroke(color.opacity(0.25), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            AppLocalization.format(
+                "%@. %@. %@",
+                severityTitle,
+                issue.localizedTitle,
+                issue.localizedConsequence
+            )
+        )
+    }
+
+    @ViewBuilder
+    private var issueActions: some View {
+        if let title = issue.localizedPrimaryActionTitle,
+           let action = issue.primaryAction {
+            if isPrimary {
+                actionButton(title: title, action: action)
+                    .buttonStyle(.borderedProminent)
+            } else {
+                actionButton(title: title, action: action)
+                    .buttonStyle(.bordered)
+            }
+        }
+        if let title = issue.localizedSecondaryActionTitle,
+           let action = issue.secondaryAction {
+            Button(title) { perform(action) }
+                .disabled(actionsDisabled)
+        }
+    }
+
+    private func actionButton(
+        title: String,
+        action: OperationalIssue.Action
+    ) -> some View {
+        Button {
+            perform(action)
+        } label: {
+            if isWorking {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Working…")
+                }
+            } else {
+                Text(title)
+            }
+        }
+        .disabled(actionsDisabled)
     }
 
     private var color: Color {
@@ -202,6 +237,14 @@ private struct OperationalIssueCard: View {
         case .error: "exclamationmark.octagon.fill"
         case .warning: "exclamationmark.triangle.fill"
         case .information: "info.circle.fill"
+        }
+    }
+
+    private var severityTitle: String {
+        switch issue.severity {
+        case .error: AppLocalization.string("Error")
+        case .warning: AppLocalization.string("Warning")
+        case .information: AppLocalization.string("Information")
         }
     }
 }

@@ -34,7 +34,7 @@ struct ProxiesView: View {
             "mclash.proxies.\(stateScope).searches"
         )
         _inspectorPresented = SceneStorage(
-            wrappedValue: true,
+            wrappedValue: false,
             "mclash.proxies.\(stateScope).inspectorPresented"
         )
     }
@@ -71,7 +71,6 @@ struct ProxiesView: View {
                 )
             } else if let profileID {
                 VStack(spacing: 0) {
-                    routingControlsBar
                     proxyCommandBar(group: selectedGroup(in: groups))
 
                     if snapshot == nil,
@@ -117,7 +116,8 @@ struct ProxiesView: View {
         .searchable(text: searchBinding, prompt: "Search nodes in the current group")
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let profileID = resolvedSelectedProfileID,
-               workspaceSnapshot != nil {
+               workspaceSnapshot != nil,
+               profileID != model.activeProfileID || selectedProfileMixedPort == nil {
                 HStack(spacing: 14) {
                     if let port = selectedProfileMixedPort {
                         CopyableValueButton(
@@ -308,158 +308,112 @@ struct ProxiesView: View {
         }
     }
 
-    private func routingModePicker(width: CGFloat) -> some View {
-        Picker("Routing mode", selection: modeBinding) {
-            Text("Rule").tag("rule")
-            Text("Global").tag("global")
-            Text("Direct").tag("direct")
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(width: width)
-        .disabled(
-            workspaceSnapshot == nil
-                || (resolvedSelectedProfileID.map {
-                    !model.canPerform(.changeProfileMode($0))
-                } ?? true)
-        )
-    }
-
-    private var routingControlsBar: some View {
-        Group {
-            if usesCompactChrome {
-                VStack(alignment: .leading, spacing: 10) {
-                    routingModeControl
-                    Divider()
-                    systemProxyControl
-                }
-            } else {
-                HStack(alignment: .center, spacing: 18) {
-                    routingModeControl
-                    Divider()
-                        .frame(height: 38)
-                    systemProxyControl
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
-    }
-
     private func proxyCommandBar(group: MihomoProxy?) -> some View {
         HStack(spacing: 10) {
-            if !usesCompactChrome {
-                Text("Profile")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            if model.profileProxyWorkspaceProfiles.count > 1 {
+                profilePicker(width: usesCompactChrome ? 170 : 220)
+            } else {
+                Label(
+                    model.profileProxyWorkspaceProfiles.first?.name ?? "Profile",
+                    systemImage: "doc.text"
+                )
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
             }
-
-            profilePicker(width: usesCompactChrome ? 150 : 210)
 
             Spacer(minLength: 8)
 
-            workspacePicker(width: usesCompactChrome ? 138 : 154)
+            if let group {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(group.name)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text(groupStatusText(group))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
 
-            sortPicker(group: group, width: usesCompactChrome ? 44 : 108)
-                .disabled(
-                    workspaceMode != .list
-                        || group == nil
-                        || workspaceSnapshot == nil
-                )
-
-            testAllButton(group: group)
-                .frame(width: 30, height: 28)
-
-            inspectorButton(group: group)
-                .frame(width: 30, height: 28)
+            proxyOptionsMenu(group: group)
         }
         .padding(.horizontal, 16)
-        .frame(height: 46)
+        .padding(.vertical, 8)
+        .frame(minHeight: 46)
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
     }
 
-    private func profilePicker(width: CGFloat) -> some View {
-        Picker("Profile", selection: selectedProfileBinding) {
-            ForEach(model.profileProxyWorkspaceProfiles) { profile in
-                Text(
-                    profile.id == model.activeProfileID
-                        ? "\(profile.name) — Default Source"
-                        : profile.name
-                )
-                .tag(profile.id)
+    private func proxyOptionsMenu(group: MihomoProxy?) -> some View {
+        Menu {
+            Picker("Routing Mode", selection: modeBinding) {
+                Text("Rule").tag("rule")
+                Text("Global").tag("global")
+                Text("Direct").tag("direct")
             }
-        }
-        .labelsHidden()
-        .frame(width: width)
-        .help("Choose the Profile whose proxy groups you want to configure")
-    }
+            .disabled(
+                workspaceSnapshot == nil
+                    || (resolvedSelectedProfileID.map {
+                        !model.canPerform(.changeProfileMode($0))
+                    } ?? true)
+            )
 
-    private var routingModeControl: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 7) {
-                Text("Routing Mode")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let profileID = resolvedSelectedProfileID,
-                   model.isPerforming(.changeProfileMode(profileID)) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Applying…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            Toggle("macOS System Proxy", isOn: systemProxyBinding)
+                .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
+
+            Divider()
+
+            Picker("View", selection: $workspaceMode) {
+                Label("List", systemImage: "list.bullet").tag(ProxyWorkspaceMode.list)
+                Label("Topology", systemImage: "point.3.connected.trianglepath.dotted")
+                    .tag(ProxyWorkspaceMode.topology)
+            }
+
+            if let group, workspaceMode == .list {
+                Picker("Node Order", selection: sortBinding(for: group.name)) {
+                    ForEach(ProxyNodeSortMode.allCases, id: \.rawValue) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+
+                Button {
+                    guard let profileID = resolvedSelectedProfileID else { return }
+                    Task {
+                        await model.measureGroupDelays(
+                            profileID: profileID,
+                            group: group.name
+                        )
+                    }
+                } label: {
+                    Label("Test Latencies", systemImage: "speedometer")
+                }
+                .disabled(
+                    resolvedSelectedProfileID.map {
+                        !model.canPerform(.measureProfileGroupDelay($0, group.name))
+                    } ?? true
+                )
+            }
+
+            if group != nil, resolvedSelectedProfileID == model.activeProfileID {
+                Button {
+                    if inspectorPresentation == .popover {
+                        inspectorPopoverPresented.toggle()
+                    } else {
+                        inspectorPresented.toggle()
+                    }
+                } label: {
+                    Label("Inspector", systemImage: "sidebar.right")
                 }
             }
-            routingModePicker(width: usesCompactChrome ? 250 : 210)
-        }
-    }
 
-    private var systemProxyControl: some View {
-        Toggle(isOn: systemProxyBinding) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("macOS System Proxy")
-                Text(systemProxyControlSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-            .toggleStyle(.switch)
-            .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
-            .accessibilityHint("Routes macOS HTTP, HTTPS, and SOCKS traffic through MClash")
-    }
-
-    private var systemProxyControlSubtitle: String {
-        if let pending = model.pendingSystemProxyEnabled {
-            return pending ? "Turning on…" : "Turning off…"
-        }
-        return model.systemProxyEnabled ? "macOS apps are routed through MClash" : "Core only; macOS routing is off"
-    }
-
-    @ViewBuilder
-    private func inspectorButton(group: MihomoProxy?) -> some View {
-        Button {
-            guard group != nil else { return }
-            if inspectorPresentation == .popover {
-                inspectorPopoverPresented.toggle()
-            } else {
-                inspectorPresented.toggle()
-            }
+            Divider()
+            Button("Manage Profile…") { model.selection = .profiles }
         } label: {
-            Label("Inspector", systemImage: "sidebar.right")
-                .labelStyle(.iconOnly)
+            Label("More", systemImage: "ellipsis.circle")
         }
-        .buttonStyle(.borderless)
-        .disabled(
-            group == nil
-                || workspaceSnapshot == nil
-                || resolvedSelectedProfileID != model.activeProfileID
-        )
-        .help(inspectorHelp)
+        .menuStyle(.borderlessButton)
+        .help("Proxy view and routing options")
         .popover(isPresented: $inspectorPopoverPresented, arrowEdge: .top) {
             if let group {
                 ProxyInspectorView(
@@ -473,13 +427,20 @@ struct ProxiesView: View {
         }
     }
 
-    private var inspectorHelp: String {
-        switch inspectorPresentation {
-        case .popover:
-            inspectorPopoverPresented ? "Hide Inspector" : "Show Inspector"
-        case .attached:
-            inspectorPresented ? "Hide Inspector" : "Show Inspector"
+    private func profilePicker(width: CGFloat) -> some View {
+        Picker("Profile", selection: selectedProfileBinding) {
+            ForEach(model.profileProxyWorkspaceProfiles) { profile in
+                Text(
+                    profile.id == model.activeProfileID
+                        ? AppLocalization.format("%@ — Default Source", profile.name)
+                        : profile.name
+                )
+                .tag(profile.id)
+            }
         }
+        .labelsHidden()
+        .frame(width: width)
+        .help("Choose the Profile whose proxy groups you want to configure")
     }
 
     private var attachedInspectorBinding: Binding<Bool> {
@@ -707,63 +668,6 @@ struct ProxiesView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }
-    }
-
-    private func workspacePicker(width: CGFloat) -> some View {
-        Picker("View", selection: $workspaceMode) {
-            Label("List", systemImage: "list.bullet").tag(ProxyWorkspaceMode.list)
-            Label("Topology", systemImage: "point.3.connected.trianglepath.dotted")
-                .tag(ProxyWorkspaceMode.topology)
-        }
-        .pickerStyle(.segmented)
-        .frame(width: width)
-    }
-
-    private func sortPicker(group: MihomoProxy?, width: CGFloat) -> some View {
-        Picker(
-            "Node order",
-            selection: group.map { sortBinding(for: $0.name) }
-                ?? .constant(ProxyNodeSortMode.profile)
-        ) {
-            ForEach(ProxyNodeSortMode.allCases, id: \.rawValue) { mode in
-                Label(mode.title, systemImage: mode.symbol).tag(mode)
-            }
-        }
-        .pickerStyle(.menu)
-        .frame(width: width)
-    }
-
-    private func testAllButton(group: MihomoProxy?) -> some View {
-        Button {
-            guard let group, let profileID = resolvedSelectedProfileID else {
-                return
-            }
-            Task {
-                await model.measureGroupDelays(
-                    profileID: profileID,
-                    group: group.name
-                )
-            }
-        } label: {
-            if let group,
-               let profileID = resolvedSelectedProfileID,
-               model.isPerforming(.measureProfileGroupDelay(profileID, group.name)) {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Label("Test All", systemImage: "speedometer")
-                    .labelStyle(.iconOnly)
-            }
-        }
-        .buttonStyle(.borderless)
-        .disabled(
-            group.flatMap { group in
-                resolvedSelectedProfileID.map {
-                    !model.canPerform(.measureProfileGroupDelay($0, group.name))
-                }
-            } ?? true
-        )
-        .help(group.map { "Test every member in \($0.name)" } ?? "Choose a proxy group first")
     }
 
     private func automaticOverrideBanner(group: MihomoProxy, fixed: String) -> some View {
@@ -1541,24 +1445,36 @@ private struct ProxyNodeListRow: View {
         .accessibilityElement(children: .contain)
     }
 
+    @ViewBuilder
     private var selectionButton: some View {
-        Button(action: onSelect) {
-            if isPending {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 18, height: 18)
-            } else {
-                Image(systemName: selectionSymbol)
-                    .foregroundStyle(selectionColor)
-                    .frame(width: 18, height: 18)
+        if supportsSelection {
+            Button(action: onSelect) {
+                if isPending {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 18, height: 18)
+                } else {
+                    Image(systemName: selectionSymbol)
+                        .foregroundStyle(selectionColor)
+                        .frame(width: 18, height: 18)
+                }
             }
+            .buttonStyle(.plain)
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+            .disabled(!canSelect || selectionInProgress)
+            .help(selectionHelp)
+            .accessibilityLabel(selectionHelp)
+        } else if isSelected || isFixed {
+            Image(systemName: isFixed ? "pin.circle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(isFixed ? Color.orange : Color.accentColor)
+                .frame(width: 28, height: 28)
+                .accessibilityLabel(isFixed ? "Pinned preference" : "Current automatic route")
+        } else {
+            Color.clear
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
         }
-        .buttonStyle(.plain)
-        .frame(width: 28, height: 28)
-        .contentShape(Rectangle())
-        .disabled(!supportsSelection || !canSelect || selectionInProgress)
-        .help(selectionHelp)
-        .accessibilityLabel(selectionHelp)
     }
 
     private var nodeInformation: some View {
@@ -1575,13 +1491,7 @@ private struct ProxyNodeListRow: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                Text(node?.type ?? "Unresolved")
-                Text(statusText)
-                if node?.udp == true { Text("UDP") }
-                if node?.tcpFastOpen == true { Text("TFO") }
-                if let provider = normalized(node?.providerName) { Text(provider) }
-            }
+            Text(statusText)
             .font(.caption)
             .foregroundStyle(isAlive == false ? Color.red : Color.secondary)
             .lineLimit(1)
@@ -1593,31 +1503,18 @@ private struct ProxyNodeListRow: View {
     }
 
     private var delayIndicator: some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
-                Text(delayText)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(delayColor)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: 68, alignment: .trailing)
-            }
-            if let lastTestedAt {
-                Text("tested \(lastTestedAt.formatted(.relative(presentation: .named)))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .help(lastTestedAt.formatted(date: .abbreviated, time: .standard))
-            }
+        HStack(spacing: 6) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+            Text(delayText)
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(delayColor)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 68, alignment: .trailing)
         }
-    }
-
-    private var lastTestedAt: Date? {
-        guard let value = node?.history.last?.time else { return nil }
-        return parsedRuntimeTimestamp(value)
     }
 
     @ViewBuilder

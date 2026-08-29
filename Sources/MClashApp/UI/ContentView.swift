@@ -5,30 +5,36 @@ struct ContentView: View {
     @Bindable var applicationUpdater: ApplicationUpdater
     @AppStorage("mclash.navigation.destination") private var restoredDestinationRawValue =
         AppModel.Destination.overview.rawValue
+    @AppStorage("mclash.navigation.advancedExpanded") private var advancedExpanded = false
     @State private var hasRestoredDestination = false
 
     var body: some View {
         NavigationSplitView {
             List(selection: $model.selection) {
-                Section("Status") {
+                Section {
                     destinationRow(.overview)
-                    destinationRow(.connections)
                 }
 
-                Section("Routing") {
+                Section("Configure") {
+                    destinationRow(.profiles)
                     destinationRow(.proxies)
                     destinationRow(.appRouting)
-                    destinationRow(.profiles)
-                    destinationRow(.rules)
-                    destinationRow(.providers)
                 }
 
-                Section("Diagnostics") {
+                Section("Monitor") {
+                    destinationRow(.connections)
                     destinationRow(.attention)
-                    destinationRow(.logs)
                 }
 
-                Section("Application") {
+                Section {
+                    DisclosureGroup("Advanced", isExpanded: $advancedExpanded) {
+                        destinationRow(.rules)
+                        destinationRow(.providers)
+                        destinationRow(.logs)
+                    }
+                }
+
+                Section {
                     destinationRow(.settings)
                 }
             }
@@ -77,6 +83,9 @@ struct ContentView: View {
         .onChange(of: model.selection) { _, destination in
             guard let destination else { return }
             restoredDestinationRawValue = destination.rawValue
+            if advancedDestinations.contains(destination) {
+                advancedExpanded = true
+            }
         }
         .alert(
             "Import Subscription?",
@@ -86,20 +95,22 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) {
                 model.cancelPendingSubscriptionImport()
             }
-            Button("Import") {
+            Button("Import Profile") {
                 Task { await model.confirmPendingSubscriptionImport(request) }
             }
         } message: { request in
             Text(
-                "Download a subscription from \(request.displayHost)? "
-                    + "It will be added to Profiles without changing your active route."
+                AppLocalization.format(
+                    "Download a subscription from %@? It will be added to Profiles without changing your active route.",
+                    request.displayHost
+                )
             )
         }
     }
 
     private func destinationRow(_ destination: AppModel.Destination) -> some View {
         HStack(spacing: 8) {
-            Label(destination.title, systemImage: destination.symbol)
+            Label(AppLocalization.string(destination.title), systemImage: destination.symbol)
             Spacer(minLength: 4)
             destinationAccessory(destination)
         }
@@ -133,12 +144,19 @@ struct ContentView: View {
         }
 
         let destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .overview
+        if advancedDestinations.contains(destination) {
+            advancedExpanded = true
+        }
         if restoredDestinationRawValue != destination.rawValue {
             restoredDestinationRawValue = destination.rawValue
         }
         if model.selection != destination {
             model.selection = destination
         }
+    }
+
+    private var advancedDestinations: Set<AppModel.Destination> {
+        [.rules, .providers, .logs]
     }
 
     @ViewBuilder
@@ -241,40 +259,53 @@ private struct SidebarOperationalStatus: View {
     var body: some View {
         let snapshot = model.operationalSnapshot
 
-        Button {
-            model.selection = model.operationalIssues.isEmpty ? .overview : .attention
-        } label: {
-            HStack(alignment: .top, spacing: 9) {
-                Circle()
-                    .fill(statusColor(for: snapshot.level))
-                    .frame(width: 9, height: 9)
-                    .padding(.top, 4)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(snapshot.title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    Text(snapshot.captureSummary)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+        Group {
+            if model.operationalIssues.isEmpty {
+                statusContent(snapshot)
+            } else {
+                Button {
+                    model.selection = .attention
+                } label: {
+                    statusContent(snapshot)
+                        .contentShape(Rectangle())
                 }
-
-                Spacer(minLength: 0)
+                .buttonStyle(.plain)
+                .help("Review issues")
+                .accessibilityHint("Opens recovery actions")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
         .help(snapshot.detail)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(snapshot.title), \(snapshot.captureSummary)"
+            AppLocalization.format("%@, %@", snapshot.title, snapshot.captureSummary)
         )
+    }
+
+    private func statusContent(_ snapshot: OperationalSnapshot) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Circle()
+                .fill(statusColor(for: snapshot.level))
+                .frame(width: 9, height: 9)
+                .padding(.top, 4)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(snapshot.title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(snapshot.captureSummary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func statusColor(for level: OperationalSnapshot.Level) -> Color {

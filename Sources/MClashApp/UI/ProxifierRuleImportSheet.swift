@@ -45,9 +45,13 @@ struct ProxifierRuleImportSheet: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Text("\(selectedRules.count) selected")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(AppLocalization.format("%d selected", selectedRules.count))
+                        .font(.callout.monospacedDigit())
+                    Text(importSummary)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(20)
 
@@ -76,19 +80,19 @@ struct ProxifierRuleImportSheet: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
+                            if !item.notes.isEmpty {
+                                Label(
+                                    item.notes.joined(separator: " · "),
+                                    systemImage: item.isImportable
+                                        ? "exclamationmark.triangle.fill"
+                                        : "xmark.circle.fill"
+                                )
+                                .font(.caption2)
+                                .foregroundStyle(item.isImportable ? .orange : .secondary)
+                                .lineLimit(2)
+                            }
                         }
                         Spacer(minLength: 12)
-                        if !item.notes.isEmpty {
-                            Image(systemName: item.isImportable
-                                ? "exclamationmark.triangle.fill"
-                                : "xmark.circle.fill")
-                                .foregroundStyle(item.isImportable ? .orange : .secondary)
-                                .help(item.notes.joined(separator: "\n"))
-                                .accessibilityLabel(
-                                    item.isImportable ? "Conversion warning" : "Rule cannot be imported"
-                                )
-                                .accessibilityValue(item.notes.joined(separator: ". "))
-                        }
                     }
                 }
                 .toggleStyle(.checkbox)
@@ -121,7 +125,7 @@ struct ProxifierRuleImportSheet: View {
 
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Import \(selectedRules.count) Rules") {
+                Button("Import Rules") {
                     onImport(selectedRules)
                     dismiss()
                 }
@@ -146,6 +150,18 @@ struct ProxifierRuleImportSheet: View {
             guard selectedRuleIDs.contains(item.id) else { return nil }
             return item.rule
         }
+    }
+
+    private var importSummary: String {
+        let ready = plan.items.filter { $0.isImportable && $0.notes.isEmpty }.count
+        let warnings = plan.items.filter { $0.isImportable && !$0.notes.isEmpty }.count
+        let skipped = plan.items.count - ready - warnings
+        return AppLocalization.format(
+            "Ready %d · Warnings %d · Skipped %d",
+            ready,
+            warnings,
+            skipped
+        )
     }
 
     private func selectionBinding(for item: ProxifierRuleImportItem) -> Binding<Bool> {

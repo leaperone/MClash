@@ -30,6 +30,8 @@ struct CaptureRuleEditorSheet: View {
     @State private var submissionError: String?
     @State private var attemptedSubmission = false
     @State private var showingApplicationImporter = false
+    @State private var showsSourceOptions = false
+    @State private var showsDestinationOptions = false
     @State private var showsAdvancedOptions: Bool
     @State private var domainDestinationPage = 0
     @State private var networkDestinationPage = 0
@@ -85,32 +87,34 @@ struct CaptureRuleEditorSheet: View {
                 destinationSection
                 actionSection
                 advancedSection
-                previewSection
             }
             .formStyle(.grouped)
 
             Divider()
 
             HStack(spacing: 10) {
-                Group {
-                    if let currentValidationError {
-                        Label(currentValidationError, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("capture-rule-validation-error")
-                    } else if appliesImmediately {
-                        Label(
-                            "Existing connections stay online unless this rule needs a new Mihomo route listener.",
-                            systemImage: "bolt.horizontal.circle"
-                        )
-                        .foregroundStyle(.secondary)
-                    } else {
-                        Text("Changes are saved for the next App Routing activation.")
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(rulePreview, systemImage: "arrow.triangle.branch")
+                        .font(.callout)
+                        .lineLimit(2)
+
+                    Group {
+                        if let currentValidationError {
+                            Label(currentValidationError, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                                .accessibilityIdentifier("capture-rule-validation-error")
+                        } else if appliesImmediately {
+                            Text("Existing connections stay online unless this rule needs a new route listener.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Changes are saved for the next App Routing activation.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    .font(.caption)
+                    .lineLimit(2)
+                    .help(currentValidationError ?? "")
                 }
-                .font(.caption)
-                .lineLimit(2)
-                .help(currentValidationError ?? "")
 
                 Spacer()
                 Button("Cancel", role: .cancel) {
@@ -125,7 +129,8 @@ struct CaptureRuleEditorSheet: View {
                 .buttonStyle(.borderedProminent)
             }
             .padding(.horizontal, 24)
-            .frame(height: 58)
+            .padding(.vertical, 10)
+            .frame(minHeight: 58)
         }
         .frame(
             minWidth: 620,
@@ -160,133 +165,139 @@ struct CaptureRuleEditorSheet: View {
     }
 
     private var sourcesSection: some View {
-        Section("Sources (Optional · Any May Match)") {
-            Text("Add applications, running processes, or identifiers. Items in this section use OR matching; destinations below are combined with the source group using AND.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Application & Process Identifiers", systemImage: "textformat.abc")
-                    .font(.body.weight(.medium))
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    TextField(
-                        "chatgpt; codex.app; codex; com.openai.codex",
-                        text: $draft.applicationIdentifierInput,
-                        axis: .vertical
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .font(.body.monospaced())
-                    .lineLimit(1 ... 3)
-                    .onSubmit(addApplicationIdentifiers)
-                    .accessibilityLabel("Application and process identifiers")
-                    .focused($focusedField, equals: .applicationIdentifier)
-
-                    Button("Add", action: addApplicationIdentifiers)
-                        .disabled(draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                Text("Paste several executable names, signing IDs, bundle IDs, or wildcard patterns separated by semicolons, commas, or new lines.")
+        Section {
+            DisclosureGroup(isExpanded: $showsSourceOptions) {
+                Text("Add applications, running processes, or identifiers. Items in this section use OR matching; destinations below are combined with the source group using AND.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                ForEach(draft.applicationIdentifierPatterns, id: \.self) { pattern in
-                    HStack(spacing: 8) {
-                        Text(pattern)
-                            .font(.callout.monospaced())
-                            .textSelection(.enabled)
-                        Spacer()
-                        removeSourceButton(
-                            label: "Remove identifier \(pattern)",
-                            help: "Remove application or process identifier"
-                        ) {
-                            draft.removeApplicationIdentifier(pattern)
-                        }
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Application & Process Identifiers", systemImage: "textformat.abc")
+                        .font(.body.weight(.medium))
+
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        TextField(
+                            "chatgpt; codex.app; codex; com.openai.codex",
+                            text: $draft.applicationIdentifierInput,
+                            axis: .vertical
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .font(.body.monospaced())
+                        .lineLimit(1 ... 3)
+                        .onSubmit(addApplicationIdentifiers)
+                        .accessibilityLabel(
+                            AppLocalization.string("Application and process identifiers")
+                        )
+                        .focused($focusedField, equals: .applicationIdentifier)
+
+                        Button("Add", action: addApplicationIdentifiers)
+                            .disabled(draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                }
-            }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Choose Applications", systemImage: "app.badge")
-                    .font(.body.weight(.medium))
+                    Text("Paste several executable names, signing IDs, bundle IDs, or wildcard patterns separated by semicolons, commas, or new lines.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                HStack(spacing: 8) {
-                    Picker("Application to add", selection: $applicationToAddID) {
-                        Text("Choose a running application").tag(nil as String?)
-                        ForEach(availableApplicationCandidates) { candidate in
-                            Label {
-                                Text(applicationLabel(candidate))
-                            } icon: {
-                                Image(nsImage: applicationIcon(candidate))
-                            }
-                            .tag(candidate.id as String?)
-                        }
-                    }
-                    .labelsHidden()
-                    .accessibilityLabel("Application to add")
-
-                    Button("Add") { addSelectedApplication() }
-                        .disabled(applicationToAddID == nil)
-
-                    Button {
-                        showingApplicationImporter = true
-                    } label: {
-                        Label("Choose App…", systemImage: "folder")
-                    }
-                }
-
-                ForEach(draft.selectedApplications) { application in
-                    selectedApplicationSummary(application)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Choose Running Processes", systemImage: "terminal")
-                    .font(.body.weight(.medium))
-
-                HStack(spacing: 8) {
-                    Picker("Running process to add", selection: $processToAddID) {
-                        Text("Choose a running process").tag(nil as String?)
-                        ForEach(availableProcessCandidates) { candidate in
-                            Text(candidate.displayName).tag(candidate.id as String?)
-                        }
-                    }
-                    .labelsHidden()
-                    .accessibilityLabel("Running process to add")
-
-                    Button("Add") { addSelectedProcess() }
-                        .disabled(processToAddID == nil)
-                }
-
-                ForEach(draft.selectedProcesses) { process in
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(process.displayName)
-                                .font(.callout.weight(.medium))
-                            Text("PID \(process.processIdentifier) · \(process.executablePath)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                    ForEach(draft.applicationIdentifierPatterns, id: \.self) { pattern in
+                        HStack(spacing: 8) {
+                            Text(pattern)
+                                .font(.callout.monospaced())
                                 .textSelection(.enabled)
-                        }
-                        Spacer()
-                        removeSourceButton(
-                            label: "Remove process \(process.displayName)",
-                            help: "Remove running process"
-                        ) {
-                            draft.removeProcess(id: process.id)
+                            Spacer()
+                            removeSourceButton(
+                                label: "Remove identifier \(pattern)",
+                                help: "Remove application or process identifier"
+                            ) {
+                                draft.removeApplicationIdentifier(pattern)
+                            }
                         }
                     }
                 }
-            }
 
-            if draft.selectedApplications.isEmpty,
-               draft.selectedProcesses.isEmpty,
-               draft.applicationIdentifierPatterns.isEmpty,
-               draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("No source restriction — this rule applies to all applications and processes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Choose Applications", systemImage: "app.badge")
+                        .font(.body.weight(.medium))
+
+                    HStack(spacing: 8) {
+                        Picker("Application to add", selection: $applicationToAddID) {
+                            Text("Choose a running application").tag(nil as String?)
+                            ForEach(availableApplicationCandidates) { candidate in
+                                Label {
+                                    Text(applicationLabel(candidate))
+                                } icon: {
+                                    Image(nsImage: applicationIcon(candidate))
+                                }
+                                .tag(candidate.id as String?)
+                            }
+                        }
+                        .labelsHidden()
+                        .accessibilityLabel("Application to add")
+
+                        Button("Add") { addSelectedApplication() }
+                            .disabled(applicationToAddID == nil)
+
+                        Button {
+                            showingApplicationImporter = true
+                        } label: {
+                            Label("Choose App…", systemImage: "folder")
+                        }
+                    }
+
+                    ForEach(draft.selectedApplications) { application in
+                        selectedApplicationSummary(application)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Choose Running Processes", systemImage: "terminal")
+                        .font(.body.weight(.medium))
+
+                    HStack(spacing: 8) {
+                        Picker("Running process to add", selection: $processToAddID) {
+                            Text("Choose a running process").tag(nil as String?)
+                            ForEach(availableProcessCandidates) { candidate in
+                                Text(candidate.displayName).tag(candidate.id as String?)
+                            }
+                        }
+                        .labelsHidden()
+                        .accessibilityLabel("Running process to add")
+
+                        Button("Add") { addSelectedProcess() }
+                            .disabled(processToAddID == nil)
+                    }
+
+                    ForEach(draft.selectedProcesses) { process in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(process.displayName)
+                                    .font(.callout.weight(.medium))
+                                Text("PID \(process.processIdentifier) · \(process.executablePath)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .textSelection(.enabled)
+                            }
+                            Spacer()
+                            removeSourceButton(
+                                label: "Remove process \(process.displayName)",
+                                help: "Remove running process"
+                            ) {
+                                draft.removeProcess(id: process.id)
+                            }
+                        }
+                    }
+                }
+
+                if draft.selectedApplications.isEmpty,
+                   draft.selectedProcesses.isEmpty,
+                   draft.applicationIdentifierPatterns.isEmpty,
+                   draft.applicationIdentifierInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("No source restriction — this rule applies to all applications and processes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } label: {
+                LabeledContent("Sources", value: sourceSelectionSummary)
             }
         }
     }
@@ -294,88 +305,92 @@ struct CaptureRuleEditorSheet: View {
     private var destinationSection: some View {
         let snapshot = destinationDisplaySnapshot
 
-        return Section("Destinations (Optional)") {
-            Text("A flow may match any destination below. If an application is selected, both the application and one of these destinations must match.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Domains", systemImage: "globe")
-                    .font(.body.weight(.medium))
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    TextField(
-                        "openai.com, *.oaistatic.com",
-                        text: $draft.domainInput,
-                        axis: .vertical
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1 ... 3)
-                    .onSubmit(addDomains)
-                    .focused($focusedField, equals: .domain)
-
-                    Button("Add", action: addDomains)
-                        .disabled(draft.domainInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                Text("Bare domains include their subdomains. Prefix = for an exact hostname. Paste several values separated by commas, spaces, or new lines.")
+        return Section {
+            DisclosureGroup(isExpanded: $showsDestinationOptions) {
+                Text("A flow may match any destination below. If an application is selected, both the application and one of these destinations must match.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                ForEach(snapshot.domains, id: \.self) { destination in
-                    destinationRow(destination)
-                }
-                destinationPageControls(
-                    page: snapshot.domainPage,
-                    totalCount: snapshot.domainCount,
-                    label: "domains",
-                    previous: {
-                        domainDestinationPage = max(0, snapshot.domainPage - 1)
-                    },
-                    next: {
-                        domainDestinationPage = snapshot.domainPage + 1
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Domains", systemImage: "globe")
+                        .font(.body.weight(.medium))
+
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        TextField(
+                            "openai.com, *.oaistatic.com",
+                            text: $draft.domainInput,
+                            axis: .vertical
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1 ... 3)
+                        .onSubmit(addDomains)
+                        .focused($focusedField, equals: .domain)
+
+                        Button("Add", action: addDomains)
+                            .disabled(draft.domainInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                )
-            }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Label("IP Addresses & Networks", systemImage: "network")
-                    .font(.body.weight(.medium))
+                    Text("Bare domains include their subdomains. Prefix = for an exact hostname. Paste several values separated by commas, spaces, or new lines.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    TextField(
-                        "1.1.1.1, 104.18.0.0/16",
-                        text: $draft.networkInput,
-                        axis: .vertical
+                    ForEach(snapshot.domains, id: \.self) { destination in
+                        destinationRow(destination)
+                    }
+                    destinationPageControls(
+                        page: snapshot.domainPage,
+                        totalCount: snapshot.domainCount,
+                        label: "domains",
+                        previous: {
+                            domainDestinationPage = max(0, snapshot.domainPage - 1)
+                        },
+                        next: {
+                            domainDestinationPage = snapshot.domainPage + 1
+                        }
                     )
-                    .textFieldStyle(.roundedBorder)
-                    .font(.body.monospaced())
-                    .lineLimit(1 ... 3)
-                    .onSubmit(addNetworks)
-                    .focused($focusedField, equals: .network)
-
-                    Button("Add", action: addNetworks)
-                        .disabled(draft.networkInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
 
-                Text("Accepts IPv4, IPv6, and CIDR networks. Domain matching uses the hostname macOS provides; if an app connects directly by IP, add that IP or CIDR here too.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("IP Addresses & Networks", systemImage: "network")
+                        .font(.body.weight(.medium))
 
-                ForEach(snapshot.networks, id: \.self) { destination in
-                    destinationRow(destination)
-                }
-                destinationPageControls(
-                    page: snapshot.networkPage,
-                    totalCount: snapshot.networkCount,
-                    label: "addresses and networks",
-                    previous: {
-                        networkDestinationPage = max(0, snapshot.networkPage - 1)
-                    },
-                    next: {
-                        networkDestinationPage = snapshot.networkPage + 1
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        TextField(
+                            "1.1.1.1, 104.18.0.0/16",
+                            text: $draft.networkInput,
+                            axis: .vertical
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .font(.body.monospaced())
+                        .lineLimit(1 ... 3)
+                        .onSubmit(addNetworks)
+                        .focused($focusedField, equals: .network)
+
+                        Button("Add", action: addNetworks)
+                            .disabled(draft.networkInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                )
+
+                    Text("Accepts IPv4, IPv6, and CIDR networks. Domain matching uses the hostname macOS provides; if an app connects directly by IP, add that IP or CIDR here too.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(snapshot.networks, id: \.self) { destination in
+                        destinationRow(destination)
+                    }
+                    destinationPageControls(
+                        page: snapshot.networkPage,
+                        totalCount: snapshot.networkCount,
+                        label: "addresses and networks",
+                        previous: {
+                            networkDestinationPage = max(0, snapshot.networkPage - 1)
+                        },
+                        next: {
+                            networkDestinationPage = snapshot.networkPage + 1
+                        }
+                    )
+                }
+            } label: {
+                LabeledContent("Destinations", value: destinationSelectionSummary)
             }
         }
     }
@@ -513,13 +528,6 @@ struct CaptureRuleEditorSheet: View {
             Text("Use advanced matching for an executable path, user, protocol, port range, or fallback behavior.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private var previewSection: some View {
-        Section("Rule Preview") {
-            Label(rulePreview, systemImage: "arrow.triangle.branch")
-                .font(.callout)
         }
     }
 
@@ -709,6 +717,21 @@ struct CaptureRuleEditorSheet: View {
 
     private var normalizedRuleName: String {
         draft.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var sourceSelectionSummary: String {
+        let count = draft.selectedApplications.count
+            + draft.selectedProcesses.count
+            + draft.applicationIdentifierPatterns.count
+        return count == 0
+            ? AppLocalization.string("All applications")
+            : AppLocalization.format("%d selected", count)
+    }
+
+    private var destinationSelectionSummary: String {
+        draft.destinations.isEmpty
+            ? AppLocalization.string("Any destination")
+            : AppLocalization.format("%d selected", draft.destinations.count)
     }
 
     private var visibleError: String? {
@@ -1009,21 +1032,21 @@ struct CaptureRuleEditorSheet: View {
              .invalidCaptureRule:
             focusedField = .identifier
         case .invalidApplicationPattern:
-            focusedField = .applicationIdentifier
+            revealSourceOptionsAndFocus(.applicationIdentifier)
         case .invalidExecutablePath:
             revealAdvancedOptionsAndFocus(.executablePath)
         case .invalidUserID:
             revealAdvancedOptionsAndFocus(.userID)
         case .invalidIPAddress, .invalidNetwork:
-            focusedField = .network
+            revealDestinationOptionsAndFocus(.network)
         case .invalidDomain:
-            focusedField = .domain
+            revealDestinationOptionsAndFocus(.domain)
         case .noTransportProtocol:
             revealAdvancedOptionsAndFocus(.transport)
         case .invalidPortRange:
             revealAdvancedOptionsAndFocus(.portRange)
         case .noMatchCriteria:
-            focusedField = .applicationIdentifier
+            revealSourceOptionsAndFocus(.applicationIdentifier)
         case .missingMihomoGroup:
             focusedField = .policyGroup
         }
@@ -1031,6 +1054,22 @@ struct CaptureRuleEditorSheet: View {
 
     private func revealAdvancedOptionsAndFocus(_ field: FocusField) {
         showsAdvancedOptions = true
+        Task { @MainActor in
+            await Task.yield()
+            focusedField = field
+        }
+    }
+
+    private func revealSourceOptionsAndFocus(_ field: FocusField) {
+        showsSourceOptions = true
+        Task { @MainActor in
+            await Task.yield()
+            focusedField = field
+        }
+    }
+
+    private func revealDestinationOptionsAndFocus(_ field: FocusField) {
+        showsDestinationOptions = true
         Task { @MainActor in
             await Task.yield()
             focusedField = field
