@@ -51,6 +51,8 @@ if [[ "${origin_ready}" != "true" ]]; then
 fi
 
 swiftc -swift-version 6 \
+  "${repo_root}/Sources/MClashApp/App/AppLanguage.swift" \
+  "${repo_root}/Sources/MClashApp/App/AppLocalization.swift" \
   "${repo_root}/Sources/MClashApp/Core/CoreModels.swift" \
   "${repo_root}/Sources/MClashApp/Core/CoreBinaryLocator.swift" \
   "${repo_root}/Sources/MClashApp/Core/CoreSupervisor.swift" \
@@ -124,6 +126,8 @@ swiftc -parse-as-library -swift-version 6 \
 system_proxy_sources=("${repo_root}"/Sources/MClashApp/SystemProxy/*.swift(N))
 system_proxy_sources=("${(@)system_proxy_sources:#*/SystemProxyPreferences.swift}")
 swiftc -swift-version 6 -framework SystemConfiguration \
+  "${repo_root}/Sources/MClashApp/App/AppLanguage.swift" \
+  "${repo_root}/Sources/MClashApp/App/AppLocalization.swift" \
   "${system_proxy_sources[@]}" \
   "${repo_root}/Tests/Integration/SystemProxyReadSmoke.swift" \
   -o "${build_dir}/system-proxy-read-smoke"
@@ -153,6 +157,8 @@ if [[ "${api_ready}" != "true" ]]; then
 fi
 
 swiftc -swift-version 6 \
+  "${repo_root}/Sources/MClashApp/App/AppLanguage.swift" \
+  "${repo_root}/Sources/MClashApp/App/AppLocalization.swift" \
   "${repo_root}"/Sources/MClashApp/MihomoAPI/*.swift \
   "${repo_root}/Tests/Integration/MihomoAPISmoke.swift" \
   -o "${build_dir}/mihomo-api-smoke"
@@ -163,6 +169,8 @@ core_pid=""
 
 if [[ -n "${MCLASH_TEST_SUBSCRIPTION:-}" ]]; then
   swiftc -swift-version 6 \
+    "${repo_root}/Sources/MClashApp/App/AppLanguage.swift" \
+    "${repo_root}/Sources/MClashApp/App/AppLocalization.swift" \
     "${repo_root}"/Sources/MClashApp/Profiles/*.swift \
     "${repo_root}/Tests/Integration/ProfileRemoteSmoke.swift" \
     -o "${build_dir}/profile-remote-smoke"
