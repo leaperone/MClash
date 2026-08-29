@@ -158,7 +158,9 @@ struct MenuBarContent: View {
 
     private var appRoutingStatus: some View {
         Button {
-            showMainWindow(destination: .appRouting)
+            // Application capture is a capability toggle; activity and
+            // evidence live in the unified Traffic workspace.
+            showMainWindow(destination: .connections)
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: appRoutingStatusSymbol)

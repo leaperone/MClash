@@ -16,9 +16,12 @@ struct ContentView: View {
                 }
 
                 Section("Configure") {
-                    destinationRow(.profiles)
+                    destinationRow(.workspaces)
+                    destinationRow(.nodes)
+                    destinationRow(.sources)
+                    destinationRow(.entrances)
                     destinationRow(.proxies)
-                    destinationRow(.appRouting)
+                    appRoutingToggleRow
                 }
 
                 Section("Monitor") {
@@ -27,7 +30,8 @@ struct ContentView: View {
                 }
 
                 Section {
-                    DisclosureGroup("Advanced", isExpanded: $advancedExpanded) {
+                DisclosureGroup("Advanced", isExpanded: $advancedExpanded) {
+                        destinationRow(.profiles)
                         destinationRow(.rules)
                         destinationRow(.providers)
                         destinationRow(.logs)
@@ -88,20 +92,20 @@ struct ContentView: View {
             }
         }
         .alert(
-            "Import Subscription?",
+            AppLocalization.string("Add Source?"),
             isPresented: pendingSubscriptionImportIsPresented,
             presenting: model.pendingSubscriptionImport
         ) { request in
             Button("Cancel", role: .cancel) {
                 model.cancelPendingSubscriptionImport()
             }
-            Button("Import Profile") {
+            Button(AppLocalization.string("Import Source")) {
                 Task { await model.confirmPendingSubscriptionImport(request) }
             }
         } message: { request in
             Text(
                 AppLocalization.format(
-                    "Download a subscription from %@? It will be added to Profiles without changing your active route.",
+                    "Download a source from %@? Only node connection data is imported. Source proxy groups, rules, DNS and TUN settings are ignored.",
                     request.displayHost
                 )
             )
@@ -156,7 +160,7 @@ struct ContentView: View {
     }
 
     private var advancedDestinations: Set<AppModel.Destination> {
-        [.rules, .providers, .logs]
+        [.profiles, .rules, .providers, .logs]
     }
 
     @ViewBuilder
@@ -164,14 +168,22 @@ struct ContentView: View {
         switch model.selection ?? .overview {
         case .overview:
             OverviewView(model: model)
+        case .workspaces:
+            ConfigurationWorkspacesView(model: model)
+        case .nodes:
+            ConfigurationNodesView(model: model)
+        case .sources:
+            ConfigurationSourcesView(model: model)
+        case .entrances:
+            ConfigurationEntrancesView(model: model)
         case .proxies:
-            ProxiesView(model: model)
+            ConfigurationProxyGroupsView(model: model)
         case .appRouting:
-            AppRoutingView(model: model)
+            ConnectionsView(model: model)
         case .profiles:
             ProfilesView(model: model)
         case .rules:
-            RulesView(model: model)
+            ConfigurationRulesView(model: model)
         case .providers:
             ProvidersView(model: model)
         case .connections:
@@ -210,6 +222,30 @@ struct ContentView: View {
         default:
             EmptyView()
         }
+    }
+
+    private var appRoutingToggleRow: some View {
+        Toggle(isOn: appRoutingEnabled) {
+            Label(AppLocalization.string("App Routing"), systemImage: "app.badge")
+        }
+        .toggleStyle(.switch)
+        .disabled(
+            model.pendingNetworkCaptureEnabled != nil
+                || !model.canPerform(.changeNetworkCapture)
+        )
+        .help(AppLocalization.string(model.unifiedConfigurationEnabled
+            ? "Capture application traffic using the unified MClash rules"
+            : "Legacy application capture is active until a MClash Workspace is selected"))
+        .accessibilityLabel(AppLocalization.string(model.unifiedConfigurationEnabled
+            ? "App Routing using unified MClash rules"
+            : "App Routing using legacy profile rules"))
+    }
+
+    private var appRoutingEnabled: Binding<Bool> {
+        Binding(
+            get: { model.appRoutingCapabilityEnabled },
+            set: { value in Task { await model.setNetworkCaptureEnabled(value) } }
+        )
     }
 
     private var sidebarConnectionValue: String {

@@ -1,25 +1,28 @@
 import Foundation
 
 public struct MClashBackupManifest: Codable, Equatable, Sendable {
-    public static let currentFormatVersion = 2
+    public static let currentFormatVersion = 3
 
     public let formatVersion: Int
     public let createdAt: Date
     public let hasSettings: Bool
     public let hasActiveProfileState: Bool
     public let hasProfileRuntimePlan: Bool
+    public let hasConfiguration: Bool
 
     public init(
         createdAt: Date = Date(),
         hasSettings: Bool,
         hasActiveProfileState: Bool,
-        hasProfileRuntimePlan: Bool = false
+        hasProfileRuntimePlan: Bool = false,
+        hasConfiguration: Bool = false
     ) {
         formatVersion = Self.currentFormatVersion
         self.createdAt = createdAt
         self.hasSettings = hasSettings
         self.hasActiveProfileState = hasActiveProfileState
         self.hasProfileRuntimePlan = hasProfileRuntimePlan
+        self.hasConfiguration = hasConfiguration
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -28,6 +31,7 @@ public struct MClashBackupManifest: Codable, Equatable, Sendable {
         case hasSettings
         case hasActiveProfileState
         case hasProfileRuntimePlan
+        case hasConfiguration
     }
 
     public init(from decoder: any Decoder) throws {
@@ -42,6 +46,10 @@ public struct MClashBackupManifest: Codable, Equatable, Sendable {
         hasProfileRuntimePlan = try container.decodeIfPresent(
             Bool.self,
             forKey: .hasProfileRuntimePlan
+        ) ?? false
+        hasConfiguration = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .hasConfiguration
         ) ?? false
     }
 }
@@ -119,11 +127,20 @@ public actor ProfileBackupService {
             }
         }
 
+        let hasConfiguration = fileManager.fileExists(atPath: layout.configurationDirectory.path)
+        if hasConfiguration {
+            try fileManager.copyItem(
+                at: layout.configurationDirectory,
+                to: staging.appendingPathComponent("Configuration", isDirectory: true)
+            )
+        }
+
         let manifest = MClashBackupManifest(
             createdAt: date,
             hasSettings: hasSettings,
             hasActiveProfileState: hasActiveState,
-            hasProfileRuntimePlan: hasRuntimePlan
+            hasProfileRuntimePlan: hasRuntimePlan,
+            hasConfiguration: hasConfiguration
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -238,6 +255,17 @@ public actor ProfileBackupService {
                 )
             )
         }
+        if manifest.hasConfiguration {
+            let backupConfiguration = backup.appendingPathComponent("Configuration", isDirectory: true)
+            var configurationIsDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: backupConfiguration.path, isDirectory: &configurationIsDirectory), configurationIsDirectory.boolValue else {
+                throw ProfileBackupError.incompleteBackup("Configuration")
+            }
+            try fileManager.copyItem(
+                at: backupConfiguration,
+                to: incoming.appendingPathComponent("Configuration", isDirectory: true)
+            )
+        }
 
         let targets = restoreTargets(
             layout: layout,
@@ -344,38 +372,48 @@ public actor ProfileBackupService {
         manifest: MClashBackupManifest
     ) -> [RestoreTarget] {
         let root = layout.rootDirectory
-        return [
-            RestoreTarget(
-                incoming: incoming.appendingPathComponent("Profiles", isDirectory: true),
-                destination: layout.profilesDirectory,
-                previous: previous.appendingPathComponent("Profiles", isDirectory: true)
-            ),
-            RestoreTarget(
-                incoming: manifest.hasSettings
-                    ? incoming.appendingPathComponent("Settings", isDirectory: true)
-                    : nil,
-                destination: root.appendingPathComponent("Settings", isDirectory: true),
-                previous: previous.appendingPathComponent("Settings", isDirectory: true)
-            ),
-            RestoreTarget(
-                incoming: manifest.hasActiveProfileState
-                    ? incoming.appendingPathComponent("State/active-profile.json")
-                    : nil,
-                destination: layout.activeProfileStateURL,
-                previous: previous.appendingPathComponent("active-profile.json")
-            ),
-            RestoreTarget(
-                incoming: manifest.hasProfileRuntimePlan
-                    ? incoming.appendingPathComponent(
-                        "State/profile-runtime-plan.json"
-                    )
-                    : nil,
-                destination: layout.profileRuntimePlanURL,
-                previous: previous.appendingPathComponent(
-                    "profile-runtime-plan.json"
+        var targets = [RestoreTarget(
+            incoming: incoming.appendingPathComponent("Profiles", isDirectory: true),
+            destination: layout.profilesDirectory,
+            previous: previous.appendingPathComponent("Profiles", isDirectory: true)
+        )]
+        if manifest.hasSettings {
+            targets.append(
+                RestoreTarget(
+                    incoming: incoming.appendingPathComponent("Settings", isDirectory: true),
+                    destination: root.appendingPathComponent("Settings", isDirectory: true),
+                    previous: previous.appendingPathComponent("Settings", isDirectory: true)
                 )
-            ),
-        ]
+            )
+        }
+        if manifest.hasActiveProfileState {
+            targets.append(
+                RestoreTarget(
+                    incoming: incoming.appendingPathComponent("State/active-profile.json"),
+                    destination: layout.activeProfileStateURL,
+                    previous: previous.appendingPathComponent("active-profile.json")
+                )
+            )
+        }
+        if manifest.hasProfileRuntimePlan {
+            targets.append(
+                RestoreTarget(
+                    incoming: incoming.appendingPathComponent("State/profile-runtime-plan.json"),
+                    destination: layout.profileRuntimePlanURL,
+                    previous: previous.appendingPathComponent("profile-runtime-plan.json")
+                )
+            )
+        }
+        if manifest.hasConfiguration {
+            targets.append(
+                RestoreTarget(
+                    incoming: incoming.appendingPathComponent("Configuration", isDirectory: true),
+                    destination: layout.configurationDirectory,
+                    previous: previous.appendingPathComponent("Configuration", isDirectory: true)
+                )
+            )
+        }
+        return targets
     }
 
     private func validateBackupTree(_ root: URL) throws {
@@ -386,8 +424,8 @@ public actor ProfileBackupService {
         }
         guard let enumerator = fileManager.enumerator(
             at: root,
-            includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
+            includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey, .fileSizeKey],
+            options: []
         ) else {
             throw ProfileBackupError.notABackupPackage
         }

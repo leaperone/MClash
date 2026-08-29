@@ -125,6 +125,64 @@ public actor RuntimeOverrideActivationCoordinator {
         )
     }
 
+    /// Activates a configuration produced by the strategy-owned MClash
+    /// compiler. Unlike the legacy profile path this never reads or patches
+    /// the source profile YAML; the supplied bytes are the complete runtime
+    /// document. ProfileStore is retained only for atomic runtime replacement
+    /// and active-session bookkeeping during the migration period.
+    @discardableResult
+    public func activateCompiledConfiguration(
+        _ id: ProfileID,
+        baseConfiguration: Data,
+        overrides: RuntimeOverrides = .empty,
+        networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
+        profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil,
+        routeListeners: [ProfileRouteListenerSpec] = [],
+        in profileStore: ProfileStore,
+        validator: any ProfileValidating
+    ) async throws -> RuntimeConfigurationActivation {
+        let currentOverrides = mixedOnly(overrides)
+        let runtimeData = try composer.applying(
+            currentOverrides,
+            to: baseConfiguration,
+            networkExtensionListener: networkExtensionListener,
+            profileMixedListener: profileMixedListener,
+            routeListeners: routeListeners
+        )
+        let stagedURL = try await profileStore.stageRuntimeConfiguration(
+            data: runtimeData,
+            preferredName: "compiled-config.yaml"
+        )
+        do {
+            try await validator.validate(configurationAt: stagedURL)
+        } catch {
+            try? FileManager.default.removeItem(at: stagedURL)
+            throw error
+        }
+
+        let previousProfileID = try await profileStore.activeProfileID()
+        let receipt: FileReplacementReceipt
+        do {
+            receipt = try await profileStore.replaceRuntimeConfiguration(withStagedFile: stagedURL)
+        } catch {
+            try? FileManager.default.removeItem(at: stagedURL)
+            throw error
+        }
+        do {
+            try await profileStore.setActiveProfile(id)
+            try await profileStore.commitReplacement(receipt)
+        } catch {
+            try? await profileStore.rollbackReplacement(receipt)
+            try? await profileStore.setActiveProfile(previousProfileID)
+            throw error
+        }
+        return RuntimeConfigurationActivation(
+            profileID: id,
+            previousProfileID: previousProfileID,
+            configurationURL: profileStore.layout.runtimeConfigurationURL
+        )
+    }
+
     private func stagedRuntimeConfiguration(
         for id: ProfileID,
         overrides: RuntimeOverrides,
