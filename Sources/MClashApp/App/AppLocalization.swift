@@ -19,6 +19,13 @@ enum AppLocalization {
         )
     }
 
+    static func relativeDate(_ date: Date) -> String {
+        date.formatted(
+            .relative(presentation: .named)
+                .locale(selectedLanguage.locale)
+        )
+    }
+
     private static var selectedLanguage: AppLanguage {
         guard let rawValue = UserDefaults.standard.string(forKey: AppLanguage.storageKey) else {
             return .system

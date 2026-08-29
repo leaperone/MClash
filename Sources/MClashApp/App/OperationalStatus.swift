@@ -51,6 +51,15 @@ struct OperationalIssue: Identifiable, Equatable, Sendable {
     let secondaryActionTitle: String?
     let secondaryAction: Action?
 
+    var localizedTitle: String { AppLocalization.string(title) }
+    var localizedConsequence: String { AppLocalization.string(consequence) }
+    var localizedPrimaryActionTitle: String? {
+        primaryActionTitle.map { AppLocalization.string($0) }
+    }
+    var localizedSecondaryActionTitle: String? {
+        secondaryActionTitle.map { AppLocalization.string($0) }
+    }
+
     init(
         id: String,
         severity: Severity,
@@ -289,7 +298,10 @@ extension AppModel {
                     id: "live-data.\(stream.presentationIdentifier)",
                     severity: stream == .connections || stream == .traffic ? .warning : .information,
                     subsystem: .liveData,
-                    title: "\(stream.presentationTitle) data is reconnecting",
+                    title: AppLocalization.format(
+                        "%@ data is reconnecting",
+                        AppLocalization.string(stream.presentationTitle)
+                    ),
                     consequence: stream.staleDataConsequence,
                     technicalDetail: liveStreamHealth[stream]?.lastError,
                     primaryActionTitle: stream == .appRouting ? "Open Activity" : "View Logs",
@@ -370,20 +382,27 @@ extension AppModel {
         let captureSummary: String
         switch (systemProxyIsOn, appRoutingIsOn) {
         case (true, true):
-            captureSummary = "System Proxy + App Routing"
+            captureSummary = AppLocalization.string("System Proxy + App Routing")
         case (true, false):
-            captureSummary = "System Proxy"
+            captureSummary = AppLocalization.string("System Proxy")
         case (false, true):
-            captureSummary = "App Routing · \(activeRuleCount) active \(activeRuleCount == 1 ? "rule" : "rules")"
+            captureSummary = AppLocalization.format(
+                activeRuleCount == 1
+                    ? "App Routing · %d active rule"
+                    : "App Routing · %d active rules",
+                activeRuleCount
+            )
         case (false, false):
-            captureSummary = isConnected ? "Local proxy listeners only" : "Traffic capture off"
+            captureSummary = AppLocalization.string(
+                isConnected ? "Local proxy listeners only" : "Traffic capture off"
+            )
         }
 
         if !issues.filter({ $0.severity == .error }).isEmpty {
             return OperationalSnapshot(
                 level: .attention,
-                title: "Routing needs attention",
-                detail: issues[0].consequence,
+                title: AppLocalization.string("Routing needs attention"),
+                detail: issues[0].localizedConsequence,
                 captureSummary: captureSummary,
                 activeCaptureCount: activeCaptureCount,
                 activeRuleCount: activeRuleCount,
@@ -395,8 +414,10 @@ extension AppModel {
         if preparationInProgress || isBusy || networkStateTransitionInProgress {
             return OperationalSnapshot(
                 level: .transitioning,
-                title: "Preparing routing state",
-                detail: "MClash is applying a network change and will verify the resulting state.",
+                title: AppLocalization.string("Preparing routing state"),
+                detail: AppLocalization.string(
+                    "MClash is applying a network change and will verify the resulting state."
+                ),
                 captureSummary: captureSummary,
                 activeCaptureCount: activeCaptureCount,
                 activeRuleCount: activeRuleCount,
@@ -408,10 +429,10 @@ extension AppModel {
         guard isConnected else {
             return OperationalSnapshot(
                 level: .disconnected,
-                title: "Traffic capture is off",
+                title: AppLocalization.string("Traffic capture off"),
                 detail: activeProfile == nil
-                    ? "Choose a profile to start routing traffic."
-                    : "The selected profile is ready when you want to connect.",
+                    ? AppLocalization.string("Choose a profile to start routing traffic.")
+                    : AppLocalization.string("The selected profile is ready when you want to connect."),
                 captureSummary: captureSummary,
                 activeCaptureCount: activeCaptureCount,
                 activeRuleCount: activeRuleCount,
@@ -423,8 +444,10 @@ extension AppModel {
         guard activeCaptureCount > 0 else {
             return OperationalSnapshot(
                 level: .localOnly,
-                title: "Core ready · macOS capture off",
-                detail: "Only apps explicitly configured to use MClash's local proxy listeners are routed.",
+                title: AppLocalization.string("Core ready · macOS capture off"),
+                detail: AppLocalization.string(
+                    "Only apps explicitly configured to use MClash's local proxy listeners are routed."
+                ),
                 captureSummary: captureSummary,
                 activeCaptureCount: activeCaptureCount,
                 activeRuleCount: activeRuleCount,
@@ -435,10 +458,17 @@ extension AppModel {
 
         return OperationalSnapshot(
             level: issues.isEmpty ? .active : .attention,
-            title: issues.isEmpty ? "Traffic routing is active" : "Routing is active with warnings",
+            title: AppLocalization.string(
+                issues.isEmpty ? "Traffic routing is active" : "Routing is active with warnings"
+            ),
             detail: latestRouteAt.map {
-                "Mihomo last reported a non-direct route \($0.formatted(.relative(presentation: .named)))."
-            } ?? "Capture configuration is verified; Mihomo has not yet reported a non-direct route.",
+                AppLocalization.format(
+                    "Mihomo last reported a non-direct route %@.",
+                    AppLocalization.relativeDate($0)
+                )
+            } ?? AppLocalization.string(
+                "Capture configuration is verified; Mihomo has not yet reported a non-direct route."
+            ),
             captureSummary: captureSummary,
             activeCaptureCount: activeCaptureCount,
             activeRuleCount: activeRuleCount,
@@ -447,6 +477,10 @@ extension AppModel {
         )
     }
 
+}
+
+extension OperationalIssue.Subsystem {
+    var localizedTitle: String { AppLocalization.string(rawValue) }
 }
 
 private extension AppModel.StorageInitializationFailure.Component {

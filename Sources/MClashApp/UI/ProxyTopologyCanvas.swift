@@ -299,6 +299,7 @@ private struct ProxyTopologyInteractiveView: View {
             }
             .disabled(effectiveZoom <= 0.65)
             .help("Zoom Out")
+            .accessibilityLabel(AppLocalization.string("Zoom Out"))
 
             Text("\(Int(effectiveZoom * 100))%")
                 .font(.caption.monospacedDigit())
@@ -312,6 +313,7 @@ private struct ProxyTopologyInteractiveView: View {
             }
             .disabled(effectiveZoom >= 1.6)
             .help("Zoom In")
+            .accessibilityLabel(AppLocalization.string("Zoom In"))
 
             Button("Reset") { zoom = 1 }
                 .help("Reset topology scale to 100 percent")

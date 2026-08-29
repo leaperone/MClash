@@ -8,7 +8,7 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MClashLayout.sectionSpacing) {
-                OverviewOperationalSummary(model: model)
+                OverviewOperationalSummary(model: model, layout: layout)
                 OverviewAttentionSummary(model: model)
                 OverviewNetworkStateSection(model: model, layout: layout)
                 OverviewLiveDataNotice(model: model)
@@ -64,11 +64,42 @@ struct OverviewView: View {
 
 private struct OverviewOperationalSummary: View {
     @Bindable var model: AppModel
+    let layout: OverviewLayout
 
+    @ViewBuilder
     var body: some View {
         let snapshot = model.operationalSnapshot
         let issues = model.operationalIssues
 
+        Group {
+            if layout == .compact {
+                VStack(alignment: .leading, spacing: 12) {
+                    summaryHeading(snapshot)
+                    statusPills(snapshot, stacked: true)
+                    summaryAction(issues)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(alignment: .top, spacing: 16) {
+                    summaryHeading(snapshot)
+                    Spacer(minLength: 20)
+                    summaryAction(issues)
+                }
+            }
+        }
+        .padding(18)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(color(for: snapshot.level).opacity(0.18), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func summaryHeading(_ snapshot: OperationalSnapshot) -> some View {
         HStack(alignment: .top, spacing: 16) {
             Image(systemName: symbol(for: snapshot.level))
                 .font(.system(size: 28, weight: .semibold))
@@ -84,47 +115,58 @@ private struct OverviewOperationalSummary: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 8) {
-                    statusPill(
-                        snapshot.captureSummary,
-                        symbol: "arrow.triangle.branch"
-                    )
-                    if model.isConnected {
-                        statusPill(
-                            connectionStatusTitle,
-                            symbol: "arrow.left.arrow.right"
-                        )
-                    }
-                    if model.liveDataIsDegraded {
-                        statusPill("Live data stale", symbol: "clock.badge.exclamationmark")
-                    }
+                if layout != .compact {
+                    statusPills(snapshot, stacked: false)
                 }
-            }
-
-            Spacer(minLength: 20)
-
-            if !issues.isEmpty {
-                Button("Review \(issues.count) \(issues.count == 1 ? "Issue" : "Issues")") {
-                    model.selection = .attention
-                }
-                .buttonStyle(.borderedProminent)
-            } else if !model.isConnected {
-                Button("Connect") { Task { await model.connect() } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!model.canPerform(.connection) || model.activeProfile == nil)
             }
         }
-        .padding(18)
-        .background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+    }
+
+    @ViewBuilder
+    private func statusPills(_ snapshot: OperationalSnapshot, stacked: Bool) -> some View {
+        if stacked {
+            VStack(alignment: .leading, spacing: 8) {
+                statusPillContent(snapshot)
+            }
+        } else {
+            HStack(spacing: 8) {
+                statusPillContent(snapshot)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func statusPillContent(_ snapshot: OperationalSnapshot) -> some View {
+        statusPill(
+            snapshot.captureSummary,
+            symbol: "arrow.triangle.branch"
         )
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(color(for: snapshot.level).opacity(0.18), lineWidth: 1)
+        if model.isConnected {
+            statusPill(
+                connectionStatusTitle,
+                symbol: "arrow.left.arrow.right"
+            )
         }
-        .accessibilityElement(children: .contain)
+        if model.liveDataIsDegraded {
+            statusPill("Live data stale", symbol: "clock.badge.exclamationmark")
+        }
+    }
+
+    @ViewBuilder
+    private func summaryAction(_ issues: [OperationalIssue]) -> some View {
+        if !issues.isEmpty {
+            Button(AppLocalization.format(
+                issues.count == 1 ? "Review %@ Issue" : "Review %@ Issues",
+                formattedCount(issues.count)
+            )) {
+                model.selection = .attention
+            }
+            .buttonStyle(.borderedProminent)
+        } else if !model.isConnected {
+            Button("Connect") { Task { await model.connect() } }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canPerform(.connection) || model.activeProfile == nil)
+        }
     }
 
     private func statusPill(_ title: String, symbol: String) -> some View {
@@ -180,9 +222,9 @@ private struct OverviewAttentionSummary: View {
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(issue.title)
+                    Text(issue.localizedTitle)
                         .font(.callout.weight(.semibold))
-                    Text(issue.consequence)
+                    Text(issue.localizedConsequence)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

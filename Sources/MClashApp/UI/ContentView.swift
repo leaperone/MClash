@@ -43,40 +43,31 @@ struct ContentView: View {
                 // Keep every destination inside the finite detail-column size.
                 // Wide Tables must not feed their intrinsic width back into
                 // NavigationSplitView and displace or blank the sidebar.
-                ZStack(alignment: .top) {
-                    destinationView
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-
-                    if let errorMessage = activeErrorMessage {
-                        ErrorBanner(
-                            message: errorMessage,
-                            retryNetworkRestore: model.systemProxyRecoveryRequired ? {
-                                Task { await model.disableSystemProxy() }
-                            } : nil,
-                            isRestoringNetwork: model.isPerforming(.changeSystemProxy),
-                            showLogs: {
-                                model.selection = .logs
-                                if !model.systemProxyRecoveryRequired {
-                                    model.errorMessage = nil
-                                }
-                            },
-                            dismiss: model.systemProxyRecoveryRequired
-                                ? nil
-                                : { model.errorMessage = nil }
-                        )
-                        .frame(maxWidth: 720)
-                        .padding(.horizontal, MClashLayout.pagePadding)
-                        // Keep the destination's primary header usable while an
-                        // operation error is visible. App Routing and Traffic
-                        // both reserve a stable header lane at the top of their
-                        // page; the banner floats immediately below that lane
-                        // instead of covering its tabs and switches.
-                        .padding(.top, errorBannerTopClearance)
-                        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-                        .zIndex(10)
+                destinationView
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if let errorMessage = activeErrorMessage {
+                            ErrorBanner(
+                                message: errorMessage,
+                                retryNetworkRestore: model.systemProxyRecoveryRequired ? {
+                                    Task { await model.disableSystemProxy() }
+                                } : nil,
+                                isRestoringNetwork: model.isPerforming(.changeSystemProxy),
+                                showLogs: {
+                                    model.selection = .logs
+                                    if !model.systemProxyRecoveryRequired {
+                                        model.errorMessage = nil
+                                    }
+                                },
+                                dismiss: model.systemProxyRecoveryRequired
+                                    ? nil
+                                    : { model.errorMessage = nil }
+                            )
+                            .frame(maxWidth: 720)
+                            .padding(.horizontal, MClashLayout.pagePadding)
+                            .padding(.vertical, 8)
+                        }
                     }
-                }
-                .frame(width: geometry.size.width, height: geometry.size.height)
             }
             .mclashPageSurface()
         }
@@ -120,17 +111,6 @@ struct ContentView: View {
             return message
         }
         return model.errorMessage
-    }
-
-    private var errorBannerTopClearance: CGFloat {
-        switch model.selection ?? .overview {
-        case .appRouting:
-            94
-        case .connections:
-            56
-        case .overview, .proxies, .profiles, .rules, .providers, .attention, .logs, .settings:
-            56
-        }
     }
 
     private var pendingSubscriptionImportIsPresented: Binding<Bool> {

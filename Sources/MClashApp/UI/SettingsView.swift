@@ -614,6 +614,8 @@ private struct SystemProxySettingsEditor: View {
                         TextEditor(text: $customBypassText)
                             .font(.body.monospaced())
                             .frame(minHeight: 110)
+                            .accessibilityLabel(AppLocalization.string("Custom domains or patterns"))
+                            .accessibilityHint(AppLocalization.string("One value per line"))
                         Text("Enter one value per line, for example *.example.com.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -1065,16 +1067,22 @@ private struct OptionalStringListField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Toggle(title, isOn: overrideEnabled)
+            Toggle(localizedTitle, isOn: overrideEnabled)
             if value != nil {
                 TextEditor(text: textValue)
                     .font(.body.monospaced())
                     .frame(minHeight: 70)
+                    .accessibilityLabel(localizedTitle)
+                    .accessibilityHint(AppLocalization.string("One value per line"))
                 Text("One value per line. An enabled empty list clears this field.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var localizedTitle: String {
+        AppLocalization.string(title)
     }
 
     private var overrideEnabled: Binding<Bool> {

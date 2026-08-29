@@ -223,8 +223,8 @@ struct AppRoutingView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                statusHeader
-                    .frame(height: 86)
+                statusHeader(compact: geometry.size.width < 900)
+                    .fixedSize(horizontal: false, vertical: true)
                 Divider()
 
                 ZStack {
@@ -360,7 +360,16 @@ struct AppRoutingView: View {
         }
     }
 
-    private var statusHeader: some View {
+    @ViewBuilder
+    private func statusHeader(compact: Bool) -> some View {
+        if compact {
+            compactStatusHeader
+        } else {
+            expandedStatusHeader
+        }
+    }
+
+    private var expandedStatusHeader: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 HStack(spacing: 7) {
@@ -375,38 +384,14 @@ struct AppRoutingView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Picker("App Routing workspace", selection: $workspace) {
-                    ForEach(Workspace.allCases) { item in
-                        Text(item.rawValue).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 240)
+                workspacePicker
 
                 profileScopePicker
 
-                HStack(spacing: 10) {
-                    Menu {
-                        Toggle("Include DNS with App Routing", isOn: dnsEnabled)
-                        Divider()
-                        Button("Open Attention") { model.selection = .attention }
-                        Button("Open Logs") { model.selection = .logs }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .help("App Routing options")
-
-                    Toggle("Enabled", isOn: enabled)
-                        .toggleStyle(.switch)
-                        .disabled(
-                            model.pendingNetworkCaptureEnabled != nil
-                                || !model.canPerform(.changeNetworkCapture)
-                        )
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                statusHeaderControls
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .frame(height: 48)
+            .padding(.vertical, 8)
 
             Divider()
 
@@ -418,14 +403,88 @@ struct AppRoutingView: View {
                 Text(compactStatusMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                     .help(compactStatusHelp)
                 Spacer(minLength: 12)
                 compactStatusActions
             }
-            .frame(height: 37)
+            .padding(.vertical, 7)
         }
         .padding(.horizontal, MClashLayout.pagePadding)
+    }
+
+    private var compactStatusHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Label(statusTitle, systemImage: statusSymbol)
+                    .font(.headline)
+                    .foregroundStyle(statusColor)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+
+                Spacer(minLength: 4)
+
+                statusHeaderControls
+            }
+
+            HStack(spacing: 8) {
+                workspacePicker
+                    .frame(maxWidth: .infinity)
+                profileScopePicker
+                    .frame(minWidth: 130, idealWidth: 160, maxWidth: 220)
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: compactStatusSymbol)
+                    .foregroundStyle(compactStatusColor)
+                    .frame(width: 16)
+                    .accessibilityHidden(true)
+                Text(compactStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(compactStatusHelp)
+                    .layoutPriority(1)
+                Spacer(minLength: 4)
+                compactStatusActions
+            }
+        }
+        .padding(.horizontal, MClashLayout.pagePadding)
+        .padding(.vertical, 8)
+    }
+
+    private var workspacePicker: some View {
+        Picker("App Routing workspace", selection: $workspace) {
+            ForEach(Workspace.allCases) { item in
+                Text(item.rawValue).tag(item)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(minWidth: 200, idealWidth: 240, maxWidth: 320)
+    }
+
+    private var statusHeaderControls: some View {
+        HStack(spacing: 10) {
+            Menu {
+                Toggle("Include DNS with App Routing", isOn: dnsEnabled)
+                Divider()
+                Button("Open Attention") { model.selection = .attention }
+                Button("Open Logs") { model.selection = .logs }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .help("App Routing options")
+            .accessibilityLabel(AppLocalization.string("App Routing options"))
+
+            Toggle("Enabled", isOn: enabled)
+                .toggleStyle(.switch)
+                .disabled(
+                    model.pendingNetworkCaptureEnabled != nil
+                        || !model.canPerform(.changeNetworkCapture)
+                )
+        }
     }
 
     private var profileScopePicker: some View {
@@ -438,7 +497,7 @@ struct AppRoutingView: View {
             }
             Text("Direct / System").tag(ProfileScope.system)
         }
-        .frame(width: 170)
+        .frame(minWidth: 130, idealWidth: 170, maxWidth: 220)
         .help("Show all profiles together or focus on one profile")
     }
 
@@ -551,7 +610,7 @@ struct AppRoutingView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .frame(width: 190, alignment: .trailing)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var dataPlaneStatus: some View {
@@ -1102,6 +1161,8 @@ struct AppRoutingView: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
                     .onTapGesture(count: 2) { edit(rule) }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { edit(rule) }
             }
             .width(min: 110, ideal: 170)
 
@@ -1194,6 +1255,11 @@ struct AppRoutingView: View {
             }
         }
         .onDeleteCommand { removeSelectedRule() }
+        .onKeyPress(.return) {
+            guard let selectedRule else { return .ignored }
+            edit(selectedRule)
+            return .handled
+        }
     }
 
     private var rulesWorkspace: some View {
@@ -1270,9 +1336,10 @@ struct AppRoutingView: View {
                         .fontWeight(.medium)
                         .lineLimit(1)
                         .onTapGesture(count: 2) {
-                            selectedActivityID = activity.flowIdentifier
-                            activityInspectorPresented = true
+                            inspectActivity(activity)
                         }
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { inspectActivity(activity) }
                     Text("PID \(activity.source.processIdentifier)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1341,8 +1408,24 @@ struct AppRoutingView: View {
             }
             .width(min: 72, ideal: 88)
         }
+        .contextMenu(forSelectionType: UUID.self) { selection in
+            if let id = selection.first,
+               let activity = activities.first(where: { $0.flowIdentifier == id }) {
+                Button("Inspect") { inspectActivity(activity) }
+            }
+        } primaryAction: { selection in
+            if let id = selection.first,
+               let activity = activities.first(where: { $0.flowIdentifier == id }) {
+                inspectActivity(activity)
+            }
+        }
         .onChange(of: selectedActivityID) { _, identifier in
             if identifier == nil { activityInspectorPresented = false }
+        }
+        .onKeyPress(.return) {
+            guard let selectedActivity else { return .ignored }
+            inspectActivity(selectedActivity)
+            return .handled
         }
     }
 
@@ -1399,12 +1482,14 @@ struct AppRoutingView: View {
                 Image(systemName: "chevron.up")
             }
             .help("Move rule up")
+            .accessibilityLabel(AppLocalization.string("Move rule up"))
             .disabled(!canMoveSelectedRule(by: -1))
 
             Button(action: { moveSelectedRule(by: 1) }) {
                 Image(systemName: "chevron.down")
             }
             .help("Move rule down")
+            .accessibilityLabel(AppLocalization.string("Move rule down"))
             .disabled(!canMoveSelectedRule(by: 1))
 
             Spacer()
@@ -1511,6 +1596,11 @@ struct AppRoutingView: View {
     private var selectedActivity: AppRoutingActivity? {
         guard let selectedActivityID else { return nil }
         return activityPresentation.activitiesByIdentifier[selectedActivityID]
+    }
+
+    private func inspectActivity(_ activity: AppRoutingActivity) {
+        selectedActivityID = activity.flowIdentifier
+        activityInspectorPresented = true
     }
 
     @ViewBuilder

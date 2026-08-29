@@ -16,12 +16,10 @@ struct MenuBarContent: View {
                 Color.clear
             }
         }
-        .frame(
-            width: 344,
-            height: contentIsVisible ? popoverHeight : retainedPopoverHeight
-        )
+        .frame(minWidth: 320, idealWidth: 344, maxWidth: 420)
+        .frame(height: contentIsVisible ? popoverHeight : retainedPopoverHeight)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("MClash quick controls")
+        .accessibilityLabel(AppLocalization.string("MClash quick controls"))
         .background {
             MenuBarWindowVisibilityView { isVisible in
                 if contentIsVisible, !isVisible {
@@ -91,7 +89,7 @@ struct MenuBarContent: View {
                 Text(compactStatusSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -250,7 +248,7 @@ struct MenuBarContent: View {
                         Text(attentionTitle)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.primary)
-                        Text(model.operationalIssues[0].consequence)
+                        Text(model.operationalIssues[0].localizedConsequence)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
@@ -264,7 +262,7 @@ struct MenuBarContent: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(
-                "\(attentionTitle). \(model.operationalIssues[0].consequence)"
+                "\(attentionTitle). \(model.operationalIssues[0].localizedConsequence)"
             )
         } else {
             Button {
@@ -941,8 +939,11 @@ struct MenuBarContent: View {
     }
 
     private var attentionTitle: String {
-        "\(formattedCount(model.operationalIssues.count)) "
-            + (model.operationalIssues.count == 1 ? "item needs attention" : "items need attention")
+        let count = model.operationalIssues.count
+        return AppLocalization.format(
+            count == 1 ? "%@ item needs attention" : "%@ items need attention",
+            formattedCount(count)
+        )
     }
 
     private var attentionColor: Color {

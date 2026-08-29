@@ -7210,7 +7210,11 @@ final class AppModel {
                     attempt: failureAttempt
                 )
                 if failureAttempt >= Self.appRoutingProviderFailureThreshold {
-                    let message = "MClash lost contact with the App Routing provider after \(failureAttempt) consecutive activity checks. Traffic capture can no longer be verified. Last error: \(error.localizedDescription)"
+                    let message = AppLocalization.format(
+                        "MClash lost contact with the App Routing provider after %@ consecutive activity checks. Traffic capture can no longer be verified. Last error: %@",
+                        String(failureAttempt),
+                        error.localizedDescription
+                    )
                     networkCaptureState = .failed(message)
                     appendSupervisorLog(message)
                     return
@@ -7676,15 +7680,26 @@ final class AppModel {
             appRoutingProviderStatusFailureCount += 1
             let count = appRoutingProviderStatusFailureCount
             let reason = error.localizedDescription
-            appRoutingActivityError = "Provider verification failed: \(reason)"
+            appRoutingActivityError = AppLocalization.format(
+                "Provider verification failed: %@",
+                reason
+            )
             markStreamDegraded(.appRouting, error: error, attempt: count)
 
             if count >= Self.appRoutingProviderFailureThreshold {
-                let message = "App Routing is no longer verified after \(count) consecutive provider checks. Expected active revision \(expectedRevision). Last error: \(reason)"
+                let message = AppLocalization.format(
+                    "App Routing is no longer verified after %@ consecutive provider checks. Expected active revision %@. Last error: %@",
+                    String(count),
+                    String(expectedRevision),
+                    reason
+                )
                 return (false, message)
             } else if count == 1 {
                 appendSupervisorLog(
-                    "App Routing provider verification is retrying: \(reason)"
+                    AppLocalization.format(
+                        "App Routing provider verification is retrying: %@",
+                        reason
+                    )
                 )
             }
             return (false, nil)
