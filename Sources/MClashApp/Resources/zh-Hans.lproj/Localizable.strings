@@ -1,5 +1,41 @@
 /* MClash 简体中文本地化。 */
 
+"Configuration" = "配置";
+"Entrances" = "入口";
+"Workspaces" = "工作方案";
+"Nodes" = "节点";
+"Proxy Groups" = "代理组";
+"Add Source?" = "添加来源？";
+"Import Source" = "导入来源";
+"Organize" = "整理";
+"Unified strategy" = "统一策略";
+"Unified strategy: imports provide nodes only" = "统一策略：导入内容仅提供节点";
+"Hide Inspector" = "隐藏检查器";
+"Show Inspector" = "显示检查器";
+"Search %@" = "搜索%@";
+"No matching items" = "没有匹配项";
+"Select an item" = "选择一个项目";
+"Use This Workspace" = "使用此工作方案";
+"Toggle Enabled" = "切换启用状态";
+"Add %@" = "添加%@";
+"No Workspace" = "没有工作方案";
+"Capture application traffic using the unified MClash rules" = "使用 MClash 统一规则捕获应用流量";
+"Legacy application capture is active until a MClash Workspace is selected" = "选择 MClash 工作方案前使用旧版应用捕获规则";
+"App Routing using unified MClash rules" = "使用 MClash 统一规则的应用路由";
+"App Routing using legacy profile rules" = "使用旧配置规则的应用路由";
+"Node" = "节点";
+"Proxy Group" = "代理组";
+"Entrance" = "入口";
+"Alias (Optional)" = "别名（可选）";
+"Domain suffix (Optional)" = "域名后缀（可选）";
+"Port (Optional)" = "端口（可选）";
+"Bind Address" = "绑定地址";
+"Name is required." = "名称不能为空。";
+"Bind address is required." = "绑定地址不能为空。";
+"Port must be between 1 and 65535." = "端口必须在 1 到 65535 之间。";
+"No nodes imported yet." = "尚未导入节点。";
+"Sources are refreshed from the original profile and provide node data only." = "来源从原始配置刷新，且只提供节点数据。";
+
 "#" = "#";
 "1.1.1.1, 104.18.0.0/16" = "1.1.1.1, 104.18.0.0/16";
 "A flow may match any destination below. If an application is selected, both the application and one of these destinations must match." = "一个流量连接可以匹配下方任一目标。如果选择了应用，则必须同时匹配该应用和其中一个目标。";

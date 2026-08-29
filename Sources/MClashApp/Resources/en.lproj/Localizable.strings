@@ -1,5 +1,41 @@
 /* MClash English localization — source language. */
 
+"Configuration" = "Configuration";
+"Entrances" = "Entrances";
+"Workspaces" = "Workspaces";
+"Nodes" = "Nodes";
+"Proxy Groups" = "Proxy Groups";
+"Add Source?" = "Add Source?";
+"Import Source" = "Import Source";
+"Organize" = "Organize";
+"Unified strategy" = "Unified strategy";
+"Unified strategy: imports provide nodes only" = "Unified strategy: imports provide nodes only";
+"Hide Inspector" = "Hide Inspector";
+"Show Inspector" = "Show Inspector";
+"Search %@" = "Search %@";
+"No matching items" = "No matching items";
+"Select an item" = "Select an item";
+"Use This Workspace" = "Use This Workspace";
+"Toggle Enabled" = "Toggle Enabled";
+"Add %@" = "Add %@";
+"No Workspace" = "No Workspace";
+"Capture application traffic using the unified MClash rules" = "Capture application traffic using the unified MClash rules";
+"Legacy application capture is active until a MClash Workspace is selected" = "Legacy application capture is active until a MClash Workspace is selected";
+"App Routing using unified MClash rules" = "App Routing using unified MClash rules";
+"App Routing using legacy profile rules" = "App Routing using legacy profile rules";
+"Node" = "Node";
+"Proxy Group" = "Proxy Group";
+"Entrance" = "Entrance";
+"Alias (Optional)" = "Alias (Optional)";
+"Domain suffix (Optional)" = "Domain suffix (Optional)";
+"Port (Optional)" = "Port (Optional)";
+"Bind Address" = "Bind Address";
+"Name is required." = "Name is required.";
+"Bind address is required." = "Bind address is required.";
+"Port must be between 1 and 65535." = "Port must be between 1 and 65535.";
+"No nodes imported yet." = "No nodes imported yet.";
+"Sources are refreshed from the original profile and provide node data only." = "Sources are refreshed from the original profile and provide node data only.";
+
 "#" = "#";
 "1.1.1.1, 104.18.0.0/16" = "1.1.1.1, 104.18.0.0/16";
 "A flow may match any destination below. If an application is selected, both the application and one of these destinations must match." = "A flow may match any destination below. If an application is selected, both the application and one of these destinations must match.";

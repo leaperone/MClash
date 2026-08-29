@@ -1,4 +1,40 @@
 /* MClash 日本語ローカライズ */
+"Alias (Optional)" = "エイリアス（任意）";
+"App Routing using legacy profile rules" = "従来のプロファイルルールを使う App Routing";
+"App Routing using unified MClash rules" = "MClash 統合ルールを使う App Routing";
+"Bind Address" = "バインドアドレス";
+"Bind address is required." = "バインドアドレスが必要です。";
+"Capture application traffic using the unified MClash rules" = "MClash 統合ルールでアプリ通信をキャプチャ";
+"Domain suffix (Optional)" = "ドメインサフィックス（任意）";
+"Entrance" = "入口";
+"Legacy application capture is active until a MClash Workspace is selected" = "MClash ワークスペースを選択するまで従来のアプリキャプチャを使用します";
+"Name is required." = "名前は必須です。";
+"No nodes imported yet." = "まだノードを読み込んでいません。";
+"Node" = "ノード";
+"Port (Optional)" = "ポート（任意）";
+"Port must be between 1 and 65535." = "ポートは 1～65535 の範囲で指定してください。";
+"Proxy Group" = "プロキシグループ";
+"Sources are refreshed from the original profile and provide node data only." = "ソースは元のプロファイルから更新され、ノードデータのみを提供します。";
+
+"Configuration" = "設定";
+"Entrances" = "入口";
+"Workspaces" = "ワークスペース";
+"Nodes" = "ノード";
+"Proxy Groups" = "プロキシグループ";
+"Add Source?" = "ソースを追加しますか？";
+"Import Source" = "ソースを読み込む";
+"Organize" = "整理";
+"Unified strategy" = "統合ストラテジー";
+"Unified strategy: imports provide nodes only" = "統合ストラテジー：読み込みはノードのみ";
+"Hide Inspector" = "インスペクタを隠す";
+"Show Inspector" = "インスペクタを表示";
+"Search %@" = "%@を検索";
+"No matching items" = "一致する項目はありません";
+"Select an item" = "項目を選択";
+"Use This Workspace" = "このワークスペースを使用";
+"Toggle Enabled" = "有効状態を切り替え";
+"Add %@" = "%@を追加";
+"No Workspace" = "ワークスペースなし";
 
 "#" = "#";
 "1.1.1.1, 104.18.0.0/16" = "1.1.1.1, 104.18.0.0/16";

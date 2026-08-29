@@ -55,6 +55,38 @@ public struct ProfileDirectoryLayout: Equatable, Sendable {
         rootDirectory.appendingPathComponent("State", isDirectory: true)
     }
 
+    /// Authoritative MClash configuration storage. Imported profile files
+    /// remain under `Profiles` as read-only migration/audit snapshots; these
+    /// directories contain the strategy-owned model used to generate runtime
+    /// configuration.
+    public var configurationDirectory: URL {
+        rootDirectory.appendingPathComponent("Configuration", isDirectory: true)
+    }
+
+    public var sourcesDirectory: URL {
+        configurationDirectory.appendingPathComponent("Sources", isDirectory: true)
+    }
+
+    public var nodeCatalogDirectory: URL {
+        configurationDirectory.appendingPathComponent("Nodes", isDirectory: true)
+    }
+
+    public var workspacesDirectory: URL {
+        configurationDirectory.appendingPathComponent("Workspaces", isDirectory: true)
+    }
+
+    public var snapshotsDirectory: URL {
+        configurationDirectory.appendingPathComponent("Snapshots", isDirectory: true)
+    }
+
+    public var configurationManifestURL: URL {
+        configurationDirectory.appendingPathComponent("manifest.json", isDirectory: false)
+    }
+
+    public var configurationStagingDirectory: URL {
+        configurationDirectory.appendingPathComponent("Staging", isDirectory: true)
+    }
+
     public var activeProfileStateURL: URL {
         stateDirectory.appendingPathComponent("active-profile.json", isDirectory: false)
     }
@@ -86,6 +118,12 @@ public struct ProfileDirectoryLayout: Equatable, Sendable {
             rootDirectory,
             profilesDirectory,
             stateDirectory,
+            configurationDirectory,
+            sourcesDirectory,
+            nodeCatalogDirectory,
+            workspacesDirectory,
+            snapshotsDirectory,
+            configurationStagingDirectory,
             runtimeDirectory,
             runtimeStagingDirectory,
             trafficHistoryDirectory,

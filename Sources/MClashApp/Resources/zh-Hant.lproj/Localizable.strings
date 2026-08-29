@@ -1,4 +1,40 @@
 /* MClash 繁體中文在地化。 */
+"Alias (Optional)" = "別名（選填）";
+"App Routing using legacy profile rules" = "使用舊設定規則的 App Routing";
+"App Routing using unified MClash rules" = "使用 MClash 統一規則的 App Routing";
+"Bind Address" = "繫結位址";
+"Bind address is required." = "必須填寫繫結位址。";
+"Capture application traffic using the unified MClash rules" = "使用 MClash 統一規則擷取應用程式流量";
+"Domain suffix (Optional)" = "網域後綴（選填）";
+"Entrance" = "入口";
+"Legacy application capture is active until a MClash Workspace is selected" = "選取 MClash 工作方案前會使用舊版應用程式擷取規則";
+"Name is required." = "名稱為必填。";
+"No nodes imported yet." = "尚未匯入節點。";
+"Node" = "節點";
+"Port (Optional)" = "連接埠（選填）";
+"Port must be between 1 and 65535." = "連接埠必須介於 1 到 65535。";
+"Proxy Group" = "代理群組";
+"Sources are refreshed from the original profile and provide node data only." = "來源從原始設定重新整理，僅提供節點資料。";
+
+"Configuration" = "設定";
+"Entrances" = "入口";
+"Workspaces" = "工作方案";
+"Nodes" = "節點";
+"Proxy Groups" = "代理群組";
+"Add Source?" = "新增來源？";
+"Import Source" = "匯入來源";
+"Organize" = "整理";
+"Unified strategy" = "統一策略";
+"Unified strategy: imports provide nodes only" = "統一策略：匯入內容僅提供節點";
+"Hide Inspector" = "隱藏檢查器";
+"Show Inspector" = "顯示檢查器";
+"Search %@" = "搜尋%@";
+"No matching items" = "沒有符合項目";
+"Select an item" = "選取項目";
+"Use This Workspace" = "使用此工作方案";
+"Toggle Enabled" = "切換啟用狀態";
+"Add %@" = "新增%@";
+"No Workspace" = "沒有工作方案";
 
 "#" = "#";
 "1.1.1.1, 104.18.0.0/16" = "1.1.1.1, 104.18.0.0/16";
