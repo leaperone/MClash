@@ -330,19 +330,28 @@ struct ProxiesView: View {
                 .lineLimit(1)
             }
 
-            Spacer(minLength: 8)
-
-            if let group {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(group.name)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                    Text(groupStatusText(group))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+            Picker("Routing Mode", selection: modeBinding) {
+                Text("Rule").tag("rule")
+                Text("Global").tag("global")
+                Text("Direct").tag("direct")
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(
+                workspaceSnapshot == nil
+                    || (resolvedSelectedProfileID.map {
+                        !model.canPerform(.changeProfileMode($0))
+                    } ?? true)
+            )
+
+            if let profileID = resolvedSelectedProfileID,
+               model.isPerforming(.changeProfileMode(profileID)) {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Applying…")
+            }
+
+            Spacer(minLength: 8)
 
             proxyOptionsMenu(group: group)
         }
@@ -356,18 +365,6 @@ struct ProxiesView: View {
 
     private func proxyOptionsMenu(group: MihomoProxy?) -> some View {
         Menu {
-            Picker("Routing Mode", selection: modeBinding) {
-                Text("Rule").tag("rule")
-                Text("Global").tag("global")
-                Text("Direct").tag("direct")
-            }
-            .disabled(
-                workspaceSnapshot == nil
-                    || (resolvedSelectedProfileID.map {
-                        !model.canPerform(.changeProfileMode($0))
-                    } ?? true)
-            )
-
             Toggle("macOS System Proxy", isOn: systemProxyBinding)
                 .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
 
