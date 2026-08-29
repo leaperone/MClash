@@ -993,9 +993,13 @@ final class AutomationCommandGateway {
             let ruleCount = request.params["rules"]?.arrayValue?.count ?? 0
             let revision = request.params["expectedRevision"]?.intValue.map(String.init)
                 ?? AppLocalization.string("Missing")
-            let enabled = request.params["enabled"]?.boolValue.map(String.init)
+            let enabled = request.params["enabled"]?.boolValue.map {
+                AppLocalization.string($0 ? "On" : "Off")
+            }
                 ?? AppLocalization.string("Unchanged")
-            let dnsEnabled = request.params["dnsEnabled"]?.boolValue.map(String.init)
+            let dnsEnabled = request.params["dnsEnabled"]?.boolValue.map {
+                AppLocalization.string($0 ? "On" : "Off")
+            }
                 ?? AppLocalization.string("Unchanged")
             return AppLocalization.format(
                 "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@",
