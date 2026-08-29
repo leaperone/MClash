@@ -59,11 +59,15 @@ public enum SubscriptionURLRouterError: Error, Equatable, LocalizedError, Sendab
     public var errorDescription: String? {
         switch self {
         case .unsupportedScheme:
-            "This URL is not an MClash subscription link."
+            AppLocalization.string(
+                "This URL is not an MClash subscription link."
+            )
         case .unsupportedAction:
-            "This MClash URL action is not supported."
+            AppLocalization.string("This MClash URL action is not supported.")
         case .invalidSubscriptionURL:
-            "The subscription link does not contain a valid HTTPS URL."
+            AppLocalization.string(
+                "The subscription link does not contain a valid HTTPS URL."
+            )
         }
     }
 }

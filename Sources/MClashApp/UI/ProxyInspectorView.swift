@@ -50,7 +50,12 @@ struct ProxyInspectorView: View {
                             InspectorValueRow(
                                 "Latency",
                                 value: model.proxyDelay(for: node.name, in: group.name)
-                                    .map { "\($0) ms" } ?? "Not tested"
+                                    .map {
+                                        AppLocalization.format(
+                                            "%@ ms",
+                                            formattedCount($0)
+                                        )
+                                    } ?? AppLocalization.string("Not tested")
                             )
                         }
                         InspectorValueRow(
@@ -95,10 +100,14 @@ struct ProxyInspectorView: View {
 
     private var inspectorHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(group?.name ?? "Proxy Inspector")
+            Text(group?.name ?? AppLocalization.string("Proxy Inspector"))
                 .font(.headline)
                 .lineLimit(2)
-            Text(focusedNodeName.map { "Inspecting \($0)" } ?? "Select a node to inspect it")
+            Text(
+                focusedNodeName.map {
+                    AppLocalization.format("Inspecting %@", $0)
+                } ?? AppLocalization.string("Select a node to inspect it")
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -115,9 +124,11 @@ struct ProxyInspectorView: View {
 
     private func availabilityTitle(for node: MihomoProxy) -> String {
         guard let alive = model.proxyAlive(for: node.name, in: group?.name) else {
-            return "Not tested"
+            return AppLocalization.string("Not tested")
         }
-        return alive ? "Available" : "Unavailable"
+        return alive
+            ? AppLocalization.string("Available")
+            : AppLocalization.string("Unavailable")
     }
 
     private func capability(_ text: String) -> some View {
@@ -166,13 +177,13 @@ private struct ProxyInspectorGroupTrafficRows: View {
         InspectorValueRow(
             "Active Connections",
             value: presentation.connectionMetricsStale
-                ? "Stale"
+                ? AppLocalization.string("Stale")
                 : formattedCount(presentation.groupActiveConnections)
         )
         InspectorValueRow(
             "Observed Traffic",
             value: presentation.connectionMetricsStale
-                ? "Stale"
+                ? AppLocalization.string("Stale")
                 : formattedByteCount(presentation.groupObservedBytes)
         )
     }
@@ -193,10 +204,9 @@ private struct ProxyInspectorObservedTrafficSection: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
             }
-            Text(
-                "Actual routes observed during the last five minutes. "
-                    + "Showing up to eight routes with the most traffic."
-            )
+            Text(AppLocalization.string(
+                "Actual routes observed during the last five minutes. Showing up to eight routes with the most traffic."
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -659,7 +669,7 @@ private struct InspectorValueRow: View {
     let value: String
 
     init(_ title: String, value: String) {
-        self.title = title
+        self.title = AppLocalization.string(title)
         self.value = value
     }
 
@@ -668,7 +678,7 @@ private struct InspectorValueRow: View {
             LabeledContent(title) {
                 CopyableValueButton(
                     value: value,
-                    accessibilityName: title.lowercased(),
+                    accessibilityName: title,
                     font: .callout,
                     lineLimit: 2
                 )
@@ -680,7 +690,7 @@ private struct InspectorValueRow: View {
                     .foregroundStyle(.secondary)
                 CopyableValueButton(
                     value: value,
-                    accessibilityName: title.lowercased(),
+                    accessibilityName: title,
                     font: .callout,
                     lineLimit: 3
                 )
@@ -699,7 +709,7 @@ private struct InspectorSection<Content: View>: View {
         showsDivider: Bool = true,
         @ViewBuilder content: () -> Content
     ) {
-        self.title = title
+        self.title = AppLocalization.string(title)
         self.showsDivider = showsDivider
         self.content = content()
     }
@@ -801,19 +811,22 @@ private struct ProxyPathDetail: View {
     }
 
     private func stepDescription(after index: Int) -> String {
-        guard path.selectionHops.indices.contains(index) else { return "Final outlet" }
+        guard path.selectionHops.indices.contains(index) else {
+            return AppLocalization.string("Final outlet")
+        }
         let hop = path.selectionHops[index]
         return switch hop.kind {
         case let .selection(decision): decision.description
-        case .dialer, .dialerSelection: "Dialer dependency"
+        case .dialer, .dialerSelection: AppLocalization.string("Dialer dependency")
         }
     }
 
     private var certaintyDescription: String {
         switch path.certainty {
-        case .deterministic: "Configured route"
-        case .automatic: "Current automatic route"
-        case .perConnection: "The final route varies by connection"
+        case .deterministic: AppLocalization.string("Configured route")
+        case .automatic: AppLocalization.string("Current automatic route")
+        case .perConnection:
+            AppLocalization.string("The final route varies by connection")
         }
     }
 
@@ -828,11 +841,19 @@ private struct ProxyPathDetail: View {
     private func dialerDescription(_ hop: ProxySelectionHop) -> String {
         switch hop.kind {
         case .dialer:
-            "\(hop.source) uses \(hop.target) as its dialer dependency"
+            AppLocalization.format(
+                "%@ uses %@ as its dialer dependency",
+                hop.source,
+                hop.target
+            )
         case .dialerSelection:
-            "Dialer group \(hop.source) currently selects \(hop.target)"
+            AppLocalization.format(
+                "Dialer group %@ currently selects %@",
+                hop.source,
+                hop.target
+            )
         case .selection:
-            "\(hop.source) selects \(hop.target)"
+            AppLocalization.format("%@ selects %@", hop.source, hop.target)
         }
     }
 }
@@ -887,9 +908,15 @@ private struct ObservedRouteRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(route.destination), \(route.ruleDescription), route "
-                + "\(route.chains.joined(separator: ", then ")), "
-                + "\(formattedByteCount(route.totalBytes)) observed"
+            AppLocalization.format(
+                "%@, %@, route %@, %@ observed",
+                route.destination,
+                route.ruleDescription,
+                route.chains.joined(
+                    separator: ", \(AppLocalization.string("then")) "
+                ),
+                formattedByteCount(route.totalBytes)
+            )
         )
     }
 }
@@ -913,7 +940,7 @@ private struct ObservedRouteSummary: Equatable, Identifiable, Sendable {
     var totalBytes: Int64 { addingTraffic(upload, download) }
 
     var ruleDescription: String {
-        let type = key.rule.isEmpty ? "Rule" : key.rule
+        let type = key.rule.isEmpty ? AppLocalization.string("Rule") : key.rule
         let payload = key.rulePayload.trimmingCharacters(in: .whitespacesAndNewlines)
         return payload.isEmpty ? type : "\(type) · \(payload)"
     }
@@ -922,33 +949,42 @@ private struct ObservedRouteSummary: Equatable, Identifiable, Sendable {
 private extension ProxySelectionDecision {
     var description: String {
         switch self {
-        case .selector: "Manual selection"
-        case .urlTest: "Automatic latency choice"
-        case .fallback: "Automatic fallback"
-        case .fixedOverride: "Pinned automatic preference"
-        case .relay: "Relay sequence"
-        case let .automatic(type): "Automatic \(type) choice"
+        case .selector: AppLocalization.string("Manual selection")
+        case .urlTest: AppLocalization.string("Automatic latency choice")
+        case .fallback: AppLocalization.string("Automatic fallback")
+        case .fixedOverride: AppLocalization.string("Pinned automatic preference")
+        case .relay: AppLocalization.string("Relay sequence")
+        case let .automatic(type): AppLocalization.format("Automatic %@ choice", type)
         }
     }
 }
 
 private func issueDescription(_ issue: ProxySelectionPathIssue) -> String {
     switch issue {
-    case let .rootNotFound(name): "Root group \(name) is unavailable."
-    case let .unresolvedReference(name): "Referenced node \(name) is unavailable."
-    case let .noSelection(group): "\(group) has no current selection."
-    case .cycle: "The configuration contains a recursive proxy dependency."
-    case .loadBalance: "Load balancing chooses a route independently for each connection."
+    case let .rootNotFound(name):
+        AppLocalization.format("Root group %@ is unavailable.", name)
+    case let .unresolvedReference(name):
+        AppLocalization.format("Referenced node %@ is unavailable.", name)
+    case let .noSelection(group):
+        AppLocalization.format("%@ has no current selection.", group)
+    case .cycle:
+        AppLocalization.string("The configuration contains a recursive proxy dependency.")
+    case .loadBalance:
+        AppLocalization.string(
+            "Load balancing chooses a route independently for each connection."
+        )
     case let .dialerUnresolvedReference(name):
-        "Dialer dependency \(name) is unavailable."
+        AppLocalization.format("Dialer dependency %@ is unavailable.", name)
     case let .dialerNoSelection(group):
-        "Dialer group \(group) has no current selection."
+        AppLocalization.format("Dialer group %@ has no current selection.", group)
     case .dialerCycle:
-        "The configuration contains a recursive dialer dependency."
+        AppLocalization.string("The configuration contains a recursive dialer dependency.")
     case .dialerLoadBalance:
-        "The dialer route is selected independently for each connection."
+        AppLocalization.string(
+            "The dialer route is selected independently for each connection."
+        )
     case .dialerDepthLimit:
-        "The dialer dependency chain is too deep to resolve safely."
+        AppLocalization.string("The dialer dependency chain is too deep to resolve safely.")
     }
 }
 

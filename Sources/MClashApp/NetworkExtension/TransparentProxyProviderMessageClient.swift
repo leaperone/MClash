@@ -145,31 +145,67 @@ enum TransparentProxyProviderMessageError: Error, Equatable, Sendable, Localized
     var errorDescription: String? {
         switch self {
         case .sessionUnavailable:
-            "The transparent proxy provider session is unavailable."
+            AppLocalization.string("The transparent proxy provider session is unavailable.")
         case .timedOut:
-            "The transparent proxy provider did not respond before the deadline."
+            AppLocalization.string(
+                "The transparent proxy provider did not respond before the deadline."
+            )
         case .missingResponse:
-            "The transparent proxy provider returned no response data."
+            AppLocalization.string("The transparent proxy provider returned no response data.")
         case .missingActivityBatch:
-            "The transparent proxy provider returned no App Routing activity batch."
+            AppLocalization.string(
+                "The transparent proxy provider returned no App Routing activity batch."
+            )
         case .missingDNSRuntimeReport:
-            "The transparent proxy provider has not published a DNS runtime report."
+            AppLocalization.string(
+                "The transparent proxy provider has not published a DNS runtime report."
+            )
         case let .invalidResponse(message):
-            "The transparent proxy provider returned an invalid response: \(message)"
+            AppLocalization.format(
+                "The transparent proxy provider returned an invalid response: %@",
+                message
+            )
         case let .unsupportedProtocolVersion(expected, actual):
-            "Provider control protocol version mismatch (expected \(expected), received \(actual))."
+            AppLocalization.format(
+                "Provider control protocol version mismatch (expected %@, received %@).",
+                String(expected),
+                String(actual)
+            )
         case let .unexpectedProvider(provider):
-            "The response came from an unexpected provider: \(provider)."
+            AppLocalization.format(
+                "The response came from an unexpected provider: %@.",
+                provider
+            )
         case let .rejected(command, message):
-            "The provider rejected \(command.rawValue): \(message ?? "no reason supplied")"
+            AppLocalization.format(
+                "The provider rejected %@: %@",
+                command.rawValue,
+                message ?? AppLocalization.string("no reason supplied")
+            )
         case let .revisionDidNotAdvance(current, proposed):
-            "Provider configuration revision must advance beyond \(current); received \(proposed)."
+            AppLocalization.format(
+                "Provider configuration revision must advance beyond %@; received %@.",
+                String(current),
+                String(proposed)
+            )
         case let .revisionMismatch(expected, actual):
-            "Provider revision mismatch (expected \(expected), received \(actual))."
+            AppLocalization.format(
+                "Provider revision mismatch (expected %@, received %@).",
+                String(expected),
+                String(actual)
+            )
         case .dnsActivationMismatch:
-            "The DNS runtime report belongs to a different activation."
+            AppLocalization.string(
+                "The DNS runtime report belongs to a different activation."
+            )
         case let .stateMismatch(expectedCapture, actualCapture, expectedFailOpen, actualFailOpen):
-            "Provider state mismatch (capture \(actualCapture)/\(expectedCapture), fail-open \(actualFailOpen)/\(expectedFailOpen))."
+            AppLocalization.format(
+                "Provider state mismatch (capture %@/%@, fail-open %@/%@).",
+                String(actualCapture),
+                String(expectedCapture),
+                String(actualFailOpen),
+                String(expectedFailOpen)
+            )
         }
     }
 }

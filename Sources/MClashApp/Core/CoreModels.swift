@@ -72,23 +72,45 @@ enum CoreSupervisorError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .alreadyRunning:
-            "The proxy core is already running."
+            AppLocalization.string("The proxy core is already running.")
         case let .binaryNotFound(path):
-            "MClash’s bundled proxy core is missing. Reinstall MClash. (\(path))"
+            AppLocalization.format(
+                "MClash’s bundled proxy core is missing. Reinstall MClash. (%@)",
+                path
+            )
         case let .binaryNotExecutable(path):
-            "MClash’s bundled proxy core is not executable. Reinstall MClash. (\(path))"
+            AppLocalization.format(
+                "MClash’s bundled proxy core is not executable. Reinstall MClash. (%@)",
+                path
+            )
         case let .configurationNotFound(path):
-            "The active configuration was not found at \(path)."
+            AppLocalization.format(
+                "The active configuration was not found at %@.",
+                path
+            )
         case let .configurationInvalid(details):
-            "The configuration did not pass core validation.\n\(details)"
+            AppLocalization.format(
+                "The configuration did not pass core validation.\n%@",
+                details
+            )
         case .configurationValidationTimedOut:
-            "The proxy core did not finish validating the configuration in time."
+            AppLocalization.string(
+                "The proxy core did not finish validating the configuration in time."
+            )
         case let .launchFailed(details):
-            "The proxy core could not be launched.\n\(details)"
+            AppLocalization.format(
+                "The proxy core could not be launched.\n%@",
+                details
+            )
         case .readinessTimedOut:
-            "The proxy core launched but did not become ready in time."
+            AppLocalization.string(
+                "The proxy core launched but did not become ready in time."
+            )
         case let .stopTimedOut(processIdentifier):
-            "The proxy core process (PID \(processIdentifier)) did not stop after termination and forced termination were requested."
+            AppLocalization.format(
+                "The proxy core process (PID %@) did not stop after termination and forced termination were requested.",
+                String(processIdentifier)
+            )
         }
     }
 }

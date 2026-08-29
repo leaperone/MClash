@@ -231,15 +231,30 @@ extension NetworkExtensionMihomoListenerValidationError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .invalidPort(port):
-            "The Network Extension SOCKS5 port must be between 1 and 65535; received \(port)."
+            AppLocalization.format(
+                "The Network Extension SOCKS5 port must be between 1 and 65535; received %d.",
+                port
+            )
         case let .duplicatePort(port):
-            "Each private App Routing route needs a distinct SOCKS5 port; \(port) was reused."
+            AppLocalization.format(
+                "Each private App Routing route needs a distinct SOCKS5 port; %d was reused.",
+                port
+            )
         case .missingRoute:
-            "A private App Routing listener configuration needs at least one route."
+            AppLocalization.string(
+                "A private App Routing listener configuration needs at least one route."
+            )
         case let .invalidCredentialLength(field, byteCount):
-            "The Network Extension SOCKS5 \(field.rawValue) must contain 1 to 255 UTF-8 bytes; received \(byteCount)."
+            AppLocalization.format(
+                "The Network Extension SOCKS5 %@ must contain 1 to 255 UTF-8 bytes; received %d.",
+                field.rawValue,
+                byteCount
+            )
         case let .invalidCredentialCharacters(field):
-            "The Network Extension SOCKS5 \(field.rawValue) cannot contain null bytes or line breaks."
+            AppLocalization.format(
+                "The Network Extension SOCKS5 %@ cannot contain null bytes or line breaks.",
+                field.rawValue
+            )
         }
     }
 }

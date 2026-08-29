@@ -100,6 +100,13 @@ Every response contains the same `id`, `apiVersion`, and exactly one of
 `result` or `error`. Clients must call `system.capabilities` instead of assuming
 that a method exists in every application version.
 
+Clients may rely on schema versions, IDs, enums, error codes, and error types as
+machine-readable contracts. Human-readable fields such as `message`, `title`,
+`consequence`, `technicalDetail`, `lastError`, and supervisor log text are
+opaque, may follow MClash's selected interface language, and may change wording.
+Mihomo stdout and stderr remain verbatim. Diagnostic text queries match the
+rendered text in its current language.
+
 `system.capabilities` and `auth.pair` are the only unauthenticated methods.
 Capabilities report `requiredScope`, `requiresInteraction`, risk, parameter
 names, types, and whether each parameter is required. Interactive presentations

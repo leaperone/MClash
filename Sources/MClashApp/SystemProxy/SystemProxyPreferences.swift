@@ -85,11 +85,17 @@ public enum SystemProxyPreferencesError: Error, Equatable, LocalizedError, Senda
     public var errorDescription: String? {
         switch self {
         case let .invalidBypassDomain(domain):
-            "Invalid system proxy bypass entry: \(domain)"
+            AppLocalization.format("Invalid system proxy bypass entry: %@", domain)
         case let .invalidGuardInterval(seconds):
-            "System proxy guard interval must be between 2 and 300 seconds; received \(seconds)."
+            AppLocalization.format(
+                "System proxy guard interval must be between 2 and 300 seconds; received %d.",
+                seconds
+            )
         case let .unsupportedSchemaVersion(version):
-            "System proxy settings use unsupported schema version \(version)."
+            AppLocalization.format(
+                "System proxy settings use unsupported schema version %d.",
+                version
+            )
         }
     }
 }

@@ -209,7 +209,7 @@ private struct OverviewStatusCard: View {
         let count = model.operationalIssues.count
         return AppLocalization.format(
             count == 1 ? "Review %@ Issue" : "Review %@ Issues",
-            formattedCount(count)
+            AppLocalization.number(count)
         )
     }
 
@@ -328,7 +328,7 @@ private struct OverviewMetricsCard: View {
 
     private var connectionCount: String {
         model.liveStreamHealth[.connections]?.hasCurrentData == true
-            ? formattedCount(model.connections?.connections.count ?? 0)
+            ? AppLocalization.number(model.connections?.connections.count ?? 0)
             : "—"
     }
 }
@@ -379,7 +379,7 @@ private struct OverviewConnectionDetails: View {
                 Divider().padding(.leading, 36)
                 valueRow(
                     "Session Started",
-                    value: session.startedAt.formatted(date: .abbreviated, time: .standard)
+                    value: AppLocalization.date(session.startedAt)
                 )
             }
         }

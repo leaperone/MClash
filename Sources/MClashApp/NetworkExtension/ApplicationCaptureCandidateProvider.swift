@@ -81,19 +81,40 @@ enum ApplicationCaptureCandidateError: Error, Equatable, LocalizedError, Sendabl
     var errorDescription: String? {
         switch self {
         case let .missingExecutable(url):
-            "No executable was found for \(url.lastPathComponent)."
+            AppLocalization.format(
+                "No executable was found for %@.",
+                url.lastPathComponent
+            )
         case let .codeObjectLookupFailed(status):
-            "The application code object could not be opened (OSStatus \(status))."
+            AppLocalization.format(
+                "The application code object could not be opened (OSStatus %@).",
+                String(status)
+            )
         case let .invalidCodeSignature(status):
-            "The application code signature is invalid (OSStatus \(status))."
+            AppLocalization.format(
+                "The application code signature is invalid (OSStatus %@).",
+                String(status)
+            )
         case let .signingInformationFailed(status):
-            "The application signing identity could not be read (OSStatus \(status))."
+            AppLocalization.format(
+                "The application signing identity could not be read (OSStatus %@).",
+                String(status)
+            )
         case let .unsignedApplication(url):
-            "\(url.lastPathComponent) is unsigned and cannot be selected as an application rule. Use an executable-path rule instead."
+            AppLocalization.format(
+                "%@ is unsigned and cannot be selected as an application rule. Use an executable-path rule instead.",
+                url.lastPathComponent
+            )
         case let .designatedRequirementFailed(status):
-            "The application designated requirement could not be read (OSStatus \(status))."
+            AppLocalization.format(
+                "The application designated requirement could not be read (OSStatus %@).",
+                String(status)
+            )
         case let .requirementStringFailed(status):
-            "The application designated requirement could not be serialized (OSStatus \(status))."
+            AppLocalization.format(
+                "The application designated requirement could not be serialized (OSStatus %@).",
+                String(status)
+            )
         }
     }
 }

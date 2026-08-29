@@ -68,7 +68,13 @@ struct ConfigurationProxyGroupsView: View {
             items: model.configurationWorkbenchItems,
             onAdd: { _ in
                 Task {
-                    do { try await model.createConfigurationProxyGroup() }
+                    do {
+                        let id = try await model.createConfigurationProxyGroup()
+                        editRequest = ConfigurationEditRequest(
+                            section: .proxyGroups,
+                            itemID: id.rawValue
+                        )
+                    }
                     catch { model.errorMessage = error.localizedDescription }
                 }
             },
@@ -97,7 +103,13 @@ struct ConfigurationRulesView: View {
             items: model.configurationWorkbenchItems,
             onAdd: { _ in
                 Task {
-                    do { try await model.createConfigurationRule() }
+                    do {
+                        let id = try await model.createConfigurationRule()
+                        editRequest = ConfigurationEditRequest(
+                            section: .rules,
+                            itemID: id.rawValue
+                        )
+                    }
                     catch { model.errorMessage = error.localizedDescription }
                 }
             },
@@ -182,15 +194,37 @@ private extension ConfigurationWorkbenchItem {
         let workspaceItems = document.workspaces.map { workspace in
             Self(
                 id: workspace.id.rawValue,
-                title: workspace.name,
-                subtitle: "\(workspace.nodeIDs.count) nodes · \(workspace.ruleIDs.count) rules",
+                title: configurationDisplayName(workspace.name),
+                subtitle: AppLocalization.format(
+                    "%@ nodes · %@ rules",
+                    AppLocalization.number(workspace.nodeIDs.count),
+                    AppLocalization.number(workspace.ruleIDs.count)
+                ),
                 symbol: "rectangle.3.group",
-                detail: "A MClash strategy workspace shared by the configured traffic entrances.",
+                detail: AppLocalization.string(
+                    "A MClash strategy workspace shared by the configured traffic entrances."
+                ),
                 metadata: [
-                    ("Status", document.currentWorkspaceID == workspace.id ? "Active" : "Available"),
-                    ("Proxy groups", "\(workspace.proxyGroupIDs.count)"),
-                    ("Entrances", "\(workspace.entranceIDs.count)"),
-                    ("Revision", "\(workspace.revision)"),
+                    (
+                        AppLocalization.string("Status"),
+                        AppLocalization.string(
+                            document.currentWorkspaceID == workspace.id
+                                ? "Active"
+                                : "Available"
+                        )
+                    ),
+                    (
+                        AppLocalization.string("Proxy Groups"),
+                        AppLocalization.number(workspace.proxyGroupIDs.count)
+                    ),
+                    (
+                        AppLocalization.string("Entrances"),
+                        AppLocalization.number(workspace.entranceIDs.count)
+                    ),
+                    (
+                        AppLocalization.string("Revision"),
+                        AppLocalization.number(workspace.revision)
+                    ),
                 ]
             )
         }
@@ -199,10 +233,25 @@ private extension ConfigurationWorkbenchItem {
             return Self(
                 id: source.id.rawValue,
                 title: source.displayName,
-                subtitle: "\(count) nodes · revision \(source.revision)",
+                subtitle: AppLocalization.format(
+                    "%@ nodes · revision %@",
+                    AppLocalization.number(count),
+                    AppLocalization.number(source.revision)
+                ),
                 symbol: source.kind == .subscription ? "link" : "folder",
-                detail: "Imported source. MClash uses it for node data only; source strategy sections are ignored.",
-                metadata: [("Kind", source.kind.rawValue), ("Location", source.location), ("Nodes", "\(count)")]
+                detail: AppLocalization.string(
+                    "Imported source. MClash uses it for node data only; source strategy sections are ignored."
+                ),
+                metadata: [
+                    (AppLocalization.string("Kind"), source.kind.localizedTitle),
+                    (
+                        AppLocalization.string("Location"),
+                        source.location == "local"
+                            ? AppLocalization.string("Local")
+                            : source.location
+                    ),
+                    (AppLocalization.string("Nodes"), AppLocalization.number(count)),
+                ]
             )
         }
         let nodeItems = document.nodes.map { node in
@@ -212,54 +261,129 @@ private extension ConfigurationWorkbenchItem {
                 title: node.userAlias ?? node.displayName,
                 subtitle: "\(node.proto.rawValue) · \(node.host):\(node.port)",
                 symbol: "point.3.filled.connected.trianglepath.dotted",
-                detail: "A strategy-owned node. Refreshing a source updates its connection data without changing group membership.",
+                detail: AppLocalization.string(
+                    "A strategy-owned node. Refreshing a source updates its connection data without changing group membership."
+                ),
                 metadata: [
-                    ("Source", sourceNames.isEmpty ? "Unknown" : sourceNames),
-                    ("Availability", node.health.availability.rawValue),
-                    ("Fingerprint", String(node.fingerprint.prefix(12))),
-                ]
+                    (
+                        AppLocalization.string("Source"),
+                        sourceNames.isEmpty ? AppLocalization.string("Unknown") : sourceNames
+                    ),
+                    (
+                        AppLocalization.string("Availability"),
+                        node.health.availability.localizedTitle
+                    ),
+                    (
+                        AppLocalization.string("Fingerprint"),
+                        String(node.fingerprint.prefix(12))
+                    ),
+                ],
+                isEnabled: node.enabled
             )
         }
         let groupItems = document.proxyGroups.map { group in
             Self(
                 id: group.id.rawValue,
-                title: group.name,
-                subtitle: "\(group.type.rawValue) · \(group.members.count) members",
+                title: configurationDisplayName(group.name),
+                subtitle: AppLocalization.format(
+                    "%@ · %@ members",
+                    group.type.localizedTitle,
+                    AppLocalization.number(group.members.count)
+                ),
                 symbol: "square.3.layers.3d",
-                detail: "A MClash-owned proxy group. Members reference nodes or other MClash groups.",
-                metadata: [("Enabled", group.enabled ? "Yes" : "No"), ("Members", "\(group.members.count)"), ("Used by", "\(document.workspaces.count(where: { $0.proxyGroupIDs.contains(group.id) })) workspaces")]
+                detail: AppLocalization.string(
+                    "A MClash-owned proxy group. Members reference nodes or other MClash groups."
+                ),
+                metadata: [
+                    (
+                        AppLocalization.string("Status"),
+                        AppLocalization.string(group.enabled ? "Enabled" : "Disabled")
+                    ),
+                    (
+                        AppLocalization.string("Members"),
+                        AppLocalization.number(group.members.count)
+                    ),
+                    (
+                        AppLocalization.string("Used by"),
+                        AppLocalization.format(
+                            "%@ workspaces",
+                            AppLocalization.number(
+                                document.workspaces.count(where: {
+                                    $0.proxyGroupIDs.contains(group.id)
+                                })
+                            )
+                        )
+                    ),
+                ],
+                isEnabled: group.enabled
             )
         }
         let ruleItems = document.rules.map { rule in
             let action: String
             switch rule.action {
-            case .direct: action = "DIRECT"
-            case .reject: action = "REJECT"
-            case let .proxyGroup(id): action = groupByID[id]?.name ?? "Missing group"
+            case .direct: action = AppLocalization.string("Direct")
+            case .reject: action = AppLocalization.string("Reject")
+            case let .proxyGroup(id):
+                action = groupByID[id].map {
+                    configurationDisplayName($0.name)
+                } ?? AppLocalization.string("Missing Group")
             }
             return Self(
                 id: rule.id.rawValue,
-                title: "Rule \(rule.priority)",
-                subtitle: "\(rule.matchers.count) matchers · \(action)",
+                title: AppLocalization.format("Rule %d", rule.priority),
+                subtitle: AppLocalization.format(
+                    "%@ matchers · %@",
+                    AppLocalization.number(rule.matchers.count),
+                    action
+                ),
                 symbol: "list.bullet.indent",
-                detail: "A unified rule shared by HTTP, SOCKS5, App Routing and TUN when their context is available.",
-                metadata: [("Priority", "\(rule.priority)"), ("Action", action), ("Enabled", rule.enabled ? "Yes" : "No")]
+                detail: AppLocalization.string(
+                    "A unified rule shared by HTTP, SOCKS5, App Routing and TUN when their context is available."
+                ),
+                metadata: [
+                    (
+                        AppLocalization.string("Priority"),
+                        AppLocalization.number(rule.priority)
+                    ),
+                    (AppLocalization.string("Action"), action),
+                    (
+                        AppLocalization.string("Status"),
+                        AppLocalization.string(rule.enabled ? "Enabled" : "Disabled")
+                    ),
+                ],
+                isEnabled: rule.enabled
             )
         }
         let entranceItems = document.entrances.map { entrance in
             Self(
                 id: entrance.id.rawValue,
-                title: entrance.kind.rawValue.uppercased(),
-                subtitle: entrance.port.map { "127.0.0.1:\($0)" } ?? "System capability",
+                title: entrance.kind.localizedTitle,
+                subtitle: entrance.port.map { "127.0.0.1:\($0)" }
+                    ?? AppLocalization.string("System Capability"),
                 symbol: entrance.kind == .appRouting ? "app.badge" : "arrow.triangle.branch",
                 detail: entrance.kind == .appRouting
-                    ? "Application capture is a capability switch. Its rules are managed in the unified Rules workspace."
-                    : "A MClash traffic entrance that follows the active Workspace.",
+                    ? AppLocalization.string(
+                        "Application capture is a capability switch. Its rules are managed in the unified Rules workspace."
+                    )
+                    : AppLocalization.string(
+                        "A MClash traffic entrance that follows the active Workspace."
+                    ),
                 metadata: [
-                    ("Enabled", entrance.enabled ? "Yes" : "No"),
-                    ("Bind", entrance.bindAddress),
-                    ("Workspace", entrance.workspaceOverride == nil ? "Current Workspace" : "Override"),
-                ]
+                    (
+                        AppLocalization.string("Status"),
+                        AppLocalization.string(entrance.enabled ? "Enabled" : "Disabled")
+                    ),
+                    (AppLocalization.string("Bind Address"), entrance.bindAddress),
+                    (
+                        AppLocalization.string("Workspace"),
+                        AppLocalization.string(
+                            entrance.workspaceOverride == nil
+                                ? "Current Workspace"
+                                : "Override"
+                        )
+                    ),
+                ],
+                isEnabled: entrance.enabled
             )
         }
         return [

@@ -10,9 +10,11 @@ struct ProvidersView: View {
             if !model.isConnected {
                 DisconnectedUnavailableView(
                     model: model,
-                    title: "Connect to manage providers",
+                    title: AppLocalization.string("Connect to manage providers"),
                     systemImage: "shippingbox",
-                    description: "Provider status and update controls come from the active core."
+                    description: AppLocalization.string(
+                        "Provider status and update controls come from the active core."
+                    )
                 )
             } else if case let .degraded(message) = model.controllerState {
                 ContentUnavailableView {
@@ -234,7 +236,9 @@ private struct ProxyProviderRow: View {
                             )
                         )
                         if subscription.expire > 0 {
-                            Text("· Expires \(expiration(subscription))")
+                            Text("·")
+                                .accessibilityHidden(true)
+                            Text(expiration(subscription))
                         }
                         Spacer()
                     }
@@ -293,8 +297,12 @@ private struct ProxyProviderRow: View {
                 )
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .menuStyle(.borderlessButton)
+            .accessibilityLabel(
+                AppLocalization.format("More actions for %@", provider.name)
+            )
         }
         .controlSize(.small)
     }
@@ -316,21 +324,25 @@ private struct ProxyProviderRow: View {
     private func providerReceiptView(
         _ receipt: AppModel.ProviderOperationReceipt
     ) -> some View {
-        let action = receipt.kind == .healthCheckProxy ? "Health check" : "Update"
+        let action = AppLocalization.string(
+            receipt.kind == .healthCheckProxy ? "Health check" : "Update"
+        )
+        let completedAt = AppLocalization.relativeDate(receipt.completedAt)
         return HStack(spacing: 5) {
             switch receipt.outcome {
             case .succeeded:
                 Label(
-                    "\(action) completed \(receipt.completedAt.formatted(.relative(presentation: .named)))",
+                    AppLocalization.format("%@ completed %@", action, completedAt),
                     systemImage: "checkmark.circle.fill"
                 )
                 .foregroundStyle(.green)
             case let .failed(message):
-                Label("\(action) failed", systemImage: "exclamationmark.triangle.fill")
+                Label(
+                    AppLocalization.format("%@ failed %@", action, completedAt),
+                    systemImage: "exclamationmark.triangle.fill"
+                )
                     .foregroundStyle(.red)
                     .help(message)
-                Text(receipt.completedAt, style: .relative)
-                    .foregroundStyle(.secondary)
             }
         }
         .font(.caption)
@@ -346,7 +358,12 @@ private struct ProxyProviderRow: View {
             )
         ]
         if let updatedAt = provider.updatedAt, let date = parsedRuntimeTimestamp(updatedAt) {
-            parts.append("updated \(date.formatted(.relative(presentation: .named)))")
+            parts.append(
+                AppLocalization.format(
+                    "Updated %@",
+                    AppLocalization.relativeDate(date)
+                )
+            )
         }
         return parts.joined(separator: " · ")
     }
@@ -374,8 +391,11 @@ private struct ProxyProviderRow: View {
     }
 
     private func expiration(_ subscription: MihomoSubscriptionInfo) -> String {
-        Date(timeIntervalSince1970: TimeInterval(subscription.expire))
-            .formatted(date: .abbreviated, time: .omitted)
+        let date = Date(timeIntervalSince1970: TimeInterval(subscription.expire))
+        return AppLocalization.format(
+            date < Date.now ? "Expired %@" : "Expires %@",
+            AppLocalization.relativeDate(date)
+        )
     }
 
 }
@@ -451,24 +471,29 @@ private struct RuleProviderRow: View {
 
     private var updatedLabel: String {
         guard let date = parsedRuntimeTimestamp(provider.updatedAt) else {
-            return "Not updated yet"
+            return AppLocalization.string("Not updated yet")
         }
-        return date.formatted(.relative(presentation: .named))
+        return AppLocalization.relativeDate(date)
     }
 
     private func ruleProviderReceipt(
         _ receipt: AppModel.ProviderOperationReceipt
     ) -> some View {
-        Group {
+        let action = AppLocalization.string("Update")
+        let completedAt = AppLocalization.relativeDate(receipt.completedAt)
+        return Group {
             switch receipt.outcome {
             case .succeeded:
                 Label(
-                    "Update completed \(receipt.completedAt.formatted(.relative(presentation: .named)))",
+                    AppLocalization.format("%@ completed %@", action, completedAt),
                     systemImage: "checkmark.circle.fill"
                 )
                 .foregroundStyle(.green)
             case let .failed(message):
-                Label("Update failed", systemImage: "exclamationmark.triangle.fill")
+                Label(
+                    AppLocalization.format("%@ failed %@", action, completedAt),
+                    systemImage: "exclamationmark.triangle.fill"
+                )
                     .foregroundStyle(.red)
                     .help(message)
             }

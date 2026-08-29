@@ -43,16 +43,17 @@ extension AppModel.LocalListenerSource {
 
 func formattedByteCount(
     _ value: Int64,
-    style: ByteCountFormatter.CountStyle = .file
+    style: ByteCountFormatStyle.Style = .file
 ) -> String {
-    let normalized = max(0, value)
-    guard normalized > 0 else { return "0 B" }
-
-    return ByteCountFormatter.string(fromByteCount: normalized, countStyle: style)
+    guard value > 0 else { return "0 B" }
+    return max(0, value).formatted(
+        .byteCount(style: style, spellsOutZero: false)
+            .locale(AppLocalization.selectedLocale)
+    )
 }
 
 func formattedByteRate(_ value: Int64) -> String {
-    "\(formattedByteCount(value))/s"
+    AppLocalization.format("%@/s", formattedByteCount(value))
 }
 
 /// A menu-bar-safe rate with short, stable units and at most four characters.
@@ -80,15 +81,19 @@ private func compactMenuBarMagnitude(_ value: Double, suffixes: [String]) -> Str
 
     let number: String
     if suffixIndex > 0, scaled < 9.95 {
-        number = String(format: "%.1f", scaled)
+        number = scaled.formatted(
+            .number
+                .precision(.fractionLength(1))
+                .locale(AppLocalization.selectedLocale)
+        )
     } else {
-        number = String(Int(scaled.rounded()))
+        number = AppLocalization.number(Int(scaled.rounded()))
     }
     return number + suffixes[suffixIndex]
 }
 
 func formattedCount(_ value: Int) -> String {
-    max(0, value).formatted(.number.grouping(.automatic))
+    AppLocalization.number(max(0, value))
 }
 
 func saturatingByteSum(_ lhs: Int64, _ rhs: Int64) -> Int64 {
@@ -125,9 +130,9 @@ struct DisconnectedUnavailableView: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label(title, systemImage: systemImage)
+            Label(AppLocalization.string(title), systemImage: systemImage)
         } description: {
-            Text(description)
+            Text(AppLocalization.string(description))
         } actions: {
             if model.preparationInProgress {
                 HStack(spacing: 7) {
@@ -190,7 +195,7 @@ struct CopyableValueButton: View {
                     Image(systemName: systemImage)
                 }
                 if let title {
-                    Text(title)
+                    Text(AppLocalization.string(title))
                 }
                 Text(value)
                     .monospacedDigit()
@@ -211,9 +216,22 @@ struct CopyableValueButton: View {
             )
         }
         .buttonStyle(.plain)
-        .help(copied ? "Copied" : "Copy \(accessibilityName): \(value)")
-        .accessibilityLabel("Copy \(accessibilityName)")
-        .accessibilityValue(copied ? "Copied" : value)
+        .help(
+            copied
+                ? AppLocalization.string("Copied")
+                : AppLocalization.format(
+                    "Copy %@: %@",
+                    AppLocalization.string(accessibilityName),
+                    value
+                )
+        )
+        .accessibilityLabel(
+            AppLocalization.format(
+                "Copy %@",
+                AppLocalization.string(accessibilityName)
+            )
+        )
+        .accessibilityValue(copied ? AppLocalization.string("Copied") : value)
         .contextMenu {
             Button("Copy") { copyValue() }
         }
@@ -232,7 +250,10 @@ struct CopyableValueButton: View {
             element: NSApplication.shared,
             notification: .announcementRequested,
             userInfo: [
-                .announcement: AppLocalization.format("Copied %@", accessibilityName),
+                .announcement: AppLocalization.format(
+                    "Copied %@",
+                    AppLocalization.string(accessibilityName)
+                ),
                 .priority: NSAccessibilityPriorityLevel.medium.rawValue,
             ]
         )

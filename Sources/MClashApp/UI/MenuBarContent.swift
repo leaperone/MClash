@@ -7,7 +7,6 @@ struct MenuBarContent: View {
     @State private var pickerGroupName: String?
     @State private var contentIsVisible = false
     @State private var retainedPopoverHeight: CGFloat = 410
-    @State private var routingOptionsExpanded = false
 
     var body: some View {
         Group {
@@ -75,6 +74,20 @@ struct MenuBarContent: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
         }
+        .onChange(of: issueMessage, initial: true) { _, message in
+            guard let message,
+                  !message.isEmpty,
+                  !model.mainWindowIsVisible
+            else { return }
+            NSAccessibility.post(
+                element: NSApplication.shared,
+                notification: .announcementRequested,
+                userInfo: [
+                    .announcement: message,
+                    .priority: NSAccessibilityPriorityLevel.high.rawValue
+                ]
+            )
+        }
         // MenuBarExtra windows cannot infer a useful intrinsic height from ScrollView content.
         // An explicit popover size keeps the entire quick-control surface visible on every launch.
     }
@@ -124,9 +137,12 @@ struct MenuBarContent: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Download \(liveTrafficValue(model.traffic.download)), "
-                + "upload \(liveTrafficValue(model.traffic.upload)), "
-                + "connections \(liveConnectionCount)"
+            AppLocalization.format(
+                "Download %@, upload %@, connections %@",
+                liveTrafficValue(model.traffic.download),
+                liveTrafficValue(model.traffic.upload),
+                liveConnectionCount
+            )
         )
     }
 
@@ -178,7 +194,7 @@ struct MenuBarContent: View {
 
                 Spacer(minLength: 8)
 
-                Text(AppLocalization.string(appRoutingStatusTitle))
+                Text(appRoutingStatusTitle)
                     .font(.caption.monospacedDigit().weight(.medium))
                     .foregroundStyle(appRoutingStatusColor)
                     .lineLimit(1)
@@ -192,7 +208,11 @@ struct MenuBarContent: View {
         .buttonStyle(.plain)
         .help(appRoutingStatusHelp)
         .accessibilityLabel(
-            "App Routing, \(appRoutingStatusTitle), \(appRoutingRuleSummary)"
+            AppLocalization.format(
+                "App Routing, %@, %@",
+                appRoutingStatusTitle,
+                appRoutingRuleSummary
+            )
         )
     }
 
@@ -223,7 +243,11 @@ struct MenuBarContent: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(
-                "\(attentionTitle). \(model.operationalIssues[0].localizedConsequence)"
+                AppLocalization.format(
+                    "%@, %@",
+                    attentionTitle,
+                    model.operationalIssues[0].localizedConsequence
+                )
             )
         }
     }
@@ -250,7 +274,7 @@ struct MenuBarContent: View {
                     } else {
                         Image(systemName: connectionButtonSymbol)
                     }
-                    Text(AppLocalization.string(connectionButtonTitle))
+                    Text(connectionButtonTitle)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -309,64 +333,64 @@ struct MenuBarContent: View {
     }
 
     private var connectedControls: some View {
-        DisclosureGroup("Routing Options", isExpanded: $routingOptionsExpanded) {
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle(
-                    "macOS System Proxy",
-                    isOn: Binding(
-                        get: { model.pendingSystemProxyEnabled ?? model.systemProxyEnabled },
-                        set: { enabled in Task { await model.setSystemProxyEnabled(enabled) } }
-                    )
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(
+                "macOS System Proxy",
+                isOn: Binding(
+                    get: { model.pendingSystemProxyEnabled ?? model.systemProxyEnabled },
+                    set: { enabled in Task { await model.setSystemProxyEnabled(enabled) } }
                 )
-                .disabled(
-                    !model.controllerIsReady
-                        || !model.canPerform(.changeSystemProxy)
-                        || model.networkCapturePreferences.enabled
-                )
-                .help(
+            )
+            .disabled(
+                !model.controllerIsReady
+                    || !model.canPerform(.changeSystemProxy)
+                    || model.networkCapturePreferences.enabled
+            )
+            .help(
+                AppLocalization.string(
                     model.networkCapturePreferences.enabled
                         ? "App Routing is active. Turn it off before enabling the mutually exclusive macOS System Proxy."
                         : "Route compatible macOS applications through MClash's local proxy listeners."
                 )
+            )
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Routing Mode")
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Routing Mode")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Routing Mode", selection: modeBinding) {
+                    Text("Rule").tag("rule")
+                    Text("Global").tag("global")
+                    Text("Direct").tag("direct")
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .disabled(
+                    !model.controllerIsReady
+                        || !model.canPerform(.changeMode)
+                )
+            }
+
+            if model.pendingMode != nil || model.pendingSystemProxyEnabled != nil {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(pendingRoutingTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    Picker("Routing Mode", selection: modeBinding) {
-                        Text("Rule").tag("rule")
-                        Text("Global").tag("global")
-                        Text("Direct").tag("direct")
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .disabled(
-                        !model.controllerIsReady
-                            || !model.canPerform(.changeMode)
-                    )
                 }
-
-                if model.pendingMode != nil || model.pendingSystemProxyEnabled != nil {
-                    HStack(spacing: 7) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(pendingRoutingTitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if !quickRouteGroups.isEmpty {
-                    quickRoutes
-                }
-
-                Button("Manage All Routes…") {
-                    showMainWindow(destination: .proxies)
-                }
-                .controlSize(.small)
             }
-            .padding(.top, 8)
+            if !quickRouteGroups.isEmpty {
+                quickRoutes
+            }
+
+            Button("Proxies") {
+                showMainWindow(destination: .proxies)
+            }
+            .controlSize(.small)
         }
+        .padding(.top, 8)
         .font(.callout)
     }
 
@@ -459,7 +483,11 @@ struct MenuBarContent: View {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
-                            Text(group.fixedOverride ?? group.now ?? "Choose…")
+                            Text(
+                                group.fixedOverride
+                                    ?? group.now
+                                    ?? AppLocalization.string("Choose…")
+                            )
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -546,12 +574,17 @@ struct MenuBarContent: View {
 
     private var pendingRoutingTitle: String {
         if let mode = model.pendingMode {
-            return "Switching to \(mode.capitalized)…"
+            return AppLocalization.format(
+                "Switching to %@…",
+                AppLocalization.string(mode.capitalized)
+            )
         }
         if let enabled = model.pendingSystemProxyEnabled {
-            return enabled ? "Turning on System Proxy…" : "Turning off System Proxy…"
+            return AppLocalization.string(
+                enabled ? "Turning on System Proxy…" : "Turning off System Proxy…"
+            )
         }
-        return "Applying routing change…"
+        return AppLocalization.string("Applying routing change…")
     }
 
     private var issueMessage: String? {
@@ -579,11 +612,11 @@ struct MenuBarContent: View {
 
     private var connectionButtonTitle: String {
         switch model.coreState {
-        case .running: "Disconnect"
-        case .validating: "Checking Configuration…"
-        case .starting: "Connecting…"
-        case .stopping: "Disconnecting…"
-        case .stopped, .failed: "Connect"
+        case .running: AppLocalization.string("Disconnect")
+        case .validating: AppLocalization.string("Checking Configuration…")
+        case .starting: AppLocalization.string("Connecting…")
+        case .stopping: AppLocalization.string("Disconnecting…")
+        case .stopped, .failed: AppLocalization.string("Connect")
         }
     }
 
@@ -659,18 +692,20 @@ struct MenuBarContent: View {
 
     private var appRoutingStatusTitle: String {
         switch model.networkCaptureState {
-        case .off: return "Off"
-        case .waitingForConnection: return "Waiting for Core"
-        case .enabling: return "Starting"
-        case .awaitingUserApproval: return "Needs Approval"
+        case .off: return AppLocalization.string("Off")
+        case .waitingForConnection: return AppLocalization.string("Waiting for Core")
+        case .enabling: return AppLocalization.string("Starting")
+        case .awaitingUserApproval: return AppLocalization.string("Needs Approval")
         case .on:
             if model.appRoutingProviderStatusFailureCount > 0 {
-                return "Verification retrying"
+                return AppLocalization.string("Verification retrying")
             }
-            return model.appRoutingProviderLastVerifiedAt == nil ? "Verifying" : "Running"
-        case .disabling: return "Stopping"
-        case .requiresReboot: return "Restart Required"
-        case .failed: return "Failed"
+            return AppLocalization.string(
+                model.appRoutingProviderLastVerifiedAt == nil ? "Verifying" : "Running"
+            )
+        case .disabling: return AppLocalization.string("Stopping")
+        case .requiresReboot: return AppLocalization.string("Restart Required")
+        case .failed: return AppLocalization.string("Failed")
         }
     }
 
@@ -701,21 +736,31 @@ struct MenuBarContent: View {
     private var appRoutingStatusHelp: String {
         switch model.networkCaptureState {
         case .on where appRoutingProviderIsVerified:
-            let verifiedAt = model.appRoutingProviderLastVerifiedAt?.formatted(
-                .relative(presentation: .named)
-            ) ?? "recently"
-            return "The provider runtime was verified \(verifiedAt). "
-                + "\(enabledAppRoutingRuleCount) enabled "
-                + (enabledAppRoutingRuleCount == 1 ? "rule." : "rules.")
+            let verifiedAt = model.appRoutingProviderLastVerifiedAt.map(
+                AppLocalization.relativeDate
+            ) ?? AppLocalization.string("recently")
+            return AppLocalization.format(
+                enabledAppRoutingRuleCount == 1
+                    ? "The provider runtime was verified %@. %d enabled rule."
+                    : "The provider runtime was verified %@. %d enabled rules.",
+                verifiedAt,
+                enabledAppRoutingRuleCount
+            )
         case .on:
             if model.appRoutingProviderStatusFailureCount > 0 {
-                return "The provider runtime check is retrying. Open App Routing for details."
+                return AppLocalization.string(
+                    "The provider runtime check is retrying. Open App Routing for details."
+                )
             }
-            return "The provider runtime is being verified."
+            return AppLocalization.string("The provider runtime is being verified.")
         case .off:
-            return "App Routing is off. Saved rules are not intercepting traffic."
+            return AppLocalization.string(
+                "App Routing is off. Saved rules are not intercepting traffic."
+            )
         default:
-            return "Open App Routing for provider status and recovery actions."
+            return AppLocalization.string(
+                "Open App Routing for provider status and recovery actions."
+            )
         }
     }
 

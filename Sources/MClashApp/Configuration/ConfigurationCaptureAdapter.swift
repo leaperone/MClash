@@ -73,7 +73,15 @@ public enum ConfigurationCaptureAdapter {
                     }
                 }
             } catch {
-                diagnostics.append(.init(severity: .error, code: "capture_rule_conversion_failed", subject: rule.id.rawValue.uuidString.lowercased(), message: "Rule could not be represented by the application capture provider: \(error.localizedDescription)"))
+                diagnostics.append(.init(
+                    severity: .error,
+                    code: "capture_rule_conversion_failed",
+                    subject: rule.id.rawValue.uuidString.lowercased(),
+                    message: AppLocalization.format(
+                        "Rule could not be represented by the application capture provider: %@",
+                        error.localizedDescription
+                    )
+                ))
                 continue
             }
 
@@ -83,7 +91,14 @@ public enum ConfigurationCaptureAdapter {
             case .reject: action = .reject
             case let .proxyGroup(groupID):
                 guard let name = groupNames[groupID] else {
-                    diagnostics.append(.init(severity: .error, code: "capture_rule_missing_group", subject: rule.id.rawValue.uuidString.lowercased(), message: "Rule targets a proxy group that is not available."))
+                    diagnostics.append(.init(
+                        severity: .error,
+                        code: "capture_rule_missing_group",
+                        subject: rule.id.rawValue.uuidString.lowercased(),
+                        message: AppLocalization.string(
+                            "Rule targets a proxy group that is not available."
+                        )
+                    ))
                     continue
                 }
                 action = .mihomo(.group(name))
@@ -102,10 +117,21 @@ public enum ConfigurationCaptureAdapter {
                 )
                 converted.append(captureRule)
             } catch {
-                diagnostics.append(.init(severity: .error, code: "capture_rule_invalid", subject: rule.id.rawValue.uuidString.lowercased(), message: "Rule could not be activated for application capture: \(error.localizedDescription)"))
+                diagnostics.append(.init(
+                    severity: .error,
+                    code: "capture_rule_invalid",
+                    subject: rule.id.rawValue.uuidString.lowercased(),
+                    message: AppLocalization.format(
+                        "Rule could not be activated for application capture: %@",
+                        error.localizedDescription
+                    )
+                ))
             }
         }
-        return Result(rules: converted, diagnostics: diagnostics.sorted { $0.id < $1.id })
+        return Result(
+            rules: diagnostics.isEmpty ? converted : [],
+            diagnostics: diagnostics.sorted { $0.id < $1.id }
+        )
     }
 
     private static func stableRuleOrder(_ lhs: RoutingRule, _ rhs: RoutingRule) -> Bool {

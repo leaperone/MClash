@@ -53,10 +53,10 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         entry: FlowLedgerEntry?
     ) -> String {
         let disposition = switch activity.effectiveAction {
-        case .direct: "direct pass-through"
-        case .reject: "rejected"
-        case .failOpen: "fail-open"
-        case .mihomo: "mihomo proxy"
+        case .direct: AppLocalization.string("direct pass-through")
+        case .reject: AppLocalization.string("rejected")
+        case .failOpen: AppLocalization.string("fail-open")
+        case .mihomo: AppLocalization.string("mihomo proxy")
         }
         let route = entry?.mihomoRoute
         return [
@@ -87,14 +87,18 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
 
     private static func causeText(_ activity: AppRoutingActivity) -> String {
         switch activity.cause {
-        case .captureDisabled: "Capture disabled"
-        case .configurationUnavailable: "Configuration unavailable"
-        case .contextUnavailable: "Identity unavailable"
+        case .captureDisabled: AppLocalization.string("Capture disabled")
+        case .configurationUnavailable: AppLocalization.string("Configuration unavailable")
+        case .contextUnavailable: AppLocalization.string("Identity unavailable")
         case let .rule(cause), let .mihomoUnavailable(cause, _):
             switch cause {
             case let .matchedRule(identifier): identifier
-            case let .builtInBypass(reason): "Built-in: \(reason.rawValue)"
-            case .defaultDirect: "Default direct"
+            case let .builtInBypass(reason):
+                AppLocalization.format(
+                    "Built-in: %@",
+                    AppLocalization.string(reason.rawValue)
+                )
+            case .defaultDirect: AppLocalization.string("Default direct")
             }
         }
     }
@@ -102,7 +106,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
     private static func destinationText(_ activity: AppRoutingActivity) -> String {
         let host = activity.destination.hostname
             ?? activity.destination.ipAddress
-            ?? "Unknown destination"
+            ?? AppLocalization.string("Unknown destination")
         return activity.destination.port > 0
             ? "\(host):\(activity.destination.port)"
             : host
@@ -112,22 +116,28 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         _ activity: AppRoutingActivity,
         entry: FlowLedgerEntry?
     ) -> String {
-        if activity.relayState == .failed { return "Relay failed" }
+        if activity.relayState == .failed { return AppLocalization.string("Relay failed") }
         return switch activity.effectiveAction {
         case .direct where activity.payloadBytesAreMeasured == true:
-            "Direct \(activity.relayState.rawValue)"
-        case .direct: "Direct pass-through"
-        case .reject: "Rejected"
-        case .failOpen: "Fail-open"
+            AppLocalization.format(
+                "Direct %@",
+                AppLocalization.string(activity.relayState.rawValue)
+            )
+        case .direct: AppLocalization.string("Direct pass-through")
+        case .reject: AppLocalization.string("Rejected")
+        case .failOpen: AppLocalization.string("Fail-open")
         case .mihomo:
             if FlowLedgerAssociationPresentation.isConfirmed(entry?.association) {
-                "Route confirmed"
+                AppLocalization.string("Route confirmed")
             } else if FlowLedgerAssociationPresentation.isProbable(entry?.association) {
-                "Probable Mihomo match"
+                AppLocalization.string("Probable Mihomo match")
             } else if (activity.downloadDatagrams ?? 0) > 0 {
-                "Response observed"
+                AppLocalization.string("Response observed")
             } else {
-                "Sent to Mihomo \(activity.relayState.rawValue)"
+                AppLocalization.format(
+                    "Sent to Mihomo %@",
+                    AppLocalization.string(activity.relayState.rawValue)
+                )
             }
         }
     }
@@ -138,14 +148,18 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
     ) -> String {
         guard case .mihomo = activity.effectiveAction else { return "" }
         guard let route = entry?.mihomoRoute else {
-            if activity.relayState == .failed { return "Relay failed" }
+            if activity.relayState == .failed {
+                return AppLocalization.string("Relay failed")
+            }
             if (activity.downloadDatagrams ?? 0) > 0 {
-                return "Response observed node path not yet matched"
+                return AppLocalization.string("Response observed node path not yet matched")
             }
             if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
-                return "Sent to Mihomo awaiting connections confirmation"
+                return AppLocalization.string(
+                    "Sent to Mihomo awaiting connections confirmation"
+                )
             }
-            return "Waiting for Mihomo metadata"
+            return AppLocalization.string("Waiting for Mihomo metadata")
         }
         return [route.rule, route.rulePayload, route.chain.joined(separator: " ")]
             .compactMap { $0 }
@@ -256,7 +270,7 @@ struct AppRoutingView: View {
                 updateActivityInspectorPresentation(for: width)
             }
         }
-        .navigationTitle("App Routing")
+        .navigationTitle(AppLocalization.string("App Routing"))
         .mclashPageSurface()
         .task(id: candidateRefreshRequest) {
             await refreshApplications(request: candidateRefreshRequest)
@@ -334,28 +348,32 @@ struct AppRoutingView: View {
                 .inspectorColumnWidth(min: 300, ideal: 360, max: 460)
         }
         .confirmationDialog(
-            "Enable App Routing?",
+            AppLocalization.string("Enable App Routing?"),
             isPresented: $showingAppRoutingEnableConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Enable App Routing") {
+            Button(AppLocalization.string("Enable App Routing")) {
                 Task { await model.setNetworkCaptureEnabled(true) }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(AppLocalization.string("Cancel"), role: .cancel) {}
         } message: {
             Text(appRoutingEnableConfirmationMessage)
         }
         .confirmationDialog(
-            "Replace the current macOS DNS Proxy?",
+            AppLocalization.string("Replace the current macOS DNS Proxy?"),
             isPresented: $showingDNSReplacementConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Enable MClash DNS Routing") {
+            Button(AppLocalization.string("Enable MClash DNS Routing")) {
                 Task { await model.setDNSCaptureEnabled(true) }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(AppLocalization.string("Cancel"), role: .cancel) {}
         } message: {
-            Text("macOS allows one active DNS Proxy. Enabling MClash DNS Routing can replace Proxifier DNS or another DNS Proxy. MClash restores normal system DNS if its Provider fails, but it cannot recreate another app's private DNS configuration for you.")
+            Text(
+                AppLocalization.string(
+                    "macOS allows one active DNS Proxy. Enabling MClash DNS Routing can replace Proxifier DNS or another DNS Proxy. MClash restores normal system DNS if its Provider fails, but it cannot recreate another app's private DNS configuration for you."
+                )
+            )
         }
     }
 
@@ -446,9 +464,9 @@ struct AppRoutingView: View {
     }
 
     private var workspacePicker: some View {
-        Picker("App Routing workspace", selection: $workspace) {
+        Picker(AppLocalization.string("App Routing workspace"), selection: $workspace) {
             ForEach(Workspace.allCases) { item in
-                Text(item.rawValue).tag(item)
+                Text(AppLocalization.string(item.rawValue)).tag(item)
             }
         }
         .pickerStyle(.segmented)
@@ -458,29 +476,31 @@ struct AppRoutingView: View {
     private var statusHeaderControls: some View {
         HStack(spacing: 10) {
             Menu {
-                Toggle("Include DNS with App Routing", isOn: dnsEnabled)
-                Picker("Profile Scope", selection: $profileScope) {
-                    Text("All Profiles").tag(ProfileScope.all)
-                    Text("Default Profile").tag(ProfileScope.defaultProfile)
+                Toggle(AppLocalization.string("Include DNS with App Routing"), isOn: dnsEnabled)
+                Picker(AppLocalization.string("Profile Scope"), selection: $profileScope) {
+                    Text(AppLocalization.string("All Profiles")).tag(ProfileScope.all)
+                    Text(AppLocalization.string("Default Profile")).tag(ProfileScope.defaultProfile)
                     ForEach(model.profiles) { profile in
                         Text(profile.name)
                             .tag(ProfileScope.profile(profile.id))
                     }
-                    Text("Direct / System").tag(ProfileScope.system)
+                    Text(AppLocalization.string("Direct / System")).tag(ProfileScope.system)
                 }
                 Divider()
                 if !model.operationalIssues.isEmpty {
-                    Button("Open Attention") { model.selection = .attention }
+                    Button(AppLocalization.string("Open Attention")) {
+                        model.selection = .attention
+                    }
                 }
-                Button("Open Logs") { model.selection = .logs }
+                Button(AppLocalization.string("Open Logs")) { model.selection = .logs }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton)
-            .help("App Routing options")
+            .help(AppLocalization.string("App Routing options"))
             .accessibilityLabel(AppLocalization.string("App Routing options"))
 
-            Toggle("Enabled", isOn: enabled)
+            Toggle(AppLocalization.string("Enabled"), isOn: enabled)
                 .toggleStyle(.switch)
                 .disabled(
                     model.pendingNetworkCaptureEnabled != nil
@@ -490,43 +510,70 @@ struct AppRoutingView: View {
     }
 
     private var compactStatusMessage: String {
-        if proxifierImportError != nil { return "The Proxifier profile could not be opened." }
-        if editorError != nil { return "The last rule change could not be applied." }
+        if proxifierImportError != nil {
+            return AppLocalization.string("The Proxifier profile could not be opened.")
+        }
+        if editorError != nil {
+            return AppLocalization.string("The last rule change could not be applied.")
+        }
 
         switch model.networkCaptureState {
         case .waitingForConnection:
-            return "Rules are saved. Connect MClash to start routing."
+            return AppLocalization.string("Rules are saved. Connect MClash to start routing.")
         case .awaitingUserApproval:
-            return "macOS approval is required before application traffic can be captured."
+            return AppLocalization.string(
+                "macOS approval is required before application traffic can be captured."
+            )
         case .requiresReboot:
-            return "Restart this Mac to finish enabling the Network Extension."
+            return AppLocalization.string(
+                "Restart this Mac to finish enabling the Network Extension."
+            )
         case .failed:
-            return "App Routing could not start. Review Attention or retry."
+            return AppLocalization.string(
+                "App Routing could not start. Review Attention or retry."
+            )
         case .enabling:
-            return "Starting application and DNS routing…"
+            return AppLocalization.string("Starting application and DNS routing…")
         case .disabling:
-            return "Stopping App Routing and restoring normal network handling…"
+            return AppLocalization.string(
+                "Stopping App Routing and restoring normal network handling…"
+            )
         case .off:
             return model.networkCapturePreferences.dnsEnabled
-                ? "Rules are saved. DNS will start together with App Routing."
-                : "Rules are saved. DNS is excluded in App Routing options."
+                ? AppLocalization.string(
+                    "Rules are saved. DNS will start together with App Routing."
+                )
+                : AppLocalization.string(
+                    "Rules are saved. DNS is excluded in App Routing options."
+                )
         case .on:
             break
         }
 
         if model.dnsProxyRuntimeError != nil || model.dnsProxyAutomaticallyDisabled {
-            return "Application traffic is active; DNS routing needs attention."
+            return AppLocalization.string(
+                "Application traffic is active; DNS routing needs attention."
+            )
         }
         if model.appRoutingProviderLastVerifiedAt == nil {
-            return "Traffic capture is starting; waiting for Provider verification."
+            return AppLocalization.string(
+                "Traffic capture is starting; waiting for Provider verification."
+            )
         }
         if workspace == .activity {
             let active = model.appRoutingActiveCount
-            return "\(formattedCount(active)) active · ↓ \(formattedActivityRate(model.appRoutingTrafficRates.measured.download)) · ↑ \(formattedActivityRate(model.appRoutingTrafficRates.measured.upload))"
+            return AppLocalization.format(
+                "%@ active · ↓ %@ · ↑ %@",
+                formattedCount(active),
+                formattedActivityRate(model.appRoutingTrafficRates.measured.download),
+                formattedActivityRate(model.appRoutingTrafficRates.measured.upload)
+            )
         }
         return model.networkCapturePreferences.dnsEnabled
-            ? "Application traffic and DNS are active through MClash."
-            : "Application traffic is active; DNS remains with the system resolver."
+            ? AppLocalization.string("Application traffic and DNS are active through MClash.")
+            : AppLocalization.string(
+                "Application traffic is active; DNS remains with the system resolver."
+            )
     }
 
     private var compactStatusHelp: String {
@@ -565,32 +612,38 @@ struct AppRoutingView: View {
     private var compactStatusActions: some View {
         Group {
             if proxifierImportError != nil {
-                Button("Dismiss") { proxifierImportError = nil }
+                Button(AppLocalization.string("Dismiss")) { proxifierImportError = nil }
             } else if editorError != nil {
-                Button("Dismiss") { editorError = nil }
+                Button(AppLocalization.string("Dismiss")) { editorError = nil }
             } else if model.dnsProxyRuntimeError != nil || model.dnsProxyAutomaticallyDisabled {
                 HStack(spacing: 6) {
-                    Button("Retry DNS") {
+                    Button(AppLocalization.string("Retry DNS")) {
                         Task { await model.retryDNSCaptureActivation() }
                     }
-                    Button("Attention") { model.selection = .attention }
+                    Button(AppLocalization.string("Attention")) { model.selection = .attention }
                 }
             } else {
                 switch model.networkCaptureState {
                 case .waitingForConnection:
-                    Button("Connect") { Task { await model.connect() } }
+                    Button(AppLocalization.string("Connect")) {
+                        Task { await model.connect() }
+                    }
                         .disabled(!model.canPerform(.connection))
                 case .awaitingUserApproval:
-                    Button("Open Settings") { SMAppService.openSystemSettingsLoginItems() }
+                    Button(AppLocalization.string("Open Settings")) {
+                        SMAppService.openSystemSettingsLoginItems()
+                    }
                 case .failed:
                     HStack(spacing: 6) {
-                        Button("Retry") {
+                        Button(AppLocalization.string("Retry")) {
                             Task { await model.retryNetworkCaptureActivation() }
                         }
-                        Button("Attention") { model.selection = .attention }
+                        Button(AppLocalization.string("Attention")) {
+                            model.selection = .attention
+                        }
                     }
                 case .requiresReboot:
-                    Button("Attention") { model.selection = .attention }
+                    Button(AppLocalization.string("Attention")) { model.selection = .attention }
                 case .off, .enabling, .on, .disabling:
                     Color.clear
                 }
@@ -628,12 +681,20 @@ struct AppRoutingView: View {
                 .buttonStyle(.plain)
                 .frame(minWidth: 24, minHeight: 24)
                 .contentShape(Rectangle())
-                .help(rule.enabled ? "Disable rule" : "Enable rule")
-                .accessibilityLabel(rule.enabled ? "Disable \(rule.id)" : "Enable \(rule.id)")
+                .help(
+                    rule.enabled
+                        ? AppLocalization.string("Disable rule")
+                        : AppLocalization.string("Enable rule")
+                )
+                .accessibilityLabel(
+                    rule.enabled
+                        ? AppLocalization.format("Disable %@", rule.id)
+                        : AppLocalization.format("Enable %@", rule.id)
+                )
             }
             .width(30)
 
-            TableColumn("Rule") { rule in
+            TableColumn(AppLocalization.string("Rule")) { rule in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(rule.id)
                         .fontWeight(.medium)
@@ -649,7 +710,7 @@ struct AppRoutingView: View {
             }
             .width(min: 190, ideal: 300)
 
-            TableColumn("Match") { rule in
+            TableColumn(AppLocalization.string("Match")) { rule in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(destinationSummary(rule))
                         .lineLimit(1)
@@ -662,7 +723,7 @@ struct AppRoutingView: View {
             }
             .width(min: 170, ideal: 260)
 
-            TableColumn("Route") { rule in
+            TableColumn(AppLocalization.string("Route")) { rule in
                 Text(actionSummary(rule.action))
                     .lineLimit(1)
                     .foregroundStyle(actionColor(rule.action))
@@ -672,10 +733,10 @@ struct AppRoutingView: View {
         .contextMenu(forSelectionType: String.self) { selection in
             if let id = selection.first,
                let rule = visibleRules.first(where: { $0.id == id }) {
-                Button("Edit…") { edit(rule) }
-                Button("Duplicate") { clone(rule) }
+                Button(AppLocalization.string("Edit…")) { edit(rule) }
+                Button(AppLocalization.string("Duplicate")) { clone(rule) }
                 Divider()
-                Button("Delete", role: .destructive) { remove(rule) }
+                Button(AppLocalization.string("Delete"), role: .destructive) { remove(rule) }
             }
         } primaryAction: { selection in
             if let id = selection.first,
@@ -705,12 +766,15 @@ struct AppRoutingView: View {
 
     private var effectivePolicyBar: some View {
         HStack(spacing: 8) {
-            Text("Effective Policy")
+            Text(AppLocalization.string("Effective Policy"))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
             if enabledRuleCount == 0 {
-                Label("Applications Direct", systemImage: "arrow.right.circle")
+                Label(
+                    AppLocalization.string("Applications Direct"),
+                    systemImage: "arrow.right.circle"
+                )
                     .font(.callout.weight(.medium))
                 Text("·")
                     .foregroundStyle(.tertiary)
@@ -718,9 +782,19 @@ struct AppRoutingView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
-                Text("\(enabledRuleCount) enabled \(enabledRuleCount == 1 ? "rule" : "rules")")
+                Text(
+                    AppLocalization.format(
+                        enabledRuleCount == 1 ? "%d enabled rule" : "%d enabled rules",
+                        enabledRuleCount
+                    )
+                )
                     .font(.callout.weight(.medium))
-                Text("· First match wins · \(dnsPolicyTitle)")
+                Text(
+                    AppLocalization.format(
+                        "· First match wins · %@",
+                        dnsPolicyTitle
+                    )
+                )
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -737,7 +811,7 @@ struct AppRoutingView: View {
         let visibleActivities = activityPresentation.visibleActivities
         if activityPresentation.activeCount == 0 {
             ContentUnavailableView(
-                "No Active App Routing Connections",
+                AppLocalization.string("No Active App Routing Connections"),
                 systemImage: "network.slash",
                 description: Text(activityEmptyDescription)
             )
@@ -750,7 +824,7 @@ struct AppRoutingView: View {
 
     private func activityTable(_ activities: [AppRoutingActivity]) -> some View {
         Table(activities, selection: $selectedActivityID) {
-            TableColumn("Application / Process") { activity in
+            TableColumn(AppLocalization.string("Application / Process")) { activity in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activityApplicationName(activity))
                         .fontWeight(.medium)
@@ -760,7 +834,12 @@ struct AppRoutingView: View {
                         }
                         .accessibilityAddTraits(.isButton)
                         .accessibilityAction { inspectActivity(activity) }
-                    Text("PID \(activity.source.processIdentifier)")
+                    Text(
+                        AppLocalization.format(
+                            "PID %@",
+                            String(activity.source.processIdentifier)
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -768,7 +847,7 @@ struct AppRoutingView: View {
             }
             .width(min: 145, ideal: 200)
 
-            TableColumn("Target") { activity in
+            TableColumn(AppLocalization.string("Target")) { activity in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activityDestination(activity))
                         .lineLimit(1)
@@ -781,7 +860,7 @@ struct AppRoutingView: View {
             }
             .width(min: 145, ideal: 210)
 
-            TableColumn("Route") { activity in
+            TableColumn(AppLocalization.string("Route")) { activity in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activityRoute(activity))
                         .lineLimit(1)
@@ -797,7 +876,7 @@ struct AppRoutingView: View {
             }
             .width(min: 150, ideal: 220)
 
-            TableColumn("Current Speed") { activity in
+            TableColumn(AppLocalization.string("Current Speed")) { activity in
                 activitySpeed(activity)
             }
             .width(min: 104, ideal: 122)
@@ -805,7 +884,7 @@ struct AppRoutingView: View {
         .contextMenu(forSelectionType: UUID.self) { selection in
             if let id = selection.first,
                let activity = activities.first(where: { $0.flowIdentifier == id }) {
-                Button("Inspect") { inspectActivity(activity) }
+                Button(AppLocalization.string("Inspect")) { inspectActivity(activity) }
             }
         } primaryAction: { selection in
             if let id = selection.first,
@@ -828,21 +907,28 @@ struct AppRoutingView: View {
             Image(systemName: "app.badge")
                 .font(.system(size: 36, weight: .regular))
                 .foregroundStyle(.secondary)
-            Text("No App Routing Rules")
+            Text(AppLocalization.string("No App Routing Rules"))
                 .font(.title3.weight(.semibold))
-            Text("Add an application, process, domain, IP, or port rule to choose how its traffic is handled.")
+            Text(
+                AppLocalization.string(
+                    "Add an application, process, domain, IP, or port rule to choose how its traffic is handled."
+                )
+            )
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 440)
-            Button("Add First Rule…") { addRule() }
+            Button(AppLocalization.string("Add First Rule…")) { addRule() }
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canPerform(.changeNetworkCapture))
             Button {
                 proxifierImportError = nil
                 showingProxifierImporter = true
             } label: {
-                Label("Import Proxifier Profile…", systemImage: "arrow.down.doc")
+                Label(
+                    AppLocalization.string("Import Proxifier Profile…"),
+                    systemImage: "arrow.down.doc"
+                )
             }
             .buttonStyle(.bordered)
             .disabled(!model.canPerform(.changeNetworkCapture))
@@ -854,38 +940,46 @@ struct AppRoutingView: View {
     private var actionBar: some View {
         HStack(spacing: 8) {
             Button(action: addRule) {
-                Label("Add Rule…", systemImage: "plus")
+                Label(AppLocalization.string("Add Rule…"), systemImage: "plus")
             }
             .keyboardShortcut("n", modifiers: .command)
 
             if selectedRule != nil {
-                Button("Edit…", action: editSelectedRule)
+                Button(AppLocalization.string("Edit…"), action: editSelectedRule)
             }
+
+            Spacer()
 
             Menu {
                 Button {
                     proxifierImportError = nil
                     showingProxifierImporter = true
                 } label: {
-                    Label("Import Proxifier Profile…", systemImage: "arrow.down.doc")
+                    Label(
+                        AppLocalization.string("Import Proxifier Profile…"),
+                        systemImage: "arrow.down.doc"
+                    )
                 }
 
                 if selectedRule != nil {
                     Divider()
-                    Button("Duplicate", action: cloneSelectedRule)
-                    Button("Move Up", action: { moveSelectedRule(by: -1) })
+                    Button(AppLocalization.string("Duplicate"), action: cloneSelectedRule)
+                    Button(AppLocalization.string("Move Up"), action: { moveSelectedRule(by: -1) })
                         .disabled(!canMoveSelectedRule(by: -1))
-                    Button("Move Down", action: { moveSelectedRule(by: 1) })
+                    Button(AppLocalization.string("Move Down"), action: { moveSelectedRule(by: 1) })
                         .disabled(!canMoveSelectedRule(by: 1))
                     Divider()
-                    Button("Delete Rule", role: .destructive, action: removeSelectedRule)
+                    Button(
+                        AppLocalization.string("Delete Rule"),
+                        role: .destructive,
+                        action: removeSelectedRule
+                    )
                 }
             } label: {
-                Label("More", systemImage: "ellipsis.circle")
+                Label(AppLocalization.string("More"), systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
-            .help("More App Routing rule actions")
-
-            Spacer()
+            .help(AppLocalization.string("More App Routing rule actions"))
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -898,7 +992,10 @@ struct AppRoutingView: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("Filter app, target, rule, or route", text: $activitySearchText)
+            TextField(
+                AppLocalization.string("Filter app, target, rule, or route"),
+                text: $activitySearchText
+            )
                 .textFieldStyle(.plain)
                 .frame(maxWidth: 360)
 
@@ -913,23 +1010,23 @@ struct AppRoutingView: View {
             } else {
                 switch model.liveStreamHealth[.appRouting]?.phase ?? .inactive {
                 case .live:
-                    Text("Live connections · updates automatically")
+                    Text(AppLocalization.string("Live connections · updates automatically"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 case .connecting:
-                    Text("Waiting for the first provider response…")
+                    Text(AppLocalization.string("Waiting for the first provider response…"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 case .reconnecting:
-                    Text("Provider reconnecting…")
+                    Text(AppLocalization.string("Provider reconnecting…"))
                         .font(.caption)
                         .foregroundStyle(.orange)
                 case .stale:
-                    Text("Provider data is stale")
+                    Text(AppLocalization.string("Provider data is stale"))
                         .font(.caption)
                         .foregroundStyle(.red)
                 case .inactive:
-                    Text("Provider inactive")
+                    Text(AppLocalization.string("Provider inactive"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -938,10 +1035,14 @@ struct AppRoutingView: View {
             Button {
                 activityInspectorPresented.toggle()
             } label: {
-                Label("Inspect", systemImage: "sidebar.right")
+                Label(AppLocalization.string("Inspect"), systemImage: "sidebar.right")
             }
             .disabled(selectedActivity == nil)
-            .help(activityInspectorPresented ? "Hide activity details" : "Show activity details")
+            .help(
+                activityInspectorPresented
+                    ? AppLocalization.string("Hide activity details")
+                    : AppLocalization.string("Show activity details")
+            )
             .popover(isPresented: popoverActivityInspectorBinding, arrowEdge: .top) {
                 activityInspectorContent
                     .frame(width: 380, height: 520)
@@ -956,12 +1057,16 @@ struct AppRoutingView: View {
     private var headerCount: String {
         switch workspace {
         case .rules:
-            "· \(enabledRuleCount) enabled"
+            AppLocalization.format("· %d enabled", enabledRuleCount)
         case .activity:
             if activityPresentation.visibleActivities.count == activityPresentation.activeCount {
-                "· \(activityPresentation.activeCount) active"
+                AppLocalization.format("· %d active", activityPresentation.activeCount)
             } else {
-                "· \(activityPresentation.visibleActivities.count) shown · \(activityPresentation.activeCount) active"
+                AppLocalization.format(
+                    "· %d shown · %d active",
+                    activityPresentation.visibleActivities.count,
+                    activityPresentation.activeCount
+                )
             }
         }
     }
@@ -969,9 +1074,13 @@ struct AppRoutingView: View {
     private var activityEmptyDescription: String {
         switch model.networkCaptureState {
         case .on:
-            "Start using an application routed through Mihomo. Provider-owned TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed."
+            AppLocalization.string(
+                "Start using an application routed through Mihomo. Provider-owned TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed."
+            )
         default:
-            "Enable App Routing and connect MClash to see live provider-owned connections."
+            AppLocalization.string(
+                "Enable App Routing and connect MClash to see live provider-owned connections."
+            )
         }
     }
 
@@ -994,9 +1103,11 @@ struct AppRoutingView: View {
             )
         } else {
             ContentUnavailableView(
-                "Select an activity",
+                AppLocalization.string("Select an activity"),
                 systemImage: "sidebar.right",
-                description: Text("Choose a flow to inspect every routing stage.")
+                description: Text(
+                    AppLocalization.string("Choose a flow to inspect every routing stage.")
+                )
             )
         }
     }
@@ -1080,14 +1191,17 @@ struct AppRoutingView: View {
         if let bundle = activity.source.bundleIdentifier, !bundle.isEmpty { return bundle }
         if let signing = activity.source.signingIdentifier, !signing.isEmpty { return signing }
         return activity.source.processIdentifier > 0
-            ? "Process \(activity.source.processIdentifier)"
-            : "Unknown process"
+            ? AppLocalization.format(
+                "Process %@",
+                String(activity.source.processIdentifier)
+            )
+            : AppLocalization.string("Unknown process")
     }
 
     private func activityDestination(_ activity: AppRoutingActivity) -> String {
         let host = activity.destination.hostname
             ?? activity.destination.ipAddress
-            ?? "Unknown destination"
+            ?? AppLocalization.string("Unknown destination")
         return activity.destination.port > 0 ? "\(host):\(activity.destination.port)" : host
     }
 
@@ -1101,14 +1215,18 @@ struct AppRoutingView: View {
 
     private func activityCause(_ activity: AppRoutingActivity) -> String {
         switch activity.cause {
-        case .captureDisabled: "Capture disabled"
-        case .configurationUnavailable: "Configuration unavailable"
-        case .contextUnavailable: "Identity unavailable"
+        case .captureDisabled: AppLocalization.string("Capture disabled")
+        case .configurationUnavailable: AppLocalization.string("Configuration unavailable")
+        case .contextUnavailable: AppLocalization.string("Identity unavailable")
         case let .rule(cause), let .mihomoUnavailable(cause, _):
             switch cause {
             case let .matchedRule(identifier): identifier
-            case let .builtInBypass(reason): "Built-in: \(reason.rawValue)"
-            case .defaultDirect: "Default direct"
+            case let .builtInBypass(reason):
+                AppLocalization.format(
+                    "Built-in: %@",
+                    AppLocalization.string(reason.rawValue)
+                )
+            case .defaultDirect: AppLocalization.string("Default direct")
             }
         }
     }
@@ -1116,162 +1234,67 @@ struct AppRoutingView: View {
     private func activityRoute(_ activity: AppRoutingActivity) -> String {
         switch activity.effectiveAction {
         case .direct:
-            return activity.configuredAction == .direct ? "Direct" : "Direct fallback"
+            return activity.configuredAction == .direct
+                ? AppLocalization.string("Direct")
+                : AppLocalization.string("Direct fallback")
         case .reject:
-            return "Rejected"
+            return AppLocalization.string("Rejected")
         case .failOpen:
-            return "Fail-open"
+            return AppLocalization.string("Fail-open")
         case let .mihomo(route):
             let target = switch route.profileRoute {
-            case .rules: "Rules"
-            case .global: "Global"
+            case .rules: AppLocalization.string("Rules")
+            case .global: AppLocalization.string("Global")
             case let .group(group): group
             }
             guard let profileID = route.routingProfileID else {
-                return "Mihomo \(target)"
+                return AppLocalization.format("Mihomo %@", target)
             }
             let name = model.profiles.first {
                 $0.id.rawValue == profileID.uuid
             }?.name ?? AppLocalization.string("Unavailable profile")
-            return "\(name) · \(target)"
-        }
-    }
-
-    private var scopedAppRoutingActivities: [AppRoutingActivity] {
-        guard let target = profileScope.trafficTarget else {
-            return model.appRoutingActivities
-        }
-        return model.appRoutingActivities.filter {
-            $0.mclashTrafficTarget == target
-        }
-    }
-
-    private var scopedRuleStatistics: [String: AppModel.AppRoutingRuleStatistics] {
-        guard profileScope != .all else {
-            return model.appRoutingRuleStatistics
-        }
-        return scopedAppRoutingActivities.reduce(into: [:]) { result, activity in
-            guard let identifier = activity.matchedRuleIdentifier else { return }
-            var value = result[identifier] ?? .zero
-            value.matchCount += 1
-            if activity.isLiveManagedFlow { value.activeCount += 1 }
-            if activity.relayState == .failed { value.failureCount += 1 }
-            value.lastMatchedAt = max(
-                value.lastMatchedAt ?? .distantPast,
-                activity.startedAt
-            )
-
-            let isMeasured: Bool = switch activity.effectiveAction {
-            case .mihomo, .reject: true
-            case .direct: activity.payloadBytesAreMeasured == true
-            case .failOpen: false
-            }
-            if isMeasured {
-                value.measuredBytes = addingWithoutOverflow(
-                    value.measuredBytes,
-                    activity.uploadBytes
-                )
-                value.measuredBytes = addingWithoutOverflow(
-                    value.measuredBytes,
-                    activity.downloadBytes
-                )
-            } else {
-                value.unmeasuredCount += 1
-            }
-            result[identifier] = value
-        }
-    }
-
-    private func addingWithoutOverflow(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
-        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
-        return overflow ? .max : sum
-    }
-
-    private var scopedTrafficRate: AppRoutingByteRate {
-        switch profileScope {
-        case .all:
-            return model.appRoutingTrafficRates.measured
-        case .defaultProfile:
-            return model.appRoutingTrafficRates.defaultProfile
-        case let .profile(profileID):
-            return model.appRoutingTrafficRates.byProfile[profileID]
-                ?? AppRoutingByteRate()
-        case .system:
-            return model.appRoutingTrafficRates.direct
-        }
-    }
-
-    private func pathBelongsToSelectedProfile(_ path: AppRoutingTrafficPath) -> Bool {
-        switch profileScope {
-        case .all:
-            true
-        case .defaultProfile:
-            if case let .mihomo(route) = path {
-                route.mclashTrafficTarget == .defaultProfile
-            } else {
-                false
-            }
-        case let .profile(profileID):
-            if case let .mihomo(route) = path {
-                route.mclashTrafficTarget == .profile(profileID)
-            } else {
-                false
-            }
-        case .system:
-            if case .mihomo = path { false } else { true }
-        }
-    }
-
-    private func activityProfileTitle(_ activity: AppRoutingActivity) -> String {
-        switch activity.mclashTrafficTarget {
-        case .defaultProfile:
-            "Default Profile"
-        case let .profile(profileID):
-            model.profiles.first(where: { $0.id == profileID })?.name
-                ?? "Unavailable"
-        case .system:
-            "Direct / System"
+            return AppLocalization.format("%@ · %@", name, target)
         }
     }
 
     private func activityResult(_ activity: AppRoutingActivity) -> String {
-        if activity.relayState == .failed { return "Relay failed" }
+        if activity.relayState == .failed { return AppLocalization.string("Relay failed") }
         return switch activity.effectiveAction {
         case .direct where activity.payloadBytesAreMeasured == true:
             switch activity.relayState {
-            case .pending, .connecting: "Direct connecting"
-            case .ready: "Direct ready"
-            case .relaying: "Direct relaying"
-            case .completed: "Direct complete"
-            case .notApplicable: "Direct"
-            case .failed: "Relay failed"
+            case .pending, .connecting: AppLocalization.string("Direct connecting")
+            case .ready: AppLocalization.string("Direct ready")
+            case .relaying: AppLocalization.string("Direct relaying")
+            case .completed: AppLocalization.string("Direct complete")
+            case .notApplicable: AppLocalization.string("Direct")
+            case .failed: AppLocalization.string("Relay failed")
             }
-        case .direct: "Direct pass-through"
-        case .reject: "Rejected"
-        case .failOpen: "Fail-open"
+        case .direct: AppLocalization.string("Direct pass-through")
+        case .reject: AppLocalization.string("Rejected")
+        case .failOpen: AppLocalization.string("Fail-open")
         case .mihomo: switch activity.relayState {
-            case .pending, .connecting: "Connecting"
-            case .ready: "Mihomo ready"
+            case .pending, .connecting: AppLocalization.string("Connecting")
+            case .ready: AppLocalization.string("Mihomo ready")
             case .relaying:
                 if routeIsConfirmed(activity) {
-                    "Route confirmed"
+                    AppLocalization.string("Route confirmed")
                 } else if routeIsProbable(activity) {
-                    "Probable Mihomo match"
+                    AppLocalization.string("Probable Mihomo match")
                 } else if (activity.downloadDatagrams ?? 0) > 0 {
-                    "Response observed"
+                    AppLocalization.string("Response observed")
                 } else {
-                    "Sent to Mihomo"
+                    AppLocalization.string("Sent to Mihomo")
                 }
             case .completed:
                 if routeIsConfirmed(activity) {
-                    "Route confirmed"
+                    AppLocalization.string("Route confirmed")
                 } else if routeIsProbable(activity) {
-                    "Probable Mihomo match"
+                    AppLocalization.string("Probable Mihomo match")
                 } else {
-                    "Mihomo complete"
+                    AppLocalization.string("Mihomo complete")
                 }
-            case .failed: "Relay failed"
-            case .notApplicable: "Mihomo"
+            case .failed: AppLocalization.string("Relay failed")
+            case .notApplicable: AppLocalization.string("Mihomo")
             }
         }
     }
@@ -1294,33 +1317,6 @@ struct AppRoutingView: View {
         case .failOpen: .orange
         case .mihomo: .accentColor
         }
-    }
-
-    private func mihomoPath(_ activity: AppRoutingActivity) -> String {
-        guard case .mihomo = activity.effectiveAction else { return "—" }
-        guard let entry = model.appRoutingFlowEntries[activity.flowIdentifier],
-              let route = entry.mihomoRoute else {
-            if activity.relayState == .failed { return "Relay failed" }
-            if (activity.downloadDatagrams ?? 0) > 0 {
-                return "Response observed · node path not yet matched"
-            }
-            if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
-                return "Sent to Mihomo · awaiting /connections confirmation"
-            }
-            return "Waiting for Mihomo metadata"
-        }
-        let rule = [route.rule, route.rulePayload]
-            .compactMap { $0 }
-            .joined(separator: " · ")
-        let chain = route.chain.joined(separator: " → ")
-        var components = [rule, chain].filter { !$0.isEmpty }
-        if case let .destinationAndStartTime(_, difference) = entry.association {
-            components.insert(
-                "Probable · destination/time Δ\(difference.formatted(.number.precision(.fractionLength(2))))s",
-                at: 0
-            )
-        }
-        return components.joined(separator: " · ")
     }
 
     private func routeIsConfirmed(_ activity: AppRoutingActivity) -> Bool {
@@ -1347,69 +1343,16 @@ struct AppRoutingView: View {
         .foregroundStyle(rate.total > 0 ? Color.primary : Color.secondary)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Download \(formattedActivityRate(rate.download)), upload \(formattedActivityRate(rate.upload))"
+            AppLocalization.format(
+                "Download %@, upload %@",
+                formattedActivityRate(rate.download),
+                formattedActivityRate(rate.upload)
+            )
         )
     }
 
-    @ViewBuilder
-    private func activityTraffic(_ activity: AppRoutingActivity) -> some View {
-        let entry = model.appRoutingFlowEntries[activity.flowIdentifier]
-        switch entry?.upload ?? fallbackUploadMeasurement(activity) {
-        case .notMeasuredAfterHandoff:
-            Label("Not measured", systemImage: "arrow.uturn.right")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help("MClash recorded the decision, then handed the flow back to macOS. Payload bytes are not observable after handoff.")
-        case .notApplicable:
-            Text("No payload")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help("The flow was rejected before application payload was relayed.")
-        case .exact:
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("↓ \(formattedActivityBytes(activity.downloadBytes))")
-                Text("↑ \(formattedActivityBytes(activity.uploadBytes))")
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private func fallbackUploadMeasurement(
-        _ activity: AppRoutingActivity
-    ) -> FlowLedgerByteMeasurement {
-        switch activity.effectiveAction {
-        case .direct where activity.payloadBytesAreMeasured == true:
-            .exact(activity.uploadBytes)
-        case .direct, .failOpen: .notMeasuredAfterHandoff
-        case .reject: .notApplicable
-        case .mihomo: .exact(activity.uploadBytes)
-        }
-    }
-
-    private func formattedActivityBytes(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
-    }
-
     private func formattedActivityRate(_ bytesPerSecond: UInt64) -> String {
-        "\(formattedActivityBytes(bytesPerSecond))/s"
-    }
-
-    private func formattedActivityCount(_ value: UInt64) -> String {
-        value.formatted(.number.grouping(.automatic))
-    }
-
-    private func appRoutingTrafficPathTitle(_ path: AppRoutingTrafficPath) -> String {
-        switch path {
-        case .direct: "Direct"
-        case .failOpen: "Fail Open"
-        case .rejected: "Rejected"
-        case .mihomo(.profileRules): "Mihomo Rules"
-        case .mihomo(.global): "Mihomo GLOBAL"
-        case let .mihomo(.group(group)): group
-        case let .mihomo(.profile(profileID, target)):
-            "\(routingProfileName(profileID)) · \(profileRouteTitle(target))"
-        }
+        formattedByteRate(Int64(clamping: bytesPerSecond))
     }
 
     private var rules: [CaptureRule] {
@@ -1437,22 +1380,9 @@ struct AppRoutingView: View {
     }
 
     private var dnsPolicyTitle: String {
-        model.networkCapturePreferences.dnsEnabled ? "DNS On" : "DNS Off"
-    }
-
-    private func formattedRuleTraffic(_ bytes: UInt64, partial: Bool) -> String {
-        let value = ByteCountFormatter.string(
-            fromByteCount: Int64(clamping: bytes),
-            countStyle: .file
-        )
-        return partial ? "\(value)+" : value
-    }
-
-    private func ruleTrafficHelp(_ statistics: AppModel.AppRoutingRuleStatistics) -> String {
-        guard statistics.unmeasuredCount > 0 else {
-            return "Exact payload bytes observed for this rule in the current app session."
-        }
-        return "\(formattedRuleTraffic(statistics.measuredBytes, partial: false)) measured, plus \(formattedCount(statistics.unmeasuredCount)) pass-through flows whose payload was not observable."
+        model.networkCapturePreferences.dnsEnabled
+            ? AppLocalization.string("DNS On")
+            : AppLocalization.string("DNS Off")
     }
 
     private var selectedRule: CaptureRule? {
@@ -1478,21 +1408,29 @@ struct AppRoutingView: View {
 
     private var appRoutingEnableConfirmationMessage: String {
         var effects = [
-            "MClash will restart the Mihomo core, which can close current connections.",
-            "macOS may ask you to approve the MClash Network Filter."
+            AppLocalization.string(
+                "MClash will restart the Mihomo core, which can close current connections."
+            ),
+            AppLocalization.string("macOS may ask you to approve the MClash Network Filter.")
         ]
         if model.networkCapturePreferences.dnsEnabled {
             effects.append(
-                "DNS Routing will start at the same time and can replace Proxifier DNS or another active macOS DNS Proxy."
+                AppLocalization.string(
+                    "DNS Routing will start at the same time and can replace Proxifier DNS or another active macOS DNS Proxy."
+                )
             )
         } else {
             effects.append(
-                "DNS Routing is excluded by the Advanced DNS Routing setting."
+                AppLocalization.string(
+                    "DNS Routing is excluded by the Advanced DNS Routing setting."
+                )
             )
         }
         if model.systemProxyEnabled {
             effects.insert(
-                "The currently enabled MClash System Proxy will be turned off because the two capture modes are mutually exclusive.",
+                AppLocalization.string(
+                    "The currently enabled MClash System Proxy will be turned off because the two capture modes are mutually exclusive."
+                ),
                 at: 0
             )
         }
@@ -1502,28 +1440,31 @@ struct AppRoutingView: View {
     private var statusTitle: String {
         switch model.networkCaptureState {
         case .waitingForConnection:
-            return "App Routing Waiting for Connection"
+            return AppLocalization.string("App Routing Waiting for Connection")
         case .awaitingUserApproval:
-            return "System Approval Required"
+            return AppLocalization.string("System Approval Required")
         case .requiresReboot:
-            return "Restart Required"
+            return AppLocalization.string("Restart Required")
         case .failed:
-            return "App Routing Needs Attention"
+            return AppLocalization.string("App Routing Needs Attention")
         case .off, .enabling, .on, .disabling:
             break
         }
         if let pending = model.pendingNetworkCaptureEnabled {
-            return pending ? "Starting App Routing" : "Stopping App Routing"
+            return pending
+                ? AppLocalization.string("Starting App Routing")
+                : AppLocalization.string("Stopping App Routing")
         }
         return switch model.networkCaptureState {
-        case .off: "App Routing Off"
-        case .waitingForConnection: "App Routing Waiting for Connection"
-        case .enabling: "Starting App Routing"
-        case .awaitingUserApproval: "System Approval Required"
-        case let .on(revision): "App Routing On · revision \(revision)"
-        case .disabling: "Stopping App Routing"
-        case .requiresReboot: "Restart Required"
-        case .failed: "App Routing Needs Attention"
+        case .off: AppLocalization.string("App Routing Off")
+        case .waitingForConnection: AppLocalization.string("App Routing Waiting for Connection")
+        case .enabling: AppLocalization.string("Starting App Routing")
+        case .awaitingUserApproval: AppLocalization.string("System Approval Required")
+        case let .on(revision):
+            AppLocalization.format("App Routing On · revision %@", String(revision))
+        case .disabling: AppLocalization.string("Stopping App Routing")
+        case .requiresReboot: AppLocalization.string("Restart Required")
+        case .failed: AppLocalization.string("App Routing Needs Attention")
         }
     }
 
@@ -1562,7 +1503,7 @@ struct AppRoutingView: View {
         editingRuleID = nil
         selectedRuleID = nil
         draft = CaptureRuleDraft(
-            identifier: uniqueRuleName("New Rule"),
+            identifier: uniqueRuleName(AppLocalization.string("New Rule")),
             priority: nextPriority,
             action: profileScope == .system ? .direct : .mihomoProfileRules,
             routingProfileID: {
@@ -1611,7 +1552,7 @@ struct AppRoutingView: View {
                 applicationCandidates: applicationCandidates,
                 processCandidates: processCandidates
             )
-            copy.identifier = uniqueRuleName("\(rule.id) Copy")
+            copy.identifier = uniqueRuleName(AppLocalization.format("Copy %@", rule.id))
             copy.priority = nextPriority
             copy.enabled = true
             draft = copy
@@ -1773,27 +1714,34 @@ struct AppRoutingView: View {
     }
 
     private func sourceSummary(_ rule: CaptureRule) -> String {
-        guard !rule.sources.isEmpty else { return "Any application" }
+        guard !rule.sources.isEmpty else {
+            return AppLocalization.string("Any application")
+        }
         return rule.sources.map { source in
             switch source {
             case let .application(application):
                 application.bundleIdentifier
                     ?? application.signingIdentifier
-                    ?? "Signed application"
+                    ?? AppLocalization.string("Signed application")
             case let .applicationIdentifierPattern(application):
                 application.pattern
             case let .executable(executable):
                 URL(fileURLWithPath: executable.canonicalPath).lastPathComponent
             case let .processInstance(process):
-                "PID \(process.processIdentifier) · this run"
+                AppLocalization.format(
+                    "PID %@ · this run",
+                    String(process.processIdentifier)
+                )
             case let .userID(userID):
-                "User \(userID)"
+                AppLocalization.format("User %@", String(userID))
             }
         }.joined(separator: ", ")
     }
 
     private func destinationSummary(_ rule: CaptureRule) -> String {
-        guard !rule.destinations.isEmpty else { return "Any target" }
+        guard !rule.destinations.isEmpty else {
+            return AppLocalization.string("Any target")
+        }
         return rule.destinations.map { destination in
             switch destination {
             case let .ip(address): address.presentation
@@ -1808,26 +1756,32 @@ struct AppRoutingView: View {
 
     private func transportSummary(_ rule: CaptureRule) -> String {
         let protocols = rule.protocols.isEmpty
-            ? "TCP + UDP"
+            ? AppLocalization.string("TCP + UDP")
             : rule.protocols.map { $0.rawValue.uppercased() }.sorted().joined(separator: " + ")
-        guard !rule.portRanges.isEmpty else { return "\(protocols) · Any" }
+        guard !rule.portRanges.isEmpty else {
+            return AppLocalization.format("%@ · Any", protocols)
+        }
         let ports = rule.portRanges.map { range in
             range.lowerBound == range.upperBound
                 ? String(range.lowerBound)
                 : "\(range.lowerBound)-\(range.upperBound)"
         }.joined(separator: ", ")
-        return "\(protocols) · \(ports)"
+        return AppLocalization.format("%@ · %@", protocols, ports)
     }
 
     private func actionSummary(_ action: CaptureAction) -> String {
         switch action {
-        case .direct: "Direct"
-        case .reject: "Reject"
-        case .mihomo(.profileRules): "Mihomo Rules"
-        case .mihomo(.global): "Mihomo Global"
+        case .direct: AppLocalization.string("Direct")
+        case .reject: AppLocalization.string("Reject")
+        case .mihomo(.profileRules): AppLocalization.string("Mihomo Rules")
+        case .mihomo(.global): AppLocalization.string("Mihomo Global")
         case let .mihomo(.group(group)): group
         case let .mihomo(.profile(profileID, target)):
-            "\(routingProfileName(profileID)) · \(profileRouteTitle(target))"
+            AppLocalization.format(
+                "%@ · %@",
+                routingProfileName(profileID),
+                profileRouteTitle(target)
+            )
         }
     }
 
@@ -1839,8 +1793,8 @@ struct AppRoutingView: View {
 
     private func profileRouteTitle(_ route: MihomoProfileRoute) -> String {
         switch route {
-        case .rules: "Rules"
-        case .global: "Global"
+        case .rules: AppLocalization.string("Rules")
+        case .global: AppLocalization.string("Global")
         case let .group(group): group
         }
     }
@@ -1881,13 +1835,14 @@ private struct AppRoutingFlowInspector: View {
                         pipelineStage(
                             "Capture",
                             value: activity.effectiveCaptureOrigin == .dnsProxy
-                                ? "DNS Proxy"
-                                : "App Routing",
+                                ? AppLocalization.string("DNS Proxy")
+                                : AppLocalization.string("App Routing"),
                             symbol: "network.badge.shield.half.filled"
                         )
                         pipelineStage(
                             "App Rule",
-                            value: activity.matchedRuleIdentifier ?? "Built-in / default decision",
+                            value: activity.matchedRuleIdentifier
+                                ?? AppLocalization.string("Built-in / default decision"),
                             symbol: "list.number"
                         )
                         pipelineStage(
@@ -1913,7 +1868,7 @@ private struct AppRoutingFlowInspector: View {
                             pipelineStage(
                                 "Proxy Path",
                                 value: route.chain.isEmpty
-                                    ? "No proxy chain reported"
+                                    ? AppLocalization.string("No proxy chain reported")
                                     : route.chain.joined(separator: " → "),
                                 symbol: "point.3.connected.trianglepath.dotted"
                             )
@@ -1944,21 +1899,38 @@ private struct AppRoutingFlowInspector: View {
                     }
 
                     inspectorSection("Traffic") {
-                        detailRow("Download", value: measurementTitle(downloadMeasurement))
-                        detailRow("Upload", value: measurementTitle(uploadMeasurement))
+                        detailRow(
+                            AppLocalization.string("Download"),
+                            value: measurementTitle(downloadMeasurement)
+                        )
+                        detailRow(
+                            AppLocalization.string("Upload"),
+                            value: measurementTitle(uploadMeasurement)
+                        )
                         if let uploadDatagrams = activity.uploadDatagrams,
                            let downloadDatagrams = activity.downloadDatagrams {
+                            let uploaded = uploadDatagrams.formatted(
+                                .number.locale(AppLocalization.selectedLocale)
+                            )
+                            let downloaded = downloadDatagrams.formatted(
+                                .number.locale(AppLocalization.selectedLocale)
+                            )
                             detailRow(
-                                "Datagrams",
-                                value: "↑ \(uploadDatagrams.formatted()) · ↓ \(downloadDatagrams.formatted())"
+                                AppLocalization.string("Datagrams"),
+                                value: "↑ \(uploaded) · ↓ \(downloaded)"
                             )
                         }
                         if let dropped = activity.droppedDatagrams, dropped > 0 {
-                            detailRow("Dropped datagrams", value: dropped.formatted())
+                            detailRow(
+                                AppLocalization.string("Dropped datagrams"),
+                                value: dropped.formatted(.number.locale(AppLocalization.selectedLocale))
+                            )
                         }
                         if isUnmeasuredAfterHandoff {
                             Label(
-                                "MClash recorded the routing decision, then returned this flow to macOS. Payload bytes after that handoff are not observable.",
+                                AppLocalization.string(
+                                    "MClash recorded the routing decision, then returned this flow to macOS. Payload bytes after that handoff are not observable."
+                                ),
                                 systemImage: "info.circle"
                             )
                             .font(.caption)
@@ -1967,7 +1939,9 @@ private struct AppRoutingFlowInspector: View {
                         } else if activity.effectiveAction == .direct,
                                   activity.payloadBytesAreMeasured == true {
                             Label(
-                                "This flow had already been intercepted before switching to Direct fallback, so App Routing counted bytes after upstream acceptance and application delivery.",
+                                AppLocalization.string(
+                                    "This flow had already been intercepted before switching to Direct fallback, so App Routing counted bytes after upstream acceptance and application delivery."
+                                ),
                                 systemImage: "checkmark.circle"
                             )
                             .font(.caption)
@@ -1977,34 +1951,42 @@ private struct AppRoutingFlowInspector: View {
                     }
 
                     inspectorSection("Lifecycle") {
-                        detailRow("Protocol", value: activity.transportProtocol.rawValue.uppercased())
-                        detailRow("Relay", value: relayStateTitle)
                         detailRow(
-                            "Started",
-                            value: activity.startedAt.formatted(date: .abbreviated, time: .standard)
+                            AppLocalization.string("Protocol"),
+                            value: activity.transportProtocol.rawValue.uppercased()
+                        )
+                        detailRow(AppLocalization.string("Relay"), value: relayStateTitle)
+                        detailRow(
+                            AppLocalization.string("Started"),
+                            value: AppLocalization.date(activity.startedAt)
                         )
                         if let endedAt = activity.endedAt {
                             detailRow(
-                                "Ended",
-                                value: endedAt.formatted(date: .abbreviated, time: .standard)
+                                AppLocalization.string("Ended"),
+                                value: AppLocalization.date(endedAt)
                             )
                             detailRow(
-                                "Duration",
-                                value: Duration.seconds(endedAt.timeIntervalSince(activity.startedAt)).formatted()
+                                AppLocalization.string("Duration"),
+                                value: Duration.seconds(endedAt.timeIntervalSince(activity.startedAt)).formatted(
+                                    .units().locale(AppLocalization.selectedLocale)
+                                )
                             )
                         }
                         if let lastPayloadAt = activity.lastPayloadAt {
                             detailRow(
-                                "Last payload",
-                                value: lastPayloadAt.formatted(date: .abbreviated, time: .standard)
+                                AppLocalization.string("Last payload"),
+                                value: AppLocalization.date(lastPayloadAt)
                             )
                         }
-                        detailRow("PID", value: String(activity.source.processIdentifier))
+                        detailRow(
+                            AppLocalization.string("PID"),
+                            value: String(activity.source.processIdentifier)
+                        )
                         if let path = activity.source.executablePath {
-                            detailRow("Executable", value: path)
+                            detailRow(AppLocalization.string("Executable"), value: path)
                         }
                         if let identifier = activity.source.bundleIdentifier {
-                            detailRow("Bundle ID", value: identifier)
+                            detailRow(AppLocalization.string("Bundle ID"), value: identifier)
                         }
                     }
 
@@ -2032,7 +2014,13 @@ private struct AppRoutingFlowInspector: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("App Routing flow from \(applicationName) to \(destination)")
+        .accessibilityLabel(
+            AppLocalization.format(
+                "App Routing flow from %@ to %@",
+                applicationName,
+                destination
+            )
+        )
     }
 
     private func inspectorSection<Content: View>(
@@ -2040,7 +2028,7 @@ private struct AppRoutingFlowInspector: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
+            Text(AppLocalization.string(title))
                 .font(.headline)
             VStack(alignment: .leading, spacing: 9) {
                 content()
@@ -2055,10 +2043,10 @@ private struct AppRoutingFlowInspector: View {
                 .frame(width: 20)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(AppLocalization.string(title))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(value.isEmpty ? "Unavailable" : value)
+                Text(value.isEmpty ? AppLocalization.string("Unavailable") : value)
                     .font(.callout)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2082,32 +2070,37 @@ private struct AppRoutingFlowInspector: View {
         }
         return activity.source.bundleIdentifier
             ?? activity.source.signingIdentifier
-            ?? "Process \(activity.source.processIdentifier)"
+            ?? AppLocalization.format(
+                "Process %@",
+                String(activity.source.processIdentifier)
+            )
     }
 
     private var destination: String {
         let host = activity.destination.hostname
             ?? activity.destination.ipAddress
-            ?? "Unknown destination"
+            ?? AppLocalization.string("Unknown destination")
         return activity.destination.port > 0 ? "\(host):\(activity.destination.port)" : host
     }
 
     private var outcomeTitle: String {
         switch ledgerEntry?.outcome {
         case .viaMihomo:
-            routeIsConfirmed ? "Mihomo route confirmed" : mihomoEvidenceTitle
+            routeIsConfirmed
+                ? AppLocalization.string("Mihomo route confirmed")
+                : mihomoEvidenceTitle
         case .direct:
             activity.payloadBytesAreMeasured == true
-                ? "Direct · relayed and measured"
-                : "Direct · handed back to macOS"
-        case .rejected: "Rejected"
-        case .failOpen: "Fail-open · handed back to macOS"
-        case .relayFailed: "Relay failed"
+                ? AppLocalization.string("Direct · relayed and measured")
+                : AppLocalization.string("Direct · handed back to macOS")
+        case .rejected: AppLocalization.string("Rejected")
+        case .failOpen: AppLocalization.string("Fail-open · handed back to macOS")
+        case .relayFailed: AppLocalization.string("Relay failed")
         case nil:
             switch activity.effectiveAction {
-            case .direct: "Direct"
-            case .reject: "Rejected"
-            case .failOpen: "Fail-open"
+            case .direct: AppLocalization.string("Direct")
+            case .reject: AppLocalization.string("Rejected")
+            case .failOpen: AppLocalization.string("Fail-open")
             case .mihomo: mihomoEvidenceTitle
             }
         }
@@ -2137,15 +2130,19 @@ private struct AppRoutingFlowInspector: View {
     }
 
     private var mihomoEvidenceTitle: String {
-        if routeIsConfirmed { return "Route confirmed by Mihomo /connections" }
+        if routeIsConfirmed {
+            return AppLocalization.string("Route confirmed by Mihomo /connections")
+        }
         if routeIsProbable { return mihomoAssociationTitle }
         if (activity.downloadDatagrams ?? 0) > 0 {
-            return "Response observed; node path not yet matched"
+            return AppLocalization.string("Response observed; node path not yet matched")
         }
         if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
-            return "Sent to Mihomo; awaiting /connections confirmation"
+            return AppLocalization.string(
+                "Sent to Mihomo; awaiting /connections confirmation"
+            )
         }
-        return "Waiting for an associated Mihomo connection"
+        return AppLocalization.string("Waiting for an associated Mihomo connection")
     }
 
     private var mihomoEvidenceSymbol: String {
@@ -2178,11 +2175,11 @@ private struct AppRoutingFlowInspector: View {
     private func measurementTitle(_ measurement: FlowLedgerByteMeasurement) -> String {
         switch measurement {
         case let .exact(bytes):
-            ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+            formattedByteCount(Int64(clamping: bytes))
         case .notMeasuredAfterHandoff:
-            "Not measured after handoff"
+            AppLocalization.string("Not measured after handoff")
         case .notApplicable:
-            "No payload relayed"
+            AppLocalization.string("No payload relayed")
         }
     }
 
@@ -2193,13 +2190,13 @@ private struct AppRoutingFlowInspector: View {
 
     private var relayStateTitle: String {
         switch activity.relayState {
-        case .notApplicable: "Not applicable"
-        case .pending: "Pending"
-        case .connecting: "Connecting"
-        case .ready: "Ready"
-        case .relaying: "Relaying"
-        case .completed: "Completed"
-        case .failed: "Failed"
+        case .notApplicable: AppLocalization.string("Not applicable")
+        case .pending: AppLocalization.string("Pending")
+        case .connecting: AppLocalization.string("Connecting")
+        case .ready: AppLocalization.string("Ready")
+        case .relaying: AppLocalization.string("Relaying")
+        case .completed: AppLocalization.string("Completed")
+        case .failed: AppLocalization.string("Failed")
         }
     }
 }

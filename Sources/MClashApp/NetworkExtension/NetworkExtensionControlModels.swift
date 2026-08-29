@@ -147,11 +147,20 @@ enum NetworkExtensionRuntimeConfigurationError: Error, Equatable, LocalizedError
     var errorDescription: String? {
         switch self {
         case let .invalidRevision(revision):
-            "Network capture revision must be greater than zero; received \(revision)."
+            AppLocalization.format(
+                "Network capture revision must be greater than zero; received %@.",
+                String(revision)
+            )
         case let .snapshotTooLarge(actual, maximum):
-            "Encoded network capture rules are \(actual) bytes; the maximum is \(maximum)."
+            AppLocalization.format(
+                "Encoded network capture rules are %@ bytes; the maximum is %@.",
+                String(actual),
+                String(maximum)
+            )
         case .missingProfileRulesProxy:
-            "The private Mihomo listener catalog is missing the profile-rules route required by DNS Routing."
+            AppLocalization.string(
+                "The private Mihomo listener catalog is missing the profile-rules route required by DNS Routing."
+            )
         }
     }
 }
@@ -209,7 +218,9 @@ struct NetworkExtensionControlFailure: Error, Equatable, Sendable, LocalizedErro
         var message: String
         if underlyingError.domain == "OSSystemExtensionErrorDomain",
            underlyingError.code == 9 {
-            message = "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application"
+            message = AppLocalization.string(
+                "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application"
+            )
         } else {
             message = underlyingError.localizedDescription
         }
@@ -220,22 +231,31 @@ struct NetworkExtensionControlFailure: Error, Equatable, Sendable, LocalizedErro
     }
 
     var errorDescription: String? {
-        "\(operation.displayName): \(message)"
+        AppLocalization.format("%@: %@", operation.displayName, message)
     }
 }
 
 private extension NetworkExtensionControlOperation {
     var displayName: String {
         switch self {
-        case .activateSystemExtension: "System extension installation"
-        case .configureTransparentProxy: "Network filter configuration"
-        case .startTransparentProxy: "Network filter startup"
-        case .configureDNSProxy: "DNS proxy configuration"
-        case .inspectDNSProxy: "DNS proxy status"
-        case .disableDNSProxy: "DNS proxy shutdown"
-        case .stopTransparentProxy: "Network filter shutdown"
-        case .deactivateSystemExtension: "System extension removal"
-        case .stateTransition: "Network Extension state transition"
+        case .activateSystemExtension:
+            AppLocalization.string("System extension installation")
+        case .configureTransparentProxy:
+            AppLocalization.string("Network filter configuration")
+        case .startTransparentProxy:
+            AppLocalization.string("Network filter startup")
+        case .configureDNSProxy:
+            AppLocalization.string("DNS proxy configuration")
+        case .inspectDNSProxy:
+            AppLocalization.string("DNS proxy status")
+        case .disableDNSProxy:
+            AppLocalization.string("DNS proxy shutdown")
+        case .stopTransparentProxy:
+            AppLocalization.string("Network filter shutdown")
+        case .deactivateSystemExtension:
+            AppLocalization.string("System extension removal")
+        case .stateTransition:
+            AppLocalization.string("Network Extension state transition")
         }
     }
 }
@@ -296,7 +316,11 @@ enum NetworkExtensionStateReductionError: Error, Equatable, Sendable, LocalizedE
     var errorDescription: String? {
         switch self {
         case let .invalidTransition(phase, event):
-            return "Invalid network extension transition from \(phase.rawValue): \(event)"
+            return AppLocalization.format(
+                "Invalid network extension transition from %@: %@",
+                phase.rawValue,
+                String(describing: event)
+            )
         }
     }
 }

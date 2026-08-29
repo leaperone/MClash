@@ -37,9 +37,16 @@ struct ProxifierRuleImportSheet: View {
                     .foregroundStyle(Color.accentColor)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Import Proxifier Rules")
+                    Text(AppLocalization.string("Import Proxifier Rules"))
                         .font(.title3.weight(.semibold))
-                    Text("\(plan.sourceName) · v\(plan.profileVersion) · \(plan.platform)")
+                    Text(
+                        AppLocalization.format(
+                            "%@ · v%@ · %@",
+                            plan.sourceName,
+                            plan.profileVersion,
+                            plan.platform
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -66,17 +73,23 @@ struct ProxifierRuleImportSheet: View {
                                     .fontWeight(.medium)
                                     .lineLimit(1)
                                 if item.isCatchAll {
-                                    Text("CATCH-ALL")
+                                    Text(AppLocalization.string("CATCH-ALL"))
                                         .font(.caption2.weight(.semibold))
                                         .foregroundStyle(.red)
                                 }
                                 if item.rule?.enabled == false {
-                                    Text("DISABLED")
+                                    Text(AppLocalization.string("DISABLED"))
                                         .font(.caption2.weight(.semibold))
                                         .foregroundStyle(.secondary)
                                 }
                             }
-                            Text("\(item.criteriaSummary) · \(actionTitle(item))")
+                            Text(
+                                AppLocalization.format(
+                                    "%@ · %@",
+                                    item.criteriaSummary,
+                                    actionTitle(item)
+                                )
+                            )
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -99,11 +112,16 @@ struct ProxifierRuleImportSheet: View {
                 .disabled(!item.isImportable)
                 .help(item.notes.joined(separator: "\n"))
                 .accessibilityLabel(
-                    "\(item.importedName), \(item.criteriaSummary), \(actionTitle(item))"
+                    AppLocalization.format(
+                        "%@, %@, %@",
+                        item.importedName,
+                        item.criteriaSummary,
+                        actionTitle(item)
+                    )
                 )
                 .accessibilityHint(
                     item.notes.isEmpty
-                        ? "Select this rule for import."
+                        ? AppLocalization.string("Select this rule for import.")
                         : item.notes.joined(separator: ". ")
                 )
             }
@@ -113,7 +131,9 @@ struct ProxifierRuleImportSheet: View {
 
             HStack(spacing: 12) {
                 Label(
-                    "Only rules are imported; proxy servers and credentials are ignored.",
+                    AppLocalization.string(
+                        "Only rules are imported; proxy servers and credentials are ignored."
+                    ),
                     systemImage: "lock.shield"
                 )
                 .font(.caption)
@@ -123,9 +143,9 @@ struct ProxifierRuleImportSheet: View {
 
                 Spacer()
 
-                Button("Cancel") { dismiss() }
+                Button(AppLocalization.string("Cancel")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Import Rules") {
+                Button(AppLocalization.string("Import Rules")) {
                     onImport(selectedRules)
                     dismiss()
                 }
@@ -179,11 +199,13 @@ struct ProxifierRuleImportSheet: View {
     }
 
     private func actionTitle(_ item: ProxifierRuleImportItem) -> String {
-        guard let action = item.rule?.action else { return "Skipped" }
+        guard let action = item.rule?.action else {
+            return AppLocalization.string("Skipped")
+        }
         return switch action {
-        case .direct: "Direct"
-        case .reject: "Reject"
-        case .mihomo: "Mihomo Rules"
+        case .direct: AppLocalization.string("Direct")
+        case .reject: AppLocalization.string("Reject")
+        case .mihomo: AppLocalization.string("Mihomo Rules")
         }
     }
 }

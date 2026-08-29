@@ -1397,23 +1397,41 @@ extension RuntimeConfigurationComposerError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .profileIsNotUTF8:
-            "The profile is not valid UTF-8 YAML."
+            AppLocalization.string("The profile is not valid UTF-8 YAML.")
         case .multipleYAMLDocumentsUnsupported:
-            "Runtime overrides do not support profiles containing multiple YAML documents."
+            AppLocalization.string(
+                "Runtime overrides do not support profiles containing multiple YAML documents."
+            )
         case .multipleRulesSectionsUnsupported:
-            "Runtime rule overrides do not support profiles containing duplicate top-level rules sections."
+            AppLocalization.string(
+                "Runtime rule overrides do not support profiles containing duplicate top-level rules sections."
+            )
         case .multipleListenersSectionsUnsupported:
-            "The Network Extension listener layer does not support profiles containing duplicate top-level listeners sections."
+            AppLocalization.string(
+                "The Network Extension listener layer does not support profiles containing duplicate top-level listeners sections."
+            )
         case .rulesSectionMustBeSequence:
-            "The profile's top-level rules value must be a block or inline YAML sequence."
+            AppLocalization.string(
+                "The profile's top-level rules value must be a block or inline YAML sequence."
+            )
         case .listenersSectionMustBeSequence:
-            "The profile's top-level listeners value must be a block or inline YAML sequence."
+            AppLocalization.string(
+                "The profile's top-level listeners value must be a block or inline YAML sequence."
+            )
         case let .reservedListenerNameConflict(name):
-            "The profile already uses the reserved Network Extension listener name \(name)."
+            AppLocalization.format(
+                "The profile already uses the reserved Network Extension listener name %@.",
+                name
+            )
         case let .unsupportedBoundListenerSyntax(binding):
-            "The listener binding \(binding) uses YAML syntax that MClash cannot safely include in its port-conflict preflight."
+            AppLocalization.format(
+                "The listener binding %@ uses YAML syntax that MClash cannot safely include in its port-conflict preflight.",
+                binding
+            )
         case .scalarEncodingFailed:
-            "A runtime override could not be encoded as a YAML scalar."
+            AppLocalization.string(
+                "A runtime override could not be encoded as a YAML scalar."
+            )
         }
     }
 }

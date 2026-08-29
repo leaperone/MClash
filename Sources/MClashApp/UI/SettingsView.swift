@@ -70,10 +70,10 @@ struct SettingsView: View {
             }
 
             Section("Routing & macOS Proxy") {
-                LabeledContent("App Routing", value: AppLocalization.string(appRoutingStatus))
+                LabeledContent("App Routing", value: appRoutingStatus)
                 LabeledContent(
                     "macOS System Proxy",
-                    value: AppLocalization.string(systemProxyStatus)
+                    value: systemProxyStatus
                 )
                 appRoutingFeedback
                 systemProxySettingsFeedback
@@ -116,16 +116,38 @@ struct SettingsView: View {
                     if let verifiedAt = model.systemProxyGuardLastVerifiedAt {
                         LabeledContent(
                             "Last macOS verification",
-                            value: verifiedAt.formatted(.relative(presentation: .named))
+                            value: AppLocalization.relativeDate(verifiedAt)
                         )
-                        .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
+                        .help(
+                            verifiedAt.formatted(
+                                .dateTime
+                                    .year()
+                                    .month(.abbreviated)
+                                    .day()
+                                    .hour()
+                                    .minute()
+                                    .second()
+                                    .locale(AppLocalization.selectedLocale)
+                            )
+                        )
                     }
                     if let verifiedAt = model.appRoutingProviderLastVerifiedAt {
                         LabeledContent(
                             "App Routing provider verified",
-                            value: verifiedAt.formatted(.relative(presentation: .named))
+                            value: AppLocalization.relativeDate(verifiedAt)
                         )
-                        .help(verifiedAt.formatted(date: .abbreviated, time: .standard))
+                        .help(
+                            verifiedAt.formatted(
+                                .dateTime
+                                    .year()
+                                    .month(.abbreviated)
+                                    .day()
+                                    .hour()
+                                    .minute()
+                                    .second()
+                                    .locale(AppLocalization.selectedLocale)
+                            )
+                        )
                     }
                     if model.systemProxyEnabled {
                         LabeledContent(
@@ -140,15 +162,28 @@ struct SettingsView: View {
                                 value: AppLocalization.format(
                                     "%d · last %@",
                                     model.systemProxyGuardRepairCount,
-                                    repairedAt.formatted(.relative(presentation: .named))
+                                    AppLocalization.relativeDate(repairedAt)
                                 )
                             )
-                            .help(repairedAt.formatted(date: .abbreviated, time: .standard))
+                            .help(
+                                repairedAt.formatted(
+                                    .dateTime
+                                        .year()
+                                        .month(.abbreviated)
+                                        .day()
+                                        .hour()
+                                        .minute()
+                                        .second()
+                                        .locale(AppLocalization.selectedLocale)
+                                )
+                            )
                         }
                         Button(
-                            model.systemProxyPreferences.guardEnabled
-                                ? "Pause Proxy Guard"
-                                : "Resume Proxy Guard"
+                            AppLocalization.string(
+                                model.systemProxyPreferences.guardEnabled
+                                    ? "Pause Proxy Guard"
+                                    : "Resume Proxy Guard"
+                            )
                         ) {
                             Task {
                                 await model.setSystemProxyGuardPaused(
@@ -211,15 +246,21 @@ struct SettingsView: View {
 
             Section {
                 DisclosureGroup("Advanced", isExpanded: $advancedSettingsExpanded) {
-                    Button(model.isConnected ? "Edit Ports & Restart…" : "Edit Ports…") {
+                    Button(
+                        AppLocalization.string(
+                            model.isConnected ? "Edit Ports & Restart…" : "Edit Ports…"
+                        )
+                    ) {
                         showingListenerPortSettings = true
                     }
                     .disabled(!model.canPerform(.changeRuntimeSettings))
 
                     Button(
-                        model.isConnected
-                            ? "Manage Dedicated Ports & Restart…"
-                            : "Manage Dedicated Ports…"
+                        AppLocalization.string(
+                            model.isConnected
+                                ? "Manage Dedicated Ports & Restart…"
+                                : "Manage Dedicated Ports…"
+                        )
                     ) {
                         showingProfileRouteListenerSettings = true
                     }
@@ -254,13 +295,16 @@ struct SettingsView: View {
                         LabeledContent("Distribution", value: "Bundled mihomo Alpha")
                         LabeledContent(
                             "Version",
-                            value: model.runningSession?.version ?? "Verified during build"
+                            value: model.runningSession?.version
+                                ?? AppLocalization.string("Verified during build")
                         )
                         LabeledContent("Controller") {
                             if let controllerAddress {
                                 CopyableValueButton(
                                     value: controllerAddress,
-                                    accessibilityName: "controller address"
+                                    accessibilityName: AppLocalization.string(
+                                        "controller address"
+                                    )
                                 )
                             } else {
                                 Text("Assigned when connecting")
@@ -316,13 +360,19 @@ struct SettingsView: View {
     }
 
     private var systemProxyStatus: String {
-        if model.pendingSystemProxyEnabled == true { return "Turning On" }
-        if model.pendingSystemProxyEnabled == false { return "Turning Off" }
-        if model.systemProxyRecoveryRequired { return "Needs Restoration" }
-        if model.systemProxyEnabled, !model.systemProxyPreferences.guardEnabled {
-            return "On · Guard Paused"
+        if model.pendingSystemProxyEnabled == true {
+            return AppLocalization.string("Turning On")
         }
-        return model.systemProxyEnabled ? "On" : "Off"
+        if model.pendingSystemProxyEnabled == false {
+            return AppLocalization.string("Turning Off")
+        }
+        if model.systemProxyRecoveryRequired {
+            return AppLocalization.string("Needs Restoration")
+        }
+        if model.systemProxyEnabled, !model.systemProxyPreferences.guardEnabled {
+            return AppLocalization.string("On · Guard Paused")
+        }
+        return AppLocalization.string(model.systemProxyEnabled ? "On" : "Off")
     }
 
     @ViewBuilder
@@ -373,28 +423,29 @@ struct SettingsView: View {
     private var appRoutingStatus: String {
         switch model.networkCaptureState {
         case .waitingForConnection:
-            return "Waiting for Connection"
+            return AppLocalization.string("Waiting for Connection")
         case .awaitingUserApproval:
-            return "System Approval Required"
+            return AppLocalization.string("System Approval Required")
         case .requiresReboot:
-            return "Restart Required"
+            return AppLocalization.string("Restart Required")
         case .failed:
-            return "Needs Attention"
+            return AppLocalization.string("Needs Attention")
         case .off, .enabling, .on, .disabling:
             break
         }
         if let pending = model.pendingNetworkCaptureEnabled {
-            return pending ? "Turning On" : "Turning Off"
+            return AppLocalization.string(pending ? "Turning On" : "Turning Off")
         }
         return switch model.networkCaptureState {
-        case .off: "Off"
-        case .waitingForConnection: "Waiting for Connection"
-        case .enabling: "Starting"
-        case .awaitingUserApproval: "System Approval Required"
-        case let .on(revision): "On · revision \(revision)"
-        case .disabling: "Stopping"
-        case .requiresReboot: "Restart Required"
-        case .failed: "Needs Attention"
+        case .off: AppLocalization.string("Off")
+        case .waitingForConnection: AppLocalization.string("Waiting for Connection")
+        case .enabling: AppLocalization.string("Starting")
+        case .awaitingUserApproval: AppLocalization.string("System Approval Required")
+        case let .on(revision):
+            AppLocalization.format("On · revision %@", String(revision))
+        case .disabling: AppLocalization.string("Stopping")
+        case .requiresReboot: AppLocalization.string("Restart Required")
+        case .failed: AppLocalization.string("Needs Attention")
         }
     }
 
@@ -428,7 +479,7 @@ struct SettingsView: View {
         HStack(spacing: 7) {
             ProgressView()
                 .controlSize(.small)
-            Text(title)
+            Text(AppLocalization.string(title))
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -438,9 +489,10 @@ struct SettingsView: View {
         _ outcome: AppModel.RuntimeSettingsApplyOutcome
     ) -> String {
         switch outcome {
-        case .unchanged: "Settings are already up to date."
-        case .saved: "Settings saved for the next connection."
-        case .savedAndRestarted: "Settings applied · Core restarted."
+        case .unchanged: AppLocalization.string("Settings are already up to date.")
+        case .saved: AppLocalization.string("Settings saved for the next connection.")
+        case .savedAndRestarted:
+            AppLocalization.string("Settings applied · Core restarted.")
         }
     }
 
@@ -516,7 +568,10 @@ private struct SystemProxySettingsEditor: View {
                     Toggle("Restore the system proxy if another app changes it", isOn: $guardEnabled)
                     if guardEnabled {
                         Stepper(
-                            "Check every \(guardIntervalSeconds) seconds",
+                            AppLocalization.format(
+                                "Check every %d seconds",
+                                guardIntervalSeconds
+                            ),
                             value: $guardIntervalSeconds,
                             in: 2...300
                         )
@@ -692,7 +747,14 @@ private struct RuntimeSettingsEditor: View {
                         Picker("Log level", selection: $overrides.logLevel) {
                             Text("Use Profile").tag(nil as String?)
                             ForEach(MihomoLogLevel.allCases, id: \.rawValue) { level in
-                                Text(level.rawValue.capitalized).tag(level.rawValue as String?)
+                                Text(
+                                    AppLocalization.string(
+                                        level == .info
+                                            ? "Information"
+                                            : level.rawValue.capitalized
+                                    )
+                                )
+                                    .tag(level.rawValue as String?)
                             }
                         }
                     }
@@ -804,7 +866,13 @@ private struct RuntimeSettingsEditor: View {
                 if isSaving {
                     ProgressView()
                         .controlSize(.small)
-                    Text(model.isConnected ? "Validating and restarting…" : "Validating and applying…")
+                    Text(
+                        AppLocalization.string(
+                            model.isConnected
+                                ? "Validating and restarting…"
+                                : "Validating and applying…"
+                        )
+                    )
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -813,7 +881,11 @@ private struct RuntimeSettingsEditor: View {
                 Button("Cancel", role: .cancel) { isPresented = false }
                     .keyboardShortcut(.cancelAction)
                     .disabled(isSaving)
-                Button(model.isConnected ? "Apply & Restart Core" : "Save") { save() }
+                Button(
+                    AppLocalization.string(
+                        model.isConnected ? "Apply & Restart Core" : "Save"
+                    )
+                ) { save() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(isSaving || !model.canPerform(.changeRuntimeSettings))

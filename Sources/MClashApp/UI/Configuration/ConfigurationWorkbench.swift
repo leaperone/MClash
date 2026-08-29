@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Rockxy-inspired three-pane shell for the strategy-owned configuration
@@ -46,15 +47,14 @@ struct ConfigurationWorkbench: View {
                 Divider()
                 itemList
                     .frame(minWidth: 260, idealWidth: 350, maxWidth: .infinity)
-                if inspectorVisible && geometry.size.width >= 760 {
-                    Divider()
-                    inspector
-                        .frame(minWidth: 260, idealWidth: 320, maxWidth: 420)
-                }
             }
         }
         .navigationTitle(AppLocalization.string(title))
         .background(Color(nsColor: .windowBackgroundColor))
+        .inspector(isPresented: $inspectorVisible) {
+            inspector
+                .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
+        }
         .toolbar {
             ToolbarItem {
                 Button { inspectorVisible.toggle() } label: {
@@ -65,6 +65,17 @@ struct ConfigurationWorkbench: View {
             }
         }
         .onChange(of: section) { _, _ in selectedID = filteredItems.first?.id }
+        .onChange(of: statusMessage, initial: true) { _, message in
+            guard let message, !message.isEmpty else { return }
+            NSAccessibility.post(
+                element: NSApplication.shared,
+                notification: .announcementRequested,
+                userInfo: [
+                    .announcement: message,
+                    .priority: NSAccessibilityPriorityLevel.high.rawValue
+                ]
+            )
+        }
         .onAppear { selectedID = filteredItems.first?.id }
     }
 
@@ -103,8 +114,8 @@ struct ConfigurationWorkbench: View {
                 Spacer()
                 Button { onAdd?(section) } label: { Image(systemName: "plus") }
                     .buttonStyle(.bordered)
-                    .help(AppLocalization.format("Add %@", AppLocalization.string(sectionAddLabel)))
-                    .accessibilityLabel(AppLocalization.format("Add %@", AppLocalization.string(section.title)))
+                    .help(AppLocalization.format("Add %@", AppLocalization.string(section.singularTitle)))
+                    .accessibilityLabel(AppLocalization.format("Add %@", AppLocalization.string(section.singularTitle)))
                     .disabled(onAdd == nil)
             }
             .padding(.horizontal, MClashLayout.pagePadding)
@@ -135,10 +146,6 @@ struct ConfigurationWorkbench: View {
             .mclashListSurface(horizontalMargin: 8, verticalMargin: 4)
             .overlay { if filteredItems.isEmpty { ContentUnavailableView(AppLocalization.string("No matching items"), systemImage: "magnifyingglass") } }
         }
-    }
-
-    private var sectionAddLabel: String {
-        section.title.hasSuffix("s") ? String(section.title.dropLast()) : section.title
     }
 
     private var inspector: some View {
@@ -186,8 +193,8 @@ private struct ConfigurationWorkbenchInspector: View {
                     Button(AppLocalization.string("Use This Workspace")) { onActivate?(item.id) }
                         .buttonStyle(.borderedProminent)
                 }
-                if onToggleEnabled != nil, [.nodes, .proxyGroups, .rules, .entrances].contains(section) {
-                    Button(AppLocalization.string("Toggle Enabled")) {
+                if let isEnabled = item.isEnabled, onToggleEnabled != nil {
+                    Button(AppLocalization.string(isEnabled ? "Disable" : "Enable")) {
                         onToggleEnabled?(section, item.id)
                     }
                     .buttonStyle(.bordered)

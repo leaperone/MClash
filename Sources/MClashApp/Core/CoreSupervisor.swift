@@ -170,7 +170,9 @@ actor CoreSupervisor {
             lock.withLock {
                 let value = String(decoding: data, as: UTF8.self)
                 if truncated {
-                    return value + "\n[output truncated by MClash]"
+                    return value + "\n" + AppLocalization.string(
+                        "[output truncated by MClash]"
+                    )
                 }
                 return value
             }
@@ -392,9 +394,11 @@ actor CoreSupervisor {
         } catch {
             managedProcess = nil
             cleanup(managed)
-            let message = error.localizedDescription
-            transition(to: .failed(message))
-            throw CoreSupervisorError.launchFailed(message)
+            let failure = CoreSupervisorError.launchFailed(
+                error.localizedDescription
+            )
+            transition(to: .failed(failure.localizedDescription))
+            throw failure
         }
 
         do {
@@ -407,7 +411,9 @@ actor CoreSupervisor {
             guard runGeneration == desiredRunGeneration,
                   managedProcess?.id == managed.id,
                   process.isRunning else {
-                throw CoreSupervisorError.launchFailed("The core exited during startup.")
+                throw CoreSupervisorError.launchFailed(
+                    AppLocalization.string("The core exited during startup.")
+                )
             }
             transition(
                 to: .running(
@@ -492,7 +498,11 @@ actor CoreSupervisor {
 
         while Date() < deadline {
             guard managedProcess?.process.isRunning == true else {
-                throw CoreSupervisorError.launchFailed("The core exited before becoming ready.")
+                throw CoreSupervisorError.launchFailed(
+                    AppLocalization.string(
+                        "The core exited before becoming ready."
+                    )
+                )
             }
 
             do {
@@ -537,7 +547,10 @@ actor CoreSupervisor {
         crashTimestamps = crashTimestamps.filter { now.timeIntervalSince($0) < crashWindow }
         crashTimestamps.append(now)
 
-        let message = "The proxy core exited unexpectedly with status \(status)."
+        let message = AppLocalization.format(
+            "The proxy core exited unexpectedly with status %@.",
+            String(status)
+        )
         emitLog(message, stream: .supervisor)
         transition(to: .failed(message))
 
@@ -731,7 +744,11 @@ actor CoreSupervisor {
                         case .cancelled:
                             continuation.resume(throwing: CancellationError())
                         case nil:
-                            continuation.resume(throwing: error)
+                            continuation.resume(
+                                throwing: CoreSupervisorError.launchFailed(
+                                    error.localizedDescription
+                                )
+                            )
                         }
                     }
                 }

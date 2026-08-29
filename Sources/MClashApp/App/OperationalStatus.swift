@@ -120,7 +120,12 @@ extension AppModel {
                     subsystem: .application,
                     title: failure.component.issueTitle,
                     consequence: failure.component.userConsequence,
-                    technicalDetail: "\(failure.reason)\n\nRecovery: \(failure.recoverySuggestion)\nDetected: \(failure.occurredAt.formatted(date: .abbreviated, time: .standard))",
+                    technicalDetail: AppLocalization.format(
+                        "%@\n\nRecovery: %@\nDetected: %@",
+                        failure.reason,
+                        failure.recoverySuggestion,
+                        AppLocalization.date(failure.occurredAt)
+                    ),
                     primaryActionTitle: "View Recovery Log",
                     primaryAction: .openLogs,
                     secondaryActionTitle: nil,
@@ -171,7 +176,12 @@ extension AppModel {
                         ? "The macOS system proxy is unverified"
                         : "System proxy verification is retrying",
                     consequence: "MClash cannot currently confirm that macOS traffic is still being sent to its local proxy. Routing may be bypassed or interrupted.",
-                    technicalDetail: "\(guardFailure.consecutiveFailures) consecutive verification failures. Last attempt: \(guardFailure.lastFailureAt.formatted(date: .abbreviated, time: .standard)). Last error: \(guardFailure.reason)",
+                    technicalDetail: AppLocalization.format(
+                        "%@ consecutive verification failures. Last attempt: %@. Last error: %@",
+                        AppLocalization.number(guardFailure.consecutiveFailures),
+                        AppLocalization.date(guardFailure.lastFailureAt),
+                        guardFailure.reason
+                    ),
                     primaryActionTitle: guardFailure.consecutiveFailures
                         >= Self.systemProxyGuardFailureThreshold
                         ? "Turn Off & Restore"
@@ -388,9 +398,9 @@ extension AppModel {
         case (false, true):
             captureSummary = AppLocalization.format(
                 activeRuleCount == 1
-                    ? "App Routing · %d active rule"
-                    : "App Routing · %d active rules",
-                activeRuleCount
+                    ? "App Routing · %@ active rule"
+                    : "App Routing · %@ active rules",
+                AppLocalization.number(activeRuleCount)
             )
         case (false, false):
             captureSummary = AppLocalization.string(

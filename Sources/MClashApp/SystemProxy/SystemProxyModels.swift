@@ -185,11 +185,16 @@ public struct SystemProxyEndpoint: Codable, Equatable, Sendable {
     public init(host: String = "127.0.0.1", port: Int) throws {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedHost.isEmpty else {
-            throw SystemProxyError.invalidEndpoint(reason: "Proxy host must not be empty.")
+            throw SystemProxyError.invalidEndpoint(
+                reason: AppLocalization.string("Proxy host must not be empty.")
+            )
         }
         guard (1...65_535).contains(port) else {
             throw SystemProxyError.invalidEndpoint(
-                reason: "Proxy port must be between 1 and 65535; received \(port)."
+                reason: AppLocalization.format(
+                    "Proxy port must be between 1 and 65535; received %d.",
+                    port
+                )
             )
         }
 
@@ -244,7 +249,9 @@ public struct SystemProxyServiceState: Codable, Equatable, Sendable {
         guard protocolExists || configuration == nil else {
             throw SystemProxyError.invalidServiceState(
                 serviceID: service.id,
-                reason: "A configuration cannot exist when the proxy protocol is absent."
+                reason: AppLocalization.string(
+                    "A configuration cannot exist when the proxy protocol is absent."
+                )
             )
         }
         self.service = service
@@ -290,35 +297,67 @@ public enum SystemProxyError: Error, Equatable, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .preferencesUnavailable:
-            return "Unable to open macOS network preferences."
+            return AppLocalization.string("Unable to open macOS network preferences.")
         case .currentNetworkSetUnavailable:
-            return "Unable to read the current macOS network set."
+            return AppLocalization.string("Unable to read the current macOS network set.")
         case let .serviceNotFound(id):
-            return "Network service '\(id)' no longer exists."
+            return AppLocalization.format("Network service '%@' no longer exists.", id)
         case let .proxyProtocolUnavailable(id):
-            return "Unable to create or access the proxy protocol for network service '\(id)'."
+            return AppLocalization.format(
+                "Unable to create or access the proxy protocol for network service '%@'.",
+                id
+            )
         case let .invalidPropertyListValue(path, type):
-            return "Unsupported proxy value of type '\(type)' at '\(path)'."
+            return AppLocalization.format(
+                "Unsupported proxy value of type '%@' at '%@'.",
+                type,
+                path
+            )
         case let .invalidEndpoint(reason):
-            return "Invalid local proxy endpoint: \(reason)"
+            return AppLocalization.format("Invalid local proxy endpoint: %@", reason)
         case let .invalidServiceState(serviceID, reason):
-            return "Invalid proxy state for service '\(serviceID)': \(reason)"
+            return AppLocalization.format(
+                "Invalid proxy state for service '%@': %@",
+                serviceID,
+                reason
+            )
         case let .duplicateService(id):
-            return "Proxy operation contains duplicate network service '\(id)'."
+            return AppLocalization.format(
+                "Proxy operation contains duplicate network service '%@'.",
+                id
+            )
         case .noEnabledNetworkServices:
-            return "No enabled macOS network service is available for system proxy settings."
+            return AppLocalization.string(
+                "No enabled macOS network service is available for system proxy settings."
+            )
         case .lockFailed:
-            return "macOS did not grant MClash permission to update network proxy settings. The local HTTP and SOCKS5 proxies are still available."
+            return AppLocalization.string(
+                "macOS did not grant MClash permission to update network proxy settings. The local HTTP and SOCKS5 proxies are still available."
+            )
         case .commitFailed:
-            return "macOS rejected the proxy preference changes while committing them."
+            return AppLocalization.string(
+                "macOS rejected the proxy preference changes while committing them."
+            )
         case .applyFailed:
-            return "macOS could not apply the committed proxy preference changes."
+            return AppLocalization.string(
+                "macOS could not apply the committed proxy preference changes."
+            )
         case let .networkSetupFailed(details):
-            return "macOS could not update one or more proxy settings: \(details)"
+            return AppLocalization.format(
+                "macOS could not update one or more proxy settings: %@",
+                details
+            )
         case let .unsupportedSnapshotVersion(version):
-            return "Unsupported system proxy snapshot version \(version)."
+            return AppLocalization.format(
+                "Unsupported system proxy snapshot version %d.",
+                version
+            )
         case let .persistenceFailed(path, reason):
-            return "Unable to persist system proxy state at '\(path)': \(reason)"
+            return AppLocalization.format(
+                "Unable to persist system proxy state at '%@': %@",
+                path,
+                reason
+            )
         }
     }
 

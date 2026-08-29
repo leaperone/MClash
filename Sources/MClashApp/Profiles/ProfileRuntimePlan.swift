@@ -397,35 +397,81 @@ extension ProfileRuntimePlanValidationError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .unsupportedSchemaVersion(version):
-            "The profile runtime plan uses unsupported schema version \(version)."
+            AppLocalization.format(
+                "The profile runtime plan uses unsupported schema version %@.",
+                AppLocalization.number(version)
+            )
         case let .duplicateProfile(profileID):
-            "Profile \(profileID) appears more than once in the runtime plan."
+            AppLocalization.format(
+                "Profile %@ appears more than once in the runtime plan.",
+                profileID.description
+            )
         case let .invalidDefaultMixedPort(port):
-            "The virtual Default Profile has invalid Mixed port \(port). Use a port from 1 through 65535."
+            AppLocalization.format(
+                "The virtual Default Profile has invalid Mixed port %@. Use a port from 1 through 65535.",
+                AppLocalization.number(port)
+            )
         case let .invalidMixedPort(profileID, port):
-            "Profile \(profileID) has invalid mixed port \(port). Use a port from 1 through 65535."
+            AppLocalization.format(
+                "Profile %@ has invalid mixed port %@. Use a port from 1 through 65535.",
+                profileID.description,
+                AppLocalization.number(port)
+            )
         case let .defaultMixedPortConflict(port):
-            "Mixed port \(port) is assigned to both the virtual Default Profile and a real profile."
+            AppLocalization.format(
+                "Mixed port %@ is assigned to both the virtual Default Profile and a real profile.",
+                AppLocalization.number(port)
+            )
         case let .duplicateMixedPort(port):
-            "Mixed port \(port) is assigned to more than one profile."
+            AppLocalization.format(
+                "Mixed port %@ is assigned to more than one profile.",
+                AppLocalization.number(port)
+            )
         case let .primaryProfileMissing(profileID):
-            "Primary profile \(profileID) is not present in the runtime plan."
+            AppLocalization.format(
+                "Primary profile %@ is not present in the runtime plan.",
+                profileID.description
+            )
         case let .duplicateRouteListenerID(id):
-            "Two routing ports use the same identifier (\(id.uuidString))."
+            AppLocalization.format(
+                "Two routing ports use the same identifier (%@).",
+                id.uuidString
+            )
         case let .duplicateRouteListenerName(name):
-            "Routing port names must be unique; “\(name)” is used more than once."
+            AppLocalization.format(
+                "Routing port names must be unique; “%@” is used more than once.",
+                name
+            )
         case let .invalidRouteListenerName(name):
-            "“\(name)” is not a valid routing port name."
+            AppLocalization.format(
+                "“%@” is not a valid routing port name.",
+                name
+            )
         case let .invalidRouteListenerPort(port):
-            "Routing port \(port) is outside the valid range of 1 through 65535."
+            AppLocalization.format(
+                "Routing port %@ is outside the valid range of 1 through 65535.",
+                AppLocalization.number(port)
+            )
         case let .routeListenerPortConflict(port):
-            "Port \(port) is already assigned to another MClash listener."
+            AppLocalization.format(
+                "Port %@ is already assigned to another MClash listener.",
+                AppLocalization.number(port)
+            )
         case let .routeListenerProfileMissing(profileID):
-            "A routing port refers to Profile \(profileID), which is not present in the runtime plan."
+            AppLocalization.format(
+                "A routing port refers to Profile %@, which is not present in the runtime plan.",
+                profileID.description
+            )
         case let .routeListenerProfileDisabled(profileID):
-            "Enable the dedicated session for Profile \(profileID) before enabling its routing ports."
+            AppLocalization.format(
+                "Enable the dedicated session for Profile %@ before enabling its routing ports.",
+                profileID.description
+            )
         case let .invalidRouteListenerTarget(target):
-            "“\(target)” is not a valid routing target."
+            AppLocalization.format(
+                "“%@” is not a valid routing target.",
+                target
+            )
         }
     }
 }

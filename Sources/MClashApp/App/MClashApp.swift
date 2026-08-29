@@ -77,12 +77,13 @@ struct MClashApp: App {
                 navigationCommand("Nodes", destination: .nodes, key: "3")
                 navigationCommand("Sources", destination: .sources, key: "4")
                 navigationCommand("Entrances", destination: .entrances, key: "5")
-                navigationCommand("Proxy Groups", destination: .proxies, key: "6")
+                navigationCommand("Proxy Groups", destination: .proxyGroups, key: "8")
+                navigationCommand("Proxies", destination: .proxies, key: "6")
                 navigationCommand("Traffic", destination: .connections, key: "7")
             }
 
             CommandMenu("Routing") {
-                Button(model.isConnected ? "Disconnect" : "Connect") {
+                Button(AppLocalization.string(model.isConnected ? "Disconnect" : "Connect")) {
                     Task { await model.toggleConnection() }
                 }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
@@ -231,7 +232,10 @@ struct MClashApp: App {
                 showMainWindow(destination: destination)
             }
         } catch {
-            model.errorMessage = "External automation could not start: \(error.localizedDescription)"
+            model.errorMessage = AppLocalization.format(
+                "External automation could not start: %@",
+                error.localizedDescription
+            )
         }
     }
 }
@@ -354,18 +358,39 @@ private struct MenuBarStatusLabel: View {
 
     private var accessibilityLabel: String {
         if model.preparationInProgress {
-            return "MClash, preparing application state"
+            return AppLocalization.string("MClash, preparing application state")
         }
         if case let .failed(message) = model.systemProxyState {
-            return "MClash, system proxy restoration failed: \(message)"
+            return AppLocalization.format(
+                "MClash, system proxy restoration failed: %@",
+                message
+            )
         }
         if case let .degraded(message) = model.controllerState {
-            return "MClash, connected, controls unavailable: \(message)"
+            return AppLocalization.format(
+                "MClash, connected, controls unavailable: %@",
+                message
+            )
         }
         if model.isConnected, model.controllerIsReady, !model.systemProxyEnabled {
-            return "MClash, core running, macOS System Proxy off"
+            return AppLocalization.string("MClash, core running, macOS System Proxy off")
         }
-        return "MClash, \(model.statusTitle)"
+        return AppLocalization.format(
+            "MClash, %@",
+            coreStatusTitle
+        )
+    }
+
+    private var coreStatusTitle: String {
+        let key = switch model.coreState {
+        case .stopped: "Not Connected"
+        case .validating: "Checking"
+        case .starting: "Starting"
+        case .running: "Connected"
+        case .stopping: "Stopping"
+        case .failed: "Failed"
+        }
+        return AppLocalization.string(key)
     }
 
     private func menuBarRate(_ value: Int64) -> String {

@@ -170,9 +170,12 @@ extension ConfigurationStoreError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unavailable:
-            "MClash configuration storage is unavailable."
+            AppLocalization.string("MClash configuration storage is unavailable.")
         case let .unsupportedSchemaVersion(version):
-            "MClash configuration uses unsupported schema version \(version)."
+            AppLocalization.format(
+                "MClash configuration uses unsupported schema version %d.",
+                version
+            )
         }
     }
 }

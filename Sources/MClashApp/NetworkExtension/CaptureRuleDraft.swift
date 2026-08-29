@@ -41,31 +41,55 @@ extension CaptureRuleDraftError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidIdentifier:
-            "Enter a rule identifier."
+            AppLocalization.string("Enter a rule identifier.")
         case let .invalidApplicationPattern(value):
-            "Enter an application name or bundle identifier pattern; received \(value)."
+            AppLocalization.format(
+                "Enter an application name or bundle identifier pattern; received %@.",
+                value
+            )
         case let .invalidExecutablePath(value):
-            "Executable path must be an absolute path; received \(value.isEmpty ? "an empty value" : value)."
+            AppLocalization.format(
+                "Executable path must be an absolute path; received %@.",
+                value.isEmpty ? AppLocalization.string("an empty value") : value
+            )
         case let .invalidUserID(value):
-            "User ID must be a whole number from 0 through \(UInt32.max); received \(value)."
+            AppLocalization.format(
+                "User ID must be a whole number from 0 through %@; received %@.",
+                String(UInt32.max),
+                value
+            )
         case let .invalidIPAddress(value):
-            "Enter a valid IPv4 or IPv6 address; received \(value)."
+            AppLocalization.format(
+                "Enter a valid IPv4 or IPv6 address; received %@.",
+                value
+            )
         case let .invalidNetwork(value):
-            "Enter a valid IPv4 or IPv6 CIDR network; received \(value)."
+            AppLocalization.format(
+                "Enter a valid IPv4 or IPv6 CIDR network; received %@.",
+                value
+            )
         case let .invalidDomain(value):
-            "Enter a valid domain name; received \(value)."
+            AppLocalization.format("Enter a valid domain name; received %@.", value)
         case .noTransportProtocol:
-            "Select TCP, UDP, or both."
+            AppLocalization.string("Select TCP, UDP, or both.")
         case let .invalidPortRange(value):
-            "Port must be 1–65535 or a range such as 8000-9000; received \(value)."
+            AppLocalization.format(
+                "Port must be 1–65535 or a range such as 8000-9000; received %@.",
+                value
+            )
         case .noMatchCriteria:
-            "Add an application, domain, IP/CIDR, executable, user, protocol restriction, or port restriction."
+            AppLocalization.string(
+                "Add an application, domain, IP/CIDR, executable, user, protocol restriction, or port restriction."
+            )
         case .missingMihomoGroup:
-            "Choose a Mihomo policy group."
+            AppLocalization.string("Choose a Mihomo policy group.")
         case let .unsupportedExistingRule(reason):
-            "This rule uses an option that this editor cannot represent: \(reason)."
+            AppLocalization.format(
+                "This rule uses an option that this editor cannot represent: %@.",
+                AppLocalization.string(reason)
+            )
         case let .invalidCaptureRule(reason):
-            "The rule is invalid: \(reason)"
+            AppLocalization.format("The rule is invalid: %@", reason)
         }
     }
 }
@@ -706,7 +730,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
     ) -> ApplicationCaptureCandidate {
         let label = matcher.bundleIdentifier
             ?? matcher.signingIdentifier
-            ?? "Previously selected application"
+            ?? AppLocalization.string("Previously selected application")
         return ApplicationCaptureCandidate(
             id: "stored:\(matcher.designatedRequirement)",
             displayName: label,
@@ -726,9 +750,14 @@ struct CaptureRuleDraft: Equatable, Sendable {
     ) -> RunningProcessCaptureCandidate {
         let path = matcher.canonicalExecutablePath ?? ""
         let name = URL(fileURLWithPath: path).lastPathComponent
+        let processName = name.isEmpty ? AppLocalization.string("Process") : name
         return RunningProcessCaptureCandidate(
             id: "stored-process:\(matcher.processIdentifier)",
-            displayName: "\(name.isEmpty ? "Process" : name) · PID \(matcher.processIdentifier) (not running)",
+            displayName: AppLocalization.format(
+                "%@ · PID %@ (not running)",
+                processName,
+                String(matcher.processIdentifier)
+            ),
             processIdentifier: matcher.processIdentifier,
             executablePath: path,
             matcher: matcher

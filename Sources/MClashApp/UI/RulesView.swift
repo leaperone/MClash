@@ -118,22 +118,32 @@ struct RulesView: View {
                                 .controlSize(.small)
                         } else {
                             Label("More", systemImage: "ellipsis.circle")
+                                .labelStyle(.iconOnly)
                         }
                     }
+                    .accessibilityLabel(AppLocalization.string("Refresh Rules"))
                 }
             }
     }
 
     private var rulesFreshnessTitle: String {
-        guard let loadedAt = model.rulesLastLoadedAt else { return "Not loaded" }
-        return "Updated \(loadedAt.formatted(.relative(presentation: .named)))"
+        guard let loadedAt = model.rulesLastLoadedAt else {
+            return AppLocalization.string("Not loaded")
+        }
+        return AppLocalization.format(
+            "Updated %@",
+            AppLocalization.relativeDate(loadedAt)
+        )
     }
 
     private var rulesFreshnessHelp: String {
         guard let loadedAt = model.rulesLastLoadedAt else {
-            return "Mihomo rule statistics have not been loaded."
+            return AppLocalization.string("Mihomo rule statistics have not been loaded.")
         }
-        return "Mihomo rule statistics last loaded \(loadedAt.formatted(date: .abbreviated, time: .standard)). They refresh every 15 seconds while this page is open."
+        return AppLocalization.format(
+            "Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open.",
+            AppLocalization.relativeDate(loadedAt)
+        )
     }
 
     @ViewBuilder
@@ -142,9 +152,11 @@ struct RulesView: View {
             if !model.isConnected {
                 DisconnectedUnavailableView(
                     model: model,
-                    title: "Connect to inspect rules",
+                    title: AppLocalization.string("Connect to inspect rules"),
                     systemImage: "list.bullet.rectangle",
-                    description: "Rules are read from the active mihomo runtime configuration."
+                    description: AppLocalization.string(
+                        "Rules are read from the active mihomo runtime configuration."
+                    )
                 )
             } else if case let .degraded(message) = model.controllerState {
                 ContentUnavailableView {
@@ -187,7 +199,16 @@ struct RulesView: View {
                 }
             } else {
                 if presentation.rows.isEmpty {
-                    ContentUnavailableView.search(text: searchText)
+                    ContentUnavailableView(
+                        AppLocalization.string("No matching rules"),
+                        systemImage: "magnifyingglass",
+                        description: Text(
+                            AppLocalization.format(
+                                "No rules contain “%@”.",
+                                searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            )
+                        )
+                    )
                 } else {
                     RuleTableSurface(
                         rows: presentation.rows,
@@ -239,7 +260,9 @@ private struct RuleTableSurface: Equatable, View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .accessibilityLabel("Rule \(row.rule.index + 1)")
+                    .accessibilityLabel(
+                        AppLocalization.format("Rule %d", row.rule.index + 1)
+                    )
             }
             .width(min: 38, ideal: 46, max: 58)
 
@@ -256,15 +279,24 @@ private struct RuleTableSurface: Equatable, View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Text(row.payload)
+                    Text(row.displayPayload)
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }
-                .help("\(row.rule.type) · \(row.payload)")
+                .help("\(row.rule.type) · \(row.displayPayload)")
                 .accessibilityLabel(
                     row.rule.extra?.disabled == true
-                        ? "\(row.rule.type), \(row.payload), disabled"
-                        : "\(row.rule.type), \(row.payload)"
+                        ? AppLocalization.format(
+                            "%@, %@, %@",
+                            row.rule.type,
+                            row.displayPayload,
+                            AppLocalization.string("Disabled")
+                        )
+                        : AppLocalization.format(
+                            "%@, %@",
+                            row.rule.type,
+                            row.displayPayload
+                        )
                 )
             }
             .width(min: 300, ideal: 620, max: 1_200)
@@ -274,7 +306,9 @@ private struct RuleTableSurface: Equatable, View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .help(row.rule.proxy)
-                    .accessibilityLabel("Policy \(row.rule.proxy)")
+                    .accessibilityLabel(
+                        AppLocalization.format("Policy %@", row.rule.proxy)
+                    )
             }
             .width(min: 120, ideal: 180, max: 320)
 
@@ -284,7 +318,11 @@ private struct RuleTableSurface: Equatable, View {
                         Text(
                             AppLocalization.format(
                                 "Hits %@",
-                                hitCount.formatted(.number.grouping(.automatic))
+                                hitCount.formatted(
+                                    .number
+                                        .grouping(.automatic)
+                                        .locale(AppLocalization.selectedLocale)
+                                )
                             )
                         )
                             .monospacedDigit()
@@ -292,7 +330,7 @@ private struct RuleTableSurface: Equatable, View {
                         Text("—")
                     }
                     if let lastHitAt = row.lastHitAt {
-                        Text(lastHitAt, style: .relative)
+                        Text(AppLocalization.relativeDate(lastHitAt))
                     } else if row.rule.extra != nil {
                         Text("Never")
                     }
@@ -303,7 +341,7 @@ private struct RuleTableSurface: Equatable, View {
             }
             .width(min: 90, ideal: 120, max: 160)
         }
-        .accessibilityLabel("Runtime rules")
+        .accessibilityLabel(AppLocalization.string("Runtime rules"))
     }
 }
 
@@ -369,8 +407,13 @@ final class RulePresentationStore {
     }
 
     var resultSummary: String {
-        let noun = activeQuery.isEmpty ? "rules" : "matches"
-        return "Showing \(formattedCount(rows.count)) of \(formattedCount(totalMatches)) \(noun)"
+        AppLocalization.format(
+            activeQuery.isEmpty
+                ? "Showing %@ of %@ rules"
+                : "Showing %@ of %@ matches",
+            formattedCount(rows.count),
+            formattedCount(totalMatches)
+        )
     }
 
     func updateRules(_ rules: [MihomoRule]) {
@@ -598,7 +641,7 @@ struct RuleTableRow: Identifiable, Sendable {
 
     init(rule: MihomoRule) {
         self.rule = rule
-        payload = rule.payload.isEmpty ? "Any" : rule.payload
+        payload = rule.payload
         if let value = rule.extra?.hitAt,
            !value.isEmpty,
            rule.extra?.hitCount != 0 {
@@ -609,6 +652,10 @@ struct RuleTableRow: Identifiable, Sendable {
     }
 
     var id: Int { rule.index }
+
+    var displayPayload: String {
+        payload.isEmpty ? AppLocalization.string("Any") : payload
+    }
 
     func matches(_ query: String) -> Bool {
         rule.type.localizedCaseInsensitiveContains(query)

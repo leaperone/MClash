@@ -473,25 +473,45 @@ public enum ProfileBackupError: Error, Equatable, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .destinationInsideApplicationData:
-            "Choose a backup destination outside MClash application data."
+            AppLocalization.string(
+                "Choose a backup destination outside MClash application data."
+            )
         case .notABackupPackage:
-            "The selected item is not an MClash backup package."
+            AppLocalization.string(
+                "The selected item is not an MClash backup package."
+            )
         case let .unsupportedFormat(version):
-            "Unsupported MClash backup format \(version)."
+            AppLocalization.format(
+                "Unsupported MClash backup format %@.",
+                AppLocalization.number(version)
+            )
         case .missingProfiles:
-            "The backup does not contain a Profiles directory."
+            AppLocalization.string(
+                "The backup does not contain a Profiles directory."
+            )
         case let .incompleteBackup(component):
-            "The backup is missing \(component)."
+            AppLocalization.format("The backup is missing %@.", component)
         case .symbolicLinksUnsupported:
-            "Backup packages containing symbolic links are not supported."
+            AppLocalization.string(
+                "Backup packages containing symbolic links are not supported."
+            )
         case .backupTooLarge:
-            "The backup is larger than the 512 MB safety limit."
+            AppLocalization.string(
+                "The backup is larger than the 512 MB safety limit."
+            )
         case .restoreAlreadyPending:
-            "Another backup restore transaction is still pending."
+            AppLocalization.string(
+                "Another backup restore transaction is still pending."
+            )
         case .restoreTransactionUnavailable:
-            "The backup restore transaction is no longer available."
+            AppLocalization.string(
+                "The backup restore transaction is no longer available."
+            )
         case let .restoreRollbackFailed(detail):
-            "MClash could not completely roll back the backup restore: \(detail)"
+            AppLocalization.format(
+                "MClash could not completely roll back the backup restore: %@",
+                detail
+            )
         }
     }
 }

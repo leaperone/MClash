@@ -101,8 +101,12 @@ struct ProxiesView: View {
                             systemImage: "tray",
                             description: Text(
                                 routingMode == "global"
-                                    ? "The active core did not expose the GLOBAL group."
-                                    : "The active configuration did not expose a selectable proxy group."
+                                    ? AppLocalization.string(
+                                        "The active core did not expose the GLOBAL group."
+                                    )
+                                    : AppLocalization.string(
+                                        "The active configuration did not expose a selectable proxy group."
+                                    )
                             )
                         )
                     } else {
@@ -139,7 +143,11 @@ struct ProxiesView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
-                    Button(selectedProfileMixedPort == nil ? "Open Port" : "Close Port") {
+                    Button(
+                        selectedProfileMixedPort == nil
+                            ? AppLocalization.string("Open Port")
+                            : AppLocalization.string("Close Port")
+                    ) {
                         Task {
                             do {
                                 try await model.setProfileMixedPortEnabled(
@@ -314,26 +322,36 @@ struct ProxiesView: View {
                 profilePicker(width: usesCompactChrome ? 170 : 220)
             } else {
                 Label(
-                    model.profileProxyWorkspaceProfiles.first?.name ?? "Profile",
+                    model.profileProxyWorkspaceProfiles.first?.name
+                        ?? AppLocalization.string("Profile"),
                     systemImage: "doc.text"
                 )
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
             }
 
-            Spacer(minLength: 8)
-
-            if let group {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(group.name)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                    Text(groupStatusText(group))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+            Picker("Routing Mode", selection: modeBinding) {
+                Text("Rule").tag("rule")
+                Text("Global").tag("global")
+                Text("Direct").tag("direct")
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(
+                workspaceSnapshot == nil
+                    || (resolvedSelectedProfileID.map {
+                        !model.canPerform(.changeProfileMode($0))
+                    } ?? true)
+            )
+
+            if let profileID = resolvedSelectedProfileID,
+               model.isPerforming(.changeProfileMode(profileID)) {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Applying…")
+            }
+
+            Spacer(minLength: 8)
 
             proxyOptionsMenu(group: group)
         }
@@ -347,18 +365,6 @@ struct ProxiesView: View {
 
     private func proxyOptionsMenu(group: MihomoProxy?) -> some View {
         Menu {
-            Picker("Routing Mode", selection: modeBinding) {
-                Text("Rule").tag("rule")
-                Text("Global").tag("global")
-                Text("Direct").tag("direct")
-            }
-            .disabled(
-                workspaceSnapshot == nil
-                    || (resolvedSelectedProfileID.map {
-                        !model.canPerform(.changeProfileMode($0))
-                    } ?? true)
-            )
-
             Toggle("macOS System Proxy", isOn: systemProxyBinding)
                 .disabled(!model.controllerIsReady || !model.canPerform(.changeSystemProxy))
 
@@ -411,6 +417,7 @@ struct ProxiesView: View {
             Button("Manage Profile…") { model.selection = .profiles }
         } label: {
             Label("More", systemImage: "ellipsis.circle")
+                .labelStyle(.iconOnly)
         }
         .menuStyle(.borderlessButton)
         .help("Proxy view and routing options")
@@ -478,7 +485,7 @@ struct ProxiesView: View {
                     .frame(width: 18)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(current?.name ?? "Choose a group")
+                    Text(current?.name ?? AppLocalization.string("Choose a group"))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     if let current {
@@ -507,7 +514,7 @@ struct ProxiesView: View {
         .controlSize(.regular)
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
-        .help(current?.name ?? "Choose a proxy group")
+        .help(current?.name ?? AppLocalization.string("Choose a proxy group"))
         .popover(isPresented: $groupNavigatorPresented, arrowEdge: .bottom) {
             List(selection: compactGroupSelectionBinding) {
                 groupSections(groups: groups)
@@ -966,7 +973,11 @@ struct ProxiesView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canPerform(.updateProfile(profileID)))
             } else if state != .unavailable(.profileNotFound) {
-                Button(model.isConnected ? "Reconnect" : "Connect") {
+                Button(
+                    model.isConnected
+                        ? AppLocalization.string("Reconnect")
+                        : AppLocalization.string("Connect")
+                ) {
                     Task {
                         if model.isConnected {
                             await model.restartConnection()
@@ -998,56 +1009,66 @@ struct ProxiesView: View {
     ) -> (title: String, symbol: String, message: String) {
         switch state {
         case let .unavailable(.dedicatedPortDisabled(port)):
-            let portDescription = port.map {
-                " Its reserved Mixed port is \($0)."
-            } ?? ""
-            return (
-                "Profile Port Is Closed",
-                "powerplug",
+            let message = port.map {
+                AppLocalization.format(
+                    "Open this Profile’s dedicated Mixed port to inspect and change its proxy groups. Its reserved Mixed port is %@.",
+                    String($0)
+                )
+            } ?? AppLocalization.string(
                 "Open this Profile’s dedicated Mixed port to inspect and change its proxy groups."
-                    + portDescription
+            )
+            return (
+                AppLocalization.string("Profile Port Is Closed"),
+                "powerplug",
+                message
             )
         case .unavailable(.primaryControllerNotReady):
             return (
-                "Default Source Is Not Connected",
+                AppLocalization.string("Default Source Is Not Connected"),
                 "point.3.connected.trianglepath.dotted",
-                "Connect MClash to load this Profile’s live proxy groups."
+                AppLocalization.string(
+                    "Connect MClash to load this Profile’s live proxy groups."
+                )
             )
         case .unavailable(.controllerStopped):
             return (
-                "Profile Core Is Stopped",
+                AppLocalization.string("Profile Core Is Stopped"),
                 "stop.circle",
-                "Reconnect MClash to restore this Profile’s controller."
+                AppLocalization.string(
+                    "Reconnect MClash to restore this Profile’s controller."
+                )
             )
         case .unavailable(.controllerTransitioning):
             return (
-                "Profile Core Is Changing State",
+                AppLocalization.string("Profile Core Is Changing State"),
                 "arrow.triangle.2.circlepath",
-                "Wait a moment, then retry loading this Profile."
+                AppLocalization.string("Wait a moment, then retry loading this Profile.")
             )
         case let .unavailable(.controllerFailed(message)):
             return (
-                "Profile Controller Failed",
+                AppLocalization.string("Profile Controller Failed"),
                 "exclamationmark.triangle",
                 message
             )
         case .unavailable(.profileNotFound):
             return (
-                "Profile Not Found",
+                AppLocalization.string("Profile Not Found"),
                 "doc.badge.questionmark",
-                "This Profile is no longer available."
+                AppLocalization.string("This Profile is no longer available.")
             )
         case let .failed(message, _):
             return (
-                "Proxy Groups Could Not Refresh",
+                AppLocalization.string("Proxy Groups Could Not Refresh"),
                 "exclamationmark.arrow.triangle.2.circlepath",
                 message
             )
         case .idle, .loading, .ready, nil:
             return (
-                "Proxy Controls Unavailable",
+                AppLocalization.string("Proxy Controls Unavailable"),
                 "exclamationmark.triangle",
-                "This Profile’s live controller data is not available."
+                AppLocalization.string(
+                    "This Profile’s live controller data is not available."
+                )
             )
         }
     }
@@ -1078,26 +1099,36 @@ struct ProxiesView: View {
 
     private func groupBehaviorTitle(_ group: MihomoProxy) -> String {
         switch group.groupBehavior {
-        case .selector: "Manual Selector"
-        case .urlTest: "Automatic URL Test"
-        case .fallback: "Automatic Fallback"
-        case .loadBalance: "Per-Connection Load Balance"
+        case .selector: AppLocalization.string("Manual Selector")
+        case .urlTest: AppLocalization.string("Automatic URL Test")
+        case .fallback: AppLocalization.string("Automatic Fallback")
+        case .loadBalance: AppLocalization.string("Per-Connection Load Balance")
         case nil: group.type
         }
     }
 
     private func groupStatusText(_ group: MihomoProxy) -> String {
         if group.groupBehavior == .loadBalance {
-            return "The final node is selected independently for each connection."
+            return AppLocalization.string(
+                "The final node is selected independently for each connection."
+            )
         }
         if group.fixedOverride != nil {
-            return "Pinned preference · active \(group.now ?? "not available")"
+            return AppLocalization.format(
+                "Pinned preference · active %@",
+                group.now ?? AppLocalization.string("Not available")
+            )
         }
         switch group.groupBehavior {
         case .urlTest, .fallback:
-            return "Current automatic choice: \(group.now ?? "not available")"
+            return AppLocalization.format(
+                "Current automatic choice: %@",
+                group.now ?? AppLocalization.string("Not available")
+            )
         default:
-            return group.now.map { "Using \($0)" } ?? "Choose a proxy node"
+            return group.now.map {
+                AppLocalization.format("Using %@", $0)
+            } ?? AppLocalization.string("Choose a proxy node")
         }
     }
 
@@ -1273,10 +1304,14 @@ private struct ProxyDataWarningBanner: View {
         guard model.errorMessage == nil else { return [] }
         var messages: [String] = []
         if model.degradedStreams.contains(.proxies) {
-            messages.append("Proxy choices may be stale while MClash reconnects to the Alpha API.")
+            messages.append(AppLocalization.string(
+                "Proxy choices may be stale while MClash reconnects to the Alpha API."
+            ))
         }
         if model.degradedStreams.contains(.connections) {
-            messages.append("Connection counts and observed route traffic are temporarily stale.")
+            messages.append(AppLocalization.string(
+                "Connection counts and observed route traffic are temporarily stale."
+            ))
         }
         return messages
     }
@@ -1319,8 +1354,16 @@ private struct ProxyGroupSidebarRow: View {
         .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(group.name), \(group.type), \(group.alive ? "available" : "unavailable"), "
-                + "\(formattedCount(group.all.count)) members, \(routeSummary)"
+            AppLocalization.format(
+                "%@, %@, %@, %@ members, %@",
+                group.name,
+                group.type,
+                group.alive
+                    ? AppLocalization.string("Available")
+                    : AppLocalization.string("Unavailable"),
+                formattedCount(group.all.count),
+                routeSummary
+            )
         )
     }
 
@@ -1337,13 +1380,15 @@ private struct ProxyGroupSidebarRow: View {
     private var routeSummary: String {
         let summary: String
         if let path, case .loadBalance = path.issue {
-            summary = "Per-connection route"
+            summary = AppLocalization.string("Per-connection route")
         } else if let path, let terminal = path.terminal {
             summary = path.route.count > 2 ? "… → \(terminal)" : terminal
         } else {
-            summary = group.now ?? "Route unavailable"
+            summary = group.now ?? AppLocalization.string("Route unavailable")
         }
-        return group.alive ? summary : "Unavailable · \(summary)"
+        return group.alive
+            ? summary
+            : AppLocalization.format("Unavailable · %@", summary)
     }
 }
 
@@ -1403,7 +1448,7 @@ private struct ProxyNodeListContent: View {
         }
         .listStyle(.inset)
         .mclashListSurface(horizontalMargin: 14, verticalMargin: 10)
-        .accessibilityLabel("Nodes in \(group.name)")
+        .accessibilityLabel(AppLocalization.format("Nodes in %@", group.name))
     }
 }
 
@@ -1434,7 +1479,12 @@ private struct ProxyNodeListRow: View {
         .padding(.horizontal, 4)
         .contextMenu {
             if supportsSelection {
-                Button(isSelected ? "Current Route" : "Use Node", action: onSelect)
+                Button(
+                    isSelected
+                        ? AppLocalization.string("Current Route")
+                        : AppLocalization.string("Use Node"),
+                    action: onSelect
+                )
                     .disabled(!canSelect || selectionInProgress || isSelected)
             }
             Button("Test Latency", action: onTest)
@@ -1469,7 +1519,11 @@ private struct ProxyNodeListRow: View {
             Image(systemName: isFixed ? "pin.circle.fill" : "checkmark.circle.fill")
                 .foregroundStyle(isFixed ? Color.orange : Color.accentColor)
                 .frame(width: 28, height: 28)
-                .accessibilityLabel(isFixed ? "Pinned preference" : "Current automatic route")
+                .accessibilityLabel(
+                    isFixed
+                        ? AppLocalization.string("Pinned preference")
+                        : AppLocalization.string("Current automatic route")
+                )
         } else {
             Color.clear
                 .frame(width: 28, height: 28)
@@ -1524,8 +1578,8 @@ private struct ProxyNodeListRow: View {
                 Image(systemName: "chevron.right")
             }
             .buttonStyle(.borderless)
-            .help("Open nested group \(nodeName)")
-            .accessibilityLabel("Open nested group \(nodeName)")
+            .help(AppLocalization.format("Open nested group %@", nodeName))
+            .accessibilityLabel(AppLocalization.format("Open nested group %@", nodeName))
         }
     }
 
@@ -1540,18 +1594,28 @@ private struct ProxyNodeListRow: View {
     }
 
     private var selectionHelp: String {
-        if !supportsSelection { return "This group does not support manual node selection" }
-        if isPending { return "Switching to \(nodeName)" }
-        if !canSelect { return "Proxy selection is temporarily unavailable" }
-        if isFixed { return "Pinned automatic preference" }
-        return isSelected ? "Currently selected" : "Select \(nodeName)"
+        if !supportsSelection {
+            return AppLocalization.string(
+                "This group does not support manual node selection"
+            )
+        }
+        if isPending { return AppLocalization.format("Switching to %@", nodeName) }
+        if !canSelect {
+            return AppLocalization.string("Proxy selection is temporarily unavailable")
+        }
+        if isFixed { return AppLocalization.string("Pinned automatic preference") }
+        return isSelected
+            ? AppLocalization.string("Currently selected")
+            : AppLocalization.format("Select %@", nodeName)
     }
 
     private var statusText: String {
-        if node == nil { return "Missing" }
-        if isAlive == false { return "Unavailable" }
-        if delay != nil || node?.history.isEmpty == false { return "Available" }
-        return "Not tested"
+        if node == nil { return AppLocalization.string("Missing") }
+        if isAlive == false { return AppLocalization.string("Unavailable") }
+        if delay != nil || node?.history.isEmpty == false {
+            return AppLocalization.string("Available")
+        }
+        return AppLocalization.string("Not tested")
     }
 
     private var statusColor: Color {
@@ -1561,7 +1625,9 @@ private struct ProxyNodeListRow: View {
     }
 
     private var delayText: String {
-        delay.map { "\($0) ms" } ?? "Not tested"
+        delay.map {
+            AppLocalization.format("%@ ms", formattedCount($0))
+        } ?? AppLocalization.string("Not tested")
     }
 
     private var delayColor: Color {
@@ -1606,16 +1672,23 @@ struct ProxyPathStrip: View {
                 }
             }
         }
-        .accessibilityLabel("Current route: \(path.route.joined(separator: ", then "))")
+        .accessibilityLabel(
+            AppLocalization.format(
+                "Current route: %@",
+                path.route.joined(
+                    separator: ", \(AppLocalization.string("then")) "
+                )
+            )
+        )
     }
 }
 
 private extension ProxyNodeSortMode {
     var title: String {
         switch self {
-        case .profile: "Profile"
-        case .latency: "Latency"
-        case .name: "Name"
+        case .profile: AppLocalization.string("Profile")
+        case .latency: AppLocalization.string("Latency")
+        case .name: AppLocalization.string("Name")
         }
     }
 

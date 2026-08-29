@@ -8,6 +8,10 @@ struct ConnectionsView: View {
         case history = "History"
 
         var id: Self { self }
+
+        var title: String {
+            AppLocalization.string(rawValue)
+        }
     }
 
     private enum ProfileScope: Hashable {
@@ -41,7 +45,12 @@ struct ConnectionsView: View {
             ContentUnavailableView {
                 Label("Connections unavailable", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
             } description: {
-                Text(liveStreamDetail(health, source: "Mihomo connections"))
+                Text(
+                    liveStreamDetail(
+                        health,
+                        source: AppLocalization.string("Mihomo connections")
+                    )
+                )
             } actions: {
                 Button("Reconnect MClash") {
                     Task { await model.restartConnection() }
@@ -242,11 +251,20 @@ struct ConnectionsView: View {
         case .live:
             return ""
         case .apps:
-            return "\(formattedCount(scopedApplicationAggregates.count)) apps"
+            return AppLocalization.format(
+                "%@ apps",
+                formattedCount(scopedApplicationAggregates.count)
+            )
         case .routes:
-            return "\(formattedCount(scopedRouteAggregates.count)) routes"
+            return AppLocalization.format(
+                "%@ routes",
+                formattedCount(scopedRouteAggregates.count)
+            )
         case .history:
-            return "\(formattedCount(historicalEntries.count)) records"
+            return AppLocalization.format(
+                "%@ records",
+                formattedCount(historicalEntries.count)
+            )
         }
     }
 
@@ -301,7 +319,9 @@ struct ConnectionsView: View {
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: " → ")
-        return value.isEmpty ? "No rule metadata was reported." : value
+        return value.isEmpty
+            ? AppLocalization.string("No rule metadata was reported.")
+            : value
     }
 
     private func historyRouteTitle(_ entry: FlowLedgerEntry) -> String {
@@ -316,16 +336,21 @@ struct ConnectionsView: View {
     }
 
     private func historyCompactDetail(_ entry: FlowLedgerEntry) -> String {
-        let ended = entry.endedAt?.formatted(date: .omitted, time: .shortened) ?? "—"
+        let ended = entry.endedAt.map {
+            AppLocalization.date($0, dateStyle: .omitted, timeStyle: .shortened)
+        } ?? "—"
         return "\(historyRouteTitle(entry)) · \(profileTitle(entry.trafficTarget)) · \(ended)"
     }
 
     private func historyEntryHelp(_ entry: FlowLedgerEntry) -> String {
-        "Capture: \(captureOriginTitle(entry.captureOrigin))\n"
-            + "Rule: \(historyRuleHelp(entry))\n"
-            + "Route: \(historyRouteHelp(entry))\n"
-            + "Profile: \(profileTitle(entry.trafficTarget))\n"
-            + "Ended: \(entry.endedAt?.formatted(date: .abbreviated, time: .standard) ?? "—")"
+        AppLocalization.format(
+            "Capture: %@\nRule: %@\nRoute: %@\nProfile: %@\nEnded: %@",
+            captureOriginTitle(entry.captureOrigin),
+            historyRuleHelp(entry),
+            historyRouteHelp(entry),
+            profileTitle(entry.trafficTarget),
+            entry.endedAt.map { AppLocalization.date($0) } ?? "—"
+        )
     }
 
     private var filteredHistory: [FlowLedgerEntry] {
@@ -459,7 +484,10 @@ struct ConnectionsView: View {
             }
         }
         .confirmationDialog(
-            "Close all \(formattedCount(presentation.totalConnectionCount)) active connections?",
+            AppLocalization.format(
+                "Close all %@ active connections?",
+                formattedCount(presentation.totalConnectionCount)
+            ),
             isPresented: $confirmingCloseAll
         ) {
             Button("Close All Connections", role: .destructive) {
@@ -513,7 +541,7 @@ struct ConnectionsView: View {
         HStack(spacing: 12) {
             Picker("Traffic Workspace", selection: $workspace) {
                 ForEach(Workspace.allCases) { item in
-                    Text(item.rawValue).tag(item)
+                    Text(item.title).tag(item)
                 }
             }
             .pickerStyle(.segmented)
@@ -570,7 +598,7 @@ struct ConnectionsView: View {
             HStack(spacing: 8) {
                 Picker("Traffic Workspace", selection: $workspace) {
                     ForEach(Workspace.allCases) { item in
-                        Text(item.rawValue).tag(item)
+                        Text(item.title).tag(item)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -640,6 +668,7 @@ struct ConnectionsView: View {
                 .disabled(!model.canPerform(.closeAllConnections))
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .help("More traffic actions")
         } else if workspace == .history, hasTrafficHistoryToClear {
@@ -649,6 +678,7 @@ struct ConnectionsView: View {
                 }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .help("More traffic actions")
         }
@@ -690,6 +720,7 @@ struct ConnectionsView: View {
                 }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
             }
             .menuStyle(.borderlessButton)
             .help("More traffic actions")
@@ -703,26 +734,28 @@ struct ConnectionsView: View {
     private var defaultLiveProfileTitle: String {
         let name = model.profiles.first(where: {
             $0.id == model.activeProfileID
-        })?.name ?? "Default"
-        return "Default Profile · \(name)"
+        })?.name ?? AppLocalization.string("Default")
+        return AppLocalization.format("Default Profile · %@", name)
     }
 
     private func profileTitle(_ target: ProfileTrafficTarget) -> String {
         switch target {
         case .defaultProfile:
-            "Default Profile"
+            AppLocalization.string("Default Profile")
         case let .profile(profileID):
             model.profiles.first(where: { $0.id == profileID })?.name
-                ?? "Unavailable Profile"
+                ?? AppLocalization.string("Unavailable Profile")
         case .system:
-            "Direct / System"
+            AppLocalization.string("Direct / System")
         }
     }
 
     private func compactTrafficHeaderSummary(
         presentation: ConnectionPresentationSnapshot
     ) -> String {
-        if trafficDataNotice != nil { return "Traffic data reconnecting" }
+        if trafficDataNotice != nil {
+            return AppLocalization.string("Traffic data reconnecting")
+        }
         if workspace == .live { return presentation.connectionCountLabel }
         return workspaceSummary
     }
@@ -730,17 +763,29 @@ struct ConnectionsView: View {
     private func trafficHeaderSummary(
         presentation: ConnectionPresentationSnapshot
     ) -> String {
-        if trafficDataNotice != nil { return "Live data reconnecting · last-known rows shown" }
+        if trafficDataNotice != nil {
+            return AppLocalization.string("Live data reconnecting · last-known rows shown")
+        }
         if workspace == .live {
             var parts = [presentation.connectionCountLabel]
             if let download = presentation.downloadTotal,
                let upload = presentation.uploadTotal {
-                parts.append("↓ \(formattedByteCount(download)) · ↑ \(formattedByteCount(upload))")
+                parts.append(
+                    AppLocalization.format(
+                        "↓ %@ · ↑ %@",
+                        formattedByteCount(download),
+                        formattedByteCount(upload)
+                    )
+                )
             }
             return parts.joined(separator: " · ")
         }
         if unmeasuredHandoffCount > 0 {
-            return "\(workspaceSummary) · \(formattedCount(unmeasuredHandoffCount)) pass-through unmeasured"
+            return AppLocalization.format(
+                "%@ · %@ pass-through unmeasured",
+                workspaceSummary,
+                formattedCount(unmeasuredHandoffCount)
+            )
         }
         return workspaceSummary
     }
@@ -836,7 +881,13 @@ struct ConnectionsView: View {
                         Task { await model.setPersistentTrafficHistoryEnabled(false) }
                     }
                 } label: {
-                    Label("Keep \(model.trafficHistoryRetention.rawValue) Days", systemImage: "calendar")
+                    Label(
+                        AppLocalization.format(
+                            "Keep %@ Days",
+                            AppLocalization.number(model.trafficHistoryRetention.rawValue)
+                        ),
+                        systemImage: "calendar"
+                    )
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -930,7 +981,13 @@ struct ConnectionsView: View {
                             Task { await model.setPersistentTrafficHistoryEnabled(false) }
                         }
                     } label: {
-                        Label("Keep \(model.trafficHistoryRetention.rawValue) Days", systemImage: "calendar")
+                        Label(
+                            AppLocalization.format(
+                                "Keep %@ Days",
+                                AppLocalization.number(model.trafficHistoryRetention.rawValue)
+                            ),
+                            systemImage: "calendar"
+                        )
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
@@ -949,13 +1006,19 @@ struct ConnectionsView: View {
 
     private func persistentHistoryCompactSummary(lastUpdatedAt: Date?) -> String {
         guard let snapshot = persistentTrafficHistorySnapshot else {
-            return "Preparing aggregate totals…"
+            return AppLocalization.string("Preparing aggregate totals…")
         }
-        var summary = "\(persistentByteCount(snapshot.totals.exactTotalBytes)) measured · \(formattedCount(Int(clamping: snapshot.totals.completedFlowCount))) completed"
+        let bytes = persistentByteCount(snapshot.totals.exactTotalBytes)
+        let completed = formattedCount(Int(clamping: snapshot.totals.completedFlowCount))
         if let lastUpdatedAt {
-            summary += " · updated \(lastUpdatedAt.formatted(.relative(presentation: .named)))"
+            return AppLocalization.format(
+                "%@ measured · %@ completed · updated %@",
+                bytes,
+                completed,
+                AppLocalization.relativeDate(lastUpdatedAt)
+            )
         }
-        return summary
+        return AppLocalization.format("%@ measured · %@ completed", bytes, completed)
     }
 
     private var persistentTrafficHistorySnapshot: TrafficHistorySnapshot? {
@@ -975,13 +1038,8 @@ struct ConnectionsView: View {
         formattedByteCount(Int64(clamping: bytes))
     }
 
-    private func persistentCoverageTitle(_ coverage: TrafficHistoryCoverage) -> String {
-        guard let fraction = coverage.measuredFraction else { return "No payload" }
-        return fraction.formatted(.percent.precision(.fractionLength(0)))
-    }
-
     private func retentionTitle(_ retention: TrafficHistoryRetention) -> String {
-        "\(retention.rawValue) days"
+        AppLocalization.format("%d days", retention.rawValue)
     }
 
     private var trafficDataNotice: String? {
@@ -993,34 +1051,45 @@ struct ConnectionsView: View {
             }
             return liveStreamDetail(
                 model.liveStreamHealth[.connections] ?? .inactive,
-                source: "Mihomo connections"
+                source: AppLocalization.string("Mihomo connections")
             )
         case .apps, .routes, .history:
             var staleSources: [String] = []
             if model.isConnected,
                model.liveStreamHealth[.connections]?.hasCurrentData != true {
-                staleSources.append("Mihomo connections")
+                staleSources.append(AppLocalization.string("Mihomo connections"))
             }
             if appRoutingIsActive,
                model.liveStreamHealth[.appRouting]?.hasCurrentData != true {
-                staleSources.append("App Routing activity")
+                staleSources.append(AppLocalization.string("App Routing activity"))
             }
             guard !staleSources.isEmpty else { return nil }
             let details = [
                 model.isConnected
                     ? model.liveStreamHealth[.connections].map {
-                        liveStreamDetail($0, source: "Mihomo connections")
+                        liveStreamDetail(
+                            $0,
+                            source: AppLocalization.string("Mihomo connections")
+                        )
                     }
                     : nil,
                 appRoutingIsActive
                     ? model.liveStreamHealth[.appRouting].map {
-                        liveStreamDetail($0, source: "App Routing activity")
+                        liveStreamDetail(
+                            $0,
+                            source: AppLocalization.string("App Routing activity")
+                        )
                     }
                     : nil,
             ].compactMap { $0 }
-            return staleSources.joined(separator: " and ")
-                + " are stale. Existing ledger rows remain visible as last-known observations. "
-                + details.joined(separator: " ")
+            let sourceSummary = staleSources.count == 1
+                ? staleSources[0]
+                : AppLocalization.format("%@ and %@", staleSources[0], staleSources[1])
+            return AppLocalization.format(
+                "Data from %@ is stale. Existing ledger rows remain visible as last-known observations. %@",
+                sourceSummary,
+                details.joined(separator: " ")
+            )
         }
     }
 
@@ -1029,13 +1098,24 @@ struct ConnectionsView: View {
         source: String
     ) -> String {
         let received = health.lastReceivedAt.map {
-            "last received \($0.formatted(.relative(presentation: .named)))"
-        } ?? "no sample received"
+            AppLocalization.format(
+                "last received %@",
+                AppLocalization.relativeDate($0)
+            )
+        } ?? AppLocalization.string("no sample received")
         let attempt = health.retryAttempt > 0
-            ? "retry \(formattedCount(health.retryAttempt))"
-            : "waiting for the first response"
-        let error = health.lastError.map { " Last error: \($0)" } ?? ""
-        return "\(source): \(received), \(attempt).\(error)"
+            ? AppLocalization.format("retry %@", formattedCount(health.retryAttempt))
+            : AppLocalization.string("waiting for the first response")
+        guard let error = health.lastError else {
+            return AppLocalization.format("%@: %@, %@.", source, received, attempt)
+        }
+        return AppLocalization.format(
+            "%@: %@, %@. Last error: %@",
+            source,
+            received,
+            attempt,
+            error
+        )
     }
 
     private var unmeasuredHandoffCount: Int {
@@ -1054,7 +1134,13 @@ struct ConnectionsView: View {
             Label("Connection Inspector", systemImage: "sidebar.right")
         }
         .disabled(selectedConnection == nil)
-        .help(inspectorPresented ? "Hide Connection Inspector" : "Show Connection Inspector")
+        .help(
+            AppLocalization.string(
+                inspectorPresented
+                    ? "Hide Connection Inspector"
+                    : "Show Connection Inspector"
+            )
+        )
         .accessibilityHint("Shows route, process, address, and traffic details for the selected connection")
         .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
             connectionInspector(selectedConnection)
@@ -1330,9 +1416,16 @@ private struct ConnectionPresentationSnapshot: Sendable {
 
     var connectionCountLabel: String {
         if !isFiltering {
-            return "\(formattedCount(totalConnectionCount)) active"
+            return AppLocalization.format(
+                "%@ active",
+                formattedCount(totalConnectionCount)
+            )
         }
-        return "\(formattedCount(rows.count)) of \(formattedCount(totalConnectionCount)) active"
+        return AppLocalization.format(
+            "%@ of %@ active",
+            formattedCount(rows.count),
+            formattedCount(totalConnectionCount)
+        )
     }
 }
 
@@ -1474,7 +1567,11 @@ private struct ConnectionDetailView: View {
                     }
 
                     ConnectionDetailSection("Process") {
-                        ConnectionDetailRow("Name", value: nonEmpty(connection.metadata.process) ?? "Unavailable")
+                        ConnectionDetailRow(
+                            "Name",
+                            value: nonEmpty(connection.metadata.process)
+                                ?? AppLocalization.string("Unavailable")
+                        )
                         detailRow("Path", value: nonEmpty(connection.metadata.processPath), monospaced: true)
                     }
                 }
@@ -1482,7 +1579,12 @@ private struct ConnectionDetailView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Connection details for \(connectionDestination(connection))")
+        .accessibilityLabel(
+            AppLocalization.format(
+                "Connection details for %@",
+                connectionDestination(connection)
+            )
+        )
     }
 
     private var connectionSubtitle: String {
@@ -1539,8 +1641,9 @@ private struct ConnectionDetailSection<Content: View>: View {
     }
 
     var body: some View {
+        let localizedTitle = AppLocalization.string(title)
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
+            Text(localizedTitle)
                 .font(.headline)
             VStack(alignment: .leading, spacing: 8) {
                 content
@@ -1561,15 +1664,16 @@ private struct ConnectionDetailRow: View {
     }
 
     var body: some View {
+        let localizedLabel = AppLocalization.string(label)
         LabeledContent {
             CopyableValueButton(
                 value: value,
-                accessibilityName: label.lowercased(),
+                accessibilityName: label,
                 font: monospaced ? .callout.monospaced() : .callout
             )
                 .frame(maxWidth: 220, alignment: .trailing)
         } label: {
-            Text(label)
+            Text(localizedLabel)
                 .foregroundStyle(.secondary)
         }
     }
@@ -1622,7 +1726,8 @@ private func connectionDestination(_ connection: MihomoConnection) -> String {
     if let address = nonEmpty(metadata.destinationIP) {
         return endpoint(address: address, port: port) ?? address
     }
-    return nonEmpty(metadata.remoteDestination) ?? "Unknown destination"
+    return nonEmpty(metadata.remoteDestination)
+        ?? AppLocalization.string("Unknown destination")
 }
 
 private func endpoint(address: String?, port: String?) -> String? {
@@ -1647,21 +1752,11 @@ private func joined(_ values: [String]?, separator: String) -> String? {
 
 private func formattedConnectionStart(_ value: String) -> String {
     let date = RuntimeTimestampParser.date(from: value)
-    return date?.formatted(date: .abbreviated, time: .standard) ?? value
+    return date.map { AppLocalization.date($0) } ?? value
 }
 
 private func formattedLedgerBytes(_ value: UInt64) -> String {
     formattedByteCount(value > UInt64(Int64.max) ? Int64.max : Int64(value))
-}
-
-private func trafficCoverageTitle(_ traffic: FlowLedgerTrafficAggregate) -> String {
-    if traffic.notMeasuredAfterHandoffCount > 0 {
-        return "Partial · \(formattedCount(traffic.notMeasuredAfterHandoffCount)) handoff"
-    }
-    if traffic.notApplicableCount > 0, traffic.exactTotalBytes == 0 {
-        return "No payload"
-    }
-    return "Measured"
 }
 
 private func trafficCoverageHelp(_ traffic: FlowLedgerTrafficAggregate) -> String {
@@ -1673,15 +1768,16 @@ private func routeTitle(_ route: FlowLedgerRouteKey) -> String {
     case let .mihomo(rule, _, chain):
         return chain.last ?? rule ?? "Mihomo"
     case let .unresolvedMihomo(rule):
-        return rule.map { "Mihomo · \($0)" } ?? "Mihomo · resolving"
+        return rule.map { AppLocalization.format("Mihomo · %@", $0) }
+            ?? AppLocalization.string("Mihomo · resolving")
     case .direct:
-        return "Direct"
+        return AppLocalization.string("Direct")
     case .rejected:
-        return "Rejected"
+        return AppLocalization.string("Rejected")
     case .failOpen:
-        return "Fail Open"
+        return AppLocalization.string("Fail Open")
     case .relayFailed:
-        return "Relay Failed"
+        return AppLocalization.string("Relay Failed")
     }
 }
 
@@ -1693,18 +1789,25 @@ private func routeSubtitle(
     case let .mihomo(rule, payload, chain):
         let decision = [rule, payload].compactMap(nonEmpty).joined(separator: " · ")
         let path = chain.joined(separator: " → ")
-        return nonEmpty(decision) ?? nonEmpty(path) ?? "Mihomo route"
+        return nonEmpty(decision)
+            ?? nonEmpty(path)
+            ?? AppLocalization.string("Mihomo route")
     case let .unresolvedMihomo(rule):
-        return rule.map { "App rule \($0) · awaiting Mihomo correlation" }
-            ?? "Awaiting Mihomo correlation"
+        return rule.map {
+            AppLocalization.format(
+                "App rule %@ · awaiting Mihomo correlation",
+                $0
+            )
+        } ?? AppLocalization.string("Awaiting Mihomo correlation")
     case .direct:
         return FlowLedgerTrafficPresentation.directRouteDetail(traffic)
     case .rejected:
-        return "Blocked by App Routing"
+        return AppLocalization.string("Blocked by App Routing")
     case .failOpen:
-        return "Relay failed; handed back to macOS"
+        return AppLocalization.string("Relay failed; handed back to macOS")
     case let .relayFailed(rule):
-        return rule.map { "App rule \($0)" } ?? "App Routing relay"
+        return rule.map { AppLocalization.format("App rule %@", $0) }
+            ?? AppLocalization.string("App Routing relay")
     }
 }
 
@@ -1715,7 +1818,9 @@ private func routeHelp(
     switch route {
     case let .mihomo(rule, payload, chain):
         let decision = [rule, payload].compactMap(nonEmpty).joined(separator: " · ")
-        let path = chain.isEmpty ? "No proxy chain reported" : chain.joined(separator: " → ")
+        let path = chain.isEmpty
+            ? AppLocalization.string("No proxy chain reported")
+            : chain.joined(separator: " → ")
         return [nonEmpty(decision), path].compactMap { $0 }.joined(separator: "\n")
     default:
         return "\(routeTitle(route))\n\(routeSubtitle(route, traffic: traffic))"
@@ -1725,7 +1830,7 @@ private func routeHelp(
 private func ledgerDestination(_ destination: FlowLedgerDestination) -> String {
     let address = nonEmpty(destination.hostname)
         ?? nonEmpty(destination.ipAddress)
-        ?? "Unknown destination"
+        ?? AppLocalization.string("Unknown destination")
     guard let port = destination.port else { return address }
     return endpoint(address: address, port: String(port)) ?? address
 }
@@ -1733,25 +1838,28 @@ private func ledgerDestination(_ destination: FlowLedgerDestination) -> String {
 private func captureOriginTitle(_ origin: FlowLedgerCaptureOrigin) -> String {
     switch origin {
     case .systemProxy:
-        return "System Proxy"
+        return AppLocalization.string("System Proxy")
     case .appRouting:
-        return "App Routing"
+        return AppLocalization.string("App Routing")
     case .dnsProxy:
-        return "DNS Proxy"
+        return AppLocalization.string("DNS Proxy")
     case let .localListener(name):
-        return "\(name) · local listener (origin unverified)"
+        return AppLocalization.format(
+            "%@ · local listener (origin unverified)",
+            name
+        )
     case .unknown:
-        return "Unattributed"
+        return AppLocalization.string("Unattributed")
     }
 }
 
 private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
     switch outcome {
-    case .viaMihomo: "Via Mihomo"
-    case .direct: "Direct"
-    case .rejected: "Rejected"
-    case .failOpen: "Fail Open"
-    case .relayFailed: "Failed"
+    case .viaMihomo: AppLocalization.string("Via Mihomo")
+    case .direct: AppLocalization.string("Direct")
+    case .rejected: AppLocalization.string("Rejected")
+    case .failOpen: AppLocalization.string("Fail Open")
+    case .relayFailed: AppLocalization.string("Failed")
     }
 }
 
@@ -1767,10 +1875,10 @@ private func outcomeColor(_ outcome: FlowLedgerOutcome) -> Color {
 private func ledgerTrafficTitle(_ entry: FlowLedgerEntry) -> String {
     if entry.upload == .notMeasuredAfterHandoff
         || entry.download == .notMeasuredAfterHandoff {
-        return "Not measured"
+        return AppLocalization.string("Not measured")
     }
     if entry.upload == .notApplicable, entry.download == .notApplicable {
-        return "No payload"
+        return AppLocalization.string("No payload")
     }
     let upload = ledgerExactBytes(entry.upload)
     let download = ledgerExactBytes(entry.download)
@@ -1781,12 +1889,18 @@ private func ledgerTrafficTitle(_ entry: FlowLedgerEntry) -> String {
 private func ledgerTrafficHelp(_ entry: FlowLedgerEntry) -> String {
     if entry.upload == .notMeasuredAfterHandoff
         || entry.download == .notMeasuredAfterHandoff {
-        return "This flow was handed back to macOS. MClash cannot observe its payload after handoff, so it is not reported as 0 B."
+        return AppLocalization.string(
+            "This flow was handed back to macOS. MClash cannot observe its payload after handoff, so it is not reported as 0 B."
+        )
     }
     if entry.upload == .notApplicable, entry.download == .notApplicable {
-        return "This decision carried no payload."
+        return AppLocalization.string("This decision carried no payload.")
     }
-    return "Download \(formattedLedgerBytes(ledgerExactBytes(entry.download))) · Upload \(formattedLedgerBytes(ledgerExactBytes(entry.upload)))"
+    return AppLocalization.format(
+        "Download %@ · Upload %@",
+        formattedLedgerBytes(ledgerExactBytes(entry.download)),
+        formattedLedgerBytes(ledgerExactBytes(entry.upload))
+    )
 }
 
 private func ledgerExactBytes(_ measurement: FlowLedgerByteMeasurement) -> UInt64 {
