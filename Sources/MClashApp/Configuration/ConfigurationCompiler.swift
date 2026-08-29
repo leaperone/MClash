@@ -1,11 +1,15 @@
 import CryptoKit
 import Foundation
+import MClashNetworkShared
 
 public struct CompiledConfiguration: Equatable, Sendable {
     public let workspaceID: WorkspaceID
     public let workspaceRevision: Int
     public let yaml: Data
     public let networkExtensionRules: [RoutingRule]
+    public let captureRules: [CaptureRule]
+    public let captureEnabled: Bool
+    public let captureDNSEnabled: Bool
     public let diagnostics: [ConfigurationDiagnostic]
     public let configHash: String
 
@@ -14,12 +18,18 @@ public struct CompiledConfiguration: Equatable, Sendable {
         workspaceRevision: Int,
         yaml: Data,
         networkExtensionRules: [RoutingRule],
+        captureRules: [CaptureRule],
+        captureEnabled: Bool,
+        captureDNSEnabled: Bool,
         diagnostics: [ConfigurationDiagnostic]
     ) {
         self.workspaceID = workspaceID
         self.workspaceRevision = workspaceRevision
         self.yaml = yaml
         self.networkExtensionRules = networkExtensionRules
+        self.captureRules = captureRules
+        self.captureEnabled = captureEnabled
+        self.captureDNSEnabled = captureDNSEnabled
         self.diagnostics = diagnostics
         self.configHash = SHA256.hash(data: yaml).map { String(format: "%02x", $0) }.joined()
     }
@@ -34,8 +44,10 @@ extension ConfigurationCompilationError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .invalid(diagnostics):
-            "MClash could not generate a runtime configuration: "
-                + diagnostics.map(\.message).joined(separator: " ")
+            AppLocalization.format(
+                "MClash could not generate a runtime configuration: %@",
+                diagnostics.map(\.message).joined(separator: " ")
+            )
         case let .invalidText(message): message
         }
     }
@@ -51,7 +63,9 @@ public struct ConfigurationCompiler: Sendable {
 
     public func compile(document: ConfigurationDocument, workspaceID: WorkspaceID? = nil) throws -> CompiledConfiguration {
         guard let workspace = workspaceID.flatMap({ id in document.workspaces.first(where: { $0.id == id }) }) ?? document.currentWorkspace else {
-            throw ConfigurationCompilationError.invalidText("No MClash workspace is configured.")
+            throw ConfigurationCompilationError.invalidText(
+                AppLocalization.string("No MClash workspace is configured.")
+            )
         }
         let diagnostics = document.diagnostics(for: workspace)
         let errors = diagnostics.filter { $0.severity == .error }
@@ -83,11 +97,33 @@ public struct ConfigurationCompiler: Sendable {
                 return false
             }
         }
+        let capture = ConfigurationCaptureAdapter.convert(
+            from: appRules,
+            groups: workspaceGroups,
+            workspaceID: workspace.id
+        )
+        guard capture.diagnostics.isEmpty else {
+            throw ConfigurationCompilationError.invalid(capture.diagnostics)
+        }
+        let catchAll = try CaptureRule(
+            id: "mclash-compiled-workspace-catch-all",
+            priority: .max,
+            action: .mihomo(.profileRules),
+            unavailableFallback: .reject
+        )
+        let workspaceEntrances = workspace.entranceIDs.compactMap { id in
+            document.entrances.first(where: { $0.id == id })
+        }
         return CompiledConfiguration(
             workspaceID: workspace.id,
             workspaceRevision: workspace.revision,
             yaml: Data(yaml.utf8),
             networkExtensionRules: appRules,
+            captureRules: capture.rules + [catchAll],
+            captureEnabled: workspaceEntrances.contains {
+                $0.kind == .appRouting && $0.enabled
+            },
+            captureDNSEnabled: dns?.takeoverEnabled == true,
             diagnostics: diagnostics,
         )
     }
@@ -137,14 +173,21 @@ public struct ConfigurationCompiler: Sendable {
             for group in groups {
                 lines.append("  - name: \(yamlScalar(group.name))")
                 lines.append("    type: \(mihomoGroupType(group.type))")
-                let members = group.members.compactMap { member -> String? in
-                    switch member {
-                    case let .node(id): return nodes.first(where: { $0.id == id }).map { $0.userAlias ?? $0.displayName }
-                    case let .group(id): return groups.first(where: { $0.id == id })?.name
+                let members: [String]
+                switch group.type {
+                case .direct:
+                    members = ["DIRECT"]
+                case .reject:
+                    members = ["REJECT"]
+                default:
+                    members = group.members.compactMap { member -> String? in
+                        switch member {
+                        case let .node(id): return nodes.first(where: { $0.id == id }).map { $0.userAlias ?? $0.displayName }
+                        case let .group(id): return groups.first(where: { $0.id == id })?.name
+                        }
                     }
                 }
-                let values = members.isEmpty ? ["DIRECT"] : members
-                lines.append("    proxies: [\(values.map(yamlScalar).joined(separator: ", "))]")
+                lines.append("    proxies: [\(members.map(yamlScalar).joined(separator: ", "))]")
             }
         }
 
@@ -166,12 +209,10 @@ public struct ConfigurationCompiler: Sendable {
 
         lines.append("")
         lines.append("rules:")
-        var renderedRule = false
         for ruleSet in ruleSets {
             let action = render(action: ruleSet.defaultAction, groups: groups)
             if ruleSet.sourceURL != nil {
                 lines.append("  - RULE-SET,\(yamlKey(ruleSet.name)),\(action)")
-                renderedRule = true
             }
             for rawRule in ruleSet.rules {
                 let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -181,20 +222,16 @@ public struct ConfigurationCompiler: Sendable {
                 } else {
                     lines.append("  - DOMAIN-SUFFIX,\(trimmed),\(action)")
                 }
-                renderedRule = true
             }
         }
         for rule in rules {
             let action = render(action: rule.action, groups: groups)
             for line in render(rule: rule, action: action) {
                 lines.append("  - \(line)")
-                renderedRule = true
             }
         }
-        if !renderedRule {
-            let fallback = entrances.first(where: \.enabled)?.defaultAction ?? .direct
-            lines.append("  - MATCH,\(render(action: fallback, groups: groups))")
-        }
+        let fallback = entrances.first(where: \.enabled)?.defaultAction ?? .direct
+        lines.append("  - MATCH,\(render(action: fallback, groups: groups))")
 
         lines.append("")
         lines.append("dns:")
@@ -287,7 +324,11 @@ public struct ConfigurationCompiler: Sendable {
         switch action {
         case .direct: return "DIRECT"
         case .reject: return "REJECT"
-        case let .proxyGroup(id): return groups.first(where: { $0.id == id })?.name ?? "DIRECT"
+        case let .proxyGroup(id):
+            guard let group = groups.first(where: { $0.id == id }) else {
+                preconditionFailure("Configuration validation must reject unavailable proxy group actions")
+            }
+            return group.name
         }
     }
 

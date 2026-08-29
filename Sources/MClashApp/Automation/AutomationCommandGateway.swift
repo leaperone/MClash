@@ -929,14 +929,14 @@ final class AutomationCommandGateway {
         if let teamIdentifier = peer.teamIdentifier, !teamIdentifier.isEmpty {
             signatureDescription = AppLocalization.format(
                 "Signing ID: %@\nTeam ID: %@",
-                displaySafe(peer.signingIdentifier ?? "Unknown"),
+                displaySafe(peer.signingIdentifier ?? AppLocalization.string("Unknown")),
                 displaySafe(teamIdentifier)
             )
         } else {
-            let fingerprint = peer.codeHash.map { String($0.prefix(16)) } ?? "none"
+            let fingerprint = peer.codeHash.map { String($0.prefix(16)) } ?? AppLocalization.string("None")
             signatureDescription = AppLocalization.format(
                 "Signing: Ad hoc signed\nIdentifier: %@\nCode fingerprint: %@",
-                displaySafe(peer.signingIdentifier ?? "none"),
+                displaySafe(peer.signingIdentifier ?? AppLocalization.string("None")),
                 fingerprint
             )
         }
@@ -2019,7 +2019,9 @@ final class AutomationCommandGateway {
         capability("auth.clients.list", "List paired automation clients", .read),
         capability("auth.clients.revoke", "Revoke a paired automation client", .destructive),
         capability("system.snapshot", "Read the current application snapshot", .read),
-        capability("app.ui.show", "Show a MClash window destination", .write, ["destination": "overview|proxies|appRouting|profiles|rules|providers|connections|attention|logs|settings"]),
+        capability("app.ui.show", "Show a MClash window destination", .write, [
+            "destination": AppModel.Destination.allCases.map(\.rawValue).joined(separator: "|")
+        ]),
         capability("app.ui.hide", "Hide MClash windows while keeping it running", .write),
         capability("app.quit", "Quit MClash safely", .destructive),
         capability("app.update.status", "Read update settings", .read),

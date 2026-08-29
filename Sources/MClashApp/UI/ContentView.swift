@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -21,6 +22,7 @@ struct ContentView: View {
                     destinationRow(.sources)
                     destinationRow(.entrances)
                     destinationRow(.proxies)
+                    destinationRow(.proxyGroups)
                     appRoutingToggleRow
                 }
 
@@ -177,6 +179,8 @@ struct ContentView: View {
         case .entrances:
             ConfigurationEntrancesView(model: model)
         case .proxies:
+            ProxiesView(model: model)
+        case .proxyGroups:
             ConfigurationProxyGroupsView(model: model)
         case .appRouting:
             ConnectionsView(model: model)
@@ -425,5 +429,16 @@ private struct ErrorBanner: View {
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(AppLocalization.string("MClash could not complete the operation"))
+        .onChange(of: message, initial: true) { _, message in
+            guard !message.isEmpty else { return }
+            NSAccessibility.post(
+                element: NSApp,
+                notification: .announcementRequested,
+                userInfo: [
+                    .announcement: message,
+                    .priority: NSAccessibilityPriorityLevel.high.rawValue
+                ]
+            )
+        }
     }
 }

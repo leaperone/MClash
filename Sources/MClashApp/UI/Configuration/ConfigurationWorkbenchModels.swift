@@ -17,6 +17,16 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         case .entrances: "Entrances"
         }
     }
+    var singularTitle: String {
+        switch self {
+        case .workspaces: "Workspace"
+        case .sources: "Source"
+        case .nodes: "Node"
+        case .proxyGroups: "Proxy Group"
+        case .rules: "Rule"
+        case .entrances: "Entrance"
+        }
+    }
     var symbol: String {
         switch self {
         case .workspaces: "rectangle.3.group"
@@ -36,10 +46,12 @@ struct ConfigurationWorkbenchItem: Identifiable, Sendable {
     let symbol: String
     let detail: String
     let metadata: [(String, String)]
+    let isEnabled: Bool?
 
     init(
         id: UUID = UUID(), title: String, subtitle: String,
-        symbol: String, detail: String, metadata: [(String, String)] = []
+        symbol: String, detail: String, metadata: [(String, String)] = [],
+        isEnabled: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -47,22 +59,69 @@ struct ConfigurationWorkbenchItem: Identifiable, Sendable {
         self.symbol = symbol
         self.detail = detail
         self.metadata = metadata
+        self.isEnabled = isEnabled
     }
+}
 
-    static func samples(for section: ConfigurationWorkbenchSection) -> [Self] {
-        switch section {
-        case .workspaces:
-            [Self(title: "Everyday", subtitle: "12 nodes · 6 rules", symbol: "briefcase", detail: "Your default routing workspace.", metadata: [("Entrances", "HTTP · SOCKS5 · App Routing"), ("Default", "Auto Select")]), Self(title: "AI Services", subtitle: "8 nodes · 4 rules", symbol: "sparkles", detail: "Routes AI traffic through preferred exits.", metadata: [("Entrances", "HTTP · SOCKS5"), ("Default", "AI Fast Lane")])]
-        case .sources:
-            [Self(title: "Primary subscription", subtitle: "Updated 12 min ago", symbol: "link", detail: "Nodes imported from a remote subscription.", metadata: [("Nodes", "42"), ("Status", "Healthy")]), Self(title: "Local nodes", subtitle: "Manual collection", symbol: "folder", detail: "Locally maintained connection endpoints.", metadata: [("Nodes", "6"), ("Status", "Ready")])]
-        case .nodes:
-            [Self(title: "Tokyo · Premium", subtitle: "Primary subscription", symbol: "point.3.filled.connected.trianglepath.dotted", detail: "A stable encrypted connection endpoint.", metadata: [("Protocol", "Hysteria 2"), ("Latency", "86 ms")]), Self(title: "Singapore · Edge", subtitle: "Primary subscription", symbol: "point.3.filled.connected.trianglepath.dotted", detail: "An imported node available to groups.", metadata: [("Protocol", "VLESS"), ("Latency", "124 ms")]), Self(title: "Home fallback", subtitle: "Local nodes", symbol: "point.3.filled.connected.trianglepath.dotted", detail: "A local fallback endpoint.", metadata: [("Protocol", "Shadowsocks"), ("Latency", "—")])]
-        case .proxyGroups:
-            [Self(title: "Auto Select", subtitle: "url-test · 12 members", symbol: "arrow.triangle.2.circlepath", detail: "Automatically selects the fastest healthy node.", metadata: [("Workspace", "Everyday"), ("Fallback", "DIRECT")]), Self(title: "AI Fast Lane", subtitle: "select · 8 members", symbol: "bolt", detail: "A hand-picked group for AI services.", metadata: [("Workspace", "AI Services"), ("Fallback", "Auto Select")])]
-        case .rules:
-            [Self(title: "AI services", subtitle: "Domain · AI Fast Lane", symbol: "globe", detail: "Routes known AI domains to the selected group.", metadata: [("Match", "DOMAIN-SUFFIX"), ("Action", "AI Fast Lane")]), Self(title: "Private networks", subtitle: "IP-CIDR · DIRECT", symbol: "network", detail: "Keeps local networks on the direct path.", metadata: [("Match", "IP-CIDR"), ("Action", "DIRECT")])]
-        case .entrances:
-            []
+func configurationDisplayName(_ name: String) -> String {
+    switch name {
+    case "Everyday", "MClash Select", "New Workspace", "New Group":
+        AppLocalization.string(name)
+    default: name
+    }
+}
+
+func canonicalConfigurationDefaultName(_ name: String) -> String {
+    for sentinel in ["Everyday", "MClash Select", "New Workspace", "New Group"]
+    where name == AppLocalization.string(sentinel) {
+        return sentinel
+    }
+    return name
+}
+
+extension ConfigurationSourceKind {
+    var localizedTitle: String {
+        switch self {
+        case .subscription: AppLocalization.string("Subscription")
+        case .localFile: AppLocalization.string("Local File")
+        case .pastedConfig: AppLocalization.string("Pasted Configuration")
+        }
+    }
+}
+
+extension NodeAvailability {
+    var localizedTitle: String {
+        switch self {
+        case .unknown: AppLocalization.string("Unknown")
+        case .available: AppLocalization.string("Available")
+        case .unavailable: AppLocalization.string("Unavailable")
+        case .sourceRemoved: AppLocalization.string("Source Removed")
+        case .unsupported: AppLocalization.string("Unsupported")
+        }
+    }
+}
+
+extension ProxyGroupType {
+    var localizedTitle: String {
+        switch self {
+        case .select: AppLocalization.string("Select")
+        case .fallback: AppLocalization.string("Fallback")
+        case .urlTest: AppLocalization.string("URL Test")
+        case .loadBalance: AppLocalization.string("Load Balance")
+        case .direct: AppLocalization.string("Direct")
+        case .reject: AppLocalization.string("Reject")
+        case .relay: AppLocalization.string("Relay")
+        }
+    }
+}
+
+extension EntranceKind {
+    var localizedTitle: String {
+        switch self {
+        case .http: "HTTP"
+        case .socks5: "SOCKS5"
+        case .appRouting: AppLocalization.string("App Routing")
+        case .tun: "TUN"
         }
     }
 }

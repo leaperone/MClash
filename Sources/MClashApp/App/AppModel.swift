@@ -161,7 +161,7 @@ final class AppModel {
                 policy.traffic = true
                 policy.connections = true
                 policy.appRoutingActivity = true
-            case .workspaces, .nodes, .sources, .entrances:
+            case .workspaces, .nodes, .sources, .entrances, .proxyGroups:
                 break
             case .proxies:
                 policy.connections = true
@@ -404,6 +404,7 @@ final class AppModel {
         case sources
         case entrances
         case proxies
+        case proxyGroups
         case appRouting
         case profiles
         case rules
@@ -422,7 +423,8 @@ final class AppModel {
             case .nodes: "Nodes"
             case .sources: "Sources"
             case .entrances: "Entrances"
-            case .proxies: "Proxy Groups"
+            case .proxies: "Proxies"
+            case .proxyGroups: "Proxy Groups"
             case .appRouting: "App Routing"
             case .profiles: "Profiles"
             case .rules: "Mihomo Rules"
@@ -442,6 +444,7 @@ final class AppModel {
             case .sources: "arrow.down.circle"
             case .entrances: "arrow.triangle.branch"
             case .proxies: "square.3.layers.3d"
+            case .proxyGroups: "rectangle.3.group"
             case .appRouting: "app.badge"
             case .profiles: "doc.text"
             case .rules: "list.bullet.rectangle"
@@ -929,7 +932,10 @@ final class AppModel {
                         component: .configuration,
                         occurredAt: Date(),
                         reason: error.localizedDescription,
-                        recoverySuggestion: "Restore read and write access to \(layout.configurationDirectory.path), then relaunch MClash."
+                        recoverySuggestion: AppLocalization.format(
+                            "Restore read and write access to %@, then relaunch MClash.",
+                            layout.configurationDirectory.path
+                        )
                     )
                 )
             }
@@ -1116,7 +1122,9 @@ final class AppModel {
                         let recovery = try await configurationStore.loadRecoveringInvalidDocument()
                         if recovery.quarantinedURL != nil {
                             appendSupervisorLog(
-                                "The MClash configuration document was invalid and was quarantined; a clean strategy document was created."
+                                AppLocalization.string(
+                                    "The MClash configuration document was invalid and was quarantined; a clean strategy document was created."
+                                )
                             )
                         }
                         configurationDocument = recovery.document == .empty
@@ -1131,27 +1139,18 @@ final class AppModel {
                         recordStorageFailure(
                             component: .configuration,
                             error: error,
-                            recoverySuggestion: "Restore or remove the invalid Configuration document, then relaunch MClash."
+                            recoverySuggestion: AppLocalization.string(
+                                "Restore or remove the invalid Configuration document, then relaunch MClash."
+                            )
                         )
                         throw error
                     }
                 }
                 await synchronizeConfigurationSources()
                 if unifiedConfigurationEnabled {
-                    let unifiedEnabled = configurationDocument.currentWorkspace?.entranceIDs
-                        .compactMap { id in configurationDocument.entrances.first(where: { $0.id == id }) }
-                        .first(where: { $0.kind == .appRouting })?.enabled ?? false
-                    let unifiedDNS = configurationDocument.currentWorkspace.flatMap { workspace in
-                        configurationDocument.dnsPolicies.first(where: { $0.id == workspace.dnsPolicyID })?.takeoverEnabled
-                    } ?? networkCapturePreferences.dnsEnabled
-                    if let mirrored = try? NetworkCapturePreferences(
-                        enabled: unifiedEnabled,
-                        dnsEnabled: unifiedDNS,
-                        failOpen: networkCapturePreferences.failOpen,
-                        snapshot: networkCapturePreferences.snapshot
-                    ) {
-                        networkCapturePreferences = mirrored
-                    }
+                    let compiled = try compileConfiguration()
+                    compiledConfiguration = compiled
+                    try await synchronizeCompiledCaptureState(compiled)
                 }
                 if activeProfileID != nil {
                     // A restarted host has no trustworthy in-memory provider
@@ -1177,6 +1176,8 @@ final class AppModel {
                             validator: try makeProfileValidator()
                         )
                         activeConfigURL = activation.configurationURL
+                    } else if unifiedConfigurationEnabled {
+                        throw AppModelError.profileStoreUnavailable
                     } else if FileManager.default.fileExists(
                         atPath: profileLayout.runtimeConfigurationURL.path
                     ) {
@@ -1530,7 +1531,9 @@ final class AppModel {
                         severity: .warning,
                         code: "source_removed",
                         subject: document.sources[index].id.rawValue.uuidString.lowercased(),
-                        message: "The original profile was removed; its raw snapshot is retained for audit and its nodes are marked source-removed."
+                        message: AppLocalization.string(
+                            "The original profile was removed; its raw snapshot is retained for audit and its nodes are marked source-removed."
+                        )
                     ))
                 }
             }
@@ -1557,48 +1560,75 @@ final class AppModel {
                 let additions = document.nodes.filter { $0.enabled && !existing.contains($0.id) }.map { ProxyGroupMember.node($0.id) }
                 if !additions.isEmpty { document.proxyGroups[index].members.append(contentsOf: additions) }
             }
+            try await configurationStore.save(document)
             configurationDocument = document
             configurationDiagnostics = document.diagnostics()
-            try await configurationStore.save(document)
         } catch {
-            appendSupervisorLog("MClash configuration synchronization failed: \(error.localizedDescription)")
+            appendSupervisorLog(
+                AppLocalization.format(
+                    "MClash configuration synchronization failed: %@",
+                    error.localizedDescription
+                )
+            )
             configurationDiagnostics = [ConfigurationDiagnostic(
                 severity: .error,
                 code: "configuration_sync_failed",
                 subject: "sources",
-                message: error.localizedDescription
+                message: AppLocalization.format(
+                    "MClash configuration synchronization failed: %@",
+                    error.localizedDescription
+                )
             )]
         }
     }
 
-    private func unifiedCaptureRules() -> [CaptureRule] {
-        guard let workspace = configurationDocument.currentWorkspace else { return [] }
-        let scoped = configurationDocument.rules.filter { rule in
-            rule.workspaceScope == nil || rule.workspaceScope == workspace.id
+    private func unifiedCaptureRules() throws -> [CaptureRule] {
+        guard let compiledConfiguration else {
+            throw ConfigurationCompilationError.invalidText(
+                AppLocalization.string("No MClash workspace is configured.")
+            )
         }
-        let scopedGroups = configurationDocument.proxyGroups.filter {
-            workspace.proxyGroupIDs.contains($0.id) && $0.enabled
+        return compiledConfiguration.captureRules
+    }
+
+    private func synchronizeCompiledCaptureState(
+        _ compiled: CompiledConfiguration
+    ) async throws {
+        guard let store = networkCaptureConfigurationStore else {
+            throw AppModelError.profileStoreUnavailable
         }
-        let conversion = ConfigurationCaptureAdapter.convert(
-            from: scoped,
-            groups: scopedGroups,
-            workspaceID: workspace.id
+        guard networkCapturePreferences.snapshot.rules != compiled.captureRules
+                || networkCapturePreferences.enabled != compiled.captureEnabled
+                || networkCapturePreferences.dnsEnabled != compiled.captureDNSEnabled
+        else { return }
+        networkCapturePreferences = try await store.replaceRules(
+            compiled.captureRules,
+            enabled: compiled.captureEnabled,
+            dnsEnabled: compiled.captureDNSEnabled,
+            failOpen: networkCapturePreferences.failOpen
         )
-        configurationDiagnostics = (configurationDocument.diagnostics() + conversion.diagnostics)
-            .sorted { $0.id < $1.id }
-        return conversion.rules
     }
 
     func saveConfigurationDocument(_ document: ConfigurationDocument) async throws {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
+        try await persistConfigurationDocument(document)
+    }
+
+    private func persistConfigurationDocument(_ document: ConfigurationDocument) async throws {
         guard let configurationStore else { throw ConfigurationStoreError.unavailable }
         let diagnostics = document.diagnostics()
+        try await configurationStore.save(document)
         configurationDocument = document
         configurationDiagnostics = diagnostics
-        try await configurationStore.save(document)
     }
 
     @discardableResult
-    func createConfigurationWorkspace(name: String = "New Workspace") async throws -> WorkspaceID {
+    func createConfigurationWorkspace(
+        name: String = "New Workspace"
+    ) async throws -> WorkspaceID {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
         var document = configurationDocument
         let dnsID: DNSPolicyID
         if let first = document.dnsPolicies.first {
@@ -1621,27 +1651,27 @@ final class AppModel {
         )
         document.workspaces.append(workspace)
         document.currentWorkspaceID = workspace.id
-        try await saveConfigurationDocument(document)
+        try await persistConfigurationDocument(document)
         return workspace.id
     }
 
     @discardableResult
-    func createConfigurationProxyGroup(name: String = "New Group") async throws -> ProxyGroupID {
+    func createConfigurationProxyGroup(
+        name: String = "New Group"
+    ) async throws -> ProxyGroupID {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
         var document = configurationDocument
-        let group = ProxyGroup(name: name, type: .select)
+        let group = ProxyGroup(name: name, type: .select, enabled: false)
         document.proxyGroups.append(group)
-        for index in document.workspaces.indices {
-            if !document.workspaces[index].proxyGroupIDs.contains(group.id) {
-                document.workspaces[index].proxyGroupIDs.append(group.id)
-                document.workspaces[index].revision += 1
-            }
-        }
-        try await saveConfigurationDocument(document)
+        try await persistConfigurationDocument(document)
         return group.id
     }
 
     @discardableResult
-    func createConfigurationRule(name: String = "New Rule") async throws -> RoutingRuleID {
+    func createConfigurationRule() async throws -> RoutingRuleID {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
         var document = configurationDocument
         let action: RoutingAction
         if let group = document.proxyGroups.first(where: \.enabled) {
@@ -1649,7 +1679,11 @@ final class AppModel {
         } else {
             action = .direct
         }
-        let rule = RoutingRule(priority: (document.rules.map(\.priority).max() ?? 0) + 10, action: action)
+        let rule = RoutingRule(
+            enabled: false,
+            priority: (document.rules.map(\.priority).max() ?? 0) + 10,
+            action: action
+        )
         document.rules.append(rule)
         for index in document.workspaces.indices {
             if !document.workspaces[index].ruleIDs.contains(rule.id) {
@@ -1657,7 +1691,7 @@ final class AppModel {
                 document.workspaces[index].revision += 1
             }
         }
-        try await saveConfigurationDocument(document)
+        try await persistConfigurationDocument(document)
         return rule.id
     }
 
@@ -1665,6 +1699,8 @@ final class AppModel {
         section: ConfigurationWorkbenchSection,
         id: UUID
     ) async throws {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
         var document = configurationDocument
         switch section {
         case .nodes:
@@ -1682,13 +1718,14 @@ final class AppModel {
         case .workspaces, .sources:
             return
         }
-        try await saveConfigurationDocument(document)
+        try await persistConfigurationDocument(document)
     }
 
     func compileConfiguration(workspaceID: WorkspaceID? = nil) throws -> CompiledConfiguration {
-        let compiled = try ConfigurationCompiler().compile(document: configurationDocument, workspaceID: workspaceID)
-        compiledConfiguration = compiled
-        return compiled
+        try ConfigurationCompiler().compile(
+            document: configurationDocument,
+            workspaceID: workspaceID
+        )
     }
 
     /// Compiles and applies a MClash Workspace while retaining the legacy
@@ -1696,48 +1733,45 @@ final class AppModel {
     /// bytes are complete MClash YAML; source profile strategy sections are
     /// never read by this path.
     func activateConfigurationWorkspace(_ workspaceID: WorkspaceID) async throws {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
         guard let workspace = configurationDocument.workspaces.first(where: { $0.id == workspaceID }) else {
-            throw ConfigurationCompilationError.invalidText("The selected MClash workspace no longer exists.")
+            throw ConfigurationCompilationError.invalidText(
+                AppLocalization.string(
+                    "The selected MClash workspace no longer exists."
+                )
+            )
         }
-        let compiled = try compileConfiguration(workspaceID: workspace.id)
         let previousWorkspaceID = configurationDocument.currentWorkspaceID
         let previousSnapshot = configurationDocument.lastRuntimeSnapshot
         let previousCompiledConfiguration = compiledConfiguration
         let previousUnifiedConfigurationEnabled = unifiedConfigurationEnabled
+        let previousNetworkCapturePreferences = networkCapturePreferences
+        let compiled = try compileConfiguration(workspaceID: workspace.id)
         let shouldReconnect = isConnected || isBusy
         let previousProfileID = activeProfileID
         guard let profileStore, let runtimeOverrideCoordinator, let activeProfileID else {
-            var candidate = configurationDocument
-            candidate.currentWorkspaceID = workspace.id
-            candidate.lastRuntimeSnapshot = RuntimeSnapshot(
-                workspaceID: workspace.id,
-                workspaceRevision: workspace.revision,
-                compilerVersion: ConfigurationCompiler.version,
-                mihomoConfigHash: compiled.configHash,
-                entranceIDs: workspace.entranceIDs,
-                previousSnapshotID: previousSnapshot?.id,
-                applicationSucceeded: false
-            )
-            try await saveConfigurationDocument(candidate)
-            unifiedConfigurationEnabled = true
-            return
+            throw AppModelError.profileStoreUnavailable
         }
 
         if shouldReconnect {
             guard await performDisconnect() else {
                 throw AppModelError.profileActivationFailed(
-                    errorMessage ?? "The current proxy session could not be stopped safely."
+                    errorMessage ?? AppLocalization.string(
+                        "The current proxy session could not be stopped safely."
+                    )
                 )
             }
         }
 
         do {
+            try await synchronizeCompiledCaptureState(compiled)
             let activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
                 activeProfileID,
                 baseConfiguration: compiled.yaml,
-                overrides: effectiveRuntimeOverrides(for: activeProfileID),
+                overrides: .empty,
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
-                profileMixedListener: activeProfileDedicatedMixedListener,
+                profileMixedListener: nil,
                 routeListeners: [],
                 in: profileStore,
                 validator: try makeProfileValidator()
@@ -1751,22 +1785,78 @@ final class AppModel {
                 mihomoConfigHash: compiled.configHash,
                 entranceIDs: workspace.entranceIDs,
                 previousSnapshotID: previousSnapshot?.id,
-                applicationSucceeded: !shouldReconnect
+                applicationSucceeded: false
             )
-            try await saveConfigurationDocument(candidate)
+            try await persistConfigurationDocument(candidate)
             activeConfigURL = activation.configurationURL
             unifiedConfigurationEnabled = true
+            compiledConfiguration = compiled
             if shouldReconnect {
                 guard await performConnect() else {
                     throw AppModelError.profileActivationFailed(
-                        errorMessage ?? "The MClash Workspace could not be started."
+                        errorMessage ?? AppLocalization.string(
+                            "The MClash Workspace could not be started."
+                        )
                     )
                 }
-                self.configurationDocument.lastRuntimeSnapshot?.applicationSucceeded = true
-                try await configurationStore?.save(configurationDocument)
+                if compiled.captureEnabled {
+                    switch networkCaptureState {
+                    case let .on(revision)
+                        where revision == networkCapturePreferences.snapshot.revision:
+                        break
+                    case .requiresReboot:
+                        break
+                    case .on, .off, .waitingForConnection, .enabling,
+                         .awaitingUserApproval, .disabling, .failed:
+                        throw AppModelError.profileActivationFailed(
+                            AppLocalization.string(
+                                "The restored App Routing configuration could not be activated."
+                            )
+                        )
+                    }
+                }
+                var succeeded = configurationDocument
+                succeeded.lastRuntimeSnapshot?.applicationSucceeded = true
+                try await persistConfigurationDocument(succeeded)
             }
-            compiledConfiguration = compiled
         } catch {
+            let activationError = error
+            var rollbackFailures: [String] = []
+            var restoredDocument = configurationDocument
+            restoredDocument.currentWorkspaceID = previousWorkspaceID
+            restoredDocument.lastRuntimeSnapshot = previousSnapshot
+            configurationDocument = restoredDocument
+            configurationDiagnostics = restoredDocument.diagnostics()
+            unifiedConfigurationEnabled = previousUnifiedConfigurationEnabled
+            compiledConfiguration = previousCompiledConfiguration
+            if networkCapturePreferences != previousNetworkCapturePreferences,
+               let store = networkCaptureConfigurationStore {
+                do {
+                    networkCapturePreferences = try await store.replaceRules(
+                        previousNetworkCapturePreferences.snapshot.rules,
+                        enabled: previousNetworkCapturePreferences.enabled,
+                        dnsEnabled: previousNetworkCapturePreferences.dnsEnabled,
+                        failOpen: previousNetworkCapturePreferences.failOpen
+                    )
+                } catch {
+                    rollbackFailures.append(
+                        AppLocalization.format(
+                            "saved App Routing settings: %@",
+                            error.localizedDescription
+                        )
+                    )
+                }
+            }
+            do {
+                try await configurationStore?.save(restoredDocument)
+            } catch {
+                rollbackFailures.append(
+                    AppLocalization.format(
+                        "MClash Workspace state rollback failed: %@",
+                        error.localizedDescription
+                    )
+                )
+            }
             // Re-activate the previous compiled workspace when possible. The
             // legacy profile path is only a fallback for upgrades that have
             // never successfully applied a MClash snapshot.
@@ -1778,9 +1868,9 @@ final class AppModel {
                         restored = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
                             previousProfileID,
                             baseConfiguration: previousCompiledConfiguration.yaml,
-                            overrides: effectiveRuntimeOverrides(for: previousProfileID),
+                            overrides: .empty,
                             networkExtensionListener: activeNetworkExtensionMihomoListener,
-                            profileMixedListener: activeProfileDedicatedMixedListener,
+                            profileMixedListener: nil,
                             routeListeners: [],
                             in: profileStore,
                             validator: try makeProfileValidator()
@@ -1793,19 +1883,29 @@ final class AppModel {
                     }
                     activeConfigURL = restored.configurationURL
                     self.activeProfileID = previousProfileID
-                    if shouldReconnect { _ = await performConnect() }
+                    if shouldReconnect, !(await performConnect()) {
+                        rollbackFailures.append(
+                            AppLocalization.string(
+                                "the previous session could not be restarted"
+                            )
+                        )
+                    }
                 } catch {
-                    appendSupervisorLog("MClash Workspace rollback failed: \(error.localizedDescription)")
+                    rollbackFailures.append(
+                        AppLocalization.format(
+                            "MClash Workspace rollback failed: %@",
+                            error.localizedDescription
+                        )
+                    )
                 }
             }
-            var restoredDocument = configurationDocument
-            restoredDocument.currentWorkspaceID = previousWorkspaceID
-            restoredDocument.lastRuntimeSnapshot = previousSnapshot
-            configurationDocument = restoredDocument
-            configurationDiagnostics = restoredDocument.diagnostics()
-            unifiedConfigurationEnabled = previousUnifiedConfigurationEnabled
-            compiledConfiguration = previousCompiledConfiguration
-            throw error
+            if !rollbackFailures.isEmpty {
+                throw NetworkCaptureTransactionFailure(
+                    updateReason: activationError.localizedDescription,
+                    rollbackReason: rollbackFailures.joined(separator: "; ")
+                )
+            }
+            throw activationError
         }
     }
 
@@ -1847,12 +1947,14 @@ final class AppModel {
         guard begin(.importProfile) else { return }
         defer { end(.importProfile) }
         guard let profileStore else {
-            errorMessage = "The source store could not be initialized."
+            errorMessage = AppLocalization.string(
+                "The source store could not be initialized."
+            )
             return
         }
         let panel = NSOpenPanel()
-        panel.title = "Add a configuration source"
-        panel.prompt = "Add Source"
+        panel.title = AppLocalization.string("Add a Configuration Source")
+        panel.prompt = AppLocalization.string("Add Source")
         panel.allowedContentTypes = [.yaml]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -1863,7 +1965,14 @@ final class AppModel {
             await synchronizeConfigurationSources()
             errorMessage = nil
         } catch {
-            recordOperationFailure(error, context: "Configuration source import")
+            let message = error.localizedDescription
+            errorMessage = message
+            appendSupervisorLog(
+                AppLocalization.format(
+                    "Configuration source import failed: %@",
+                    message
+                )
+            )
         }
     }
 
@@ -2357,6 +2466,30 @@ final class AppModel {
         } else {
             networkCapturePreferences = .defaults()
         }
+        if let configurationStore {
+            let recovery = try await configurationStore.loadRecoveringInvalidDocument()
+            if recovery.quarantinedURL != nil {
+                appendSupervisorLog(
+                    AppLocalization.string(
+                        "The MClash configuration document was invalid and was quarantined; a clean strategy document was created."
+                    )
+                )
+            }
+            configurationDocument = recovery.document == .empty
+                ? .mclashDefault()
+                : recovery.document
+            configurationDiagnostics = configurationDocument.diagnostics()
+            if recovery.document == .empty {
+                try await configurationStore.save(configurationDocument)
+            }
+        }
+        if unifiedConfigurationEnabled {
+            let compiled = try compileConfiguration()
+            compiledConfiguration = compiled
+            try await synchronizeCompiledCaptureState(compiled)
+        } else {
+            compiledConfiguration = nil
+        }
         profiles = try await profileStore.profiles()
         activeProfileID = try await profileStore.activeProfileID()
         await refreshActiveProfileListenerPorts()
@@ -2432,9 +2565,14 @@ final class AppModel {
             return
         }
 
-        // Validate the target before interrupting a healthy current session.
         let validator = try makeProfileValidator()
-        try await validator.validate(configurationAt: profileLayout.configurationURL(for: id))
+        // Source profile strategy is irrelevant in unified mode; the compiled
+        // workspace activation below validates the generated runtime instead.
+        if !unifiedConfigurationEnabled {
+            try await validator.validate(
+                configurationAt: profileLayout.configurationURL(for: id)
+            )
+        }
 
         let shouldReconnect = isConnected || isBusy
         let shouldRestoreSystemProxy = systemProxyEnabled
@@ -2558,11 +2696,29 @@ final class AppModel {
         _ id: ProfileID,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
-        try await validateProfileRouteListenerTargets(
-            profileRouteListeners(for: id)
-        )
+        if !unifiedConfigurationEnabled {
+            try await validateProfileRouteListenerTargets(
+                profileRouteListeners(for: id)
+            )
+        }
         guard let profileStore else {
             throw AppModelError.profileStoreUnavailable
+        }
+        if unifiedConfigurationEnabled {
+            guard let runtimeOverrideCoordinator, let compiledConfiguration else {
+                throw AppModelError.profileStoreUnavailable
+            }
+            return try await runtimeOverrideCoordinator
+                .activateCompiledConfiguration(
+                    id,
+                    baseConfiguration: compiledConfiguration.yaml,
+                    overrides: .empty,
+                    networkExtensionListener: activeNetworkExtensionMihomoListener,
+                    profileMixedListener: nil,
+                    routeListeners: [],
+                    in: profileStore,
+                    validator: validator
+                )
         }
         if let runtimeOverrideCoordinator {
             return try await runtimeOverrideCoordinator.activateProfile(
@@ -2583,9 +2739,11 @@ final class AppModel {
         overrides: RuntimeOverrides,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
-        try await validateProfileRouteListenerTargets(
-            profileRouteListeners(for: id)
-        )
+        if !unifiedConfigurationEnabled {
+            try await validateProfileRouteListenerTargets(
+                profileRouteListeners(for: id)
+            )
+        }
         guard let profileStore, let runtimeOverrideCoordinator else {
             throw AppModelError.profileStoreUnavailable
         }
@@ -2595,6 +2753,22 @@ final class AppModel {
         profileOverrides.ports.mixedPort = id == activeProfileID
             ? profileRuntimePlan.defaultMixedPort
             : profileSessionSpec(for: id)?.mixedPort
+        if unifiedConfigurationEnabled {
+            guard let compiledConfiguration else {
+                throw AppModelError.profileStoreUnavailable
+            }
+            return try await runtimeOverrideCoordinator
+                .activateCompiledConfiguration(
+                    id,
+                    baseConfiguration: compiledConfiguration.yaml,
+                    overrides: .empty,
+                    networkExtensionListener: activeNetworkExtensionMihomoListener,
+                    profileMixedListener: nil,
+                    routeListeners: [],
+                    in: profileStore,
+                    validator: validator
+                )
+        }
         return try await runtimeOverrideCoordinator.activateProfile(
             id,
             overrides: profileOverrides,
@@ -2614,6 +2788,12 @@ final class AppModel {
             throw AppModelError.operationInProgress
         }
         defer { end(.changeRuntimeSettings) }
+
+        guard !unifiedConfigurationEnabled else {
+            throw AppModelError.profileActivationFailed(
+                AppLocalization.string("Configuration unavailable")
+            )
+        }
 
         var overrides = overrides
         // Keep the in-memory model byte-for-byte equivalent to the durable
@@ -2826,6 +3006,11 @@ final class AppModel {
             throw AppModelError.operationInProgress
         }
         defer { end(.changeRuntimeSettings) }
+        guard !unifiedConfigurationEnabled else {
+            throw AppModelError.profileActivationFailed(
+                AppLocalization.string("Configuration unavailable")
+            )
+        }
         guard let activeProfileID,
               let profileStore,
               let runtimeOverrideCoordinator,
@@ -3400,6 +3585,9 @@ final class AppModel {
                     : [],
                 startAuxiliary: false
             )
+            if unifiedConfigurationEnabled, runtimeOverrideCoordinator == nil {
+                throw AppModelError.profileStoreUnavailable
+            }
             if let activeProfileID, runtimeOverrideCoordinator != nil {
                 let activation = try await activateStoredProfile(
                     activeProfileID,
@@ -4303,7 +4491,6 @@ final class AppModel {
 
     func setNetworkCaptureEnabled(_ enabled: Bool) async {
         if unifiedConfigurationEnabled {
-            let previousDocument = configurationDocument
             let currentEnabled = configurationDocument.currentWorkspace?.entranceIDs
                 .compactMap { id in configurationDocument.entrances.first(where: { $0.id == id }) }
                 .first(where: { $0.kind == .appRouting })?.enabled ?? false
@@ -4317,22 +4504,27 @@ final class AppModel {
                 candidate.entrances[index].enabled = enabled
             }
             do {
-                try await saveConfigurationDocument(candidate)
+                let candidateCompiled = try ConfigurationCompiler().compile(
+                    document: candidate
+                )
                 if activeProfileID == nil {
-                    await persistNetworkCaptureEnabledWithoutProfile(enabled)
+                    await persistNetworkCaptureEnabledWithoutProfile(
+                        enabled,
+                        rules: candidateCompiled.captureRules,
+                        dnsEnabled: candidateCompiled.captureDNSEnabled,
+                        configurationDocument: candidate,
+                        compiledConfiguration: candidateCompiled
+                    )
                 } else {
                     try await applyNetworkCaptureRules(
-                        unifiedCaptureRules(),
-                        enabled: enabled,
-                        dnsEnabled: candidate.currentWorkspace.flatMap { workspace in
-                            candidate.dnsPolicies.first(where: { $0.id == workspace.dnsPolicyID })?.takeoverEnabled
-                        }
+                        candidateCompiled.captureRules,
+                        enabled: candidateCompiled.captureEnabled,
+                        dnsEnabled: candidateCompiled.captureDNSEnabled,
+                        compiledConfiguration: candidateCompiled,
+                        configurationDocument: candidate
                     )
                 }
             } catch {
-                configurationDocument = previousDocument
-                configurationDiagnostics = previousDocument.diagnostics()
-                try? await configurationStore?.save(previousDocument)
                 recordOperationFailure(error, context: "Network capture update")
             }
             return
@@ -4355,7 +4547,13 @@ final class AppModel {
         }
     }
 
-    private func persistNetworkCaptureEnabledWithoutProfile(_ enabled: Bool) async {
+    private func persistNetworkCaptureEnabledWithoutProfile(
+        _ enabled: Bool,
+        rules: [CaptureRule]? = nil,
+        dnsEnabled: Bool? = nil,
+        configurationDocument candidateDocument: ConfigurationDocument? = nil,
+        compiledConfiguration candidateCompiledConfiguration: CompiledConfiguration? = nil
+    ) async {
         guard begin(.changeNetworkCapture) else { return }
         pendingNetworkCaptureEnabled = enabled
         defer {
@@ -4370,11 +4568,15 @@ final class AppModel {
             return
         }
 
+        let previousDocument = configurationDocument
         do {
+            if let candidateDocument {
+                try await persistConfigurationDocument(candidateDocument)
+            }
             networkCapturePreferences = try await store.replaceRules(
-                networkCapturePreferences.snapshot.rules,
+                rules ?? networkCapturePreferences.snapshot.rules,
                 enabled: enabled,
-                dnsEnabled: networkCapturePreferences.dnsEnabled,
+                dnsEnabled: dnsEnabled ?? networkCapturePreferences.dnsEnabled,
                 failOpen: networkCapturePreferences.failOpen
             )
             networkCaptureState = enabled ? .waitingForConnection : .off
@@ -4388,7 +4590,15 @@ final class AppModel {
                     ? "App Routing will start when a profile becomes available."
                     : "Automatic App Routing startup was disabled."
             )
+            if let candidateCompiledConfiguration {
+                compiledConfiguration = candidateCompiledConfiguration
+            }
         } catch {
+            if candidateDocument != nil {
+                configurationDocument = previousDocument
+                configurationDiagnostics = previousDocument.diagnostics()
+                try? await configurationStore?.save(previousDocument)
+            }
             recordOperationFailure(error, context: "Network capture update")
         }
     }
@@ -4409,7 +4619,9 @@ final class AppModel {
     func applyNetworkCaptureRules(
         _ rules: [CaptureRule],
         enabled: Bool,
-        dnsEnabled: Bool? = nil
+        dnsEnabled: Bool? = nil,
+        compiledConfiguration candidateCompiledConfiguration: CompiledConfiguration? = nil,
+        configurationDocument candidateConfigurationDocument: ConfigurationDocument? = nil
     ) async throws {
         let transactionStartedAt = Date()
         guard begin(.changeNetworkCapture) else {
@@ -4419,6 +4631,12 @@ final class AppModel {
         defer {
             pendingNetworkCaptureEnabled = nil
             end(.changeNetworkCapture)
+        }
+        if unifiedConfigurationEnabled,
+           (candidateCompiledConfiguration == nil || candidateConfigurationDocument == nil) {
+            throw AppModelError.profileActivationFailed(
+                AppLocalization.string("Configuration unavailable")
+            )
         }
         guard let store = networkCaptureConfigurationStore,
               let activeProfileID,
@@ -4444,6 +4662,8 @@ final class AppModel {
         let previousListener = networkExtensionMihomoListener
         let previousProfileListeners = networkExtensionProfileListeners
         let previousRuntimePlan = profileRuntimePlan
+        let previousConfigurationDocument = configurationDocument
+        let previousCompiledConfiguration = compiledConfiguration
         let wasConnected = isConnected || isBusy
         let requestedDNSEnabled = dnsEnabled ?? previous.dnsEnabled
         let canAttemptLiveUpdate: Bool = {
@@ -4460,6 +4680,9 @@ final class AppModel {
         }()
         let attemptedLiveUpdate = canAttemptLiveUpdate
         do {
+            if let candidateCompiledConfiguration {
+                compiledConfiguration = candidateCompiledConfiguration
+            }
             if enabled {
                 try await prepareProfileRoutingSessions(
                     for: rules,
@@ -4478,16 +4701,10 @@ final class AppModel {
             )
             networkCapturePreferences = candidate
             if unifiedConfigurationEnabled {
-                var strategy = configurationDocument
-                if let workspace = strategy.currentWorkspace,
-                   let entranceID = workspace.entranceIDs.first(where: { id in
-                       strategy.entrances.first(where: { $0.id == id })?.kind == .appRouting
-                   }),
-                   let index = strategy.entrances.firstIndex(where: { $0.id == entranceID }) {
-                    strategy.entrances[index].enabled = enabled
-                    configurationDocument = strategy
-                    configurationDiagnostics = strategy.diagnostics()
-                    try await configurationStore?.save(strategy)
+                if let candidateConfigurationDocument {
+                    try await persistConfigurationDocument(
+                        candidateConfigurationDocument
+                    )
                 }
             }
             if !enabled {
@@ -4508,6 +4725,9 @@ final class AppModel {
                 appendSupervisorLog(
                     "App Routing settings were saved for the next activation; the running core was not restarted."
                 )
+                if let candidateCompiledConfiguration {
+                    compiledConfiguration = candidateCompiledConfiguration
+                }
                 return
             }
 
@@ -4563,6 +4783,9 @@ final class AppModel {
                 appendSupervisorLog(
                     "App Routing rules were updated live; Mihomo and existing relays stayed connected."
                 )
+                if let candidateCompiledConfiguration {
+                    compiledConfiguration = candidateCompiledConfiguration
+                }
                 return
             }
 
@@ -4612,6 +4835,9 @@ final class AppModel {
                         duration: Date().timeIntervalSince(transactionStartedAt),
                         outcome: .requiresReboot(dnsEnabled: candidate.dnsEnabled)
                     )
+                    if let candidateCompiledConfiguration {
+                        compiledConfiguration = candidateCompiledConfiguration
+                    }
                     return
                 case let .failed(message):
                     throw AppModelError.profileActivationFailed(
@@ -4641,9 +4867,26 @@ final class AppModel {
                     systemProxyWasDisabled: systemProxyWasDisabled
                 )
             )
+            if let candidateCompiledConfiguration {
+                compiledConfiguration = candidateCompiledConfiguration
+            }
         } catch {
             let primaryError = error
             var rollbackFailures: [String] = []
+
+            configurationDocument = previousConfigurationDocument
+            configurationDiagnostics = previousConfigurationDocument.diagnostics()
+            compiledConfiguration = previousCompiledConfiguration
+            do {
+                try await configurationStore?.save(previousConfigurationDocument)
+            } catch {
+                rollbackFailures.append(
+                    AppLocalization.format(
+                        "MClash Workspace state rollback failed: %@",
+                        error.localizedDescription
+                    )
+                )
+            }
 
             do {
                 networkExtensionMihomoListener = previous.enabled ? previousListener : nil
@@ -4862,6 +5105,37 @@ final class AppModel {
         guard enabled != networkCapturePreferences.dnsEnabled
                 || dnsProxyAutomaticallyDisabled else { return }
         do {
+            if unifiedConfigurationEnabled {
+                var candidate = configurationDocument
+                guard let workspace = candidate.currentWorkspace,
+                      let index = candidate.dnsPolicies.firstIndex(where: {
+                          $0.id == workspace.dnsPolicyID
+                      }) else {
+                    throw AppModelError.profileStoreUnavailable
+                }
+                candidate.dnsPolicies[index].takeoverEnabled = enabled
+                let compiled = try ConfigurationCompiler().compile(
+                    document: candidate
+                )
+                if activeProfileID == nil {
+                    await persistNetworkCaptureEnabledWithoutProfile(
+                        compiled.captureEnabled,
+                        rules: compiled.captureRules,
+                        dnsEnabled: compiled.captureDNSEnabled,
+                        configurationDocument: candidate,
+                        compiledConfiguration: compiled
+                    )
+                } else {
+                    try await applyNetworkCaptureRules(
+                        compiled.captureRules,
+                        enabled: compiled.captureEnabled,
+                        dnsEnabled: compiled.captureDNSEnabled,
+                        compiledConfiguration: compiled,
+                        configurationDocument: candidate
+                    )
+                }
+                return
+            }
             try await applyNetworkCaptureRules(
                 networkCapturePreferences.snapshot.rules,
                 enabled: networkCapturePreferences.enabled,
@@ -4878,6 +5152,19 @@ final class AppModel {
         dnsProxyAutomaticallyDisabled = false
         dnsProxyRuntimeFailureCount = 0
         do {
+            if unifiedConfigurationEnabled {
+                guard let compiledConfiguration else {
+                    throw AppModelError.profileStoreUnavailable
+                }
+                try await applyNetworkCaptureRules(
+                    compiledConfiguration.captureRules,
+                    enabled: compiledConfiguration.captureEnabled,
+                    dnsEnabled: compiledConfiguration.captureDNSEnabled,
+                    compiledConfiguration: compiledConfiguration,
+                    configurationDocument: configurationDocument
+                )
+                return
+            }
             try await applyNetworkCaptureRules(
                 networkCapturePreferences.snapshot.rules,
                 enabled: true,
@@ -9435,6 +9722,12 @@ final class AppModel {
             throw AppModelError.profileStoreUnavailable
         }
         let composer = RuntimeConfigurationComposer()
+        if unifiedConfigurationEnabled {
+            guard let compiledConfiguration else {
+                throw AppModelError.profileStoreUnavailable
+            }
+            return try composer.boundListenerPorts(in: compiledConfiguration.yaml)
+        }
         let sourceData = try await profileStore.configurationData(for: profileID)
         let managedSourceData = try composer.sanitizingForManagedSession(sourceData)
         let sourceCandidate = try composer.applying(
@@ -9553,6 +9846,7 @@ final class AppModel {
     func profileRouteListeners(
         for profileID: ProfileID
     ) -> [ProfileRouteListenerSpec] {
+        if unifiedConfigurationEnabled { return [] }
         profileRuntimePlan.routeListeners.filter { $0.profileID == profileID }
     }
 
@@ -9761,6 +10055,7 @@ final class AppModel {
     }
 
     private func effectiveRuntimeOverrides(for profileID: ProfileID) -> RuntimeOverrides {
+        if unifiedConfigurationEnabled { return .empty }
         // Advanced runtime overrides belong to the active profile. Applying
         // its DNS, rules, interface, or LAN policy to another airport would
         // silently merge two otherwise independent profiles. Auxiliary
@@ -9793,9 +10088,11 @@ final class AppModel {
         startAuxiliary: Bool = true
     ) async throws {
         guard !shutdownInProgress else { throw CancellationError() }
-        try await validateProfileRouteListenerTargets(
-            profileRuntimePlan.routeListeners
-        )
+        if !unifiedConfigurationEnabled {
+            try await validateProfileRouteListenerTargets(
+                profileRuntimePlan.routeListeners
+            )
+        }
         guard let activeProfileID,
               let profileStore,
               let profileLayout else {
@@ -9807,7 +10104,7 @@ final class AppModel {
         }
 
         let shouldConfigureCapture = captureEnabled ?? networkCapturePreferences.enabled
-        let effectiveRules = unifiedConfigurationEnabled ? unifiedCaptureRules() : rules
+        let effectiveRules = unifiedConfigurationEnabled ? try unifiedCaptureRules() : rules
         try await ensureRuntimePlanCovers(
             activeProfileID: activeProfileID,
             rules: shouldConfigureCapture ? effectiveRules : []
@@ -9850,17 +10147,19 @@ final class AppModel {
                     )
                 }
             let requestedProfileIDs = Set(requests.map(\.profileID))
-            requests += networkExtensionProfileListeners.compactMap {
-                profileID, existing in
-                guard !requestedProfileIDs.contains(profileID),
-                      profiles.contains(where: { $0.id == profileID })
-                else { return nil }
-                return (
-                    profileID: profileID,
-                    routes: Set<MihomoRoute>(),
-                    includesLegacyProfileRules:
-                        existing.includesLegacyProfileRules
-                )
+            if !unifiedConfigurationEnabled {
+                requests += networkExtensionProfileListeners.compactMap {
+                    profileID, existing in
+                    guard !requestedProfileIDs.contains(profileID),
+                          profiles.contains(where: { $0.id == profileID })
+                    else { return nil }
+                    return (
+                        profileID: profileID,
+                        routes: Set<MihomoRoute>(),
+                        includesLegacyProfileRules:
+                            existing.includesLegacyProfileRules
+                    )
+                }
             }
             requests.sort { $0.profileID.description < $1.profileID.description }
 
@@ -9952,16 +10251,17 @@ final class AppModel {
         networkExtensionProfileListeners = listeners
         networkExtensionMihomoListener = listeners[activeProfileID]
 
+        let shouldStartAuxiliary = startAuxiliary && !unifiedConfigurationEnabled
         let auxiliarySpecs = profileRuntimePlan.enabledSessions.filter {
             $0.profileID != activeProfileID
         }
         let auxiliaryPlan = ProfileRuntimePlan(
-            sessions: startAuxiliary ? auxiliarySpecs : [],
+            sessions: shouldStartAuxiliary ? auxiliarySpecs : [],
             primaryProfileID: nil
         )
         var launchConfigurations: [ProfileID: CoreLaunchConfiguration] = [:]
         var preexistingRunningProfiles = Set<ProfileID>()
-        if startAuxiliary {
+        if shouldStartAuxiliary {
             let binaryURL = try binaryLocator.locate()
             var reservedControllerPorts = Set(
                 profileRuntimePlan.enabledSessions.map(\.mixedPort)
@@ -10111,7 +10411,7 @@ final class AppModel {
             )
         }
 
-        if startAuxiliary {
+        if shouldStartAuxiliary {
             for spec in auxiliarySpecs {
                 do {
                     guard case let .running(session)? = await coreFleet.state(
@@ -10359,13 +10659,23 @@ final class AppModel {
             throw AppModelError.profileStoreUnavailable
         }
         let composer = RuntimeConfigurationComposer()
-        let sourceData = try await profileStore.configurationData(for: profileID)
+        let sourceData: Data
+        if unifiedConfigurationEnabled {
+            guard let compiledConfiguration else {
+                throw AppModelError.profileStoreUnavailable
+            }
+            sourceData = compiledConfiguration.yaml
+        } else {
+            sourceData = try await profileStore.configurationData(for: profileID)
+        }
         let managedSourceData = try composer.sanitizingForManagedSession(sourceData)
         let runtimeData = try composer.applying(
             effectiveRuntimeOverrides(for: profileID),
             to: managedSourceData,
             networkExtensionListener: activeNetworkExtensionMihomoListener,
-            profileMixedListener: activeProfileDedicatedMixedListener,
+            profileMixedListener: unifiedConfigurationEnabled
+                ? nil
+                : activeProfileDedicatedMixedListener,
             routeListeners: profileRouteListeners(for: profileID)
         )
         _ = try await hotReloadRuntimeConfiguration(

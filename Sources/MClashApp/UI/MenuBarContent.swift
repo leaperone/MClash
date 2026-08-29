@@ -74,6 +74,20 @@ struct MenuBarContent: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
         }
+        .onChange(of: issueMessage, initial: true) { _, message in
+            guard let message,
+                  !message.isEmpty,
+                  !model.mainWindowIsVisible
+            else { return }
+            NSAccessibility.post(
+                element: NSApp,
+                notification: .announcementRequested,
+                userInfo: [
+                    .announcement: message,
+                    .priority: NSAccessibilityPriorityLevel.high.rawValue
+                ]
+            )
+        }
         // MenuBarExtra windows cannot infer a useful intrinsic height from ScrollView content.
         // An explicit popover size keeps the entire quick-control surface visible on every launch.
     }
@@ -371,7 +385,7 @@ struct MenuBarContent: View {
                 quickRoutes
             }
 
-            Button("Manage All Routes…") {
+            Button("Proxies") {
                 showMainWindow(destination: .proxies)
             }
             .controlSize(.small)

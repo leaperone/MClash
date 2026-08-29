@@ -26,13 +26,14 @@ struct ConfigurationEditorSheet: View {
         NavigationStack {
             Form {
                 editorForm
-                if let errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                }
             }
             .formStyle(.grouped)
-            .navigationTitle(AppLocalization.string("Edit \(section.title)"))
+            .navigationTitle(
+                AppLocalization.format(
+                    "Edit %@",
+                    AppLocalization.string(section.singularTitle)
+                )
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(AppLocalization.string("Cancel")) { dismiss() }
@@ -45,6 +46,16 @@ struct ConfigurationEditorSheet: View {
             .task { load() }
         }
         .frame(minWidth: 460, minHeight: 420)
+        .alert(
+            AppLocalization.string("Could Not Save Configuration"),
+            isPresented: errorIsPresented
+        ) {
+            Button(AppLocalization.string("OK"), role: .cancel) {
+                errorMessage = nil
+            }
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     @ViewBuilder
@@ -60,7 +71,7 @@ struct ConfigurationEditorSheet: View {
                 TextField(AppLocalization.string("Name"), text: $name)
                 Picker(AppLocalization.string("Type"), selection: $groupType) {
                     ForEach(ProxyGroupType.allCases, id: \.self) { type in
-                        Text(type.rawValue).tag(type)
+                        Text(type.localizedTitle).tag(type)
                     }
                 }
                 Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
@@ -71,10 +82,11 @@ struct ConfigurationEditorSheet: View {
             Section(AppLocalization.string("Rule")) {
                 TextField(AppLocalization.string("Priority"), value: $priority, format: .number)
                 Picker(AppLocalization.string("Action"), selection: $action) {
-                    Text("DIRECT").tag(RuleActionChoice.direct)
-                    Text("REJECT").tag(RuleActionChoice.reject)
+                    Text(AppLocalization.string("Direct")).tag(RuleActionChoice.direct)
+                    Text(AppLocalization.string("Reject")).tag(RuleActionChoice.reject)
                     ForEach(model.configurationDocument.proxyGroups) { group in
-                        Text(group.name).tag(RuleActionChoice.group(group.id))
+                        Text(configurationDisplayName(group.name))
+                            .tag(RuleActionChoice.group(group.id))
                     }
                 }
                 TextField(AppLocalization.string("Domain suffix (Optional)"), text: $matcherText)
@@ -125,13 +137,15 @@ struct ConfigurationEditorSheet: View {
 
     private var groupSelection: some View {
         Section(AppLocalization.string("Proxy Groups")) {
-            ForEach(model.configurationDocument.proxyGroups) { group in
+            ForEach(model.configurationDocument.proxyGroups.filter {
+                section != .proxyGroups || $0.id.rawValue != id
+            }) { group in
                 Toggle(isOn: Binding(
                     get: { selectedGroupIDs.contains(group.id) },
                     set: { value in
                         if value { selectedGroupIDs.insert(group.id) } else { selectedGroupIDs.remove(group.id) }
                     }
-                )) { Text(group.name) }
+                )) { Text(configurationDisplayName(group.name)) }
             }
         }
     }
@@ -144,7 +158,9 @@ struct ConfigurationEditorSheet: View {
                     set: { value in
                         if value { selectedRuleIDs.insert(rule.id) } else { selectedRuleIDs.remove(rule.id) }
                     }
-                )) { Text("Rule \(rule.priority)") }
+                )) {
+                    Text(AppLocalization.format("Rule %d", rule.priority))
+                }
             }
         }
     }
@@ -157,7 +173,7 @@ struct ConfigurationEditorSheet: View {
                     set: { value in
                         if value { selectedEntranceIDs.insert(entrance.id) } else { selectedEntranceIDs.remove(entrance.id) }
                     }
-                )) { Text(entrance.kind.rawValue.uppercased()) }
+                )) { Text(entrance.kind.localizedTitle) }
             }
         }
     }
@@ -170,17 +186,23 @@ struct ConfigurationEditorSheet: View {
             enabled = node.enabled
         case .proxyGroups:
             guard let group = model.configurationDocument.proxyGroups.first(where: { $0.id.rawValue == id }) else { return }
-            name = group.name
+            name = configurationDisplayName(group.name)
             groupType = group.type
             enabled = group.enabled
             selectedNodeIDs = Set(group.members.compactMap { if case let .node(nodeID) = $0 { return nodeID }; return nil })
             selectedGroupIDs = Set(group.members.compactMap { if case let .group(groupID) = $0 { return groupID }; return nil })
+            selectedGroupIDs.remove(group.id)
         case .rules:
             guard let rule = model.configurationDocument.rules.first(where: { $0.id.rawValue == id }) else { return }
             priority = rule.priority
             enabled = rule.enabled
             originalMatchers = rule.matchers
-            if let matcher = rule.matchers.first, case let .domainSuffix(value) = matcher { matcherText = value }
+            if let matcher = rule.matchers.first(where: {
+                if case .domainSuffix = $0 { return true }
+                return false
+            }), case let .domainSuffix(value) = matcher {
+                matcherText = value
+            }
             switch rule.action {
             case .direct: action = .direct
             case .reject: action = .reject
@@ -188,7 +210,7 @@ struct ConfigurationEditorSheet: View {
             }
         case .workspaces:
             guard let workspace = model.configurationDocument.workspaces.first(where: { $0.id.rawValue == id }) else { return }
-            name = workspace.name
+            name = configurationDisplayName(workspace.name)
             selectedNodeIDs = Set(workspace.nodeIDs)
             selectedGroupIDs = Set(workspace.proxyGroupIDs)
             selectedRuleIDs = Set(workspace.ruleIDs)
@@ -213,27 +235,53 @@ struct ConfigurationEditorSheet: View {
             document.nodes[index].enabled = enabled
         case .proxyGroups:
             guard let index = document.proxyGroups.firstIndex(where: { $0.id.rawValue == id }) else { return }
-            let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = canonicalConfigurationDefaultName(
+                name.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
             guard !normalized.isEmpty else { errorMessage = AppLocalization.string("Name is required."); return }
             document.proxyGroups[index].name = normalized
             document.proxyGroups[index].type = groupType
             document.proxyGroups[index].enabled = enabled
             document.proxyGroups[index].members = selectedNodeIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }.map { .node($0) }
                 + selectedGroupIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }.map { .group($0) }
+            let group = document.proxyGroups[index]
+            let cycle = document.currentWorkspace.flatMap { current -> ConfigurationDiagnostic? in
+                var validationWorkspace = current
+                validationWorkspace.proxyGroupIDs = document.proxyGroups.map(\.id)
+                return document.diagnostics(for: validationWorkspace).first {
+                    $0.code == "group_cycle"
+                        && $0.subject == String(describing: group.id.rawValue)
+                }
+            }
+            if let cycle {
+                errorMessage = cycle.message
+                return
+            }
         case .rules:
             guard let index = document.rules.firstIndex(where: { $0.id.rawValue == id }) else { return }
             document.rules[index].priority = max(0, priority)
             document.rules[index].enabled = enabled
             document.rules[index].action = action.routingAction
             let normalized = matcherText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if normalized.isEmpty {
-                document.rules[index].matchers = originalMatchers
-            } else {
-                document.rules[index].matchers = [.domainSuffix(normalized)]
+            var matchers = originalMatchers
+            if let matcherIndex = matchers.firstIndex(where: {
+                if case .domainSuffix = $0 { return true }
+                return false
+            }) {
+                if normalized.isEmpty {
+                    matchers.remove(at: matcherIndex)
+                } else {
+                    matchers[matcherIndex] = .domainSuffix(normalized)
+                }
+            } else if !normalized.isEmpty {
+                matchers.append(.domainSuffix(normalized))
             }
+            document.rules[index].matchers = matchers
         case .workspaces:
             guard let index = document.workspaces.firstIndex(where: { $0.id.rawValue == id }) else { return }
-            let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = canonicalConfigurationDefaultName(
+                name.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
             guard !normalized.isEmpty else { errorMessage = AppLocalization.string("Name is required."); return }
             document.workspaces[index].name = normalized
             document.workspaces[index].nodeIDs = Array(selectedNodeIDs).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
@@ -267,11 +315,17 @@ struct ConfigurationEditorSheet: View {
             }
         }
     }
+
+    private var errorIsPresented: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
+    }
 }
 
 private enum RuleActionChoice: Hashable, Identifiable {
     case direct, reject, group(ProxyGroupID)
     var id: String { switch self { case .direct: "direct"; case .reject: "reject"; case let .group(id): "group-\(id.rawValue.uuidString)" } }
-    var title: String { switch self { case .direct: "DIRECT"; case .reject: "REJECT"; case let .group(id): "Group \(id.rawValue.uuidString.prefix(8))" } }
     var routingAction: RoutingAction { switch self { case .direct: .direct; case .reject: .reject; case let .group(id): .proxyGroup(id) } }
 }

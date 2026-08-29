@@ -28,7 +28,10 @@
 - 当前 SwiftUI literal 静态提取另发现约 31 个 UI key 未进入 catalog；此外 computed `String` 会绕过 `LocalizedStringKey`，不能仅靠补资源修复。
 - `AppRoutingRuleEvidencePresentation.swift`、`FlowLedgerEvidencePresentation.swift` 和 `AppRoutingActivityFilter.swift` 在 presentation 层生成英文 String，并由 App Routing/Connections inspector 直接展示，是确认的系统性漏本地化路径。
 - 当前实际运行的 `/Applications/MClash.app` 是 `1.3.5 (50)`，每语言仅 556 keys；最新源码为 787 keys。系统语言优先级是英语后简中且 `appLanguage` 未设置，因此旧安装包整窗英文属于当前配置预期，不能作为 v1.3.7/任务分支验收。
-- 2026-08-30 fetch 后 `origin/main` 仍为 `a2fd9e7`，远端最新 tag 与 GitHub Release 均为 `v1.3.7`；当前下一 patch 候选为 `v1.3.8`，但创建 tag 前必须再次核对以避免并行发布冲突。
+- 初次收敛时 `origin/main` 为 `a2fd9e7`、最新稳定 Release 为 `v1.3.7`；分支 push 前再次 fetch 时，PR #31 与 `ReleaseNotes/1.4.0.md` 已进入 `origin/main@26741cc`，签名 tag `v1.4.0` 已创建且 Release workflow run 53 正在执行，因此下一合法 patch 改为 `v1.4.1`。
+- 随后 PR #33 以 `7d2a50e` 修正 Configuration 测试期望，`origin/main@f8998dd` 与签名 tag `v1.4.1` 已占用该版本；本任务曾顺延为 `v1.4.2`。
+- 收敛期间 PR #34 以 `ec8f287` 合入 compiled Workspace runtime 修复，`origin/main@c31e6b4` 与签名 tag `v1.4.2` 已占用该版本并触发 Release run `33272281653`；该版本不含本任务 UI/i18n，因此本任务下一合法 patch 顺延为 `v1.4.3`，且必须先吸收 PR #34、等待 v1.4.2 Release 完成。
+- `v1.4.0` 的 546 项测试只有 `ConfigurationModelsTests.validatorProducesDeterministicDependencyDiagnostics()` 失败：期望漏写合法的 `missing_node`；生产验证器无需修改，PR #33 已将期望补为 `missing_dns_policy` 与 `missing_node`。
 - 本地化基础机制正常：主窗口与两种 MenuBarExtra 都注入选定 locale，`AppLocalization` 按 `appLanguage` 加载对应 lproj；结构性测试无法发现源码文案漏收录或译文复制英文。
 - 原生 `extractLocStrings -SwiftUI` 已确认至少 34 个直接 SwiftUI key 不在 catalog；`DisconnectedUnavailableView` 还让 6 个字面量绕过提取。
 - `AppModel.swift` 自产的多条 errorMessage 与 NSOpen/SavePanel 标题/按钮最终进入 Content/Menu/Attention，AppKit String 也不会自动本地化，必须在 producer 边界处理；系统 `localizedDescription` 保持原样。
@@ -41,12 +44,35 @@
 - 全仓 canonical 审计在 producer 补漏前确认 1,228 个 `AppLocalization` 调用和 94 个动态调用；原生 SwiftUI extractor 只覆盖 169 个 key，说明仅依赖 SwiftUI 自动本地化会系统性漏掉 computed String。
 - Automation destructive NSAlert、Profiles/Core/NetworkExtension/RuntimeOverrides/SystemProxy 的多组 MClash 自产 `LocalizedError` 确认会经 `error.localizedDescription` 进入 ErrorBanner、Settings、Profiles 或 Attention；这些必须在 producer 边界本地化，同时保持机器协议字段稳定，系统原始错误、HTTP body 和用户数据只作为动态参数。
 - `.github/workflows/release.yml` 由 `v*` tag 触发；CI 依次验证源码、测试、签名、公证并发布 DMG、ZIP、appcast、SHA256 与源码包。`generate-delta-updates.sh` 默认尝试最多两个既有正式版本，逐个验证 BinaryDelta apply、代码签名、目标 build 和体积，完整 ZIP 始终保底。
-- 最终八语言目录各有 1,801 个物理项和 1,801 个唯一 key；key 集与格式占位符签名一致，重复、缺失、空值和换行差异均为 0，8/8 `plutil -lint` 通过。
+- 合入 `v1.4.0` main 前，八语言目录各有 1,801 个物理项和唯一 key；main 新增 Configuration 页面后各为 1,836 个，仍需在最终 HEAD 重做源码到 catalog 与占位符审计。
+- `git merge-tree` 与实际 merge 均确认本分支和 `origin/main@26741cc` 无结构冲突；分支已用 merge commit `4afb5fd` 保留双方历史，PR 最终仍由 preflight squash 压缩。
 - 最终源码到 catalog 审计没有发现缺失的 `AppLocalization`、常见 SwiftUI、help 或 accessibility 字面量；`New Rule`、`Copy %@`、private mihomo listener 和动态无障碍名称的终审 High 已关闭。
 - 两路最终只读审查相对 `origin/main` 未发现 Critical/High，`ProvidersView` 的显式 `return Group` 是 `some View` 函数所需的编译修复，必须由 preflight 最终构建覆盖。
 - Automation 文档已明确 schema/version、ID、enum、error code/type 等机器字段稳定；`message`、`title`、`technicalDetail`、`lastError` 与 supervisor log 等人类文本是 opaque、可本地化字段，客户端不得解析。
 - App locale 的即时展示链路正常，但已存入状态的扁平 `String` 不会随语言追溯重译；正确后续方案是 typed localized/verbatim message，约覆盖 6 个状态族、8–10 个核心文件，另有约 7 个页面局部编辑器可逐步迁移。
+
+## 最终收敛证据（2026-08-30）
+
+- Runtime/data-safety 两路独立终审均为 0 Critical / 0 High：unified 激活只消费既有 compiled snapshot；legacy rules/DNS 写入口在 unified 下拒绝或经候选 document+compiled 原子事务；Workspace activation、startup、backup reload 与 rollback 共享同一 capture 状态接缝；source Profile YAML 不再阻断 unified runtime settings。
+- i18n 交叉审计覆盖 108 个 Swift 文件、1,223 个唯一静态 key 与 406 个 format key；八个 catalog 各 1,925 个唯一项，key 集/占位符一致，`plutil -lint` 8/8，源码到 catalog 缺失为 0。配置默认 sentinel、`None`、`Direct`、`Reject` 的最后漏项已在 producer/presentation 边界修复。
+- 远端 `v1.4.2`（PR #34，`c31e6b4`）已公开 stable；Release run `33272281653` 全绿，8 个资产、2 个 delta、appcast、source、Sparkle license、SHA256 均已核验。它不包含本任务 UI/i18n，因此本任务版本为 `v1.4.3`。
+- `v1.4.3` tag/Release/run 在本次收敛时不存在；发布必须在本任务 PR squash merge 后创建指向最终 `main` 的 signed annotated tag。安装版 CPU/Energy A/B 仍是独立验收，不能由源码、CI 或 Release 替代。
 - 旧候选 `1.3.8 (53)` 已构建并通过签名/结构检查，但不含最后一轮补漏；隔离运行只确认菜单栏 scene，Computer Use 多次返回 `cgWindowNotFound`，因此不能声称完成最终实窗验收。
+- 最新 main 的 Configuration 集成审计确认发布阻断：启动和多条重载路径在 unified enabled 时仍经 `activateStoredProfile` 读取 source YAML；两个 overload 是全部调用方的共同 seam，应在这里统一分流到 `activateCompiledConfiguration`。
+- `compileConfiguration` 在保存 previous 前就覆盖 `compiledConfiguration`，导致失败 rollback 重放候选；应改为无副作用编译并只在成功后提交。
+- 备份服务会恢复 Configuration 目录，但 `reloadBackupManagedState` 没有重载内存 document/diagnostics，旧内存随后可能覆盖恢复结果；重载磁盘状态后再走统一 activation 即可修复，旧备份没有 Configuration 时仍保留现有目录。
+- Configuration 的新增 Rule 默认启用且零 matcher，并立即加入 Workspace；编辑器保存还会用一个 domain suffix 覆盖完整 matcher 数组。新对象必须安全 draft/disabled 后进入编辑，保存只原位更新可编辑 matcher。
+- 新 Proxy Group 会立即形成空组错误，编辑器允许自引用；最小修复是保存前不加入 Workspace、排除自身并拒绝 `group_cycle` diagnostic。
+- 自定义 GeometryReader 在 detail 宽度小于 760 时直接删除 Inspector，但最小主窗口扣除外层侧栏后必然落入该分支，Activate/Toggle/Edit 因此全部不可达；原生 `.inspector` 可直接替代这套断点。
+- Configuration workbench 的 subtitle/detail/metadata/status 与动态编辑标题大量预拼接英文；稳定 diagnostic `code` 可在 presentation 边界映射本地化文案，持久化消息和用户/提供方数据保持原值。
+- 第二轮 runtime 终审确认 unified 仍有三类旁路：App Routing 热重载和 auxiliary core 读取 source Profile YAML，coordinator 缺失时连接复用旧 runtime；共同结果是 compiled Workspace 可被静默覆盖。
+- Validator 只检查全局对象存在，但 compiler 会过滤 Workspace 外或 disabled 的组/节点并用 DIRECT 兜底；App Routing 又忽略 `workspace.ruleIDs` 且容忍 partial conversion，正常 UI 操作即可把预期 Proxy/Reject 静默变成直连。
+- `saveConfigurationDocument` 先发布内存再写磁盘，且 Configuration mutation/activation 未进入 Operation 串行化；磁盘失败、双击激活或与备份恢复交错时会产生未持久化运行态或覆盖恢复数据。
+- 恢复 runtime `ProxiesView` 后，authoritative `ConfigurationProxyGroupsView` 变成零调用；必须为低频组编辑提供独立显式 destination，同时让工作台/菜单栏动态错误进入现有 VoiceOver announcement 路径。
+- 第二轮 runtime 复验确认启动与备份重载在建立 compiled cache 前就生成 unified capture rules；已激活 unified 的用户重启会 fail closed，必须先恢复同一 compiled snapshot 再准备 listener。
+- Workspace 激活原先只切 Mihomo YAML，没有同步 Network Extension 的规则快照、入口启用与 DNS takeover；A→B 后 provider 可能继续执行 A 的规则。
+- Capture plan 不能用旧 compiled rule 配当前可编辑 document 的新 group 名；未 Activate 的重命名必须与正在运行的 compiled snapshot 隔离。
+- Unified Profile 切换不应在 compiled activation 前验证完整 source YAML；source 在该模式只提供节点数据，无关旧 strategy section 不能阻断切换。
 
 ## 技术决策
 
