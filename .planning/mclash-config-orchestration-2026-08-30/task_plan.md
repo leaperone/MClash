@@ -2,7 +2,7 @@
 
 - 任务 ID：`mclash-config-orchestration-2026-08-30`
 - 创建时间：`2026-08-30`
-- 状态：设计阶段，等待确认后实施
+- 状态：已实施并发布 `v1.4.1`；后续可继续以 fix-forward 方式扩展能力
 
 ## 目标
 
@@ -631,8 +631,12 @@ App Routing 当前以独立 JSON snapshot 保存 schema/revision，并通过 Aut
 - [x] Rockxy 仅作为交互组织参考：列表、Inspector、实时活动、搜索过滤和上下文操作。
 - [x] MClash 保持原生 macOS、系统语义颜色、克制密度和可恢复状态设计。
 
+## 实施结果
+
+本计划已按“来源只提供节点、MClash 统一策略、多个入口共享引擎、App Routing 仅为开关、Rockxy 式工作台交互”的方向实施。实现经过两轮独立 review、完整本地 direct 验证和 GitHub Actions 的 macOS typecheck/unit/integration、签名、公证、发布验证。
+
 ## 确认门
 
 本文件是设计与实施计划，不代表已经开始重构代码。开始 Phase 0 前，需要确认：
 
-> 是否按“来源只提供节点、MClash 统一策略、多个入口共享引擎、App Routing 仅为开关、Rockxy 式工作台交互”的方向实施？
+> 已按该方向实施；如需继续扩展，后续改动应保持此边界并采用 fix-forward 发布。
