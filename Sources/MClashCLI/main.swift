@@ -101,8 +101,7 @@ struct MClashCLI {
                     requestError.outcomeIndeterminate
                 )
                 payload["retryWithSameRequestID"] = .bool(
-                    requestError.outcomeIndeterminate
-                        && requestError.method != "auth.pair"
+                    requestError.retryWithSameRequestID
                 )
             }
             if let data = try? JSONEncoder.automation.encode(payload) {

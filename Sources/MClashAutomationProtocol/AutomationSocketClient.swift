@@ -37,9 +37,32 @@ public struct AutomationSocketClient: Sendable {
         _ request: AutomationRPCRequest,
         timeout: TimeInterval = 10
     ) throws -> AutomationRPCResponse {
-        let payload = try JSONEncoder.automation.encode(request)
-        let frame = try AutomationFrameCodec.encode(payload)
-        let deadline = try automationDeadline(after: timeout)
+        let deadline: UInt64
+        do {
+            deadline = try automationDeadline(after: timeout)
+        } catch let error as AutomationSocketError {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .connect,
+                outcomeIndeterminate: false,
+                underlyingError: error
+            )
+        }
+
+        let frame: Data
+        do {
+            let payload = try JSONEncoder.automation.encode(request)
+            frame = try AutomationFrameCodec.encode(payload)
+        } catch {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .writeRequest,
+                outcomeIndeterminate: false,
+                underlyingError: .protocolFailure(error.localizedDescription)
+            )
+        }
 
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
@@ -124,7 +147,7 @@ public struct AutomationSocketClient: Sendable {
             )
         }
 
-        let responseData: Data
+        let response: AutomationRPCResponse
         do {
             let header = try readExactly(
                 MemoryLayout<UInt32>.size,
@@ -132,10 +155,14 @@ public struct AutomationSocketClient: Sendable {
                 deadline: deadline
             )
             let payloadLength = try AutomationFrameCodec.payloadLength(from: header)
-            responseData = try readExactly(
+            let responseData = try readExactly(
                 payloadLength,
                 from: descriptor,
                 deadline: deadline
+            )
+            response = try JSONDecoder.automation.decode(
+                AutomationRPCResponse.self,
+                from: responseData
             )
         } catch let error as AutomationSocketError {
             throw AutomationSocketRequestError(
@@ -145,8 +172,16 @@ public struct AutomationSocketClient: Sendable {
                 outcomeIndeterminate: true,
                 underlyingError: error
             )
+        } catch {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .readResponse,
+                outcomeIndeterminate: true,
+                underlyingError: .protocolFailure(error.localizedDescription)
+            )
         }
-        return try JSONDecoder.automation.decode(AutomationRPCResponse.self, from: responseData)
+        return response
     }
 
     private func verifyServer(descriptor: Int32) throws {
@@ -204,6 +239,10 @@ public struct AutomationSocketRequestError: Error, LocalizedError, Sendable {
     public let phase: AutomationSocketPhase
     public let outcomeIndeterminate: Bool
     public let underlyingError: AutomationSocketError
+
+    public var retryWithSameRequestID: Bool {
+        outcomeIndeterminate && method != "auth.pair"
+    }
 
     public var errorDescription: String? { underlyingError.localizedDescription }
 }
@@ -327,6 +366,7 @@ public enum AutomationSocketError: Error, LocalizedError, Sendable {
     case pathTooLong(String)
     case connectionClosed
     case systemCall(String, Int32)
+    case protocolFailure(String)
     case discoveryUnavailable(String)
     case insecureDiscoveryFile(String)
     case unsupportedAPIVersion(Int)
@@ -341,6 +381,8 @@ public enum AutomationSocketError: Error, LocalizedError, Sendable {
             "The automation connection closed before the response completed."
         case let .systemCall(name, code):
             "Automation \(name) failed: \(String(cString: strerror(code)))"
+        case let .protocolFailure(message):
+            message
         case let .discoveryUnavailable(path):
             "MClash automation endpoint is unavailable at \(path)."
         case let .insecureDiscoveryFile(path):
