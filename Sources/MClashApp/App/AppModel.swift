@@ -475,7 +475,13 @@ final class AppModel {
     /// Authoritative MClash strategy document. Legacy Profiles remain available
     /// as source snapshots while this document owns groups, rules, DNS and
     /// entrances for the new configuration workbench.
-    private(set) var configurationDocument: ConfigurationDocument = .empty
+    private(set) var configurationRevision = UUID()
+    private(set) var configurationDocument: ConfigurationDocument = .empty {
+        didSet {
+            guard configurationDocument != oldValue else { return }
+            configurationRevision = UUID()
+        }
+    }
     private(set) var compiledConfiguration: CompiledConfiguration?
     private(set) var configurationDiagnostics: [ConfigurationDiagnostic] = []
     /// Whether the selected MClash Workspace is authoritative for the next
@@ -1615,12 +1621,441 @@ final class AppModel {
         try await persistConfigurationDocument(document)
     }
 
+    func configurationAutomationSnapshot(
+        nodeOffset: Int = 0,
+        nodeLimit: Int = 100,
+        sourceOffset: Int = 0,
+        sourceLimit: Int = 50
+    ) -> ConfigurationAutomationSnapshot {
+        let nodeOffset = min(max(0, nodeOffset), configurationDocument.nodes.count)
+        let nodeLimit = min(max(1, nodeLimit), 200)
+        let nodeEnd = min(configurationDocument.nodes.count, nodeOffset + nodeLimit)
+        let sourceOffset = min(max(0, sourceOffset), configurationDocument.sources.count)
+        let sourceLimit = min(max(1, sourceLimit), 100)
+        let sourceEnd = min(configurationDocument.sources.count, sourceOffset + sourceLimit)
+        ConfigurationAutomationSnapshot(
+            configurationRevision: configurationRevision.uuidString.lowercased(),
+            document: ConfigurationAutomationDocument(configurationDocument),
+            sources: ConfigurationAutomationPage(
+                items: configurationDocument.sources[sourceOffset..<sourceEnd].map {
+                ConfigurationAutomationSourceSummary(
+                    id: $0.id.rawValue.uuidString.lowercased(),
+                    kind: $0.kind,
+                    displayName: String(redactedDiagnosticText($0.displayName).prefix(256)),
+                    revision: $0.revision,
+                    lastFetchedAt: $0.lastFetchedAt,
+                    lastSuccessfulParseAt: $0.lastSuccessfulParseAt,
+                    diagnosticCount: $0.parseDiagnostics.count
+                )
+                },
+                offset: sourceOffset,
+                limit: sourceLimit,
+                total: configurationDocument.sources.count,
+                hasMore: sourceEnd < configurationDocument.sources.count
+            ),
+            nodes: ConfigurationAutomationPage(
+                items: configurationDocument.nodes[nodeOffset..<nodeEnd].map {
+                ConfigurationAutomationNodeSummary(
+                    id: $0.id.rawValue.uuidString.lowercased(),
+                    displayName: String(redactedDiagnosticText($0.displayName).prefix(256)),
+                    proto: $0.proto,
+                    port: $0.port,
+                    sourceLinks: $0.sourceLinks.map {
+                        $0.rawValue.uuidString.lowercased()
+                    },
+                    enabled: $0.enabled,
+                    health: $0.health,
+                    userAlias: $0.userAlias.map {
+                        String(redactedDiagnosticText($0).prefix(256))
+                    },
+                    tags: $0.tags.sorted().prefix(64).map {
+                        String(redactedDiagnosticText($0).prefix(128))
+                    }.sorted(),
+                    region: $0.region.map {
+                        String(redactedDiagnosticText($0).prefix(128))
+                    },
+                    lastSeenAt: $0.lastSeenAt,
+                    parameterKeys: $0.parameters.keys.sorted().prefix(64).map {
+                        String($0.prefix(128))
+                    },
+                    parameterKeyCount: $0.parameters.count
+                )
+                },
+                offset: nodeOffset,
+                limit: nodeLimit,
+                total: configurationDocument.nodes.count,
+                hasMore: nodeEnd < configurationDocument.nodes.count
+            ),
+            currentWorkspaceID: configurationDocument.currentWorkspaceID?
+                .rawValue.uuidString.lowercased(),
+            lastRuntimeSnapshot: configurationDocument.lastRuntimeSnapshot.map(
+                ConfigurationAutomationRuntimeSnapshot.init
+            ),
+            unifiedConfigurationEnabled: unifiedConfigurationEnabled,
+            diagnostics: configurationDiagnostics.map {
+                ConfigurationDiagnostic(
+                    severity: $0.severity,
+                    code: $0.code,
+                    subject: $0.subject,
+                    message: String(redactedDiagnosticText($0.message).prefix(1_024))
+                )
+            }
+        )
+    }
+
+    func planConfigurationAutomationDocument(
+        _ document: ConfigurationAutomationDocument,
+        expectedRevision: UUID
+    ) throws -> ConfigurationAutomationPlan {
+        try requireConfigurationRevision(expectedRevision)
+        return try makeConfigurationAutomationPlan(
+            candidate: document.applying(to: configurationDocument)
+        )
+    }
+
+    func applyConfigurationAutomationDocument(
+        _ document: ConfigurationAutomationDocument,
+        expectedRevision: UUID
+    ) async throws -> ConfigurationAutomationPlan {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
+        try requireConfigurationRevision(expectedRevision)
+        let candidate = try document.applying(to: configurationDocument)
+        let plan = try makeConfigurationAutomationPlan(candidate: candidate)
+        guard plan.valid else {
+            throw ConfigurationAutomationError.invalidConfiguration(plan.diagnostics)
+        }
+        if plan.changed {
+            try await persistConfigurationDocument(candidate)
+        }
+        return plan
+    }
+
+    func deleteConfigurationAutomationObject(
+        kind: ConfigurationAutomationObjectKind,
+        id: UUID,
+        expectedRevision: UUID
+    ) async throws -> ConfigurationAutomationPlan {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
+        try requireConfigurationRevision(expectedRevision)
+        let dependencies = configurationAutomationDependencies(kind: kind, id: id)
+        guard dependencies.isEmpty else {
+            throw ConfigurationAutomationError.dependencies(dependencies)
+        }
+
+        var candidate = configurationDocument
+        let removed: Bool
+        switch kind {
+        case .proxyGroup:
+            let count = candidate.proxyGroups.count
+            candidate.proxyGroups.removeAll { $0.id == ProxyGroupID(rawValue: id) }
+            removed = candidate.proxyGroups.count != count
+        case .rule:
+            let count = candidate.rules.count
+            candidate.rules.removeAll { $0.id == RoutingRuleID(rawValue: id) }
+            removed = candidate.rules.count != count
+        case .ruleSet:
+            let count = candidate.ruleSets.count
+            candidate.ruleSets.removeAll { $0.id == RuleSetID(rawValue: id) }
+            removed = candidate.ruleSets.count != count
+        case .dnsPolicy:
+            let count = candidate.dnsPolicies.count
+            candidate.dnsPolicies.removeAll { $0.id == DNSPolicyID(rawValue: id) }
+            removed = candidate.dnsPolicies.count != count
+        case .entrance:
+            let count = candidate.entrances.count
+            candidate.entrances.removeAll { $0.id == EntranceID(rawValue: id) }
+            removed = candidate.entrances.count != count
+        case .workspace:
+            let count = candidate.workspaces.count
+            candidate.workspaces.removeAll { $0.id == WorkspaceID(rawValue: id) }
+            removed = candidate.workspaces.count != count
+        }
+        guard removed else {
+            throw ConfigurationAutomationError.invalidInput(
+                "Unknown \(kind.rawValue) id"
+            )
+        }
+        bumpConfigurationWorkspaceRevisions(in: &candidate)
+        let plan = try makeConfigurationAutomationPlan(candidate: candidate)
+        guard plan.valid else {
+            throw ConfigurationAutomationError.invalidConfiguration(plan.diagnostics)
+        }
+        try await persistConfigurationDocument(candidate)
+        return plan
+    }
+
     private func persistConfigurationDocument(_ document: ConfigurationDocument) async throws {
         guard let configurationStore else { throw ConfigurationStoreError.unavailable }
         let diagnostics = document.diagnostics()
         try await configurationStore.save(document)
         configurationDocument = document
         configurationDiagnostics = diagnostics
+    }
+
+    private func requireConfigurationRevision(_ expected: UUID) throws {
+        guard expected == configurationRevision else {
+            throw ConfigurationAutomationError.revisionConflict(
+                configurationRevision.uuidString.lowercased()
+            )
+        }
+    }
+
+    private func makeConfigurationAutomationPlan(
+        candidate: ConfigurationDocument
+    ) throws -> ConfigurationAutomationPlan {
+        var diagnostics = configurationAutomationStructuralDiagnostics(candidate)
+        for workspace in candidate.workspaces {
+            diagnostics.append(contentsOf: candidate.diagnostics(for: workspace))
+        }
+        diagnostics = Dictionary(grouping: diagnostics, by: \.id)
+            .compactMap { $0.value.first }
+            .sorted { $0.id < $1.id }
+            .map {
+                ConfigurationDiagnostic(
+                    severity: $0.severity,
+                    code: $0.code,
+                    subject: $0.subject,
+                    message: String(redactedDiagnosticText($0.message).prefix(1_024))
+                )
+            }
+
+        var compilations: [ConfigurationAutomationCompilation] = []
+        if !diagnostics.contains(where: { $0.severity == .error }) {
+            for workspace in candidate.workspaces.sorted(by: {
+                $0.id.rawValue.uuidString < $1.id.rawValue.uuidString
+            }) {
+                do {
+                    let compiled = try ConfigurationCompiler().compile(
+                        document: candidate,
+                        workspaceID: workspace.id
+                    )
+                    compilations.append(ConfigurationAutomationCompilation(
+                        workspaceID: workspace.id.rawValue.uuidString.lowercased(),
+                        workspaceRevision: workspace.revision,
+                        configHash: compiled.configHash,
+                        byteCount: compiled.yaml.count,
+                        captureRuleCount: compiled.captureRules.count,
+                        captureEnabled: compiled.captureEnabled,
+                        captureDNSEnabled: compiled.captureDNSEnabled
+                    ))
+                } catch let error as ConfigurationCompilationError {
+                    switch error {
+                    case let .invalid(values):
+                        diagnostics.append(contentsOf: values)
+                    case let .invalidText(message):
+                        diagnostics.append(ConfigurationDiagnostic(
+                            severity: .error,
+                            code: "configuration_compile_failed",
+                            subject: workspace.id.rawValue.uuidString.lowercased(),
+                            message: message
+                        ))
+                    }
+                } catch {
+                    diagnostics.append(ConfigurationDiagnostic(
+                        severity: .error,
+                        code: "configuration_compile_failed",
+                        subject: workspace.id.rawValue.uuidString.lowercased(),
+                        message: error.localizedDescription
+                    ))
+                }
+            }
+        }
+        diagnostics = Dictionary(grouping: diagnostics, by: \.id)
+            .compactMap { $0.value.first }
+            .sorted { $0.id < $1.id }
+            .map {
+                ConfigurationDiagnostic(
+                    severity: $0.severity,
+                    code: $0.code,
+                    subject: $0.subject,
+                    message: String(redactedDiagnosticText($0.message).prefix(1_024))
+                )
+            }
+        return ConfigurationAutomationPlan(
+            document: ConfigurationAutomationDocument(candidate),
+            changed: candidate != configurationDocument,
+            valid: !diagnostics.contains(where: { $0.severity == .error }),
+            diagnostics: diagnostics,
+            compilations: compilations
+        )
+    }
+
+    private func configurationAutomationStructuralDiagnostics(
+        _ document: ConfigurationDocument
+    ) -> [ConfigurationDiagnostic] {
+        var result: [ConfigurationDiagnostic] = []
+        result += configurationAutomationDuplicateDiagnostics(
+            document.sources.map(\.id), code: "duplicate_source"
+        )
+        result += configurationAutomationDuplicateDiagnostics(
+            document.nodes.map(\.id), code: "duplicate_node"
+        )
+        result += configurationAutomationDuplicateDiagnostics(
+            document.proxyGroups.map(\.id), code: "duplicate_group"
+        )
+        result += configurationAutomationDuplicateDiagnostics(
+            document.rules.map(\.id), code: "duplicate_rule"
+        )
+        result += configurationAutomationDuplicateDiagnostics(
+            document.ruleSets.map(\.id), code: "duplicate_ruleset"
+        )
+        result += configurationAutomationDuplicateDiagnostics(
+            document.dnsPolicies.map(\.id), code: "duplicate_dns_policy"
+        )
+        result += configurationAutomationDuplicateDiagnostics(
+            document.entrances.map(\.id), code: "duplicate_entrance"
+        )
+        result += configurationAutomationDuplicateDiagnostics(
+            document.workspaces.map(\.id), code: "duplicate_workspace"
+        )
+        if document.workspaces.isEmpty {
+            result.append(ConfigurationDiagnostic(
+                severity: .error,
+                code: "missing_workspace",
+                subject: "workspaces",
+                message: "At least one workspace is required."
+            ))
+        }
+        if let currentWorkspaceID = document.currentWorkspaceID,
+           !document.workspaces.contains(where: { $0.id == currentWorkspaceID }) {
+            result.append(ConfigurationDiagnostic(
+                severity: .error,
+                code: "missing_current_workspace",
+                subject: currentWorkspaceID.rawValue.uuidString.lowercased(),
+                message: "The current workspace does not exist."
+            ))
+        }
+        let workspaceIDs = Set(document.workspaces.map(\.id))
+        for rule in document.rules {
+            if let scope = rule.workspaceScope, !workspaceIDs.contains(scope) {
+                result.append(ConfigurationDiagnostic(
+                    severity: .error,
+                    code: "missing_rule_workspace",
+                    subject: rule.id.rawValue.uuidString.lowercased(),
+                    message: "A routing rule references a workspace that does not exist."
+                ))
+            }
+        }
+        for entrance in document.entrances {
+            if let override = entrance.workspaceOverride, !workspaceIDs.contains(override) {
+                result.append(ConfigurationDiagnostic(
+                    severity: .error,
+                    code: "missing_entrance_workspace",
+                    subject: entrance.id.rawValue.uuidString.lowercased(),
+                    message: "An entrance references a workspace that does not exist."
+                ))
+            }
+        }
+        return result
+    }
+
+    private func configurationAutomationDuplicateDiagnostics<ID: ConfigurationIdentifier>(
+        _ values: [ID],
+        code: String
+    ) -> [ConfigurationDiagnostic] {
+        var counts: [ID: Int] = [:]
+        values.forEach { counts[$0, default: 0] += 1 }
+        return counts.compactMap { id, count in
+            guard count > 1 else { return nil }
+            return ConfigurationDiagnostic(
+                severity: .error,
+                code: code,
+                subject: id.rawValue.uuidString.lowercased(),
+                message: "Configuration contains duplicate identities."
+            )
+        }
+    }
+
+    private func bumpConfigurationWorkspaceRevisions(
+        in document: inout ConfigurationDocument
+    ) {
+        for index in document.workspaces.indices {
+            let revision = document.workspaces[index].revision
+            document.workspaces[index].revision = revision == .max
+                ? .max : revision + 1
+        }
+    }
+
+    private func configurationAutomationDependencies(
+        kind: ConfigurationAutomationObjectKind,
+        id: UUID
+    ) -> [ConfigurationAutomationDependency] {
+        var dependencies: [ConfigurationAutomationDependency] = []
+        func append(_ kind: String, _ id: UUID) {
+            dependencies.append(ConfigurationAutomationDependency(
+                kind: kind,
+                id: id.uuidString.lowercased()
+            ))
+        }
+        switch kind {
+        case .proxyGroup:
+            let groupID = ProxyGroupID(rawValue: id)
+            for workspace in configurationDocument.workspaces
+            where workspace.proxyGroupIDs.contains(groupID) {
+                append("workspace", workspace.id.rawValue)
+            }
+            for group in configurationDocument.proxyGroups where group.members.contains(where: {
+                if case let .group(memberID) = $0 { return memberID == groupID }
+                return false
+            }) {
+                append("proxyGroup", group.id.rawValue)
+            }
+            for rule in configurationDocument.rules where rule.action == .proxyGroup(groupID) {
+                append("rule", rule.id.rawValue)
+            }
+            for ruleSet in configurationDocument.ruleSets
+            where ruleSet.defaultAction == .proxyGroup(groupID) {
+                append("ruleSet", ruleSet.id.rawValue)
+            }
+            for entrance in configurationDocument.entrances
+            where entrance.defaultAction == .proxyGroup(groupID) {
+                append("entrance", entrance.id.rawValue)
+            }
+        case .rule:
+            let ruleID = RoutingRuleID(rawValue: id)
+            for workspace in configurationDocument.workspaces
+            where workspace.ruleIDs.contains(ruleID) {
+                append("workspace", workspace.id.rawValue)
+            }
+        case .ruleSet:
+            let ruleSetID = RuleSetID(rawValue: id)
+            for workspace in configurationDocument.workspaces
+            where workspace.ruleSetIDs.contains(ruleSetID) {
+                append("workspace", workspace.id.rawValue)
+            }
+        case .dnsPolicy:
+            let dnsPolicyID = DNSPolicyID(rawValue: id)
+            for workspace in configurationDocument.workspaces
+            where workspace.dnsPolicyID == dnsPolicyID {
+                append("workspace", workspace.id.rawValue)
+            }
+        case .entrance:
+            let entranceID = EntranceID(rawValue: id)
+            for workspace in configurationDocument.workspaces
+            where workspace.entranceIDs.contains(entranceID) {
+                append("workspace", workspace.id.rawValue)
+            }
+        case .workspace:
+            let workspaceID = WorkspaceID(rawValue: id)
+            if configurationDocument.currentWorkspace?.id == workspaceID {
+                append("currentWorkspace", id)
+            }
+            if configurationDocument.lastRuntimeSnapshot?.workspaceID == workspaceID {
+                append("runtimeSnapshot", id)
+            }
+            for rule in configurationDocument.rules where rule.workspaceScope == workspaceID {
+                append("rule", rule.id.rawValue)
+            }
+            for entrance in configurationDocument.entrances
+            where entrance.workspaceOverride == workspaceID {
+                append("entrance", entrance.id.rawValue)
+            }
+        }
+        return dependencies.sorted {
+            $0.kind == $1.kind ? $0.id < $1.id : $0.kind < $1.kind
+        }
     }
 
     @discardableResult
@@ -1732,9 +2167,15 @@ final class AppModel {
     /// profile bookkeeping needed by the current core fleet. The generated
     /// bytes are complete MClash YAML; source profile strategy sections are
     /// never read by this path.
-    func activateConfigurationWorkspace(_ workspaceID: WorkspaceID) async throws {
+    func activateConfigurationWorkspace(
+        _ workspaceID: WorkspaceID,
+        expectedConfigurationRevision: UUID? = nil
+    ) async throws {
         guard begin(.changeRuntimeSettings) else { throw CancellationError() }
         defer { end(.changeRuntimeSettings) }
+        if let expectedConfigurationRevision {
+            try requireConfigurationRevision(expectedConfigurationRevision)
+        }
         guard let workspace = configurationDocument.workspaces.first(where: { $0.id == workspaceID }) else {
             throw ConfigurationCompilationError.invalidText(
                 AppLocalization.string(
