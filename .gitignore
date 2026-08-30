@@ -26,4 +26,5 @@ Sources/MClashApp/Resources/Core/mihomo-alpha-*
 *.log
 
 # Local Git worktrees
+/.planning/
 /.worktrees/
