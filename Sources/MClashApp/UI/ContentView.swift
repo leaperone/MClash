@@ -16,25 +16,23 @@ struct ContentView: View {
                     destinationRow(.overview)
                 }
 
-                Section("Configure") {
-                    destinationRow(.workspaces)
+                Section(AppLocalization.string("Configure")) {
+                    destinationRow(.workspaces, title: "Configuration")
+                    destinationRow(.rules, title: "Rules")
                     destinationRow(.nodes)
                     destinationRow(.sources)
                     destinationRow(.entrances)
-                    destinationRow(.proxies)
-                    destinationRow(.proxyGroups)
-                    appRoutingToggleRow
+                    destinationRow(.proxyGroups, title: "Groups")
                 }
 
-                Section("Monitor") {
+                Section(AppLocalization.string("Monitor")) {
                     destinationRow(.connections)
                     destinationRow(.attention)
                 }
 
                 Section {
-                DisclosureGroup("Advanced", isExpanded: $advancedExpanded) {
+                    DisclosureGroup(AppLocalization.string("Advanced"), isExpanded: $advancedExpanded) {
                         destinationRow(.profiles)
-                        destinationRow(.rules)
                         destinationRow(.providers)
                         destinationRow(.logs)
                     }
@@ -45,7 +43,7 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 176, ideal: 206, max: 240)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 224, max: 260)
             .navigationTitle("MClash")
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 SidebarOperationalStatus(model: model)
@@ -114,9 +112,9 @@ struct ContentView: View {
         }
     }
 
-    private func destinationRow(_ destination: AppModel.Destination) -> some View {
+    private func destinationRow(_ destination: AppModel.Destination, title: String? = nil) -> some View {
         HStack(spacing: 8) {
-            Label(AppLocalization.string(destination.title), systemImage: destination.symbol)
+            Label(AppLocalization.string(title ?? destination.title), systemImage: destination.symbol)
             Spacer(minLength: 4)
             destinationAccessory(destination)
         }
@@ -149,7 +147,11 @@ struct ContentView: View {
             return
         }
 
-        let destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .overview
+        var destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .overview
+        if destination == .appRouting {
+            destination = .entrances
+            restoredDestinationRawValue = destination.rawValue
+        }
         if advancedDestinations.contains(destination) {
             advancedExpanded = true
         }
@@ -162,7 +164,7 @@ struct ContentView: View {
     }
 
     private var advancedDestinations: Set<AppModel.Destination> {
-        [.profiles, .rules, .providers, .logs]
+        [.profiles, .providers, .logs]
     }
 
     @ViewBuilder
@@ -171,7 +173,7 @@ struct ContentView: View {
         case .overview:
             OverviewView(model: model)
         case .workspaces:
-            ConfigurationWorkspacesView(model: model)
+            ConfigurationView(model: model)
         case .nodes:
             ConfigurationNodesView(model: model)
         case .sources:
@@ -179,11 +181,13 @@ struct ContentView: View {
         case .entrances:
             ConfigurationEntrancesView(model: model)
         case .proxies:
-            ProxiesView(model: model)
+            // Legacy deep link retained for compatibility; the visible
+            // navigation uses the strategy-owned Groups destination.
+            ConfigurationProxyGroupsView(model: model)
         case .proxyGroups:
             ConfigurationProxyGroupsView(model: model)
         case .appRouting:
-            ConnectionsView(model: model)
+            ConfigurationEntrancesView(model: model)
         case .profiles:
             ProfilesView(model: model)
         case .rules:
@@ -225,38 +229,9 @@ struct ContentView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(sidebarConnectionAccessibilityLabel)
-        case .appRouting:
-            Circle()
-                .fill(appRoutingAccessoryColor)
-                .frame(width: 7, height: 7)
-                .accessibilityLabel(appRoutingAccessoryLabel)
         default:
             EmptyView()
         }
-    }
-
-    private var appRoutingToggleRow: some View {
-        Toggle(isOn: appRoutingEnabled) {
-            Label(AppLocalization.string("App Routing"), systemImage: "app.badge")
-        }
-        .toggleStyle(.switch)
-        .disabled(
-            model.pendingNetworkCaptureEnabled != nil
-                || !model.canPerform(.changeNetworkCapture)
-        )
-        .help(AppLocalization.string(model.unifiedConfigurationEnabled
-            ? "Capture application traffic using the unified MClash rules"
-            : "Legacy application capture is active until a MClash Workspace is selected"))
-        .accessibilityLabel(AppLocalization.string(model.unifiedConfigurationEnabled
-            ? "App Routing using unified MClash rules"
-            : "App Routing using legacy profile rules"))
-    }
-
-    private var appRoutingEnabled: Binding<Bool> {
-        Binding(
-            get: { model.appRoutingCapabilityEnabled },
-            set: { value in Task { await model.setNetworkCaptureEnabled(value) } }
-        )
     }
 
     private var sidebarConnectionValue: String {
@@ -284,33 +259,6 @@ struct ContentView: View {
         }
     }
 
-    private var appRoutingAccessoryColor: Color {
-        switch model.networkCaptureState {
-        case .on: .green
-        case .failed: .red
-        case .awaitingUserApproval, .requiresReboot: .orange
-        case .enabling, .disabling: .accentColor
-        case .off, .waitingForConnection: .secondary.opacity(0.5)
-        }
-    }
-
-    private var appRoutingAccessoryLabel: String {
-        let statusKey = switch model.networkCaptureState {
-        case .on: "Active"
-        case .failed: "Failed"
-        case .awaitingUserApproval: "Needs Approval"
-        case .requiresReboot: "Restart Required"
-        case .enabling: "Starting"
-        case .disabling: "Stopping"
-        case .waitingForConnection: "Waiting"
-        case .off: "Off"
-        }
-        return AppLocalization.format(
-            "%@, %@",
-            AppLocalization.string("App Routing"),
-            AppLocalization.string(statusKey)
-        )
-    }
 }
 
 private struct SidebarOperationalStatus: View {

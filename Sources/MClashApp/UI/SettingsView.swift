@@ -79,7 +79,7 @@ struct SettingsView: View {
                 systemProxySettingsFeedback
 
                 Button("Manage App Routing…") {
-                    model.selection = .appRouting
+                    model.selection = .entrances
                 }
 
                 DisclosureGroup("Connection Behavior") {

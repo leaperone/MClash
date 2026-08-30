@@ -64,6 +64,7 @@ public struct NodeOnlyImporter: Sendable {
         var diagnostics: [ConfigurationDiagnostic] = []
         var nodes: [Node] = []
         var fingerprints = Set<String>()
+        var connectionFingerprints: [String: String] = [:]
 
         for (index, fields) in entries.enumerated() {
             let subject = fields["name"] ?? "proxy-\(index + 1)"
@@ -98,14 +99,19 @@ public struct NodeOnlyImporter: Sendable {
                 parameters: parameters
             )
             guard fingerprints.insert(fingerprint).inserted else {
+                let connectionFingerprint = Node.makeConnectionFingerprint(protocol: proto, host: host, port: port, parameters: parameters)
+                let code = connectionFingerprints[fingerprint] == connectionFingerprint ? "duplicate_node" : "node_identity_conflict"
                 diagnostics.append(ConfigurationDiagnostic(
                     severity: .warning,
-                    code: "duplicate_node",
+                    code: code,
                     subject: subject,
-                    message: "Skipped a duplicate node with the same connection identity."
+                    message: code == "duplicate_node"
+                        ? "Skipped a duplicate node with the same stable and connection identity."
+                        : "Skipped a node whose endpoint identity matches another node but whose credentials or connection parameters differ."
                 ))
                 continue
             }
+            connectionFingerprints[fingerprint] = Node.makeConnectionFingerprint(protocol: proto, host: host, port: port, parameters: parameters)
 
             do {
                 let node = try Node(

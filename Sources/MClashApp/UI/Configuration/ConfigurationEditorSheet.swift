@@ -11,6 +11,7 @@ struct ConfigurationEditorSheet: View {
     @State private var enabled = true
     @State private var groupType: ProxyGroupType = .select
     @State private var selectedNodeIDs: Set<NodeID> = []
+    @State private var nodeSelectors: [NodeSelector] = []
     @State private var selectedGroupIDs: Set<ProxyGroupID> = []
     @State private var selectedRuleIDs: Set<RoutingRuleID> = []
     @State private var selectedEntranceIDs: Set<EntranceID> = []
@@ -75,7 +76,15 @@ struct ConfigurationEditorSheet: View {
                     }
                 }
                 Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
-                nodeSelection
+                NodeMembershipEditor(
+                    nodes: model.configurationDocument.nodes,
+                    sourceNames: Dictionary(
+                        model.configurationDocument.sources.map { ($0.id, $0.displayName) },
+                        uniquingKeysWith: { first, _ in first }
+                    ),
+                    selectedNodeIDs: $selectedNodeIDs,
+                    selectors: $nodeSelectors
+                )
                 groupSelection
             }
         case .rules:
@@ -190,6 +199,10 @@ struct ConfigurationEditorSheet: View {
             groupType = group.type
             enabled = group.enabled
             selectedNodeIDs = Set(group.members.compactMap { if case let .node(nodeID) = $0 { return nodeID }; return nil })
+            nodeSelectors = group.memberSelectors
+            for selector in group.memberSelectors {
+                selectedNodeIDs.formUnion(selector.fixedNodeIDs)
+            }
             selectedGroupIDs = Set(group.members.compactMap { if case let .group(groupID) = $0 { return groupID }; return nil })
             selectedGroupIDs.remove(group.id)
         case .rules:
@@ -244,6 +257,7 @@ struct ConfigurationEditorSheet: View {
             document.proxyGroups[index].enabled = enabled
             document.proxyGroups[index].members = selectedNodeIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }.map { .node($0) }
                 + selectedGroupIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }.map { .group($0) }
+            document.proxyGroups[index].memberSelectors = nodeSelectors
             let group = document.proxyGroups[index]
             let cycle = document.currentWorkspace.flatMap { current -> ConfigurationDiagnostic? in
                 var validationWorkspace = current

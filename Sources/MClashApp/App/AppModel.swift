@@ -1549,16 +1549,26 @@ final class AppModel {
                 }
             }
 
-            // Keep the default selector useful as the catalog grows. User
-            // created groups are never modified by this synchronization pass.
+            // Keep the built-in group dynamic as the catalog grows. Older
+            // manifests may contain a static list produced by the first
+            // implementation; migrate that exact “all nodes” list to a
+            // selector, but never rewrite a user-customized group.
             if let index = document.proxyGroups.firstIndex(where: { $0.name == "MClash Select" }) {
                 let group = document.proxyGroups[index]
                 let existing = Set(group.members.compactMap { member -> NodeID? in
                     if case let .node(id) = member { return id }
                     return nil
                 })
-                let additions = document.nodes.filter { $0.enabled && !existing.contains($0.id) }.map { ProxyGroupMember.node($0.id) }
-                if !additions.isEmpty { document.proxyGroups[index].members.append(contentsOf: additions) }
+                let allEnabled = Set(document.nodes.filter(\.enabled).map(\.id))
+                if group.memberSelectors.isEmpty, !existing.isEmpty, existing == allEnabled {
+                    document.proxyGroups[index].members.removeAll { member in
+                        if case .node = member { return true }
+                        return false
+                    }
+                    document.proxyGroups[index].memberSelectors = [NodeSelector(name: "All enabled nodes")]
+                } else if group.memberSelectors.isEmpty, existing.isEmpty {
+                    document.proxyGroups[index].memberSelectors = [NodeSelector(name: "All enabled nodes")]
+                }
             }
             try await configurationStore.save(document)
             configurationDocument = document
@@ -1642,7 +1652,10 @@ final class AppModel {
         let entranceIDs = document.entrances.map(\.id)
         let workspace = Workspace(
             name: name,
-            nodeIDs: document.nodes.filter(\.enabled).map(\.id),
+            // An empty node scope means the complete enabled node catalog.
+            // This lets selector-backed groups pick up newly imported nodes
+            // after a refresh without rewriting the workspace.
+            nodeIDs: [],
             proxyGroupIDs: groupIDs,
             ruleIDs: document.rules.filter(\.enabled).map(\.id),
             ruleSetIDs: document.ruleSets.map(\.id),
@@ -1693,6 +1706,25 @@ final class AppModel {
         }
         try await persistConfigurationDocument(document)
         return rule.id
+    }
+
+    /// Inserts or updates one strategy-owned rule. The rule is linked to every
+    /// existing configuration so a user-created rule cannot appear saved but
+    /// silently remain inactive in the current configuration.
+    func saveConfigurationRule(_ rule: RoutingRule) async throws {
+        var document = configurationDocument
+        if let index = document.rules.firstIndex(where: { $0.id == rule.id }) {
+            document.rules[index] = rule
+        } else {
+            document.rules.append(rule)
+        }
+        for index in document.workspaces.indices {
+            if !document.workspaces[index].ruleIDs.contains(rule.id) {
+                document.workspaces[index].ruleIDs.append(rule.id)
+                document.workspaces[index].revision += 1
+            }
+        }
+        try await saveConfigurationDocument(document)
     }
 
     func toggleConfigurationEnabled(

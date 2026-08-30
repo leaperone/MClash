@@ -59,6 +59,13 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
     public var userAlias: String?
     public var lastSeenAt: Date?
 
+    /// Full connection material for diagnostics. The persisted `id` and
+    /// `fingerprint` deliberately do not change when provider credentials
+    /// rotate during a refresh.
+    public var connectionFingerprint: String {
+        Self.makeConnectionFingerprint(protocol: proto, host: host, port: port, parameters: parameters)
+    }
+
     public init(id: NodeID = NodeID(), displayName: String, protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String] = [:], sourceLinks: [SourceID] = [], tags: Set<String> = [], region: String? = nil, enabled: Bool = true, health: NodeHealthSnapshot = NodeHealthSnapshot(), userAlias: String? = nil, lastSeenAt: Date? = nil) throws {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         guard !normalizedHost.isEmpty, (1...65535).contains(port) else { throw ConfigurationModelError.invalidNodeEndpoint(host: host, port: port) }
@@ -67,8 +74,43 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
     }
 
     public static func makeFingerprint(protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String]) -> String {
-        let fields = parameters.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+        // Credentials rotate frequently in subscriptions.  They are not a
+        // node identity: retaining them here would make every refresh create
+        // a new node and orphan user-maintained group membership.  The
+        // credential values still remain in `parameters` and are emitted to
+        // Mihomo; only the identity material excludes them.
+        let fields = parameters
+            .compactMap { key, value -> (String, String)? in
+                let normalizedKey = NodeIdentity.normalizeParameterKey(key)
+                guard !NodeIdentity.isCredentialParameter(normalizedKey) else { return nil }
+                return (normalizedKey, value)
+            }
+            .sorted { lhs, rhs in
+                lhs.0 == rhs.0 ? lhs.1 < rhs.1 : lhs.0 < rhs.0
+            }
+            .map { pair in pair.0 + "=" + pair.1 }
+            .joined(separator: "&")
         let material = "\(proto.rawValue)|\(host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")))|\(port)|\(fields)"
+        return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Full connection material, including credentials, for diagnostics only.
+    /// It must never be used as the persisted NodeID because providers rotate
+    /// these values during an otherwise identical subscription refresh.
+    public static func makeConnectionFingerprint(protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String]) -> String {
+        let normalizedParameters = parameters.map { key, value in
+            (NodeIdentity.normalizeParameterKey(key), value)
+        }.sorted { lhs, rhs in
+            if lhs.0 == rhs.0 { return lhs.1 < rhs.1 }
+            return lhs.0 < rhs.0
+        }
+        let fields = normalizedParameters.map { pair in
+            pair.0 + "=" + pair.1
+        }.joined(separator: "&")
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let material = "\(proto.rawValue)|\(normalizedHost)|\(port)|\(fields)"
         return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
@@ -77,7 +119,30 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
 
 public enum ProxyGroupType: String, Codable, CaseIterable, Sendable { case select, fallback, urlTest, loadBalance, direct, reject, relay }
 public enum ProxyGroupMember: Codable, Hashable, Sendable { case node(NodeID), group(ProxyGroupID) }
-public struct ProxyGroup: Codable, Hashable, Identifiable, Sendable { public let id: ProxyGroupID; public var name: String; public var type: ProxyGroupType; public var members: [ProxyGroupMember]; public var enabled: Bool; public init(id: ProxyGroupID = ProxyGroupID(), name: String, type: ProxyGroupType = .select, members: [ProxyGroupMember] = [], enabled: Bool = true) { self.id=id; self.name=name; self.type=type; self.members=members; self.enabled=enabled } }
+public struct ProxyGroup: Codable, Hashable, Identifiable, Sendable {
+    public let id: ProxyGroupID
+    public var name: String
+    public var type: ProxyGroupType
+    /// Explicit members are durable pins. Selectors are evaluated on every
+    /// source refresh and are intentionally kept separate from those pins.
+    public var members: [ProxyGroupMember]
+    public var memberSelectors: [NodeSelector]
+    public var enabled: Bool
+
+    public init(id: ProxyGroupID = ProxyGroupID(), name: String, type: ProxyGroupType = .select, members: [ProxyGroupMember] = [], memberSelectors: [NodeSelector] = [], enabled: Bool = true) {
+        self.id=id; self.name=name; self.type=type; self.members=members; self.memberSelectors=memberSelectors; self.enabled=enabled
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, type, members, memberSelectors, enabled }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(ProxyGroupID.self, forKey: .id), name: try c.decode(String.self, forKey: .name), type: try c.decode(ProxyGroupType.self, forKey: .type), members: try c.decodeIfPresent([ProxyGroupMember].self, forKey: .members) ?? [], memberSelectors: try c.decodeIfPresent([NodeSelector].self, forKey: .memberSelectors) ?? [], enabled: try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(name, forKey: .name); try c.encode(type, forKey: .type); try c.encode(members, forKey: .members); try c.encode(memberSelectors, forKey: .memberSelectors); try c.encode(enabled, forKey: .enabled)
+    }
+}
 
 public enum RoutingMatcher: Codable, Hashable, Sendable { case application(String), processPath(String), userID(UInt32), domainExact(String), domainSuffix(String), domainWildcard(String), ipCIDR(String), transport(String), port(Int), portRange(ClosedRange<Int>) }
 public enum RoutingAction: Codable, Hashable, Sendable { case direct, reject, proxyGroup(ProxyGroupID) }

@@ -16,6 +16,7 @@ struct ConfigurationWorkbench: View {
     @State private var section: ConfigurationWorkbenchSection
     @State private var selectedID: UUID?
     @SceneStorage("mclash.configuration.query") private var query = ""
+    @State private var filter: WorkbenchFilter = .all
     @SceneStorage("mclash.configuration.inspectorVisible") private var inspectorVisible = true
 
     init(
@@ -43,7 +44,7 @@ struct ConfigurationWorkbench: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 workbenchSidebar
-                    .frame(minWidth: geometry.size.width < 600 ? 132 : 178, idealWidth: 205, maxWidth: 240)
+                    .frame(minWidth: geometry.size.width < 700 ? 156 : 196, idealWidth: 214, maxWidth: 250)
                 Divider()
                 itemList
                     .frame(minWidth: 260, idealWidth: 350, maxWidth: .infinity)
@@ -64,7 +65,11 @@ struct ConfigurationWorkbench: View {
                 .accessibilityLabel(AppLocalization.string(inspectorVisible ? "Hide Inspector" : "Show Inspector"))
             }
         }
-        .onChange(of: section) { _, _ in selectedID = filteredItems.first?.id }
+        .onChange(of: section) { _, _ in
+            query = ""
+            filter = .all
+            selectedID = filteredItems.first?.id
+        }
         .onChange(of: statusMessage, initial: true) { _, message in
             guard let message, !message.isEmpty else { return }
             NSAccessibility.post(
@@ -81,18 +86,38 @@ struct ConfigurationWorkbench: View {
 
     private var currentItems: [ConfigurationWorkbenchItem] { items[section] ?? [] }
     private var filteredItems: [ConfigurationWorkbenchItem] {
-        guard !query.isEmpty else { return currentItems }
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return currentItems.filter { item in
-            [item.title, item.subtitle, item.detail].joined(separator: " ").localizedCaseInsensitiveContains(query)
+            let queryMatches = normalizedQuery.isEmpty
+                || item.searchText.localizedCaseInsensitiveContains(normalizedQuery)
+            let filterMatches: Bool
+            switch filter {
+            case .all: filterMatches = true
+            case .enabled: filterMatches = item.isEnabled == true
+            case .attention: filterMatches = item.isEnabled == false
+            }
+            return queryMatches && filterMatches
         }
     }
-    private var selectedItem: ConfigurationWorkbenchItem? { filteredItems.first { $0.id == selectedID } }
+    private var selectedItem: ConfigurationWorkbenchItem? {
+        filteredItems.first { $0.id == selectedID }
+            ?? currentItems.first { $0.id == selectedID }
+    }
 
     private var workbenchSidebar: some View {
         List(selection: $section) {
             Section(AppLocalization.string("Organize")) {
                 ForEach(sections) { item in
-                    Label(AppLocalization.string(item.title), systemImage: item.symbol).tag(item)
+                    HStack(spacing: 8) {
+                        Label(AppLocalization.string(item.presentationTitle), systemImage: item.symbol)
+                        Spacer(minLength: 4)
+                        if let count = items[item]?.count, count > 0 {
+                            Text(AppLocalization.number(count))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tag(item)
                 }
             }
             Section {
@@ -110,12 +135,21 @@ struct ConfigurationWorkbench: View {
     private var itemList: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Text(AppLocalization.string(section.title)).font(.title2.weight(.semibold))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(AppLocalization.string(section.presentationTitle))
+                        .font(.title2.weight(.semibold))
+                    Text(sectionSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
+                Text(AppLocalization.number(filteredItems.count))
+                    .font(.title3.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
                 Button { onAdd?(section) } label: { Image(systemName: "plus") }
                     .buttonStyle(.bordered)
-                    .help(AppLocalization.format("Add %@", AppLocalization.string(section.singularTitle)))
-                    .accessibilityLabel(AppLocalization.format("Add %@", AppLocalization.string(section.singularTitle)))
+                    .help(AppLocalization.format("Add %@", AppLocalization.string(section.presentationSingularTitle)))
+                    .accessibilityLabel(AppLocalization.format("Add %@", AppLocalization.string(section.presentationSingularTitle)))
                     .disabled(onAdd == nil)
             }
             .padding(.horizontal, MClashLayout.pagePadding)
@@ -131,8 +165,7 @@ struct ConfigurationWorkbench: View {
                     .padding(.bottom, 8)
             }
 
-            TextField(AppLocalization.format("Search %@", AppLocalization.string(section.title).lowercased()), text: $query)
-                .textFieldStyle(.roundedBorder)
+            ListFilterBar(query: $query, filter: $filter)
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.bottom, 10)
 
@@ -159,6 +192,63 @@ struct ConfigurationWorkbench: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
     }
+
+    private var sectionSubtitle: String {
+        switch section {
+        case .nodes: "Search by name, host, protocol or source."
+        case .proxyGroups: "Pin nodes or describe automatic membership conditions."
+        case .rules: "Rules are evaluated from the lowest priority number."
+        case .entrances: "Choose where traffic enters the unified policy."
+        case .sources: "Sources provide node data only."
+        case .workspaces: "The current configuration connects all sections."
+        }
+    }
+}
+
+private enum WorkbenchFilter: String, CaseIterable, Identifiable {
+    case all, enabled, attention
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .enabled: "Enabled"
+        case .attention: "Review"
+        }
+    }
+}
+
+private struct ListFilterBar: View {
+    @Binding var query: String
+    @Binding var filter: WorkbenchFilter
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Picker("Filter", selection: $filter) {
+                ForEach(WorkbenchFilter.allCases) { value in
+                    Text(value.title).tag(value)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 190)
+            .labelsHidden()
+
+            TextField("Search", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .overlay(alignment: .trailing) {
+                    if !query.isEmpty {
+                        Button { query = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 7)
+                        .accessibilityLabel("Clear search")
+                    }
+                }
+        }
+    }
 }
 
 private struct ConfigurationWorkbenchRow: View {
@@ -171,8 +261,14 @@ private struct ConfigurationWorkbenchRow: View {
                 Text(item.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
+            if let isEnabled = item.isEnabled {
+                Image(systemName: isEnabled ? "circle.fill" : "circle")
+                    .font(.caption2)
+                    .foregroundStyle(isEnabled ? .green : .secondary)
+                    .accessibilityLabel(AppLocalization.string(isEnabled ? "Enabled" : "Disabled"))
+            }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
     }
 }
@@ -186,11 +282,23 @@ private struct ConfigurationWorkbenchInspector: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MClashLayout.panelSpacing) {
-                Image(systemName: item.symbol).font(.system(size: 28, weight: .semibold)).foregroundStyle(.tint)
-                Text(item.title).font(.title2.weight(.semibold))
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: item.symbol)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title)
+                            .font(.title2.weight(.semibold))
+                            .textSelection(.enabled)
+                        Text(item.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
                 Text(item.detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if onActivate != nil {
-                    Button(AppLocalization.string("Use This Workspace")) { onActivate?(item.id) }
+                    Button(AppLocalization.string("Use This Configuration")) { onActivate?(item.id) }
                         .buttonStyle(.borderedProminent)
                 }
                 if let isEnabled = item.isEnabled, onToggleEnabled != nil {
@@ -212,5 +320,12 @@ private struct ConfigurationWorkbenchInspector: View {
             .padding(MClashLayout.pagePadding)
         }
         .accessibilityElement(children: .contain)
+    }
+}
+
+private extension ConfigurationWorkbenchItem {
+    var searchText: String {
+        ([title, subtitle, detail] + metadata.flatMap { [$0.0, $0.1] })
+            .joined(separator: " ")
     }
 }

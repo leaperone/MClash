@@ -97,7 +97,7 @@ struct AttentionView: View {
                 pendingIssueID = nil
             }
         case .openAppRouting:
-            model.selection = .appRouting
+            model.selection = .entrances
         case .openRules:
             model.selection = .rules
         case .openProviders:

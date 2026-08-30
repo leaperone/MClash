@@ -28,7 +28,10 @@ public enum ConfigurationCaptureAdapter {
         groups: [ProxyGroup],
         workspaceID: WorkspaceID? = nil
     ) -> Result {
-        let groupNames = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0.name) })
+        let groupNames = Dictionary(
+            groups.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var converted: [CaptureRule] = []
         var diagnostics: [ConfigurationDiagnostic] = []
         for rule in rules.sorted(by: Self.stableRuleOrder) {

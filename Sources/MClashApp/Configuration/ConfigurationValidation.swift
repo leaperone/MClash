@@ -36,16 +36,22 @@ public enum ConfigurationValidator {
     public static func validate(workspace: Workspace, nodes: [Node], groups: [ProxyGroup], rules: [RoutingRule], ruleSets: [RuleSet] = [], dnsPolicies: [DNSPolicy], entrances: [Entrance]) -> [ConfigurationDiagnostic] {
         var result: [ConfigurationDiagnostic] = []
         let nodeIDs = Set(nodes.map(\.id)); let groupIDs = Set(groups.map(\.id)); let ruleIDs = Set(rules.map(\.id)); let setIDs = Set(ruleSets.map(\.id)); let entranceIDs = Set(entrances.map(\.id)); let dnsIDs = Set(dnsPolicies.map(\.id))
-        let enabledNodeIDs = Set(nodes.filter { workspace.nodeIDs.contains($0.id) && $0.enabled }.map(\.id))
+        // An empty workspace node scope intentionally means the complete
+        // enabled catalog. Explicit IDs remain an optional advanced scope.
+        let hasImplicitNodeScope = workspace.nodeIDs.isEmpty
+        let effectiveWorkspaceNodeIDs = hasImplicitNodeScope
+            ? Set(nodes.filter(\.enabled).map(\.id))
+            : Set(workspace.nodeIDs)
+        let enabledNodeIDs = Set(nodes.filter { effectiveWorkspaceNodeIDs.contains($0.id) && $0.enabled }.map(\.id))
         let enabledGroupIDs = Set(groups.filter { workspace.proxyGroupIDs.contains($0.id) && $0.enabled }.map(\.id))
         result += duplicateDiagnostics(nodes.map(\.id), code: "duplicate_node", message: AppLocalization.string("Node catalog contains duplicate identities."))
         result += duplicateDiagnostics(groups.map(\.id), code: "duplicate_group", message: AppLocalization.string("Configuration contains duplicate proxy group identities."))
         result += duplicateDiagnostics(rules.map(\.id), code: "duplicate_rule", message: AppLocalization.string("Configuration contains duplicate routing rule identities."))
         for id in workspace.nodeIDs where !nodeIDs.contains(id) { result.append(.init(severity: .error, code: "missing_node", subject: String(describing: id.rawValue), message: AppLocalization.string("Workspace references a node that is not in the catalog."))) }
-        for node in nodes where workspace.nodeIDs.contains(node.id) && node.proto == .unknown {
+        for node in nodes where effectiveWorkspaceNodeIDs.contains(node.id) && node.proto == .unknown {
             result.append(.init(severity: .error, code: "unsupported_node_protocol", subject: String(describing: node.id.rawValue), message: AppLocalization.string("Workspace references a node with an unsupported protocol.")))
         }
-        for node in nodes where workspace.nodeIDs.contains(node.id) {
+        for node in nodes where effectiveWorkspaceNodeIDs.contains(node.id) {
             for (key, value) in node.parameters where key.isEmpty || key.contains(where: { $0 == "\n" || $0 == "\r" || $0 == ":" }) || value.contains(where: { $0 == "\n" || $0 == "\r" }) {
                 result.append(.init(severity: .error, code: "invalid_node_parameter", subject: String(describing: node.id.rawValue), message: AppLocalization.string("Node parameters contain an unsafe YAML key or value.")))
                 break
@@ -85,16 +91,13 @@ public enum ConfigurationValidator {
         }
         guard dnsIDs.contains(workspace.dnsPolicyID) else { result.append(.error("missing_dns_policy", workspace.dnsPolicyID, AppLocalization.string("Workspace references a DNS policy that does not exist."))); return sorted(result) }
         for group in groups where enabledGroupIDs.contains(group.id) {
-            if group.members.isEmpty && group.type != .direct && group.type != .reject {
-                result.append(.init(severity: .error, code: "empty_group", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Proxy group has no members.")))
-            }
             guard group.type != .direct && group.type != .reject else { continue }
             for member in group.members {
                 switch member {
                 case let .node(id):
                     if !nodeIDs.contains(id) {
                         result.append(.error("missing_group_node", id, AppLocalization.string("Proxy group references a missing node.")))
-                    } else if !enabledNodeIDs.contains(id) {
+                    } else if !hasImplicitNodeScope && !enabledNodeIDs.contains(id) {
                         result.append(.error("group_node_outside_workspace", id, AppLocalization.string("Proxy group references a node that is not included in this workspace.")))
                     }
                 case let .group(id):
@@ -108,8 +111,48 @@ public enum ConfigurationValidator {
         }
         // Nested groups must form a DAG; cycle reporting is anchored to the lowest
         // stable UUID so the same invalid graph always produces the same diagnostic.
-        let groupMap = Dictionary(uniqueKeysWithValues: groups.filter { enabledGroupIDs.contains($0.id) }.map { ($0.id, $0) })
-        for group in groups where enabledGroupIDs.contains(group.id) {
+        let groupMap = Dictionary(
+            groups.filter { enabledGroupIDs.contains($0.id) }.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for group in groups where enabledGroupIDs.contains(group.id) && group.type != .direct && group.type != .reject {
+            let selectorResolution = NodeSelectorResolver.resolve(
+                selectors: group.memberSelectors,
+                nodes: nodes.filter { effectiveWorkspaceNodeIDs.contains($0.id) && $0.enabled }
+            )
+            result.append(contentsOf: selectorResolution.diagnostics)
+            for selector in group.memberSelectors {
+                for nodeID in selector.fixedNodeIDs
+                where nodeIDs.contains(nodeID)
+                    && !hasImplicitNodeScope
+                    && !effectiveWorkspaceNodeIDs.contains(nodeID) {
+                    result.append(.error(
+                        "group_selector_node_outside_workspace",
+                        nodeID,
+                        AppLocalization.string("Group selector pins a node that is not included in this configuration.")
+                    ))
+                }
+            }
+            if group.members.isEmpty,
+               group.memberSelectors.isEmpty,
+               group.type != .direct,
+               group.type != .reject {
+                result.append(.init(
+                    severity: effectiveWorkspaceNodeIDs.isEmpty ? .warning : .error,
+                    code: "empty_group",
+                    subject: String(describing: group.id.rawValue),
+                    message: AppLocalization.string("Proxy group has no members.")
+                ))
+            } else if !group.memberSelectors.isEmpty,
+                      group.members.isEmpty,
+                      selectorResolution.nodeIDs.isEmpty {
+                result.append(.init(
+                    severity: .warning,
+                    code: "selector_matches_no_nodes",
+                    subject: String(describing: group.id.rawValue),
+                    message: AppLocalization.string("Group selectors currently match no nodes. The group will update when a matching source node appears.")
+                ))
+            }
             if hasCycle(from: group.id, map: groupMap, visiting: [], visited: []) {
                 result.append(.init(severity: .error, code: "group_cycle", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Proxy group references itself through nested groups.")))
             }

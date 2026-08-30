@@ -72,4 +72,29 @@ struct ConfigurationOrchestrationTests {
         #expect(!output.contains("Provider-owned"))
         #expect(compiled.workspaceID == workspace.id)
     }
+
+    @Test func compilerExpandsSelectorBackedGroupsAgainstAnImplicitCatalogScope() throws {
+        let first = try Node(displayName: "US 01", protocol: .vless, host: "us-1.example.com", port: 443)
+        let second = try Node(displayName: "US 02", protocol: .vless, host: "us-2.example.com", port: 443)
+        let group = ProxyGroup(
+            name: "United States",
+            type: .select,
+            memberSelectors: [NodeSelector(name: "US", include: [.nameContains("US")])]
+        )
+        let dns = DNSPolicy(name: "MClash DNS")
+        let entrance = Entrance(kind: .socks5, enabled: true, port: 7891, defaultAction: .proxyGroup(group.id))
+        // Empty nodeIDs deliberately means all enabled catalog nodes.
+        let workspace = Workspace(name: "Everyday", proxyGroupIDs: [group.id], dnsPolicyID: dns.id, entranceIDs: [entrance.id])
+        let document = ConfigurationDocument(
+            nodes: [first, second],
+            proxyGroups: [group],
+            dnsPolicies: [dns],
+            entrances: [entrance],
+            workspaces: [workspace],
+            currentWorkspaceID: workspace.id
+        )
+        let output = String(decoding: try ConfigurationCompiler().compile(document: document).yaml, as: UTF8.self)
+        #expect(output.contains("us-1.example.com"))
+        #expect(output.contains("us-2.example.com"))
+    }
 }

@@ -67,23 +67,54 @@ public struct ConfigurationCompiler: Sendable {
                 AppLocalization.string("No MClash workspace is configured.")
             )
         }
-        let diagnostics = document.diagnostics(for: workspace)
-        let errors = diagnostics.filter { $0.severity == .error }
-        guard errors.isEmpty else { throw ConfigurationCompilationError.invalid(errors) }
+        var diagnostics = document.diagnostics(for: workspace)
 
-        let nodesByID = Dictionary(uniqueKeysWithValues: document.nodes.map { ($0.id, $0) })
-        let groupsByID = Dictionary(uniqueKeysWithValues: document.proxyGroups.map { ($0.id, $0) })
+        // Validation reports duplicate identities, but the compiler must not
+        // trap while constructing lookup tables for that diagnostic path.
+        let nodesByID = Dictionary(
+            document.nodes.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let groupsByID = Dictionary(
+            document.proxyGroups.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let dns = document.dnsPolicies.first(where: { $0.id == workspace.dnsPolicyID })
-        let workspaceNodes = workspace.nodeIDs.compactMap { nodesByID[$0] }.filter(\.enabled)
+        // An empty workspace node scope is intentional: it means “the whole
+        // enabled catalog”. This is the default and is what lets selector
+        // backed groups follow subscription refreshes automatically.
+        let workspaceNodes = workspace.nodeIDs.isEmpty
+            ? document.nodes.filter(\.enabled)
+            : workspace.nodeIDs.compactMap { nodesByID[$0] }.filter(\.enabled)
         let workspaceGroups = workspace.proxyGroupIDs.compactMap { groupsByID[$0] }.filter(\.enabled)
         let workspaceRuleSets = workspace.ruleSetIDs.compactMap { id in document.ruleSets.first(where: { $0.id == id }) }
         let workspaceRules = workspace.ruleIDs.compactMap { id in document.rules.first(where: { $0.id == id }) }.filter(\.enabled).sorted {
             if $0.priority == $1.priority { return $0.id.rawValue.uuidString < $1.id.rawValue.uuidString }
             return $0.priority < $1.priority
         }
+        // Selectors are a user-facing membership policy, not a Mihomo field.
+        // Resolve them against the current catalog immediately before render;
+        // this is what makes a subscription refresh update dynamic members
+        // without rewriting the saved group definition.
+        let resolvedGroups = workspaceGroups.map { group -> ProxyGroup in
+            let resolution = NodeSelectorResolver.resolve(selectors: group.memberSelectors, nodes: workspaceNodes)
+            diagnostics.append(contentsOf: resolution.diagnostics)
+            var merged = group
+            let existingNodeIDs = Set(group.members.compactMap { member -> NodeID? in
+                if case let .node(id) = member { return id }
+                return nil
+            })
+            let additions = resolution.nodeIDs
+                .filter { !existingNodeIDs.contains($0) }
+                .map { ProxyGroupMember.node($0) }
+            merged.members.append(contentsOf: additions)
+            return merged
+        }
+        let errors = diagnostics.filter { $0.severity == .error }
+        guard errors.isEmpty else { throw ConfigurationCompilationError.invalid(errors) }
         let yaml = render(
             nodes: workspaceNodes,
-            groups: workspaceGroups,
+            groups: resolvedGroups,
             rules: workspaceRules,
             ruleSets: workspaceRuleSets,
             dns: dns,
@@ -187,7 +218,10 @@ public struct ConfigurationCompiler: Sendable {
                         }
                     }
                 }
-                lines.append("    proxies: [\(members.map(yamlScalar).joined(separator: ", "))]")
+                let values = members.isEmpty && group.type != .direct && group.type != .reject
+                    ? ["DIRECT"]
+                    : members
+                lines.append("    proxies: [\(values.map(yamlScalar).joined(separator: ", "))]")
             }
         }
 

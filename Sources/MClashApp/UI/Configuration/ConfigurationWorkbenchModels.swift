@@ -17,6 +17,16 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         case .entrances: "Entrances"
         }
     }
+    /// User-facing terminology. “Workspace” and “Proxy Group” are retained in
+    /// the model/API for migration, but the navigation speaks in terms users
+    /// can act on immediately.
+    var presentationTitle: String {
+        switch self {
+        case .workspaces: "Configurations"
+        case .proxyGroups: "Groups"
+        default: title
+        }
+    }
     var singularTitle: String {
         switch self {
         case .workspaces: "Workspace"
@@ -25,6 +35,13 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         case .proxyGroups: "Proxy Group"
         case .rules: "Rule"
         case .entrances: "Entrance"
+        }
+    }
+    var presentationSingularTitle: String {
+        switch self {
+        case .workspaces: "Configuration"
+        case .proxyGroups: "Group"
+        default: singularTitle
         }
     }
     var symbol: String {
