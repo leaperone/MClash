@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var showingRuntimeSettings = false
     @State private var showingSystemProxySettings = false
     @State private var applicationSettingsError: String?
+    @State private var commandLineToolStatus = CommandLineToolInstaller.Status.notInstalled
+    @State private var commandLineToolError: String?
     @AppStorage(AppLanguage.storageKey) private var appLanguageRawValue = AppLanguage.system.rawValue
 
     var body: some View {
@@ -286,6 +288,21 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
+                    LabeledContent("Command Line Tool") {
+                        Button(commandLineToolButtonTitle) {
+                            updateCommandLineToolInstallation()
+                        }
+                        .disabled(
+                            commandLineToolStatus == .conflict
+                                || commandLineToolStatus == .unsafeParent
+                                || commandLineToolStatus == .unavailable
+                        )
+                    }
+                    Text("Install a link at ~/.local/bin/mclashctl so Terminal and local agents can use mclashctl. Add ~/.local/bin to your PATH if needed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    commandLineToolFeedback
+
                     Button("Edit Runtime Configuration…") {
                         showingRuntimeSettings = true
                     }
@@ -324,6 +341,9 @@ struct SettingsView: View {
         .contentMargins(.vertical, 20, for: .scrollContent)
         .navigationTitle("Settings")
         .mclashPageSurface()
+        .onAppear {
+            refreshCommandLineToolStatus()
+        }
         .sheet(isPresented: $showingRuntimeSettings) {
             RuntimeSettingsEditor(
                 model: model,
@@ -357,6 +377,68 @@ struct SettingsView: View {
             return nil
         }
         return "\(host):\(port)"
+    }
+
+    private var commandLineToolButtonTitle: String {
+        AppLocalization.string(
+            commandLineToolStatus == .installed
+                ? "Remove Command Line Tool"
+                : "Install Command Line Tool"
+        )
+    }
+
+    @ViewBuilder
+    private var commandLineToolFeedback: some View {
+        if let commandLineToolError {
+            Label(commandLineToolError, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if commandLineToolStatus == .conflict {
+            Label(
+                "~/.local/bin/mclashctl already exists. MClash will not replace it.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+        } else if commandLineToolStatus == .unavailable {
+            Label(
+                "The bundled mclashctl helper is missing or not executable.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
+        } else if commandLineToolStatus == .unsafeParent {
+            Label(
+                "MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func updateCommandLineToolInstallation() {
+        let installer = CommandLineToolInstaller()
+        do {
+            if installer.status == .installed {
+                try installer.remove()
+            } else {
+                try installer.install()
+            }
+            commandLineToolError = nil
+        } catch {
+            commandLineToolError = error.localizedDescription
+        }
+        commandLineToolStatus = installer.status
+    }
+
+    private func refreshCommandLineToolStatus() {
+        commandLineToolStatus = CommandLineToolInstaller().status
+        commandLineToolError = nil
     }
 
     private var systemProxyStatus: String {

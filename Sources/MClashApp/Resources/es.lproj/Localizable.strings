@@ -1932,3 +1932,11 @@
 "Workspace references a routing rule that does not exist." = "El espacio de trabajo hace referencia a una regla de enrutamiento que no existe.";
 "Workspace references a rule set that does not exist." = "El espacio de trabajo hace referencia a un conjunto de reglas que no existe.";
 "Workspace references an entrance that does not exist." = "El espacio de trabajo hace referencia a una entrada que no existe.";
+"Command Line Tool" = "Herramienta de línea de comandos";
+"Install a link at ~/.local/bin/mclashctl so Terminal and local agents can use mclashctl. Add ~/.local/bin to your PATH if needed." = "Instala un enlace en ~/.local/bin/mclashctl para que Terminal y los agentes locales puedan usar mclashctl. Añade ~/.local/bin a PATH si es necesario.";
+"Install Command Line Tool" = "Instalar herramienta de línea de comandos";
+"Remove Command Line Tool" = "Eliminar herramienta de línea de comandos";
+"~/.local/bin/mclashctl already exists. MClash will not replace it." = "~/.local/bin/mclashctl ya existe. MClash no lo reemplazará.";
+"The bundled mclashctl helper is missing or not executable." = "El asistente mclashctl incluido falta o no se puede ejecutar.";
+"MClash only removes a command-line link that points to this copy of the app." = "MClash solo elimina un enlace de línea de comandos que apunte a esta copia de la app.";
+"MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin." = "MClash no instalará mediante esa ruta si ~/.local o ~/.local/bin es un archivo o enlace simbólico.";

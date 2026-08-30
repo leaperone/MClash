@@ -1930,3 +1930,11 @@
 "Workspace references a routing rule that does not exist." = "工作区引用了不存在的路由规则。";
 "Workspace references a rule set that does not exist." = "工作区引用了不存在的规则集。";
 "Workspace references an entrance that does not exist." = "工作区引用了不存在的入口。";
+"Command Line Tool" = "命令行工具";
+"Install a link at ~/.local/bin/mclashctl so Terminal and local agents can use mclashctl. Add ~/.local/bin to your PATH if needed." = "在 ~/.local/bin/mclashctl 创建链接，供终端和本地 Agent 使用 mclashctl。如有需要，请将 ~/.local/bin 添加到 PATH。";
+"Install Command Line Tool" = "安装命令行工具";
+"Remove Command Line Tool" = "移除命令行工具";
+"~/.local/bin/mclashctl already exists. MClash will not replace it." = "~/.local/bin/mclashctl 已存在。MClash 不会替换它。";
+"The bundled mclashctl helper is missing or not executable." = "内置的 mclashctl 辅助工具缺失或不可执行。";
+"MClash only removes a command-line link that points to this copy of the app." = "MClash 只会移除指向当前这份 App 的命令行链接。";
+"MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin." = "如果 ~/.local 或 ~/.local/bin 是文件或符号链接，MClash 不会通过该路径安装。";

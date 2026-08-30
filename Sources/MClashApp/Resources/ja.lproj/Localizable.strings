@@ -1932,3 +1932,11 @@
 "Workspace references a routing rule that does not exist." = "ワークスペースが存在しないルーティングルールを参照しています。";
 "Workspace references a rule set that does not exist." = "ワークスペースが存在しないルールセットを参照しています。";
 "Workspace references an entrance that does not exist." = "ワークスペースが存在しない入口を参照しています。";
+"Command Line Tool" = "コマンドラインツール";
+"Install a link at ~/.local/bin/mclashctl so Terminal and local agents can use mclashctl. Add ~/.local/bin to your PATH if needed." = "ターミナルやローカルエージェントから mclashctl を使えるように、~/.local/bin/mclashctl にリンクを作成します。必要に応じて ~/.local/bin を PATH に追加してください。";
+"Install Command Line Tool" = "コマンドラインツールをインストール";
+"Remove Command Line Tool" = "コマンドラインツールを削除";
+"~/.local/bin/mclashctl already exists. MClash will not replace it." = "~/.local/bin/mclashctl はすでに存在します。MClash は置き換えません。";
+"The bundled mclashctl helper is missing or not executable." = "同梱の mclashctl ヘルパーが見つからないか、実行できません。";
+"MClash only removes a command-line link that points to this copy of the app." = "MClash は、このアプリを指すコマンドラインリンクだけを削除します。";
+"MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin." = "~/.local または ~/.local/bin がファイルかシンボリックリンクの場合、MClash はそのパスを使ってインストールしません。";

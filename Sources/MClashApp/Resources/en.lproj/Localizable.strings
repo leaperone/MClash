@@ -1931,3 +1931,11 @@
 "Workspace references a routing rule that does not exist." = "Workspace references a routing rule that does not exist.";
 "Workspace references a rule set that does not exist." = "Workspace references a rule set that does not exist.";
 "Workspace references an entrance that does not exist." = "Workspace references an entrance that does not exist.";
+"Command Line Tool" = "Command Line Tool";
+"Install a link at ~/.local/bin/mclashctl so Terminal and local agents can use mclashctl. Add ~/.local/bin to your PATH if needed." = "Install a link at ~/.local/bin/mclashctl so Terminal and local agents can use mclashctl. Add ~/.local/bin to your PATH if needed.";
+"Install Command Line Tool" = "Install Command Line Tool";
+"Remove Command Line Tool" = "Remove Command Line Tool";
+"~/.local/bin/mclashctl already exists. MClash will not replace it." = "~/.local/bin/mclashctl already exists. MClash will not replace it.";
+"The bundled mclashctl helper is missing or not executable." = "The bundled mclashctl helper is missing or not executable.";
+"MClash only removes a command-line link that points to this copy of the app." = "MClash only removes a command-line link that points to this copy of the app.";
+"MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin." = "MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin.";

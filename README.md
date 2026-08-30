@@ -116,19 +116,16 @@ Release builds include a signed `mclashctl` helper at
 needed, discovers the current user's private Unix socket, sends one JSON-RPC
 request, and prints one JSON-RPC response to stdout.
 
-```sh
-/Applications/MClash.app/Contents/Helpers/mclashctl capabilities --pretty
-/Applications/MClash.app/Contents/Helpers/mclashctl status --pretty
-/Applications/MClash.app/Contents/Helpers/mclashctl core.connect
-/Applications/MClash.app/Contents/Helpers/mclashctl routing.mode.set \
-  --params '{"mode":"rule"}'
-```
-
-For a stable shell command, link the helper instead of copying it:
+In **Settings → Advanced**, choose **Install Command Line Tool** to create
+`~/.local/bin/mclashctl`. MClash links to the helper in the app's current
+location and never replaces an existing file or different link. Add
+`~/.local/bin` to your shell or agent `PATH` if it is not already present.
 
 ```sh
-mkdir -p ~/.local/bin
-ln -sf /Applications/MClash.app/Contents/Helpers/mclashctl ~/.local/bin/mclashctl
+mclashctl capabilities --pretty
+mclashctl status --pretty
+mclashctl core.connect
+mclashctl routing.mode.set --params '{"mode":"rule"}'
 ```
 
 `system.capabilities` is the authoritative operation list for the installed
