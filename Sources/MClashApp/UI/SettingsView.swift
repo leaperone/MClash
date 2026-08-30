@@ -294,6 +294,7 @@ struct SettingsView: View {
                         }
                         .disabled(
                             commandLineToolStatus == .conflict
+                                || commandLineToolStatus == .unsafeSource
                                 || commandLineToolStatus == .unsafeParent
                                 || commandLineToolStatus == .unavailable
                         )
@@ -405,6 +406,14 @@ struct SettingsView: View {
         } else if commandLineToolStatus == .unavailable {
             Label(
                 "The bundled mclashctl helper is missing or not executable.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
+        } else if commandLineToolStatus == .unsafeSource {
+            Label(
+                "Move MClash directly to /Applications before installing its command-line tool.",
                 systemImage: "exclamationmark.triangle.fill"
             )
             .font(.caption)

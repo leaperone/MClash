@@ -117,9 +117,9 @@ needed, discovers the current user's private Unix socket, sends one JSON-RPC
 request, and prints one JSON-RPC response to stdout.
 
 In **Settings → Advanced**, choose **Install Command Line Tool** to create
-`~/.local/bin/mclashctl`. MClash links to the helper in the app's current
-location and never replaces an existing file or different link. Add
-`~/.local/bin` to your shell or agent `PATH` if it is not already present.
+`~/.local/bin/mclashctl`. MClash must be directly inside `/Applications`; it
+links to that trusted helper and never replaces an existing file or different
+link. Add `~/.local/bin` to your shell or agent `PATH` if it is not already present.
 
 ```sh
 mclashctl capabilities --pretty

@@ -18,6 +18,15 @@ enum ConfigurationAutomationLimits {
     static let tagBytes = 128
     static let aliasBytes = 256
     static let regionBytes = 128
+    static let nameBytes = 256
+    static let matcherValueBytes = 1_024
+    static let ruleTextBytes = 2_048
+    static let dnsTextBytes = 1_024
+    static let bindAddressBytes = 255
+    static let sourceURLBytes = 2_048
+    static let compiledYAMLBytes = 4 * 1_024 * 1_024
+    static let returnedDiagnostics = 256
+    static let responseHeadroomBytes = 16 * 1_024
     static let matcherExpansionPerRule = 4_096
     static let matcherExpansionPerWorkspace = 16_384
     static let matcherExpansionPerPlan = 65_536
@@ -168,6 +177,12 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: ProxyGroup?) throws -> ProxyGroup {
+        try requireAutomationText(
+            name,
+            maximumBytes: ConfigurationAutomationLimits.nameBytes,
+            field: "proxyGroups.name",
+            nonempty: true
+        )
         try requireAutomationCount(
             membersUpdate?.count ?? existing?.members.count ?? 0,
             maximum: ConfigurationAutomationLimits.groupMembers,
@@ -230,6 +245,12 @@ struct ConfigurationAutomationMatcher: Codable, Equatable, Sendable {
         guard let value else {
             throw ConfigurationAutomationError.invalidInput("\(kind.rawValue) requires value")
         }
+        try requireAutomationText(
+            value,
+            maximumBytes: ConfigurationAutomationLimits.matcherValueBytes,
+            field: "rules.matchersUpdate.value",
+            nonempty: true
+        )
         switch kind {
         case .application: return .application(value)
         case .processPath: return .processPath(value)
@@ -356,12 +377,26 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: RuleSet?) throws -> RuleSet {
+        try requireAutomationText(
+            name,
+            maximumBytes: ConfigurationAutomationLimits.nameBytes,
+            field: "ruleSets.name",
+            nonempty: true
+        )
         let rules = rulesUpdate ?? existing?.rules ?? []
         try requireAutomationCount(
             rules.count,
             maximum: ConfigurationAutomationLimits.ruleSetRules,
             field: "ruleSets.rulesUpdate"
         )
+        for rule in rules {
+            try requireAutomationText(
+                rule,
+                maximumBytes: ConfigurationAutomationLimits.ruleTextBytes,
+                field: "ruleSets.rulesUpdate",
+                nonempty: true
+            )
+        }
         let sourceURL: URL?
         if removeSourceURL == true {
             guard sourceURLUpdate == nil else {
@@ -371,6 +406,11 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
             }
             sourceURL = nil
         } else if let sourceURLUpdate {
+            try requireAutomationText(
+                sourceURLUpdate,
+                maximumBytes: ConfigurationAutomationLimits.sourceURLBytes,
+                field: "ruleSets.sourceURLUpdate"
+            )
             guard let parsed = URL(string: sourceURLUpdate),
                   ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""),
                   parsed.host?.isEmpty == false else {
@@ -421,6 +461,12 @@ struct ConfigurationAutomationDNSPolicy: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: DNSPolicy?) throws -> DNSPolicy {
+        try requireAutomationText(
+            name,
+            maximumBytes: ConfigurationAutomationLimits.nameBytes,
+            field: "dnsPolicies.name",
+            nonempty: true
+        )
         guard !(removeProxyServer == true && proxyServerUpdate != nil) else {
             throw ConfigurationAutomationError.invalidInput(
                 "proxyServerUpdate and removeProxyServer cannot be used together"
@@ -445,6 +491,29 @@ struct ConfigurationAutomationDNSPolicy: Codable, Equatable, Sendable {
             maximum: ConfigurationAutomationLimits.dnsRules,
             field: "dnsPolicies.rulesUpdate"
         )
+        for (field, values) in [
+            ("dnsPolicies.nameserversUpdate", nameservers),
+            ("dnsPolicies.fallbackNameserversUpdate", fallbackNameservers),
+            ("dnsPolicies.rulesUpdate", rules),
+        ] {
+            for value in values {
+                try requireAutomationText(
+                    value,
+                    maximumBytes: ConfigurationAutomationLimits.dnsTextBytes,
+                    field: field,
+                    nonempty: true
+                )
+            }
+        }
+        if let proxyServer = removeProxyServer == true
+            ? nil : (proxyServerUpdate ?? existing?.proxyServer) {
+            try requireAutomationText(
+                proxyServer,
+                maximumBytes: ConfigurationAutomationLimits.dnsTextBytes,
+                field: "dnsPolicies.proxyServerUpdate",
+                nonempty: true
+            )
+        }
         return DNSPolicy(
             id: DNSPolicyID(rawValue: try automationUUID(id, field: "dnsPolicies.id")),
             name: name,
@@ -478,7 +547,13 @@ struct ConfigurationAutomationEntrance: Codable, Equatable, Sendable {
     }
 
     func value() throws -> Entrance {
-        Entrance(
+        try requireAutomationText(
+            bindAddress,
+            maximumBytes: ConfigurationAutomationLimits.bindAddressBytes,
+            field: "entrances.bindAddress",
+            nonempty: enabled
+        )
+        return Entrance(
             id: EntranceID(rawValue: try automationUUID(id, field: "entrances.id")),
             kind: kind,
             enabled: enabled,
@@ -526,42 +601,60 @@ struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: Workspace?, revision: Int) throws -> Workspace {
+        try requireAutomationText(
+            name,
+            maximumBytes: ConfigurationAutomationLimits.nameBytes,
+            field: "workspaces.name",
+            nonempty: true
+        )
         let nodeIDs = nodeIDsUpdate ?? existing?.nodeIDs.map {
             $0.rawValue.uuidString.lowercased()
         } ?? []
-        try requireAutomationCount(
-            nodeIDs.count,
-            maximum: ConfigurationAutomationLimits.workspaceNodeIDs,
-            field: "workspaces.nodeIDsUpdate"
-        )
+        let proxyGroupIDs = proxyGroupIDsUpdate ?? existing?.proxyGroupIDs.map {
+            $0.rawValue.uuidString.lowercased()
+        } ?? []
+        let ruleIDs = ruleIDsUpdate ?? existing?.ruleIDs.map {
+            $0.rawValue.uuidString.lowercased()
+        } ?? []
+        let ruleSetIDs = ruleSetIDsUpdate ?? existing?.ruleSetIDs.map {
+            $0.rawValue.uuidString.lowercased()
+        } ?? []
+        let entranceIDs = entranceIDsUpdate ?? existing?.entranceIDs.map {
+            $0.rawValue.uuidString.lowercased()
+        } ?? []
+        for (values, maximum, field) in [
+            (nodeIDs, ConfigurationAutomationLimits.workspaceNodeIDs, "nodeIDsUpdate"),
+            (proxyGroupIDs, ConfigurationAutomationLimits.proxyGroups, "proxyGroupIDsUpdate"),
+            (ruleIDs, ConfigurationAutomationLimits.rules, "ruleIDsUpdate"),
+            (ruleSetIDs, ConfigurationAutomationLimits.ruleSets, "ruleSetIDsUpdate"),
+            (entranceIDs, ConfigurationAutomationLimits.entrances, "entranceIDsUpdate"),
+        ] {
+            try requireAutomationCount(
+                values.count,
+                maximum: maximum,
+                field: "workspaces.\(field)"
+            )
+        }
         return Workspace(
             id: WorkspaceID(rawValue: try automationUUID(id, field: "workspaces.id")),
             name: name,
             nodeIDs: try nodeIDs.map {
                 NodeID(rawValue: try automationUUID($0, field: "workspaces.nodeIDs"))
             },
-            proxyGroupIDs: try (proxyGroupIDsUpdate ?? existing?.proxyGroupIDs.map {
-                $0.rawValue.uuidString.lowercased()
-            } ?? []).map {
+            proxyGroupIDs: try proxyGroupIDs.map {
                 ProxyGroupID(rawValue: try automationUUID($0, field: "workspaces.proxyGroupIDs"))
             },
-            ruleIDs: try (ruleIDsUpdate ?? existing?.ruleIDs.map {
-                $0.rawValue.uuidString.lowercased()
-            } ?? []).map {
+            ruleIDs: try ruleIDs.map {
                 RoutingRuleID(rawValue: try automationUUID($0, field: "workspaces.ruleIDs"))
             },
-            ruleSetIDs: try (ruleSetIDsUpdate ?? existing?.ruleSetIDs.map {
-                $0.rawValue.uuidString.lowercased()
-            } ?? []).map {
+            ruleSetIDs: try ruleSetIDs.map {
                 RuleSetID(rawValue: try automationUUID($0, field: "workspaces.ruleSetIDs"))
             },
             dnsPolicyID: DNSPolicyID(rawValue: try automationUUID(
                 dnsPolicyID,
                 field: "workspaces.dnsPolicyID"
             )),
-            entranceIDs: try (entranceIDsUpdate ?? existing?.entranceIDs.map {
-                $0.rawValue.uuidString.lowercased()
-            } ?? []).map {
+            entranceIDs: try entranceIDs.map {
                 EntranceID(rawValue: try automationUUID($0, field: "workspaces.entranceIDs"))
             },
             revision: revision
@@ -792,6 +885,7 @@ struct ConfigurationAutomationPlan: Codable, Equatable, Sendable {
     let changed: Bool
     let valid: Bool
     let diagnostics: [ConfigurationDiagnostic]
+    let diagnosticCount: Int
     let compilations: [ConfigurationAutomationCompilation]
 }
 
@@ -828,6 +922,7 @@ struct ConfigurationAutomationSnapshot: Codable, Equatable, Sendable {
     let lastRuntimeSnapshot: ConfigurationAutomationRuntimeSnapshot?
     let unifiedConfigurationEnabled: Bool
     let diagnostics: [ConfigurationDiagnostic]
+    let diagnosticCount: Int
 }
 
 struct ConfigurationAutomationDependency: Codable, Equatable, Sendable {

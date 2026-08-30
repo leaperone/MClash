@@ -1383,6 +1383,11 @@
 "Proxy providers: %@" = "프록시 프로바이더: %@";
 "Proxy selection is temporarily unavailable" = "프록시를 일시적으로 선택할 수 없음";
 "Quit MClash safely" = "MClash 안전하게 종료";
+"Read the safe editable Configuration projection" = "안전하게 편집 가능한 구성 프로젝션 읽기";
+"Validate and compile a Configuration projection without saving it" = "구성 프로젝션을 저장하지 않고 검증 및 컴파일";
+"Save desired Configuration without changing the current proxy session" = "현재 프록시 세션을 변경하지 않고 원하는 구성 저장";
+"Delete one unreferenced Configuration object" = "참조되지 않는 구성 객체 하나 삭제";
+"Compile and activate one Configuration workspace" = "구성 작업 공간 하나를 컴파일하고 활성화";
 "Ready" = "준비됨";
 "Reconnect MClash to restore this Profile’s controller." = "이 프로필의 컨트롤러를 복원하려면 MClash에 다시 연결하십시오.";
 "Redirect" = "리디렉션";
@@ -1452,6 +1457,9 @@
 "Rules were not evaluated and the flow was handed back to macOS (fail-open)." = "규칙을 평가하지 않고 흐름을 macOS로 반환했습니다(장애 시 허용).";
 "Rules were not evaluated and the flow was handed back to macOS." = "규칙을 평가하지 않고 흐름을 macOS로 반환했습니다.";
 "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@" = "규칙: %d\n예상 리비전: %@\n앱 라우팅 활성화: %@\nDNS 활성화: %@";
+"Expected revision: %@\nObjects: %@" = "예상 리비전: %@\n객체: %@";
+"Configuration object: %@\nID: %@\nExpected revision: %@" = "구성 객체: %@\nID: %@\n예상 리비전: %@";
+"Workspace ID: %@\nExpected revision: %@" = "작업 공간 ID: %@\n예상 리비전: %@";
 "Runtime overrides do not support profiles containing multiple YAML documents." = "런타임 재정의는 여러 YAML 문서가 포함된 프로필을 지원하지 않습니다.";
 "Runtime overrides use unsupported schema version %d." = "런타임 재정의에서 지원되지 않는 스키마 버전 %d을(를) 사용합니다.";
 "Runtime rule overrides do not support profiles containing duplicate top-level rules sections." = "런타임 규칙 재정의는 중복된 최상위 rules 섹션이 포함된 프로필을 지원하지 않습니다.";
@@ -1879,6 +1887,7 @@
 "MClash Select" = "MClash 선택";
 "MClash Workspace rollback failed: %@" = "MClash 작업 공간 롤백에 실패했습니다: %@";
 "MClash Workspace state rollback failed: %@" = "MClash 작업 공간 상태 롤백에 실패했습니다: %@";
+"MClash Workspace durable state reload failed: %@" = "MClash 작업 공간 영구 상태를 다시 불러오지 못했습니다: %@";
 "MClash configuration storage is unavailable" = "MClash 구성 저장소를 사용할 수 없음";
 "MClash configuration storage is unavailable." = "MClash 구성 저장소를 사용할 수 없습니다.";
 "MClash configuration synchronization failed: %@" = "MClash 구성 동기화에 실패했습니다: %@";

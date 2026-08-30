@@ -1384,6 +1384,11 @@
 "Proxy providers: %@" = "Fournisseurs de proxy : %@";
 "Proxy selection is temporarily unavailable" = "La sélection du proxy est temporairement indisponible";
 "Quit MClash safely" = "Quitter MClash en toute sécurité";
+"Read the safe editable Configuration projection" = "Lire la projection de configuration sûre et modifiable";
+"Validate and compile a Configuration projection without saving it" = "Valider et compiler une projection de configuration sans l’enregistrer";
+"Save desired Configuration without changing the current proxy session" = "Enregistrer la configuration souhaitée sans modifier la session proxy actuelle";
+"Delete one unreferenced Configuration object" = "Supprimer un objet de configuration non référencé";
+"Compile and activate one Configuration workspace" = "Compiler et activer un espace de travail de configuration";
 "Ready" = "Prêt";
 "Reconnect MClash to restore this Profile’s controller." = "Reconnectez MClash pour restaurer le contrôleur de ce profil.";
 "Redirect" = "Redirect";
@@ -1453,6 +1458,9 @@
 "Rules were not evaluated and the flow was handed back to macOS (fail-open)." = "Les règles n’ont pas été évaluées et le flux a été rendu à macOS (repli permissif).";
 "Rules were not evaluated and the flow was handed back to macOS." = "Les règles n'ont pas été évaluées et le flux a été renvoyé à macOS.";
 "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@" = "Règles : %d\nRévision attendue : %@\nRoutage des applications activé : %@\nDNS activé : %@";
+"Expected revision: %@\nObjects: %@" = "Révision attendue : %@\nObjets : %@";
+"Configuration object: %@\nID: %@\nExpected revision: %@" = "Objet de configuration : %@\nID : %@\nRévision attendue : %@";
+"Workspace ID: %@\nExpected revision: %@" = "ID de l’espace de travail : %@\nRévision attendue : %@";
 "Runtime overrides do not support profiles containing multiple YAML documents." = "Les remplacements d'exécution ne prennent pas en charge les profils contenant plusieurs documents YAML.";
 "Runtime overrides use unsupported schema version %d." = "Les remplacements d'exécution utilisent une version de schéma non prise en charge %d.";
 "Runtime rule overrides do not support profiles containing duplicate top-level rules sections." = "Les remplacements de règles d'exécution ne prennent pas en charge les profils contenant des sections de règles de niveau supérieur en double.";
@@ -1880,6 +1888,7 @@
 "MClash Select" = "Sélection MClash";
 "MClash Workspace rollback failed: %@" = "Échec du retour en arrière de l’espace de travail MClash : %@";
 "MClash Workspace state rollback failed: %@" = "Échec du retour en arrière de l’état de l’espace de travail MClash : %@";
+"MClash Workspace durable state reload failed: %@" = "Échec du rechargement de l’état persistant de l’espace de travail MClash : %@";
 "MClash configuration storage is unavailable" = "Le stockage de configuration MClash est indisponible";
 "MClash configuration storage is unavailable." = "Le stockage de configuration MClash est indisponible.";
 "MClash configuration synchronization failed: %@" = "Échec de la synchronisation de la configuration MClash : %@";

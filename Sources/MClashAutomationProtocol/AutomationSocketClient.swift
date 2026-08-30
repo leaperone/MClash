@@ -457,6 +457,7 @@ private func connectUnixSocket(
     try withUnixSocketAddress(path: path) { address, length in
         var address = address
         while true {
+            try ensureAutomationDeadline(deadline)
             let result = withUnsafePointer(to: &address) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                     Darwin.connect(descriptor, $0, length)

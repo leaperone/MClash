@@ -1633,6 +1633,9 @@ final class AppModel {
         let sourceOffset = min(max(0, sourceOffset), configurationDocument.sources.count)
         let sourceLimit = min(max(1, sourceLimit), 100)
         let sourceEnd = min(configurationDocument.sources.count, sourceOffset + sourceLimit)
+        let projectedDiagnostics = configurationAutomationDiagnosticProjection(
+            configurationDiagnostics
+        )
         return ConfigurationAutomationSnapshot(
             configurationRevision: configurationRevision.uuidString.lowercased(),
             document: ConfigurationAutomationDocument(configurationDocument),
@@ -1693,14 +1696,8 @@ final class AppModel {
                 ConfigurationAutomationRuntimeSnapshot.init
             ),
             unifiedConfigurationEnabled: unifiedConfigurationEnabled,
-            diagnostics: configurationDiagnostics.map {
-                ConfigurationDiagnostic(
-                    severity: $0.severity,
-                    code: $0.code,
-                    subject: $0.subject,
-                    message: String(redactedDiagnosticText($0.message).prefix(1_024))
-                )
-            }
+            diagnostics: projectedDiagnostics.values,
+            diagnosticCount: projectedDiagnostics.total
         )
     }
 
@@ -1709,9 +1706,11 @@ final class AppModel {
         expectedRevision: UUID
     ) throws -> ConfigurationAutomationPlan {
         try requireConfigurationRevision(expectedRevision)
-        return try makeConfigurationAutomationPlan(
+        let plan = try makeConfigurationAutomationPlan(
             candidate: document.applying(to: configurationDocument)
         )
+        try requireConfigurationAutomationPlanBudget(plan)
+        return plan
     }
 
     func applyConfigurationAutomationDocument(
@@ -1725,9 +1724,14 @@ final class AppModel {
         try requireConfigurationRevision(expectedRevision)
         let candidate = try document.applying(to: configurationDocument)
         let plan = try makeConfigurationAutomationPlan(candidate: candidate)
+        try requireConfigurationAutomationPlanBudget(plan)
         guard plan.valid else {
             throw ConfigurationAutomationError.invalidConfiguration(plan.diagnostics)
         }
+        try requireConfigurationAutomationMutationBudget(
+            candidate: candidate,
+            plan: plan
+        )
         if plan.changed {
             try await persistConfigurationDocument(candidate)
         }
@@ -1784,9 +1788,14 @@ final class AppModel {
         }
         bumpConfigurationWorkspaceRevisions(in: &candidate)
         let plan = try makeConfigurationAutomationPlan(candidate: candidate)
+        try requireConfigurationAutomationPlanBudget(plan)
         guard plan.valid else {
             throw ConfigurationAutomationError.invalidConfiguration(plan.diagnostics)
         }
+        try requireConfigurationAutomationMutationBudget(
+            candidate: candidate,
+            plan: plan
+        )
         try await persistConfigurationDocument(candidate)
         return plan
     }
@@ -1880,12 +1889,83 @@ final class AppModel {
                     message: String(redactedDiagnosticText($0.message).prefix(1_024))
                 )
             }
+        let projectedDiagnostics = configurationAutomationDiagnosticProjection(diagnostics)
         return ConfigurationAutomationPlan(
             changed: candidate != configurationDocument,
             valid: !diagnostics.contains(where: { $0.severity == .error }),
-            diagnostics: diagnostics,
+            diagnostics: projectedDiagnostics.values,
+            diagnosticCount: projectedDiagnostics.total,
             compilations: compilations
         )
+    }
+
+    private func configurationAutomationDiagnosticProjection(
+        _ diagnostics: [ConfigurationDiagnostic]
+    ) -> (values: [ConfigurationDiagnostic], total: Int) {
+        let values = diagnostics.prefix(ConfigurationAutomationLimits.returnedDiagnostics).map {
+            ConfigurationDiagnostic(
+                severity: $0.severity,
+                code: $0.code,
+                subject: String($0.subject.prefix(256)),
+                message: String(redactedDiagnosticText($0.message).prefix(1_024))
+            )
+        }
+        return (values, diagnostics.count)
+    }
+
+    private func requireConfigurationAutomationPlanBudget(
+        _ plan: ConfigurationAutomationPlan
+    ) throws {
+        let maximum = MClashAutomationProtocol.maximumFrameSize
+            - ConfigurationAutomationLimits.responseHeadroomBytes
+        guard try JSONEncoder.automation.encode(plan).count <= maximum else {
+            throw ConfigurationAutomationError.invalidInput(
+                "Configuration plan exceeds the 1 MiB response limit"
+            )
+        }
+    }
+
+    private func requireConfigurationAutomationMutationBudget(
+        candidate: ConfigurationDocument,
+        plan: ConfigurationAutomationPlan
+    ) throws {
+        let projectedDiagnostics = configurationAutomationDiagnosticProjection(
+            candidate.diagnostics()
+        )
+        let snapshot = ConfigurationAutomationSnapshot(
+            configurationRevision: configurationRevision.uuidString.lowercased(),
+            document: ConfigurationAutomationDocument(candidate),
+            sources: ConfigurationAutomationPage<ConfigurationAutomationSourceSummary>(
+                items: [],
+                offset: candidate.sources.count,
+                limit: 1,
+                total: candidate.sources.count,
+                hasMore: false
+            ),
+            nodes: ConfigurationAutomationPage<ConfigurationAutomationNodeSummary>(
+                items: [],
+                offset: candidate.nodes.count,
+                limit: 1,
+                total: candidate.nodes.count,
+                hasMore: false
+            ),
+            currentWorkspaceID: candidate.currentWorkspaceID?
+                .rawValue.uuidString.lowercased(),
+            lastRuntimeSnapshot: candidate.lastRuntimeSnapshot.map(
+                ConfigurationAutomationRuntimeSnapshot.init
+            ),
+            unifiedConfigurationEnabled: unifiedConfigurationEnabled,
+            diagnostics: projectedDiagnostics.values,
+            diagnosticCount: projectedDiagnostics.total
+        )
+        let maximum = MClashAutomationProtocol.maximumFrameSize
+            - ConfigurationAutomationLimits.responseHeadroomBytes
+        guard try JSONEncoder.automation.encode(snapshot).count <= maximum,
+              try JSONEncoder.automation.encode(plan).count <= maximum else {
+            throw ConfigurationAutomationError.invalidInput(
+                "Configuration response exceeds the 1 MiB protocol limit"
+            )
+        }
     }
 
     private func configurationAutomationStructuralDiagnostics(
@@ -2184,6 +2264,18 @@ final class AppModel {
             throw ConfigurationAutomationError.operationInProgress
         }
         defer { end(.changeRuntimeSettings) }
+        guard networkCaptureActivationOperation == nil,
+              networkCaptureDeactivationOperation == nil,
+              systemProxyEnableOperation == nil,
+              systemProxyRestoreOperation == nil else {
+            throw ConfigurationAutomationError.operationInProgress
+        }
+        switch networkCaptureState {
+        case .enabling, .awaitingUserApproval, .disabling:
+            throw ConfigurationAutomationError.operationInProgress
+        case .off, .waitingForConnection, .on, .requiresReboot, .failed:
+            break
+        }
         if let expectedConfigurationRevision {
             try requireConfigurationRevision(expectedConfigurationRevision)
         }
@@ -2198,6 +2290,20 @@ final class AppModel {
         let previousNetworkCapturePreferences = networkCapturePreferences
         let previousActiveConfigURL = activeConfigURL
         let shouldRestoreSystemProxy = systemProxyEnabled
+        let previousNetworkCaptureWasActive: Bool = {
+            if case .on = networkCaptureState { return true }
+            return false
+        }()
+        let previousSystemProxyWasOn = systemProxyState == .on
+        let previousSystemProxySnapshot: SystemProxySnapshot?
+        if previousSystemProxyWasOn {
+            guard let profileLayout else { throw AppModelError.profileStoreUnavailable }
+            previousSystemProxySnapshot = try await systemProxyManager.loadSnapshot(
+                from: systemProxySnapshotURL(layout: profileLayout)
+            )
+        } else {
+            previousSystemProxySnapshot = nil
+        }
         let compiled: CompiledConfiguration
         do {
             compiled = try compileConfiguration(workspaceID: workspace.id)
@@ -2222,7 +2328,21 @@ final class AppModel {
             let disconnectError = errorMessage ?? AppLocalization.string(
                 "The current proxy session could not be stopped safely."
             )
-            throw AppModelError.profileActivationFailed(disconnectError)
+            let activationError = AppModelError.profileActivationFailed(disconnectError)
+            do {
+                try await restoreInterruptedConfigurationDisconnect(
+                    previousNetworkCapturePreferences: previousNetworkCapturePreferences,
+                    networkCaptureWasActive: previousNetworkCaptureWasActive,
+                    systemProxyWasOn: previousSystemProxyWasOn,
+                    systemProxySnapshot: previousSystemProxySnapshot
+                )
+            } catch {
+                throw NetworkCaptureTransactionFailure(
+                    updateReason: activationError.localizedDescription,
+                    rollbackReason: error.localizedDescription
+                )
+            }
+            throw activationError
         }
         var candidateConnectionAttempted = false
         do {
@@ -2409,6 +2529,97 @@ final class AppModel {
             }
             throw activationError
         }
+    }
+
+    private func restoreInterruptedConfigurationDisconnect(
+        previousNetworkCapturePreferences: NetworkCapturePreferences,
+        networkCaptureWasActive: Bool,
+        systemProxyWasOn: Bool,
+        systemProxySnapshot: SystemProxySnapshot?
+    ) async throws {
+        networkCapturePreferences = previousNetworkCapturePreferences
+        let supervisorState = await supervisor.state()
+        if case .running = supervisorState, controllerIsReady {
+            try await prepareProfileRoutingSessions(
+                for: previousNetworkCapturePreferences.enabled
+                    ? previousNetworkCapturePreferences.snapshot.rules : [],
+                captureEnabled: previousNetworkCapturePreferences.enabled,
+                startAuxiliary: true
+            )
+        } else {
+            guard await cleanupFailedConnectionAttempt() else {
+                throw AppModelError.profileActivationFailed(
+                    AppLocalization.string(
+                        "The current proxy session could not be stopped safely."
+                    )
+                )
+            }
+            guard await performConnect(), isConnected, controllerIsReady else {
+                throw AppModelError.profileActivationFailed(
+                    AppLocalization.string(
+                        "the previous session could not be restarted"
+                    )
+                )
+            }
+        }
+        let expectedRevision = previousNetworkCapturePreferences.snapshot.revision
+        if networkCaptureWasActive,
+           !networkCaptureState.isActive(revision: expectedRevision) {
+            await performNetworkCaptureActivation()
+            guard networkCaptureState.isActive(revision: expectedRevision) else {
+                throw AppModelError.profileActivationFailed(
+                    AppLocalization.string(
+                        "The restored App Routing configuration could not be activated."
+                    )
+                )
+            }
+        }
+        guard systemProxyWasOn, systemProxyState != .on else { return }
+        guard let systemProxySnapshot,
+              let profileLayout,
+              let endpoints = currentSystemProxyEndpoints() else {
+            throw AppModelError.systemProxyRestoreFailed
+        }
+        let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
+        systemProxyState = .enabling
+        do {
+            try await systemProxyManager.save(
+                snapshot: systemProxySnapshot,
+                to: snapshotURL
+            )
+        } catch {
+            systemProxyState = .failed(error.localizedDescription)
+            throw error
+        }
+        do {
+            try await systemProxyManager.apply(
+                endpoints: endpoints,
+                bypassDomains: systemProxyPreferences.effectiveBypassDomains
+            )
+            guard try await systemProxyManager.configurationMatches(
+                endpoints: endpoints,
+                bypassDomains: systemProxyPreferences.effectiveBypassDomains
+            ) else {
+                throw AppModelError.systemProxyGuardVerificationFailed
+            }
+        } catch {
+            let updateError = error
+            do {
+                try await systemProxyManager.restoreSnapshotAndRemove(from: snapshotURL)
+                systemProxyState = .off
+            } catch {
+                systemProxyState = .failed(error.localizedDescription)
+                throw NetworkCaptureTransactionFailure(
+                    updateReason: updateError.localizedDescription,
+                    rollbackReason: error.localizedDescription
+                )
+            }
+            throw updateError
+        }
+        systemProxyGuardFailure = nil
+        systemProxyGuardLastVerifiedAt = Date()
+        systemProxyState = .on
+        startSystemProxyGuard(endpoints: endpoints)
     }
 
     func importProfile() async {

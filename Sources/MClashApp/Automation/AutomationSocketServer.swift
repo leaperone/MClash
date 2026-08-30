@@ -278,7 +278,7 @@ final class AutomationSocketServer: @unchecked Sendable {
                     code: -32001,
                     type: "operation_timeout",
                     message: pairingTimedOut
-                        ? "The pairing outcome is indeterminate and cannot be recovered with the same request id; start a new pairing request"
+                        ? "The pairing outcome is indeterminate and cannot be recovered automatically; do not retry automatically"
                         : "The MClash operation is still running or its outcome is indeterminate; query the same execution with the same request id",
                     retryable: !pairingTimedOut,
                     data: .object([

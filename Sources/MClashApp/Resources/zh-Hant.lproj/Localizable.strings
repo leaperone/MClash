@@ -1384,6 +1384,11 @@
 "Proxy providers: %@" = "代理提供者：%@";
 "Proxy selection is temporarily unavailable" = "代理選擇暫時不可用";
 "Quit MClash safely" = "安全結束 MClash";
+"Read the safe editable Configuration projection" = "讀取可安全編輯的設定投影";
+"Validate and compile a Configuration projection without saving it" = "驗證並編譯設定投影，但不儲存";
+"Save desired Configuration without changing the current proxy session" = "儲存目標設定，但不變更目前的代理工作階段";
+"Delete one unreferenced Configuration object" = "刪除一個未被參照的設定物件";
+"Compile and activate one Configuration workspace" = "編譯並啟用一個設定工作區";
 "Ready" = "就緒";
 "Reconnect MClash to restore this Profile’s controller." = "重新連線 MClash，以還原此設定檔的控制器。";
 "Redirect" = "Redirect";
@@ -1453,6 +1458,9 @@
 "Rules were not evaluated and the flow was handed back to macOS (fail-open)." = "未評估規則，流量已交還 macOS（故障時放行）。";
 "Rules were not evaluated and the flow was handed back to macOS." = "未評估規則，流量已交還 macOS。";
 "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@" = "規則：%d\n預期修訂版本：%@\n應用程式分流已啟用：%@\nDNS 已啟用：%@";
+"Expected revision: %@\nObjects: %@" = "預期修訂版本：%@\n物件：%@";
+"Configuration object: %@\nID: %@\nExpected revision: %@" = "設定物件：%@\nID：%@\n預期修訂版本：%@";
+"Workspace ID: %@\nExpected revision: %@" = "工作區 ID：%@\n預期修訂版本：%@";
 "Runtime overrides do not support profiles containing multiple YAML documents." = "執行階段覆寫設定不支援包含多個 YAML 檔案的設定檔。";
 "Runtime overrides use unsupported schema version %d." = "執行階段覆寫設定使用了不受支援的架構版本 %d。";
 "Runtime rule overrides do not support profiles containing duplicate top-level rules sections." = "執行階段規則覆寫設定不支援包含重複頂層 rules 部分的設定檔。";
@@ -1880,6 +1888,7 @@
 "MClash Select" = "MClash 選擇";
 "MClash Workspace rollback failed: %@" = "MClash 工作區回復失敗：%@";
 "MClash Workspace state rollback failed: %@" = "MClash 工作區狀態回復失敗：%@";
+"MClash Workspace durable state reload failed: %@" = "MClash 工作區持久狀態重新載入失敗：%@";
 "MClash configuration storage is unavailable" = "MClash 設定儲存空間無法使用";
 "MClash configuration storage is unavailable." = "MClash 設定儲存空間無法使用。";
 "MClash configuration synchronization failed: %@" = "MClash 設定同步失敗：%@";

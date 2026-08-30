@@ -1383,6 +1383,11 @@
 "Proxy providers: %@" = "Proxy providers: %@";
 "Proxy selection is temporarily unavailable" = "Proxy selection is temporarily unavailable";
 "Quit MClash safely" = "Quit MClash safely";
+"Read the safe editable Configuration projection" = "Read the safe editable Configuration projection";
+"Validate and compile a Configuration projection without saving it" = "Validate and compile a Configuration projection without saving it";
+"Save desired Configuration without changing the current proxy session" = "Save desired Configuration without changing the current proxy session";
+"Delete one unreferenced Configuration object" = "Delete one unreferenced Configuration object";
+"Compile and activate one Configuration workspace" = "Compile and activate one Configuration workspace";
 "Ready" = "Ready";
 "Reconnect MClash to restore this Profile’s controller." = "Reconnect MClash to restore this Profile’s controller.";
 "Redirect" = "Redirect";
@@ -1452,6 +1457,9 @@
 "Rules were not evaluated and the flow was handed back to macOS (fail-open)." = "Rules were not evaluated and the flow was handed back to macOS (fail-open).";
 "Rules were not evaluated and the flow was handed back to macOS." = "Rules were not evaluated and the flow was handed back to macOS.";
 "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@" = "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@";
+"Expected revision: %@\nObjects: %@" = "Expected revision: %@\nObjects: %@";
+"Configuration object: %@\nID: %@\nExpected revision: %@" = "Configuration object: %@\nID: %@\nExpected revision: %@";
+"Workspace ID: %@\nExpected revision: %@" = "Workspace ID: %@\nExpected revision: %@";
 "Runtime overrides do not support profiles containing multiple YAML documents." = "Runtime overrides do not support profiles containing multiple YAML documents.";
 "Runtime overrides use unsupported schema version %d." = "Runtime overrides use unsupported schema version %d.";
 "Runtime rule overrides do not support profiles containing duplicate top-level rules sections." = "Runtime rule overrides do not support profiles containing duplicate top-level rules sections.";
@@ -1879,6 +1887,7 @@
 "MClash Select" = "MClash Select";
 "MClash Workspace rollback failed: %@" = "MClash Workspace rollback failed: %@";
 "MClash Workspace state rollback failed: %@" = "MClash Workspace state rollback failed: %@";
+"MClash Workspace durable state reload failed: %@" = "MClash Workspace durable state reload failed: %@";
 "MClash configuration storage is unavailable" = "MClash configuration storage is unavailable";
 "MClash configuration storage is unavailable." = "MClash configuration storage is unavailable.";
 "MClash configuration synchronization failed: %@" = "MClash configuration synchronization failed: %@";

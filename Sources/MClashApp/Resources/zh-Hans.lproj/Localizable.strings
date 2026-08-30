@@ -1382,6 +1382,11 @@
 "Proxy providers: %@" = "代理提供方：%@";
 "Proxy selection is temporarily unavailable" = "代理选择暂时不可用";
 "Quit MClash safely" = "安全退出 MClash";
+"Read the safe editable Configuration projection" = "读取可安全编辑的配置投影";
+"Validate and compile a Configuration projection without saving it" = "验证并编译配置投影，但不保存";
+"Save desired Configuration without changing the current proxy session" = "保存目标配置，但不更改当前代理会话";
+"Delete one unreferenced Configuration object" = "删除一个未被引用的配置对象";
+"Compile and activate one Configuration workspace" = "编译并激活一个配置工作区";
 "Ready" = "就绪";
 "Reconnect MClash to restore this Profile’s controller." = "重新连接 MClash，以恢复此配置的控制器。";
 "Redirect" = "Redirect";
@@ -1451,6 +1456,9 @@
 "Rules were not evaluated and the flow was handed back to macOS (fail-open)." = "未评估规则，流量已交还 macOS（故障时放行）。";
 "Rules were not evaluated and the flow was handed back to macOS." = "未评估规则，流量已交还 macOS。";
 "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@" = "规则：%d\n预期修订版本：%@\n应用分流已启用：%@\nDNS 已启用：%@";
+"Expected revision: %@\nObjects: %@" = "预期修订版本：%@\n对象：%@";
+"Configuration object: %@\nID: %@\nExpected revision: %@" = "配置对象：%@\nID：%@\n预期修订版本：%@";
+"Workspace ID: %@\nExpected revision: %@" = "工作区 ID：%@\n预期修订版本：%@";
 "Runtime overrides do not support profiles containing multiple YAML documents." = "运行时覆盖设置不支持包含多个 YAML 文档的配置。";
 "Runtime overrides use unsupported schema version %d." = "运行时覆盖设置使用了不受支持的架构版本 %d。";
 "Runtime rule overrides do not support profiles containing duplicate top-level rules sections." = "运行时规则覆盖设置不支持包含重复顶层 rules 部分的配置。";
@@ -1878,6 +1886,7 @@
 "MClash Select" = "MClash 选择";
 "MClash Workspace rollback failed: %@" = "MClash 工作区回滚失败：%@";
 "MClash Workspace state rollback failed: %@" = "MClash 工作区状态回滚失败：%@";
+"MClash Workspace durable state reload failed: %@" = "MClash 工作区持久状态重新加载失败：%@";
 "MClash configuration storage is unavailable" = "MClash 配置存储不可用";
 "MClash configuration storage is unavailable." = "MClash 配置存储不可用。";
 "MClash configuration synchronization failed: %@" = "MClash 配置同步失败：%@";

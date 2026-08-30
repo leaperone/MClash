@@ -28,7 +28,8 @@ readlink "$HOME/.local/bin/mclashctl"
 ```
 
 Only after confirming that the printed target is the obsolete MClash helper,
-remove that link and use the in-app installer again from the current app:
+remove that link, move MClash directly into `/Applications`, and use the in-app
+installer again:
 
 ```sh
 unlink "$HOME/.local/bin/mclashctl"
@@ -210,9 +211,9 @@ parameter hints from the running version.
 ## Unified Configuration workflow
 
 The Configuration API edits MClash's desired Configuration manifest. It does
-not expose source locations, node hosts, node parameters, subscription secrets,
-or generated Mihomo YAML. `configuration.snapshot` and `configuration.plan`
-require `read.sensitive`; `configuration.apply`, `configuration.delete`, and
+not expose source locations, node host values, node parameter values,
+subscription secrets, or generated Mihomo YAML. `configuration.snapshot` and
+`configuration.plan` require `read.sensitive`; `configuration.apply`, `configuration.delete`, and
 `configuration.workspace.activate` are destructive operations. A standard
 client must pass `--allow-interaction` and receive local approval for each
 destructive call; a trusted client may run them unattended.
@@ -221,8 +222,8 @@ The five methods are:
 
 | Method | Parameters | Result |
 | --- | --- | --- |
-| `configuration.snapshot` | Optional `nodeOffset`, `nodeLimit`, `sourceOffset`, `sourceLimit` | Safe document, paged source/node summaries, revision, runtime metadata, and diagnostics |
-| `configuration.plan` | `document`, `expectedRevision` | `changed`, `valid`, `diagnostics`, `compilations` |
+| `configuration.snapshot` | Optional `nodeOffset`, `nodeLimit`, `sourceOffset`, `sourceLimit` | Safe document, paged source/node summaries, revision, runtime metadata, diagnostics, and `diagnosticCount` |
+| `configuration.plan` | `document`, `expectedRevision` | `changed`, `valid`, `diagnostics`, `diagnosticCount`, `compilations` |
 | `configuration.apply` | `document`, `expectedRevision` | Compact apply receipt |
 | `configuration.delete` | `kind`, `id`, `expectedRevision` | Compact delete receipt; referenced objects are rejected rather than cascaded |
 | `configuration.workspace.activate` | `id`, `expectedRevision` | Compact activation receipt and runtime snapshot |
@@ -292,6 +293,7 @@ Apply returns a compact receipt rather than another Configuration snapshot:
   "changed": true,
   "valid": true,
   "diagnostics": [],
+  "diagnosticCount": 0,
   "compilations": [],
   "currentSessionChanged": false
 }
@@ -331,8 +333,8 @@ mclashctl configuration.workspace.activate \
 ```
 
 Apply and delete receipts contain `configurationRevision`, `changed`, `valid`,
-`diagnostics`, `compilations`, and `currentSessionChanged` (`false`). A delete
-receipt additionally contains `deletedKind` and `deletedID`. An activation
+`diagnostics`, `diagnosticCount`, `compilations`, and `currentSessionChanged`
+(`false`). A delete receipt additionally contains `deletedKind` and `deletedID`. An activation
 receipt contains `configurationRevision`, `workspaceID`, `activated` (`true`),
 `currentSessionChanged`, and `runtimeSnapshot`. Mutations never return the full
 document; call `configuration.snapshot` separately with the required read scope.
@@ -369,10 +371,11 @@ fields preserve their values. Empty `tagsUpdate` clears the tags.
 `regionUpdate` cannot be combined with `removeRegion: true`.
 
 Every other document array is the complete object catalog. Ordinary optional
-model fields such as `workspaceScope`, `port`, and `workspaceOverride` are part
-of that full object; preserve the snapshot value unless clearing it is
-intentional. `remove...` fields are sparse removal flags. Each write-only array
-is a whole replacement, not an append/remove delta. `sourceURLUpdate` and
+model fields such as `workspaceScope` and `port` are part of that full object;
+preserve the snapshot value unless clearing it is intentional.
+`workspaceOverride` must remain nil in v1. `remove...` fields are sparse
+removal flags. Each write-only array is a whole replacement, not an
+append/remove delta. `sourceURLUpdate` and
 `removeSourceURL`, or `proxyServerUpdate` and `removeProxyServer`, are mutually
 exclusive. A rule-set source URL must be HTTP or HTTPS and have a host.
 
@@ -400,6 +403,32 @@ The exact enum values are:
 | Entrance `kind` | `http`, `socks5`, `appRouting`, `tun` |
 | Delete `kind` | `proxyGroup`, `rule`, `ruleSet`, `dnsPolicy`, `entrance`, `workspace` |
 
+The v1 resource limits are deliberately finite. Top-level documents allow at
+most 2,000 node patches, 256 proxy groups, 2,048 rules, 256 rule sets, 64 DNS
+policies, 32 entrances, and 64 workspaces. A group or workspace may reference
+at most 4,096 members or nodes; a rule may contain 256 matchers; a rule set may
+contain 8,192 inline rules; a DNS policy may contain 64 primary and 64 fallback
+nameservers plus 512 policy rules; and a node patch may contain 64 tags. Proxy
+group nesting is limited to 64 levels.
+Workspace group, rule, rule-set, and entrance references are each capped by
+their corresponding top-level catalog limit.
+
+Names and aliases are limited to 256 UTF-8 bytes; tags and regions to 128;
+matcher and DNS values to 1,024; inline rule-set entries and source URLs to
+2,048; and bind addresses to 255. Non-source matcher expansion is limited to
+4,096 entries per rule, 16,384 per workspace, and 65,536 per plan. DNS
+expansion is limited to 4,096 per workspace and 16,384 per plan. Each compiled
+workspace YAML is limited to 4 MiB. At most 256 diagnostics are returned while
+`diagnosticCount` reports the full number.
+
+Enabled relay groups and enabled TUN entrances are rejected by v1, as is any
+entrance `workspaceOverride`. A source-less Mihomo rule cannot combine the
+destination, port, and transport matcher categories. Rules with application,
+process-path, or user-ID matchers keep their AND semantics in App Routing and
+are not widened into Mihomo rules. Inline rule-set entries must be a safe domain
+suffix or a two-field `DOMAIN`, `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, or
+`IP-CIDR6` entry; MClash appends the rule set's `defaultAction` when compiling.
+
 Diagnostics are `{id,severity,code,subject,message}`, where `severity` is
 `warning` or `error`. Compilation summaries are
 `{workspaceID,workspaceRevision,configHash,byteCount,captureRuleCount,captureEnabled,captureDNSEnabled}`.
@@ -407,13 +436,13 @@ An activation `runtimeSnapshot` is
 `{id,workspaceID,workspaceRevision,compilerVersion,mihomoConfigHash,generatedAt,entranceIDs,previousSnapshotID?,applicationSucceeded}`.
 
 The exact snapshot result is
-`{configurationRevision,document,sources,nodes,currentWorkspaceID?,lastRuntimeSnapshot?,unifiedConfigurationEnabled,diagnostics}`.
+`{configurationRevision,document,sources,nodes,currentWorkspaceID?,lastRuntimeSnapshot?,unifiedConfigurationEnabled,diagnostics,diagnosticCount}`.
 Its `sources` and `nodes` are pages shaped as
 `{items,offset,limit,total,hasMore}`. Source items contain
 `{id,kind,displayName,revision,lastFetchedAt?,lastSuccessfulParseAt?,diagnosticCount}`;
 source `kind` is `subscription`, `localFile`, or `pastedConfig`. Node items
 contain
-`{id,displayName,proto,port,sourceLinks,enabled,health,userAlias?,tags,region?,lastSeenAt?,parameterKeys,parameterKeyCount}`.
+`{id,displayName,proto,port,sourceLinks,enabled,health,userAlias?,tags,tagCount,region?,lastSeenAt?,parameterKeys,parameterKeyCount}`.
 `health` is `{availability,latencyMilliseconds?,checkedAt?}`, with availability
 `unknown`, `available`, `unavailable`, `sourceRemoved`, or `unsupported`. Node
 `proto` is `http`, `https`, `socks5`, `shadowsocks`, `vmess`, `vless`, `trojan`,
@@ -436,7 +465,7 @@ page whose `offset` equals that total. Important Configuration error data is:
 | `configuration_invalid` | `diagnostics: [{severity,code,subject,message}]`, `retryWithNewRequestID: true`; correct and start a new execution |
 | `configuration_dependencies` | `dependencies: [{kind,id}]`, `retryWithNewRequestID: true`; remove references and start a new execution. Dependency kinds are `workspace`, `proxyGroup`, `rule`, `ruleSet`, `entrance`, `currentWorkspace`, or `runtimeSnapshot` |
 | `operation_in_progress` | `retryWithSameRequestID: true`; retry the identical request ID after the other operation finishes; this busy response is not cached |
-| `response_too_large` | No retry marker. For a snapshot, reduce its node/source page. If a mutation ever returns this, its outcome is unknown: inspect a fresh snapshot and do not blindly replay it with a new ID |
+| `response_too_large` | No retry marker. For a snapshot, reduce its node/source page. Plan and mutation response budgets are checked before durable writes; if the transport fallback still returns this for a mutation, treat its outcome as unknown, inspect a fresh snapshot, and do not blindly replay it with a new ID |
 
 The `configuration_invalid` error's compact diagnostics omit `id`; diagnostics
 in plans, receipts, and snapshots use the full

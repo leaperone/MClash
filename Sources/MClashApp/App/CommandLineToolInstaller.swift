@@ -6,6 +6,7 @@ struct CommandLineToolInstaller {
         case notInstalled
         case installed
         case conflict
+        case unsafeSource
         case unsafeParent
         case unavailable
     }
@@ -19,17 +20,23 @@ struct CommandLineToolInstaller {
     private static let localDirectoryName = ".local"
     private static let binDirectoryName = "bin"
     private static let linkName = "mclashctl"
+    private static let applicationsPath = "/Applications"
     private static let directoryOpenFlags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
 
     private let helperPath: String
     private let homePath: String
+    private let appBundleName: String
+    private let appIsDirectlyInApplications: Bool
 
     init(bundle: Bundle = .main, fileManager: FileManager = .default) {
-        helperPath = bundle.bundleURL
+        let bundleURL = bundle.bundleURL.standardizedFileURL
+        helperPath = bundleURL
             .appendingPathComponent("Contents/Helpers/mclashctl", isDirectory: false)
-            .standardizedFileURL
             .path
         homePath = fileManager.homeDirectoryForCurrentUser.standardizedFileURL.path
+        appBundleName = bundleURL.lastPathComponent
+        appIsDirectlyInApplications = bundleURL.deletingLastPathComponent().path
+            == Self.applicationsPath
     }
 
     var status: Status {
@@ -71,6 +78,9 @@ struct CommandLineToolInstaller {
         let homeDescriptor = try openHomeDirectory()
         defer { close(homeDescriptor) }
 
+        guard appIsDirectlyInApplications else {
+            throw CommandLineToolInstallationError.unsafeSource
+        }
         guard helperIsAvailable else {
             throw CommandLineToolInstallationError.helperUnavailable
         }
@@ -152,17 +162,85 @@ struct CommandLineToolInstaller {
     }
 
     private var missingLinkStatus: Status {
+        guard appIsDirectlyInApplications else { return .unsafeSource }
         helperIsAvailable ? .notInstalled : .unavailable
     }
 
     private var helperIsAvailable: Bool {
-        guard helperPath.hasPrefix("/") else {
+        guard appIsDirectlyInApplications else { return false }
+        let applicationsDescriptor = open(Self.applicationsPath, Self.directoryOpenFlags)
+        guard applicationsDescriptor >= 0,
+              isTrustedApplicationsDirectory(applicationsDescriptor) else {
+            if applicationsDescriptor >= 0 { close(applicationsDescriptor) }
             return false
         }
+        defer { close(applicationsDescriptor) }
+        guard let bundleDescriptor = openTrustedSourceDirectory(
+            at: applicationsDescriptor,
+            name: appBundleName
+        ) else { return false }
+        defer { close(bundleDescriptor) }
+        guard let contentsDescriptor = openTrustedSourceDirectory(
+            at: bundleDescriptor,
+            name: "Contents"
+        ) else { return false }
+        defer { close(contentsDescriptor) }
+        guard let helpersDescriptor = openTrustedSourceDirectory(
+            at: contentsDescriptor,
+            name: "Helpers"
+        ) else { return false }
+        defer { close(helpersDescriptor) }
+        let helperDescriptor = openat(
+            helpersDescriptor,
+            Self.linkName,
+            O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard helperDescriptor >= 0 else { return false }
+        defer { close(helperDescriptor) }
         var metadata = stat()
-        return lstat(helperPath, &metadata) == 0
+        return fstat(helperDescriptor, &metadata) == 0
             && metadata.st_mode & S_IFMT == S_IFREG
-            && access(helperPath, X_OK) == 0
+            && isTrustedSource(metadata, descriptor: helperDescriptor)
+            && isExecutableByCurrentUser(metadata)
+    }
+
+    private func openTrustedSourceDirectory(
+        at parentDescriptor: Int32,
+        name: String
+    ) -> Int32? {
+        let descriptor = openat(parentDescriptor, name, Self.directoryOpenFlags)
+        guard descriptor >= 0 else { return nil }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFDIR,
+              isTrustedSource(metadata, descriptor: descriptor) else {
+            close(descriptor)
+            return nil
+        }
+        return descriptor
+    }
+
+    private func isTrustedApplicationsDirectory(_ descriptor: Int32) -> Bool {
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0 else { return false }
+        let groupWriteIsTrusted = metadata.st_mode & mode_t(0o020) == 0
+            || getgrnam("admin")?.pointee.gr_gid == metadata.st_gid
+        return metadata.st_mode & S_IFMT == S_IFDIR
+            && metadata.st_uid == 0
+            && metadata.st_mode & mode_t(0o002) == 0
+            && groupWriteIsTrusted
+            && !hasUnsafeExtendedACL(descriptor)
+    }
+
+    private func isTrustedSource(_ metadata: stat, descriptor: Int32) -> Bool {
+        (metadata.st_uid == 0 || metadata.st_uid == getuid())
+            && metadata.st_mode & mode_t(0o022) == 0
+            && !hasUnsafeExtendedACL(descriptor)
+    }
+
+    private func isExecutableByCurrentUser(_ metadata: stat) -> Bool {
+        let permission = metadata.st_uid == getuid() ? S_IXUSR : S_IXOTH
+        return metadata.st_mode & mode_t(permission) != 0
     }
 
     private func openHomeDirectory() throws -> Int32 {
@@ -203,11 +281,41 @@ struct CommandLineToolInstaller {
         guard fstat(descriptor, &metadata) == 0,
               metadata.st_mode & S_IFMT == S_IFDIR,
               metadata.st_uid == getuid(),
-              metadata.st_mode & mode_t(0o022) == 0 else {
+              metadata.st_mode & mode_t(0o022) == 0,
+              !hasUnsafeExtendedACL(descriptor) else {
             close(descriptor)
             throw CommandLineToolInstallationError.unsafeParentDirectory
         }
         return descriptor
+    }
+
+    private func hasUnsafeExtendedACL(_ descriptor: Int32) -> Bool {
+        guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
+            return errno != ENOENT
+        }
+        defer { acl_free(acl) }
+        var entry: acl_entry_t?
+        var result = acl_get_entry(acl, ACL_FIRST_ENTRY, &entry)
+        while result == 0 {
+            guard let entry else { return true }
+            var tag = ACL_UNDEFINED_TAG
+            guard acl_get_tag_type(entry, &tag) == 0 else { return true }
+            if tag == ACL_EXTENDED_ALLOW {
+                var permissions: acl_permset_t?
+                guard acl_get_permset(entry, &permissions) == 0,
+                      let permissions else { return true }
+                for permission in [
+                    ACL_WRITE_DATA, ACL_APPEND_DATA, ACL_DELETE,
+                    ACL_DELETE_CHILD, ACL_WRITE_ATTRIBUTES,
+                    ACL_WRITE_EXTATTRIBUTES, ACL_WRITE_SECURITY,
+                    ACL_CHANGE_OWNER,
+                ] where acl_get_perm_np(permissions, permission) != 0 {
+                    return true
+                }
+            }
+            result = acl_get_entry(acl, ACL_NEXT_ENTRY, &entry)
+        }
+        return errno != EINVAL
     }
 
     private func linkState(in binDescriptor: Int32) -> LinkState {
@@ -232,6 +340,7 @@ private enum CommandLineToolInstallationError: LocalizedError {
     case helperUnavailable
     case destinationOccupied
     case destinationNotManaged
+    case unsafeSource
     case unsafeParentDirectory
 
     var errorDescription: String? {
@@ -247,6 +356,10 @@ private enum CommandLineToolInstallationError: LocalizedError {
         case .destinationNotManaged:
             AppLocalization.string(
                 "MClash only removes a command-line link that points to this copy of the app."
+            )
+        case .unsafeSource:
+            AppLocalization.string(
+                "Move MClash directly to /Applications before installing its command-line tool."
             )
         case .unsafeParentDirectory:
             AppLocalization.string(

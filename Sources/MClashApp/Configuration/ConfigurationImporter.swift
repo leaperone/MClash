@@ -78,7 +78,10 @@ public struct NodeOnlyImporter: Sendable {
                 continue
             }
 
-            let proto = NodeProtocol(rawValue: (fields["type"] ?? "unknown").lowercased()) ?? .unknown
+            let rawProtocol = (fields["type"] ?? "unknown").lowercased()
+            let proto = rawProtocol == "ss"
+                ? NodeProtocol.shadowsocks
+                : NodeProtocol(rawValue: rawProtocol) ?? .unknown
             guard proto != .unknown else {
                 diagnostics.append(ConfigurationDiagnostic(
                     severity: .warning,

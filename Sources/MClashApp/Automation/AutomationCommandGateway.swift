@@ -296,8 +296,8 @@ final class AutomationCommandGateway {
                     plan: plan,
                     currentSessionChanged: false
                 ).objectValue ?? [:]
-                receipt["kind"] = .string(kind.rawValue)
-                receipt["id"] = .string(id.uuidString.lowercased())
+                receipt["deletedKind"] = .string(kind.rawValue)
+                receipt["deletedID"] = .string(id.uuidString.lowercased())
                 return .object(receipt)
             } catch {
                 throw configurationGatewayError(error)
@@ -1106,7 +1106,11 @@ final class AutomationCommandGateway {
             }.joined(separator: ", ")
             let revision = request.params["expectedRevision"]?.stringValue
                 ?? AppLocalization.string("Missing")
-            return "Expected revision: \(displaySafe(revision))\nObjects: \(counts)"
+            return AppLocalization.format(
+                "Expected revision: %@\nObjects: %@",
+                displaySafe(revision),
+                counts
+            )
         case "configuration.delete":
             return AppLocalization.format(
                 "Configuration object: %@\nID: %@\nExpected revision: %@",
@@ -1336,6 +1340,7 @@ final class AutomationCommandGateway {
             "changed": .bool(plan.changed),
             "valid": .bool(plan.valid),
             "diagnostics": try encode(plan.diagnostics),
+            "diagnosticCount": .integer(Int64(plan.diagnosticCount)),
             "compilations": try encode(plan.compilations),
             "currentSessionChanged": .bool(currentSessionChanged),
         ])
@@ -2587,6 +2592,158 @@ final class AutomationCommandGateway {
                 }
             }
         }
+        if request.method == "settings.patch",
+           let value = request.params["menuBarDisplayStyle"]?.stringValue,
+           AppModel.MenuBarDisplayStyle(rawValue: value) == nil {
+            throw GatewayError.invalidParameters(
+                "menuBarDisplayStyle must be logo or proxyStatus"
+            )
+        }
+        if request.method == "configuration.plan"
+            || request.method == "configuration.apply",
+           let document = request.params["document"] {
+            try validateConfigurationDocumentShape(document)
+        }
+    }
+
+    private static func validateConfigurationDocumentShape(
+        _ value: AutomationJSONValue
+    ) throws {
+        let document = try configurationObject(value, path: "document")
+        try rejectUnknownConfigurationKeys(document, allowed: [
+            "schemaVersion", "nodeSettings", "proxyGroups", "rules", "ruleSets",
+            "dnsPolicies", "entrances", "workspaces",
+        ], path: "document")
+
+        for (index, value) in try configurationArray(document["nodeSettings"], path: "document.nodeSettings").enumerated() {
+            try rejectUnknownConfigurationKeys(
+                try configurationObject(value, path: "document.nodeSettings[\(index)]"),
+                allowed: [
+                    "id", "enabled", "userAliasUpdate", "removeUserAlias",
+                    "tagsUpdate", "regionUpdate", "removeRegion",
+                ],
+                path: "document.nodeSettings[\(index)]"
+            )
+        }
+        for (index, value) in try configurationArray(document["proxyGroups"], path: "document.proxyGroups").enumerated() {
+            let object = try configurationObject(value, path: "document.proxyGroups[\(index)]")
+            try rejectUnknownConfigurationKeys(object, allowed: [
+                "id", "name", "type", "membersUpdate", "memberCount", "enabled",
+            ], path: "document.proxyGroups[\(index)]")
+            if let members = object["membersUpdate"] {
+                for (memberIndex, member) in try configurationArray(members, path: "document.proxyGroups[\(index)].membersUpdate").enumerated() {
+                    try rejectUnknownConfigurationKeys(
+                        try configurationObject(member, path: "document.proxyGroups[\(index)].membersUpdate[\(memberIndex)]"),
+                        allowed: ["kind", "id"],
+                        path: "document.proxyGroups[\(index)].membersUpdate[\(memberIndex)]"
+                    )
+                }
+            }
+        }
+        for (index, value) in try configurationArray(document["rules"], path: "document.rules").enumerated() {
+            let object = try configurationObject(value, path: "document.rules[\(index)]")
+            try rejectUnknownConfigurationKeys(object, allowed: [
+                "id", "enabled", "priority", "matchersUpdate", "matcherCount",
+                "action", "unavailableFallback", "workspaceScope",
+            ], path: "document.rules[\(index)]")
+            if let matchers = object["matchersUpdate"] {
+                for (matcherIndex, matcher) in try configurationArray(matchers, path: "document.rules[\(index)].matchersUpdate").enumerated() {
+                    let path = "document.rules[\(index)].matchersUpdate[\(matcherIndex)]"
+                    let object = try configurationObject(matcher, path: path)
+                    try rejectUnknownConfigurationKeys(
+                        object,
+                        allowed: object["kind"]?.stringValue == "portRange"
+                            ? ["kind", "lowerBound", "upperBound"]
+                            : ["kind", "value"],
+                        path: path
+                    )
+                }
+            }
+            try validateConfigurationAction(object["action"], path: "document.rules[\(index)].action")
+        }
+        for (index, value) in try configurationArray(document["ruleSets"], path: "document.ruleSets").enumerated() {
+            let object = try configurationObject(value, path: "document.ruleSets[\(index)]")
+            try rejectUnknownConfigurationKeys(object, allowed: [
+                "id", "name", "rulesUpdate", "ruleCount", "defaultAction",
+                "sourceURLUpdate", "removeSourceURL",
+            ], path: "document.ruleSets[\(index)]")
+            try validateConfigurationAction(object["defaultAction"], path: "document.ruleSets[\(index)].defaultAction")
+        }
+        for (index, value) in try configurationArray(document["dnsPolicies"], path: "document.dnsPolicies").enumerated() {
+            try rejectUnknownConfigurationKeys(
+                try configurationObject(value, path: "document.dnsPolicies[\(index)]"),
+                allowed: [
+                    "id", "name", "mode", "nameserversUpdate", "nameserverCount",
+                    "fallbackNameserversUpdate", "fallbackNameserverCount",
+                    "proxyServerUpdate", "removeProxyServer", "rulesUpdate",
+                    "ruleCount", "takeoverEnabled",
+                ],
+                path: "document.dnsPolicies[\(index)]"
+            )
+        }
+        for (index, value) in try configurationArray(document["entrances"], path: "document.entrances").enumerated() {
+            let object = try configurationObject(value, path: "document.entrances[\(index)]")
+            try rejectUnknownConfigurationKeys(object, allowed: [
+                "id", "kind", "enabled", "bindAddress", "port", "defaultAction",
+                "workspaceOverride",
+            ], path: "document.entrances[\(index)]")
+            try validateConfigurationAction(object["defaultAction"], path: "document.entrances[\(index)].defaultAction")
+        }
+        for (index, value) in try configurationArray(document["workspaces"], path: "document.workspaces").enumerated() {
+            try rejectUnknownConfigurationKeys(
+                try configurationObject(value, path: "document.workspaces[\(index)]"),
+                allowed: [
+                    "id", "name", "nodeIDsUpdate", "nodeCount",
+                    "proxyGroupIDsUpdate", "proxyGroupCount", "ruleIDsUpdate",
+                    "ruleCount", "ruleSetIDsUpdate", "ruleSetCount", "dnsPolicyID",
+                    "entranceIDsUpdate", "entranceCount", "revision",
+                ],
+                path: "document.workspaces[\(index)]"
+            )
+        }
+    }
+
+    private static func validateConfigurationAction(
+        _ value: AutomationJSONValue?,
+        path: String
+    ) throws {
+        let object = try configurationObject(value, path: path)
+        try rejectUnknownConfigurationKeys(
+            object,
+            allowed: object["kind"]?.stringValue == "proxyGroup"
+                ? ["kind", "proxyGroupID"] : ["kind"],
+            path: path
+        )
+    }
+
+    private static func configurationObject(
+        _ value: AutomationJSONValue?,
+        path: String
+    ) throws -> [String: AutomationJSONValue] {
+        guard case let .object(object)? = value else {
+            throw GatewayError.invalidParameters("\(path) must be an object")
+        }
+        return object
+    }
+
+    private static func configurationArray(
+        _ value: AutomationJSONValue?,
+        path: String
+    ) throws -> [AutomationJSONValue] {
+        guard case let .array(array)? = value else {
+            throw GatewayError.invalidParameters("\(path) must be an array")
+        }
+        return array
+    }
+
+    private static func rejectUnknownConfigurationKeys(
+        _ object: [String: AutomationJSONValue],
+        allowed: Set<String>,
+        path: String
+    ) throws {
+        if let key = object.keys.filter({ !allowed.contains($0) }).sorted().first {
+            throw GatewayError.invalidParameters("Unknown field: \(path).\(key)")
+        }
     }
 
     private static let sensitiveReadMethods: Set<String> = [
@@ -2657,7 +2814,13 @@ private enum GatewayError: Error, LocalizedError {
         case let .methodNotFound(method):
             AutomationRPCError(code: -32601, type: "method_not_found", message: "Unknown automation method: \(method)")
         case let .invalidParameters(message):
-            AutomationRPCError(code: -32602, type: "invalid_parameters", message: message)
+            AutomationRPCError(
+                code: -32602,
+                type: "invalid_parameters",
+                message: message,
+                retryable: true,
+                data: retryWithNewRequestIDData
+            )
         case let .confirmationRequired(method):
             AutomationRPCError(
                 code: -32020,

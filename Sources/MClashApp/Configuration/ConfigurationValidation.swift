@@ -244,7 +244,8 @@ public enum ConfigurationValidator {
             )
             if rule.matchers.isEmpty { result.append(.init(severity: .warning, code: "rule_matches_everything", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Routing rule has no matchers and may match all traffic."))) }
             let categoryCounts = matcherCategoryCounts(rule)
-            if [categoryCounts.destinations, categoryCounts.ports, categoryCounts.transports]
+            if !hasSourceMatcher(rule)
+                && [categoryCounts.destinations, categoryCounts.ports, categoryCounts.transports]
                 .filter({ $0 > 0 }).count > 1 {
                 result.append(.init(severity: .error, code: "unsupported_rule_matcher_combination", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("A routing rule cannot combine destination, port, and transport matchers.")))
             }
@@ -295,15 +296,7 @@ public enum ConfigurationValidator {
                 into: &result
             )
             for rawRule in ruleSet.rules {
-                let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
-                let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
-                let allowedTypes = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "IP-CIDR6"]
-                let validTypedRule = parts.count == 2
-                    && allowedTypes.contains(String(parts[0]))
-                    && !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                if trimmed.isEmpty
-                    || trimmed.contains(where: { $0 == "\n" || $0 == "\r" })
-                    || (trimmed.contains(",") && !validTypedRule) {
+                if !isValidRuleSetRule(rawRule) {
                     result.append(.init(severity: .error, code: "invalid_ruleset_rule", subject: String(describing: ruleSet.id.rawValue), message: AppLocalization.string("Rule set contains an invalid rule entry.")))
                     break
                 }
@@ -349,7 +342,9 @@ public enum ConfigurationValidator {
                 "rules.\(rule.id.rawValue.uuidString.lowercased()).matchers"
             )
             let counts = matcherCategoryCounts(rule)
-            if [counts.destinations, counts.ports, counts.transports]
+            if rule.enabled
+                && !hasSourceMatcher(rule)
+                && [counts.destinations, counts.ports, counts.transports]
                 .filter({ $0 > 0 }).count > 1 {
                 result.append(.init(severity: .error, code: "unsupported_rule_matcher_combination", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("A routing rule cannot combine destination, port, and transport matchers.")))
             }
@@ -360,15 +355,7 @@ public enum ConfigurationValidator {
                 "ruleSets.\(ruleSet.id.rawValue.uuidString.lowercased()).rules"
             )
             for rawRule in ruleSet.rules {
-                let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
-                let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
-                let allowedTypes = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "IP-CIDR6"]
-                let validTypedRule = parts.count == 2
-                    && allowedTypes.contains(String(parts[0]))
-                    && !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                if trimmed.isEmpty
-                    || trimmed.contains(where: { $0 == "\n" || $0 == "\r" })
-                    || (trimmed.contains(",") && !validTypedRule) {
+                if !isValidRuleSetRule(rawRule) {
                     result.append(.init(severity: .error, code: "invalid_ruleset_rule", subject: String(describing: ruleSet.id.rawValue), message: AppLocalization.string("Rule set contains an invalid rule entry.")))
                     break
                 }
@@ -390,10 +377,16 @@ public enum ConfigurationValidator {
             )
         }
         for workspace in document.workspaces {
-            appendLimit(
-                workspace.nodeIDs.count > ConfigurationAutomationLimits.workspaceNodeIDs,
-                "workspaces.\(workspace.id.rawValue.uuidString.lowercased()).nodeIDs"
-            )
+            let subject = "workspaces.\(workspace.id.rawValue.uuidString.lowercased())"
+            for (count, maximum, field) in [
+                (workspace.nodeIDs.count, ConfigurationAutomationLimits.workspaceNodeIDs, "nodeIDs"),
+                (workspace.proxyGroupIDs.count, ConfigurationAutomationLimits.proxyGroups, "proxyGroupIDs"),
+                (workspace.ruleIDs.count, ConfigurationAutomationLimits.rules, "ruleIDs"),
+                (workspace.ruleSetIDs.count, ConfigurationAutomationLimits.ruleSets, "ruleSetIDs"),
+                (workspace.entranceIDs.count, ConfigurationAutomationLimits.entrances, "entranceIDs"),
+            ] {
+                appendLimit(count > maximum, "\(subject).\(field)")
+            }
         }
         for entrance in document.entrances {
             if entrance.workspaceOverride != nil {
@@ -520,7 +513,49 @@ public enum ConfigurationValidator {
         return result
     }
 
+    private static func hasSourceMatcher(_ rule: RoutingRule) -> Bool {
+        rule.matchers.contains {
+            switch $0 {
+            case .application, .processPath, .userID: return true
+            default: return false
+            }
+        }
+    }
+
+    private static func isValidRuleSetRule(_ rawRule: String) -> Bool {
+        let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else {
+            return false
+        }
+        let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
+        if parts.count == 1 { return isSafeDomainSuffix(trimmed) }
+        let allowedTypes = [
+            "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "IP-CIDR6",
+        ]
+        return parts.count == 2
+            && allowedTypes.contains(String(parts[0]))
+            && !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private static func isSafeDomainSuffix(_ value: String) -> Bool {
+        guard value.utf8.count <= 253,
+              !value.hasPrefix("."),
+              !value.hasSuffix(".") else { return false }
+        return value.split(separator: ".", omittingEmptySubsequences: false)
+            .allSatisfy { label in
+                guard !label.isEmpty,
+                      label.utf8.count <= 63,
+                      label.first != "-",
+                      label.last != "-" else { return false }
+                return label.unicodeScalars.allSatisfy {
+                    CharacterSet.alphanumerics.contains($0) || $0 == "-"
+                }
+            }
+    }
+
     private static func matcherExpansionCount(_ rule: RoutingRule) -> Int? {
+        if hasSourceMatcher(rule) { return 0 }
         let counts = matcherCategoryCounts(rule)
         let (first, firstOverflow) = max(counts.destinations, 1)
             .multipliedReportingOverflow(by: max(counts.ports, 1))

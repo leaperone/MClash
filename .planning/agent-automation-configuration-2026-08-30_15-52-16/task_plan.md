@@ -17,7 +17,7 @@
 ## 非目标
 
 - 不修改 shell profile，不新增安装器或发布脚本。
-- 不暴露订阅完整 URL、节点连接参数、凭据或内部 manifest。
+- 不暴露订阅完整 URL、节点 host/parameter values、凭据或内部 manifest；节点协议、端口和 parameter keys 可作为脱敏摘要返回。
 - 不新增配置专用 CLI 子命令，不修改协议版本。
 - 不新增或修改测试代码，不触发 UI 手动测试。
 
@@ -73,7 +73,7 @@
 | 客户端使用 non-blocking socket + `poll` + 单一 deadline | 修复 connect 不受限和 syscall 超时重复计时的根因 |
 | 配置 revision 使用进程级 opaque UUID | 避免迁移持久 manifest 并提供 CAS |
 | safe editable DTO，而非 redacted document round-trip | 防止覆盖隐藏凭据和内部字段 |
-| apply 保存但不隐式激活 | 保留 plan/apply/activate 的清晰风险边界和回滚链路 |
+| apply 保存 desired 配置但不改变当前运行 session | 保留 plan/apply/activate 的当前会话风险边界；后续 App 启动仍可能读取已保存配置 |
 
 ## 错误与处理
 

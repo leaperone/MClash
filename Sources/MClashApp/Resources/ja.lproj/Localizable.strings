@@ -1384,6 +1384,11 @@
 "Proxy providers: %@" = "プロキシプロバイダ：%@";
 "Proxy selection is temporarily unavailable" = "プロキシを一時的に選択できません";
 "Quit MClash safely" = "MClash を安全に終了";
+"Read the safe editable Configuration projection" = "安全に編集できる設定プロジェクションを読み取る";
+"Validate and compile a Configuration projection without saving it" = "設定プロジェクションを保存せずに検証してコンパイル";
+"Save desired Configuration without changing the current proxy session" = "現在のプロキシセッションを変更せずに目的の設定を保存";
+"Delete one unreferenced Configuration object" = "参照されていない設定オブジェクトを削除";
+"Compile and activate one Configuration workspace" = "設定ワークスペースをコンパイルして有効化";
 "Ready" = "準備完了";
 "Reconnect MClash to restore this Profile’s controller." = "MClash に再接続して、このプロファイルのコントローラを復旧してください。";
 "Redirect" = "リダイレクト";
@@ -1453,6 +1458,9 @@
 "Rules were not evaluated and the flow was handed back to macOS (fail-open)." = "ルールは評価されず、フローを macOS に戻しました（フェイルオープン）。";
 "Rules were not evaluated and the flow was handed back to macOS." = "ルールは評価されず、フローを macOS に戻しました。";
 "Rules: %d\nExpected revision: %@\nApp Routing enabled: %@\nDNS enabled: %@" = "ルール：%d\n期待するリビジョン：%@\nアプリルーティング有効：%@\nDNS 有効：%@";
+"Expected revision: %@\nObjects: %@" = "期待するリビジョン：%@\nオブジェクト：%@";
+"Configuration object: %@\nID: %@\nExpected revision: %@" = "設定オブジェクト：%@\nID：%@\n期待するリビジョン：%@";
+"Workspace ID: %@\nExpected revision: %@" = "ワークスペース ID：%@\n期待するリビジョン：%@";
 "Runtime overrides do not support profiles containing multiple YAML documents." = "ランタイムの上書きは、複数の YAML ドキュメントを含むプロファイルに対応していません。";
 "Runtime overrides use unsupported schema version %d." = "ランタイムの上書きで、サポートされていないスキーマバージョン %d が使用されています。";
 "Runtime rule overrides do not support profiles containing duplicate top-level rules sections." = "ランタイムルールの上書きは、トップレベルの rules セクションが重複するプロファイルに対応していません。";
@@ -1880,6 +1888,7 @@
 "MClash Select" = "MClash 選択";
 "MClash Workspace rollback failed: %@" = "MClash ワークスペースのロールバックに失敗しました：%@";
 "MClash Workspace state rollback failed: %@" = "MClash ワークスペース状態のロールバックに失敗しました：%@";
+"MClash Workspace durable state reload failed: %@" = "MClash ワークスペースの永続状態を再読み込みできませんでした：%@";
 "MClash configuration storage is unavailable" = "MClash の設定ストレージを利用できません";
 "MClash configuration storage is unavailable." = "MClash の設定ストレージを利用できません。";
 "MClash configuration synchronization failed: %@" = "MClash 設定の同期に失敗しました：%@";
