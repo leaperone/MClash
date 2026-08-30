@@ -61,16 +61,31 @@ public struct ConfigurationCompiler: Sendable {
 
     public init() {}
 
-    public func compile(document: ConfigurationDocument, workspaceID: WorkspaceID? = nil) throws -> CompiledConfiguration {
+    public func compile(
+        document: ConfigurationDocument,
+        workspaceID: WorkspaceID? = nil
+    ) throws -> CompiledConfiguration {
+        try compile(
+            document: document,
+            workspaceID: workspaceID,
+            validatedDiagnostics: nil
+        )
+    }
+
+    func compile(
+        document: ConfigurationDocument,
+        workspaceID: WorkspaceID?,
+        validatedDiagnostics: [ConfigurationDiagnostic]?
+    ) throws -> CompiledConfiguration {
         guard let workspace = workspaceID.flatMap({ id in document.workspaces.first(where: { $0.id == id }) }) ?? document.currentWorkspace else {
             throw ConfigurationCompilationError.invalidText(
                 AppLocalization.string("No MClash workspace is configured.")
             )
         }
-        let diagnostics = document.diagnostics(for: workspace)
-        let errors = diagnostics.filter { $0.severity == .error }
-        guard errors.isEmpty else { throw ConfigurationCompilationError.invalid(errors) }
+        var diagnostics = validatedDiagnostics ?? document.diagnostics(for: workspace)
 
+        // Validation reports duplicate identities, but the compiler must not
+        // trap while constructing lookup tables for that diagnostic path.
         let nodesByID = Dictionary(
             document.nodes.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -96,16 +111,46 @@ public struct ConfigurationCompiler: Sendable {
             uniquingKeysWith: { first, _ in first }
         )
         let dns = dnsByID[workspace.dnsPolicyID]
-        let workspaceNodes = workspace.nodeIDs.compactMap { nodesByID[$0] }.filter(\.enabled)
+        // An empty workspace node scope is intentional: it means “the whole
+        // enabled catalog”. This is the default and is what lets selector
+        // backed groups follow subscription refreshes automatically.
+        let workspaceNodes = workspace.nodeIDs.isEmpty
+            ? document.nodes.filter(runtimeEligible)
+            : workspace.nodeIDs.compactMap { nodesByID[$0] }.filter(runtimeEligible)
         let workspaceGroups = workspace.proxyGroupIDs.compactMap { groupsByID[$0] }.filter(\.enabled)
         let workspaceRuleSets = workspace.ruleSetIDs.compactMap { ruleSetsByID[$0] }
         let workspaceRules = workspace.ruleIDs.compactMap { rulesByID[$0] }.filter(\.enabled).sorted {
             if $0.priority == $1.priority { return $0.id.rawValue.uuidString < $1.id.rawValue.uuidString }
             return $0.priority < $1.priority
         }
+        let runtimeNodeNames = makeRuntimeNodeNames(
+            workspaceNodes,
+            reserving: Set(workspaceGroups.map { $0.name.lowercased() })
+        )
+        // Selectors are a user-facing membership policy, not a Mihomo field.
+        // Resolve them against the current catalog immediately before render;
+        // this is what makes a subscription refresh update dynamic members
+        // without rewriting the saved group definition.
+        let resolvedGroups = workspaceGroups.map { group -> ProxyGroup in
+            let resolution = NodeSelectorResolver.resolve(selectors: group.memberSelectors, nodes: workspaceNodes)
+            diagnostics.append(contentsOf: resolution.diagnostics)
+            var merged = group
+            let existingNodeIDs = Set(group.members.compactMap { member -> NodeID? in
+                if case let .node(id) = member { return id }
+                return nil
+            })
+            let additions = resolution.nodeIDs
+                .filter { !existingNodeIDs.contains($0) }
+                .map { ProxyGroupMember.node($0) }
+            merged.members.append(contentsOf: additions)
+            return merged
+        }
+        let errors = diagnostics.filter { $0.severity == .error }
+        guard errors.isEmpty else { throw ConfigurationCompilationError.invalid(errors) }
         let yaml = render(
             nodes: workspaceNodes,
-            groups: workspaceGroups,
+            nodeNames: runtimeNodeNames,
+            groups: resolvedGroups,
             rules: workspaceRules,
             ruleSets: workspaceRuleSets,
             dns: dns,
@@ -158,6 +203,7 @@ public struct ConfigurationCompiler: Sendable {
 
     private func render(
         nodes: [Node],
+        nodeNames: [NodeID: String],
         groups: [ProxyGroup],
         rules: [RoutingRule],
         ruleSets: [RuleSet],
@@ -166,10 +212,10 @@ public struct ConfigurationCompiler: Sendable {
     ) -> String {
         let enabledPortEntrances = entrances.filter { ($0.kind == .http || $0.kind == .socks5) && $0.enabled }
         let bindAddress = enabledPortEntrances.first?.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        let nodeNames = Dictionary(uniqueKeysWithValues: nodes.map {
-            ($0.id, $0.userAlias ?? $0.displayName)
-        })
-        let groupNames = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0.name) })
+        let groupNames = Dictionary(
+            groups.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var lines: [String] = [
             "# Generated by MClash \(Self.version)",
             "allow-lan: false",
@@ -190,7 +236,7 @@ public struct ConfigurationCompiler: Sendable {
             lines[lines.count - 1] = "proxies: []"
         } else {
             for node in nodes {
-                lines.append(contentsOf: render(node: node))
+                lines.append(contentsOf: render(node: node, name: nodeNames[node.id]))
             }
         }
 
@@ -216,7 +262,10 @@ public struct ConfigurationCompiler: Sendable {
                         }
                     }
                 }
-                lines.append("    proxies: [\(members.map(yamlString).joined(separator: ", "))]")
+                let values = members.isEmpty && group.type != .direct && group.type != .reject
+                    ? ["DIRECT"]
+                    : members
+                lines.append("    proxies: [\(values.map(yamlString).joined(separator: ", "))]")
             }
         }
 
@@ -289,7 +338,7 @@ public struct ConfigurationCompiler: Sendable {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private func render(node: Node) -> [String] {
+    private func render(node: Node, name: String?) -> [String] {
         let type: String
         switch node.proto {
         case .https: type = "http"
@@ -297,7 +346,7 @@ public struct ConfigurationCompiler: Sendable {
         default: type = node.proto.rawValue
         }
         var lines = [
-            "  - name: \(yamlString(node.userAlias ?? node.displayName))",
+            "  - name: \(yamlString(name ?? node.userAlias ?? node.displayName))",
             "    type: \(type)",
             "    server: \(yamlScalar(node.host))",
             "    port: \(node.port)",
@@ -312,18 +361,74 @@ public struct ConfigurationCompiler: Sendable {
         return lines
     }
 
+    /// Mihomo identifies proxies by their rendered name. Providers often
+    /// reuse names (for example “US 01”), so assign deterministic suffixes
+    /// without changing the user-facing catalog or stable NodeID. Group
+    /// references use this same map, keeping refreshes and duplicate names
+    /// unambiguous.
+    private func makeRuntimeNodeNames(
+        _ nodes: [Node],
+        reserving groupNames: Set<String>
+    ) -> [NodeID: String] {
+        let ordered = nodes.sorted { lhs, rhs in
+            let left = (lhs.userAlias ?? lhs.displayName).lowercased()
+                + "|" + lhs.host + "|" + String(format: "%05d", lhs.port)
+                + "|" + lhs.id.rawValue.uuidString
+            let right = (rhs.userAlias ?? rhs.displayName).lowercased()
+                + "|" + rhs.host + "|" + String(format: "%05d", rhs.port)
+                + "|" + rhs.id.rawValue.uuidString
+            return left < right
+        }
+        var counts: [String: Int] = [:]
+        var result: [NodeID: String] = [:]
+        var usedNames = groupNames
+        let reserved: Set<String> = [
+            "DIRECT", "REJECT", "REJECT-DROP", "COMPATIBLE",
+            "PASS", "PASS-RULE", "GLOBAL",
+        ]
+        for node in ordered {
+            let raw = (node.userAlias ?? node.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
+            let base = raw.isEmpty ? "node-\(node.id.rawValue.uuidString.prefix(8))" : raw
+            let normalized = base.uppercased()
+            let nameKey = base.lowercased()
+            counts[nameKey, default: 0] += 1
+            let occurrence = counts[nameKey] ?? 1
+            var candidate: String
+            if reserved.contains(normalized) {
+                candidate = "\(base) (node \(occurrence))"
+            } else if occurrence == 1 {
+                candidate = base
+            } else {
+                candidate = "\(base) (\(occurrence))"
+            }
+            var suffix = occurrence
+            while usedNames.contains(candidate.lowercased()) {
+                suffix += 1
+                candidate = "\(base) (\(suffix))"
+            }
+            usedNames.insert(candidate.lowercased())
+            result[node.id] = candidate
+        }
+        return result
+    }
+
+    private func runtimeEligible(_ node: Node) -> Bool {
+        node.enabled
+            && node.health.availability != .sourceRemoved
+            && node.health.availability != .unsupported
+    }
+
     private func render(rule: RoutingRule, action: String) -> [String] {
-        var domains: [String] = []
-        var networks: [String] = []
+        var destinations: [String] = []
         var ports: [String] = []
         var transports: [String] = []
         var hasSourceMatcher = false
         for matcher in rule.matchers {
             switch matcher {
-            case let .domainExact(value): domains.append("DOMAIN,\(safeCSV(value))")
-            case let .domainSuffix(value): domains.append("DOMAIN-SUFFIX,\(safeCSV(value))")
-            case let .domainWildcard(value): domains.append("DOMAIN-KEYWORD,\(safeCSV(value.replacingOccurrences(of: "*", with: "")))")
-            case let .ipCIDR(value): networks.append("IP-CIDR,\(safeCSV(value))")
+            case let .domainExact(value): destinations.append("DOMAIN,\(safeCSV(value))")
+            case let .domainSuffix(value): destinations.append("DOMAIN-SUFFIX,\(safeCSV(value))")
+            case let .domainWildcard(value): destinations.append("DOMAIN-KEYWORD,\(safeCSV(value.replacingOccurrences(of: "*", with: "")))")
+            case let .ipCIDR(value): destinations.append("IP-CIDR,\(safeCSV(value))")
             case let .port(value): ports.append("DST-PORT,\(value)")
             case let .portRange(range): ports.append("DST-PORT,\(range.lowerBound)-\(range.upperBound)")
             case let .transport(value): transports.append("NETWORK,\(safeCSV(value))")
@@ -334,10 +439,15 @@ public struct ConfigurationCompiler: Sendable {
         // Network Extension. Emitting the remaining domain matcher to Mihomo
         // would widen an app-scoped rule to every HTTP/SOCKS/TUN flow.
         if hasSourceMatcher { return [] }
-        let matchers = domains + networks + ports + transports
-        return matchers.isEmpty
-            ? ["MATCH,\(action)"]
-            : matchers.map { "\($0),\(action)" }
+        let families = [destinations, ports, transports].filter { !$0.isEmpty }
+        guard let first = families.first else { return ["MATCH,\(action)"] }
+        guard families.count > 1 else { return first.map { "\($0),\(action)" } }
+        let combinations = families.dropFirst().reduce(first.map { [$0] }) { partial, family in
+            partial.flatMap { values in family.map { values + [$0] } }
+        }
+        return combinations.map { values in
+            "AND,(\(values.map { "(\($0))" }.joined(separator: ","))),\(action)"
+        }
     }
 
     private func safeCSV(_ value: String) -> String {

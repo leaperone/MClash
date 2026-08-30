@@ -256,6 +256,43 @@ final class AutomationCommandGateway {
                 sourceOffset: sourcePage.offset,
                 sourceLimit: sourcePage.limit
             ))
+        case "configuration.proxyGroup.selectors.export":
+            do {
+                guard let groupUUID = UUID(uuidString: try request.string("groupID")) else {
+                    throw GatewayError.invalidParameters("groupID must be a proxy group UUID")
+                }
+                let data = try model.configurationAutomationSelectorData(
+                    groupID: ProxyGroupID(rawValue: groupUUID),
+                    expectedRevision: try request.configurationRevision()
+                )
+                let page = try pageBounds(
+                    count: data.count,
+                    request: request,
+                    maximumLimit: 512 * 1_024,
+                    limitParameter: "limitBytes",
+                    defaultLimit: 256 * 1_024
+                )
+                let hasMore = page.range.upperBound < data.count
+                let digest = SHA256.hash(data: data).map {
+                    String(format: "%02x", $0)
+                }.joined()
+                return .object([
+                    "configurationRevision": .string(
+                        model.configurationRevision.uuidString.lowercased()
+                    ),
+                    "groupID": .string(groupUUID.uuidString.lowercased()),
+                    "offset": .integer(Int64(page.offset)),
+                    "limitBytes": .integer(Int64(page.limit)),
+                    "totalBytes": .integer(Int64(data.count)),
+                    "hasMore": .bool(hasMore),
+                    "nextOffset": hasMore
+                        ? .integer(Int64(page.range.upperBound)) : .null,
+                    "sha256": .string(digest),
+                    "dataBase64": .string(Data(data[page.range]).base64EncodedString()),
+                ])
+            } catch {
+                throw configurationGatewayError(error)
+            }
         case "configuration.plan":
             do {
                 let document: ConfigurationAutomationDocument = try request.decode("document")
@@ -2209,14 +2246,21 @@ final class AutomationCommandGateway {
     }
 
     private static let configurationDocumentHint =
-        "Full projection from configuration.snapshot.document; preserve every top-level array. "
+        "Compact projection from configuration.snapshot.document; preserve every top-level array. "
+        + "Snapshots omit proxyGroups.memberSelectors; export them with "
+        + "configuration.proxyGroup.selectors.export. "
         + "Sparse writes use nodeSettings enabled/userAliasUpdate/removeUserAlias/tagsUpdate/"
-        + "regionUpdate/removeRegion, proxyGroups.membersUpdate, rules.matchersUpdate, "
+        + "regionUpdate/removeRegion, proxyGroups.membersUpdate/memberSelectors, rules.matchersUpdate, "
         + "ruleSets.rulesUpdate/sourceURLUpdate/removeSourceURL, dnsPolicies.nameserversUpdate/"
         + "fallbackNameserversUpdate/proxyServerUpdate/removeProxyServer/rulesUpdate, and "
-        + "workspaces nodeIDsUpdate/proxyGroupIDsUpdate/ruleIDsUpdate/ruleSetIDsUpdate/"
-        + "entranceIDsUpdate; *Count fields are read-only summaries. Enums: member.kind="
+        + "workspaces nodeScope/nodeIDsUpdate/proxyGroupIDsUpdate/ruleIDsUpdate/ruleSetIDsUpdate/"
+        + "entranceIDsUpdate; *Count fields are read-only summaries. Enums: nodeScope="
+        + "allEnabled|listed; member.kind="
         + "node|group; proxyGroups.type=select|fallback|urlTest|loadBalance|direct|reject|relay; "
+        + "selector condition.kind=nameContains|nameEquals|hostContains|hostEquals|ipEquals|"
+        + "source|protocolIs|tagContains; memberCount is explicit-only and selectorCount is policy count; "
+        + "memberSelectors is a write-only whole replacement: omit to preserve, [] to clear; "
+        + "selector include conditions are ANDed, excludes remove automatic matches, and selectors are ORed; "
         + "matcher.kind=application|processPath|userID|domainExact|domainSuffix|domainWildcard|"
         + "ipCIDR|transport|port|portRange; action.kind=direct|reject|proxyGroup; "
         + "unavailableFallback=direct|reject; dnsPolicies.mode=system|fakeIP|redirHost; "
@@ -2246,6 +2290,12 @@ final class AutomationCommandGateway {
             "nodeLimit": "node page size; default 100, maximum 200",
             "sourceOffset": "0-based source offset",
             "sourceLimit": "source page size; default 50, maximum 100",
+        ]),
+        capability("configuration.proxyGroup.selectors.export", "Export one proxy group's selector policy as byte chunks", .read, [
+            "groupID": "proxy group UUID",
+            "expectedRevision": configurationRevisionHint,
+            "offset": "0-based byte offset; default 0",
+            "limitBytes": "chunk size; default 262144, maximum 524288",
         ]),
         capability("configuration.plan", "Validate and compile a Configuration projection without saving it", .read, [
             "document": configurationDocumentHint,
@@ -2429,6 +2479,12 @@ final class AutomationCommandGateway {
             "nodeLimit": .optional(.integer),
             "sourceOffset": .optional(.integer),
             "sourceLimit": .optional(.integer),
+        ],
+        "configuration.proxyGroup.selectors.export": [
+            "groupID": .required(.string, maximumStringBytes: 36),
+            "expectedRevision": .required(.string, maximumStringBytes: 36),
+            "offset": .optional(.integer),
+            "limitBytes": .optional(.integer),
         ],
         "configuration.apply": [
             "document": .required(.object),
@@ -2636,7 +2692,8 @@ final class AutomationCommandGateway {
         for (index, value) in try configurationArray(document["proxyGroups"], path: "document.proxyGroups").enumerated() {
             let object = try configurationObject(value, path: "document.proxyGroups[\(index)]")
             try rejectUnknownConfigurationKeys(object, allowed: [
-                "id", "name", "type", "membersUpdate", "memberCount", "enabled",
+                "id", "name", "type", "membersUpdate", "memberCount",
+                "memberSelectors", "selectorCount", "enabled",
             ], path: "document.proxyGroups[\(index)]")
             if let members = object["membersUpdate"] {
                 for (memberIndex, member) in try configurationArray(members, path: "document.proxyGroups[\(index)].membersUpdate").enumerated() {
@@ -2645,6 +2702,33 @@ final class AutomationCommandGateway {
                         allowed: ["kind", "id"],
                         path: "document.proxyGroups[\(index)].membersUpdate[\(memberIndex)]"
                     )
+                }
+            }
+            if let selectors = object["memberSelectors"] {
+                for (selectorIndex, selector) in try configurationArray(
+                    selectors,
+                    path: "document.proxyGroups[\(index)].memberSelectors"
+                ).enumerated() {
+                    let selectorPath = "document.proxyGroups[\(index)].memberSelectors[\(selectorIndex)]"
+                    let selectorObject = try configurationObject(selector, path: selectorPath)
+                    try rejectUnknownConfigurationKeys(
+                        selectorObject,
+                        allowed: ["id", "name", "include", "exclude", "fixedNodeIDs"],
+                        path: selectorPath
+                    )
+                    for field in ["include", "exclude"] {
+                        for (conditionIndex, condition) in try configurationArray(
+                            selectorObject[field],
+                            path: "\(selectorPath).\(field)"
+                        ).enumerated() {
+                            let conditionPath = "\(selectorPath).\(field)[\(conditionIndex)]"
+                            try rejectUnknownConfigurationKeys(
+                                try configurationObject(condition, path: conditionPath),
+                                allowed: ["kind", "value"],
+                                path: conditionPath
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -2701,7 +2785,8 @@ final class AutomationCommandGateway {
             try rejectUnknownConfigurationKeys(
                 try configurationObject(value, path: "document.workspaces[\(index)]"),
                 allowed: [
-                    "id", "name", "nodeIDsUpdate", "nodeCount",
+                    "id", "name", "nodeScope", "nodeIDsUpdate", "nodeCount",
+                    "effectiveNodeCount",
                     "proxyGroupIDsUpdate", "proxyGroupCount", "ruleIDsUpdate",
                     "ruleCount", "ruleSetIDsUpdate", "ruleSetCount", "dnsPolicyID",
                     "entranceIDsUpdate", "entranceCount", "revision",
@@ -2757,6 +2842,7 @@ final class AutomationCommandGateway {
     private static let sensitiveReadMethods: Set<String> = [
         "configuration.plan",
         "configuration.snapshot",
+        "configuration.proxyGroup.selectors.export",
         "appRouting.candidates.list",
         "appRouting.activities.list",
         "traffic.connections.list",

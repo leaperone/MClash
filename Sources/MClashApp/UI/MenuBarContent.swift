@@ -385,8 +385,8 @@ struct MenuBarContent: View {
                 quickRoutes
             }
 
-            Button("Proxies") {
-                showMainWindow(destination: .proxies)
+            Button(AppLocalization.string("Node Groups")) {
+                showMainWindow(destination: .proxyGroups)
             }
             .controlSize(.small)
         }

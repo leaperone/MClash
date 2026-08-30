@@ -72,7 +72,7 @@ struct SettingsView: View {
             }
 
             Section("Routing & macOS Proxy") {
-                LabeledContent("App Routing", value: appRoutingStatus)
+                LabeledContent(AppLocalization.string("Application traffic"), value: appRoutingStatus)
                 LabeledContent(
                     "macOS System Proxy",
                     value: systemProxyStatus
@@ -80,27 +80,15 @@ struct SettingsView: View {
                 appRoutingFeedback
                 systemProxySettingsFeedback
 
-                Button("Manage App Routing…") {
-                    model.selection = .appRouting
+                Button(AppLocalization.string("Open Entrances…")) {
+                    model.selection = .entrances
                 }
 
                 DisclosureGroup("Connection Behavior") {
-                    Toggle(
-                        "Enable App Routing automatically after connecting",
-                        isOn: Binding(
-                            get: {
-                                model.pendingNetworkCaptureEnabled
-                                    ?? model.networkCapturePreferences.enabled
-                            },
-                            set: { enabled in
-                                Task { await model.setNetworkCaptureEnabled(enabled) }
-                            }
-                        )
-                    )
-                    .disabled(
-                        model.pendingNetworkCaptureEnabled != nil
-                            || !model.canPerform(.changeNetworkCapture)
-                    )
+                    Text(AppLocalization.string("Use the Application traffic switch in Entrances to enable or disable capture."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     Toggle("Enable macOS system proxy when connecting", isOn: $model.autoEnableSystemProxy)
                         .disabled(model.networkCapturePreferences.enabled)

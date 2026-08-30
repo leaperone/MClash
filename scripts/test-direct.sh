@@ -71,7 +71,7 @@ rm -rf "${build_dir}"
 mkdir -p "${build_dir}"
 
 sources=("${repo_root}"/Sources/MClashApp/**/*.swift(N))
-tests=("${repo_root}"/Tests/MClashTests/*.swift(N))
+tests=("${repo_root}"/Tests/MClashTests/**/*.swift(N))
 automation_sources=("${repo_root}"/Sources/MClashAutomationProtocol/*.swift(N))
 automation_tests=("${repo_root}"/Tests/MClashAutomationProtocolTests/*.swift(N))
 network_shared_sources=("${repo_root}"/Sources/MClashNetworkShared/*.swift(N))

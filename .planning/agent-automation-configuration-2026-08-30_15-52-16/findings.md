@@ -63,6 +63,28 @@
 - System Proxy 补偿必须遵循 manager 的事务顺序：先保存 durable snapshot，再 apply/verify；失败用同一 snapshot restore-and-remove，不能先改系统后补快照。
 - source matcher 规则由 App Routing 的集合模型表达 AND 语义，不产生 Mihomo 笛卡尔展开；资源预算不得按 destination×port×transport 误拒。
 - Configuration plan 与 mutation 在持久化前编码最小响应并预留协议 envelope；普通读响应继续由 SocketServer 统一返回机器可读 `response_too_large`。
+- 合入 `origin/main@4fa9621` 后，默认 Node Group 已使用动态 selector；仅暴露 `membersUpdate` 会让 Agent 误判实际成员，统一 API 必须返回完整 bounded selector 投影并允许显式清空。
+- 主分支把空 `workspace.nodeIDs` 定义为全部 runtime-eligible 节点；wire 现用 `nodeScope=allEnabled|listed` 明确表达，`nodeCount` 保留存储数量，`effectiveNodeCount` 返回当前有效数量。
+- UI 明确声明同类 matcher 为 OR、不同类别为 AND；Mihomo 支持 `AND,((payload),(payload)),ACTION`，因此移除旧拒绝并保留 destination×port×transport 的既有展开预算。
+- 历史 manifest 可包含超限 tags，直接在 decode 时拒绝会隔离整份配置；安全边界是新导入不接受超限 tags、snapshot 不返回部分前缀、非空替换前要求先显式清空。
+- candidate Core 停止与 cleanup 均失败时不能提前跳过安全持久补偿；控制面恢复必须无条件执行，只有 runtime 重激活、重连和 System Proxy 恢复受 `failedSessionStopped` 门控。
+- Selector 全量内联仍可能让合法 snapshot 超过 1 MiB；正文应改为 write-only，并提供带 revision、SHA-256 的 byte-chunk export，已有超限文档才能无损读取后清理。
+- Selector 工作预算必须计入稳定排序、tag 扫描和 plan/apply 的重复解析；resolver 可先把节点稳定排序一次，Validator 也应按 workspace 只构造一次 eligible nodes。
+- Configuration 激活不得在没有 active Profile 时任选第一个 Profile；失败回滚只有在 Core、App Routing 和 System Proxy 均确认停净后才能重连，并必须验回旧 App Routing revision。
+- 首次 legacy → unified 激活应在任何 candidate capture 持久化前先落 unified 恢复意图，使崩溃后启动路径按旧 document 重新编译并覆盖未提交的 capture，而不引入额外 journal。
+- NetworkCapture staged file 已在可见替换前设为 `0600`；commit 后重复 chmod 只会制造“文件已替换但调用方收到失败”的窗口，应删除并在 rollback 中读取 durable preferences 后判定是否反写。
+- tags 只有在限额内且脱敏前后完全相同时才可回显；Mihomo 逻辑表达式使用的 matcher 必须拒绝括号。
+- Selector snapshot 已改为 compact；独立 export 使用同一 CAS revision、byte offset、Base64 与完整 SHA-256，单个 legacy selector 超过 frame 时仍可恢复。
+- 省略 `memberSelectors` 必须直接保留 domain 值，不能先映射回 wire 再套新限额；文档总量只允许相对旧超限值保持或缩减，Store 对未变化的 oversized selector 做 grandfathering。
+- Selector 静态写入限额对 legacy 仅作为 warning；新 API 写入仍在 DTO 边界拒绝，运行安全继续由实际排序、tag/source 扫描、文本单位与多遍解析预算阻断。
+- snapshot diagnostics 需要同时按数量和编码字节截断；Store 为诊断、最小分页与 RPC envelope 预留空间，避免 UI/导入路径保存出不可读的 Automation snapshot。
+- activation journal 在 candidate capture 前持久化；未提交目标 snapshot 时恢复旧 App Routing/unified 状态，并保留旧 System Proxy 的延迟重启意图。启动链随后会按旧 document 重新生成 runtime YAML，再允许自动连接。
+- 重复激活同一未变化 workspace 时，target workspace/hash 无法区分旧 snapshot 与本次新 snapshot；journal 需记录写入前的 snapshot ID，只有看到不同的新成功 snapshot 才能判定本次激活已经提交。
+- 中断恢复若需要重新启用 System Proxy，journal 必须保留到代理真正恢复成功；只把意图放入内存后立即清 journal 会在二次崩溃时永久丢失恢复依据。
+- 等待 System Proxy 恢复的内存标记只能在旧 App Routing 偏好持久恢复成功后设置；否则失败的 capture rollback 可能被普通连接误清 journal。
+- 任一未完成 activation journal 都是尚未解决的 rollback baseline；新 activation 必须拒绝而不能覆盖它。
+- 资源级 selector legacy warning 不能提前终止引用校验；仅 resource error 可短路，否则缺失 proxy-group action 会绕过 Validator 并触达 Compiler 的前置条件崩溃。
+- `origin/main@4fa9621` 的统一配置工作台新增文案中仍有大量非英语 locale 使用英文占位；旧 `fix/i18n-complete-*` 分支不含这批键，需基于当前分支按 locale 并行补齐。
 
 ## 参考指针
 
@@ -71,3 +93,4 @@
 - `Sources/MClashApp/App/AppModel.swift`
 - `Sources/MClashApp/Configuration/ConfigurationStore.swift`
 - `docs/AUTOMATION.md`
+- `origin/main@4fa9621`

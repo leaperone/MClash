@@ -10,6 +10,15 @@ enum ConfigurationAutomationLimits {
     static let workspaces = 64
     static let groupMembers = 4_096
     static let workspaceNodeIDs = 4_096
+    static let selectorsPerGroup = 64
+    static let selectorConditions = 32
+    static let selectorFixedNodeIDs = 512
+    static let selectorsPerDocument = 512
+    static let selectorConditionsPerDocument = 2_048
+    static let selectorFixedNodeIDsPerDocument = 4_096
+    static let selectorTextBytes = 256
+    static let selectorMatchOperationsPerWorkspace = 4 * 1_024 * 1_024
+    static let selectorMatchOperationsPerPlan = 16 * 1_024 * 1_024
     static let ruleMatchers = 256
     static let ruleSetRules = 8_192
     static let dnsNameservers = 64
@@ -26,7 +35,10 @@ enum ConfigurationAutomationLimits {
     static let sourceURLBytes = 2_048
     static let compiledYAMLBytes = 4 * 1_024 * 1_024
     static let returnedDiagnostics = 256
+    static let returnedDiagnosticBytes = 256 * 1_024
+    static let returnedNodeSourceLinks = 256
     static let responseHeadroomBytes = 16 * 1_024
+    static let snapshotPageHeadroomBytes = 128 * 1_024
     static let matcherExpansionPerRule = 4_096
     static let matcherExpansionPerWorkspace = 16_384
     static let matcherExpansionPerPlan = 65_536
@@ -55,6 +67,23 @@ private func requireAutomationText(
             "\(field) must be \(nonempty ? "non-empty and " : "")at most \(maximumBytes) UTF-8 bytes"
         )
     }
+}
+
+func configurationAutomationTagsAreValid<T: Collection>(_ tags: T) -> Bool
+where T.Element == String {
+    tags.count <= ConfigurationAutomationLimits.tags
+        && tags.allSatisfy {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && $0.utf8.count <= ConfigurationAutomationLimits.tagBytes
+        }
+}
+
+func configurationAutomationProjectedTags<T: Collection>(_ tags: T) -> [String]?
+where T.Element == String {
+    guard configurationAutomationTagsAreValid(tags) else { return nil }
+    let sorted = tags.sorted()
+    guard sorted.allSatisfy({ redactedDiagnosticText($0) == $0 }) else { return nil }
+    return sorted
 }
 
 enum ConfigurationAutomationObjectKind: String, Codable, CaseIterable, Sendable {
@@ -113,6 +142,11 @@ struct ConfigurationAutomationNodeSettings: Codable, Equatable, Sendable {
                     nonempty: true
                 )
             }
+            if !tagsUpdate.isEmpty, configurationAutomationProjectedTags(node.tags) == nil {
+                throw ConfigurationAutomationError.invalidInput(
+                    "nodeSettings.tagsUpdate must clear legacy or redacted tags before replacing them"
+                )
+            }
         }
         if let regionUpdate {
             try requireAutomationText(
@@ -159,12 +193,121 @@ struct ConfigurationAutomationGroupMember: Codable, Equatable, Sendable {
     }
 }
 
+struct ConfigurationAutomationSelectorCondition: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case nameContains, nameEquals, hostContains, hostEquals, ipEquals
+        case source, protocolIs, tagContains
+    }
+
+    let kind: Kind
+    let value: String
+
+    init(_ condition: NodeSelectorCondition) {
+        switch condition {
+        case let .nameContains(value): kind = .nameContains; self.value = value
+        case let .nameEquals(value): kind = .nameEquals; self.value = value
+        case let .hostContains(value): kind = .hostContains; self.value = value
+        case let .hostEquals(value): kind = .hostEquals; self.value = value
+        case let .ipEquals(value): kind = .ipEquals; self.value = value
+        case let .source(value):
+            kind = .source
+            self.value = value.rawValue.uuidString.lowercased()
+        case let .protocolIs(value): kind = .protocolIs; self.value = value.rawValue
+        case let .tagContains(value): kind = .tagContains; self.value = value
+        }
+    }
+
+    func valueType() throws -> NodeSelectorCondition {
+        try requireAutomationText(
+            value,
+            maximumBytes: ConfigurationAutomationLimits.selectorTextBytes,
+            field: "proxyGroups.memberSelectors.conditions.value",
+            nonempty: true
+        )
+        switch kind {
+        case .nameContains: return .nameContains(value)
+        case .nameEquals: return .nameEquals(value)
+        case .hostContains: return .hostContains(value)
+        case .hostEquals: return .hostEquals(value)
+        case .ipEquals: return .ipEquals(value)
+        case .source:
+            return .source(SourceID(rawValue: try automationUUID(
+                value,
+                field: "proxyGroups.memberSelectors.conditions.value"
+            )))
+        case .protocolIs:
+            guard let proto = NodeProtocol(rawValue: value) else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "proxyGroups.memberSelectors protocolIs value is invalid"
+                )
+            }
+            return .protocolIs(proto)
+        case .tagContains: return .tagContains(value)
+        }
+    }
+}
+
+struct ConfigurationAutomationNodeSelector: Codable, Equatable, Sendable {
+    let id: String
+    var name: String
+    var include: [ConfigurationAutomationSelectorCondition]
+    var exclude: [ConfigurationAutomationSelectorCondition]
+    var fixedNodeIDs: [String]
+
+    init(_ selector: NodeSelector) {
+        id = selector.id.uuidString.lowercased()
+        name = selector.name
+        include = selector.include.map(ConfigurationAutomationSelectorCondition.init)
+        exclude = selector.exclude.map(ConfigurationAutomationSelectorCondition.init)
+        fixedNodeIDs = selector.fixedNodeIDs.map { $0.rawValue.uuidString.lowercased() }
+    }
+
+    func value() throws -> NodeSelector {
+        let (conditionCount, overflow) = include.count.addingReportingOverflow(exclude.count)
+        guard !overflow else {
+            throw ConfigurationAutomationError.invalidInput(
+                "proxyGroups.memberSelectors conditions exceed the supported limit"
+            )
+        }
+        try requireAutomationCount(
+            conditionCount,
+            maximum: ConfigurationAutomationLimits.selectorConditions,
+            field: "proxyGroups.memberSelectors conditions"
+        )
+        try requireAutomationCount(
+            fixedNodeIDs.count,
+            maximum: ConfigurationAutomationLimits.selectorFixedNodeIDs,
+            field: "proxyGroups.memberSelectors.fixedNodeIDs"
+        )
+        try requireAutomationText(
+            name,
+            maximumBytes: ConfigurationAutomationLimits.selectorTextBytes,
+            field: "proxyGroups.memberSelectors.name",
+            nonempty: true
+        )
+        return NodeSelector(
+            id: try automationUUID(id, field: "proxyGroups.memberSelectors.id"),
+            name: name,
+            include: try include.map { try $0.valueType() },
+            exclude: try exclude.map { try $0.valueType() },
+            fixedNodeIDs: try fixedNodeIDs.map {
+                NodeID(rawValue: try automationUUID(
+                    $0,
+                    field: "proxyGroups.memberSelectors.fixedNodeIDs"
+                ))
+            }
+        )
+    }
+}
+
 struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
     let id: String
     var name: String
     var type: ProxyGroupType
     var membersUpdate: [ConfigurationAutomationGroupMember]?
     let memberCount: Int?
+    var memberSelectors: [ConfigurationAutomationNodeSelector]?
+    let selectorCount: Int?
     var enabled: Bool
 
     init(_ group: ProxyGroup) {
@@ -173,6 +316,8 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
         type = group.type
         membersUpdate = nil
         memberCount = group.members.count
+        memberSelectors = nil
+        selectorCount = group.memberSelectors.count
         enabled = group.enabled
     }
 
@@ -188,12 +333,29 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
             maximum: ConfigurationAutomationLimits.groupMembers,
             field: "proxyGroups.membersUpdate"
         )
+        let resolvedSelectors: [NodeSelector]
+        if let memberSelectors {
+            try requireAutomationCount(
+                memberSelectors.count,
+                maximum: ConfigurationAutomationLimits.selectorsPerGroup,
+                field: "proxyGroups.memberSelectors"
+            )
+            resolvedSelectors = try memberSelectors.map { try $0.value() }
+            guard Set(resolvedSelectors.map(\.id)).count == resolvedSelectors.count else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "proxyGroups.memberSelectors contains duplicate identities"
+                )
+            }
+        } else {
+            resolvedSelectors = existing?.memberSelectors ?? []
+        }
         return ProxyGroup(
             id: ProxyGroupID(rawValue: try automationUUID(id, field: "proxyGroups.id")),
             name: name,
             type: type,
             members: try membersUpdate?.map { try $0.value() }
                 ?? existing?.members ?? [],
+            memberSelectors: resolvedSelectors,
             enabled: enabled
         )
     }
@@ -567,11 +729,17 @@ struct ConfigurationAutomationEntrance: Codable, Equatable, Sendable {
     }
 }
 
+enum ConfigurationAutomationNodeScope: String, Codable, Sendable {
+    case allEnabled, listed
+}
+
 struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
     let id: String
     var name: String
+    var nodeScope: ConfigurationAutomationNodeScope?
     var nodeIDsUpdate: [String]?
     let nodeCount: Int?
+    let effectiveNodeCount: Int?
     var proxyGroupIDsUpdate: [String]?
     let proxyGroupCount: Int?
     var ruleIDsUpdate: [String]?
@@ -583,11 +751,15 @@ struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
     let entranceCount: Int?
     let revision: Int?
 
-    init(_ workspace: Workspace) {
+    init(_ workspace: Workspace, runtimeEligibleNodeIDs: Set<NodeID>) {
         id = workspace.id.rawValue.uuidString.lowercased()
         name = workspace.name
+        nodeScope = workspace.nodeIDs.isEmpty ? .allEnabled : .listed
         nodeIDsUpdate = nil
         nodeCount = workspace.nodeIDs.count
+        effectiveNodeCount = workspace.nodeIDs.isEmpty
+            ? runtimeEligibleNodeIDs.count
+            : Set(workspace.nodeIDs).intersection(runtimeEligibleNodeIDs).count
         proxyGroupIDsUpdate = nil
         proxyGroupCount = workspace.proxyGroupIDs.count
         ruleIDsUpdate = nil
@@ -607,9 +779,35 @@ struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
             field: "workspaces.name",
             nonempty: true
         )
-        let nodeIDs = nodeIDsUpdate ?? existing?.nodeIDs.map {
-            $0.rawValue.uuidString.lowercased()
-        } ?? []
+        let existingScope = existing.map {
+            $0.nodeIDs.isEmpty
+                ? ConfigurationAutomationNodeScope.allEnabled
+                : ConfigurationAutomationNodeScope.listed
+        }
+        guard let resolvedNodeScope = nodeScope ?? existingScope else {
+            throw ConfigurationAutomationError.invalidInput(
+                "workspaces.nodeScope is required for a new workspace"
+            )
+        }
+        let nodeIDs: [String]
+        switch resolvedNodeScope {
+        case .allEnabled:
+            guard nodeIDsUpdate?.isEmpty != false else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "workspaces.nodeIDsUpdate must be empty when nodeScope is allEnabled"
+                )
+            }
+            nodeIDs = []
+        case .listed:
+            nodeIDs = nodeIDsUpdate ?? existing?.nodeIDs.map {
+                $0.rawValue.uuidString.lowercased()
+            } ?? []
+            guard !nodeIDs.isEmpty else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "workspaces.nodeIDsUpdate must contain at least one ID when nodeScope is listed"
+                )
+            }
+        }
         let proxyGroupIDs = proxyGroupIDsUpdate ?? existing?.proxyGroupIDs.map {
             $0.rawValue.uuidString.lowercased()
         } ?? []
@@ -673,6 +871,12 @@ struct ConfigurationAutomationDocument: Codable, Equatable, Sendable {
     var workspaces: [ConfigurationAutomationWorkspace]
 
     init(_ document: ConfigurationDocument) {
+        let runtimeEligibleNodeIDs = Set(document.nodes.compactMap { node in
+            node.enabled
+                && node.health.availability != .sourceRemoved
+                && node.health.availability != .unsupported
+                ? node.id : nil
+        })
         schemaVersion = document.schemaVersion
         nodeSettings = []
         proxyGroups = document.proxyGroups.map(ConfigurationAutomationProxyGroup.init)
@@ -680,7 +884,12 @@ struct ConfigurationAutomationDocument: Codable, Equatable, Sendable {
         ruleSets = document.ruleSets.map(ConfigurationAutomationRuleSet.init)
         dnsPolicies = document.dnsPolicies.map(ConfigurationAutomationDNSPolicy.init)
         entrances = document.entrances.map(ConfigurationAutomationEntrance.init)
-        workspaces = document.workspaces.map(ConfigurationAutomationWorkspace.init)
+        workspaces = document.workspaces.map {
+            ConfigurationAutomationWorkspace(
+                $0,
+                runtimeEligibleNodeIDs: runtimeEligibleNodeIDs
+            )
+        }
     }
 
     func applying(to base: ConfigurationDocument) throws -> ConfigurationDocument {
@@ -739,6 +948,49 @@ struct ConfigurationAutomationDocument: Codable, Equatable, Sendable {
             ))
             return try wire.applying(to: existingGroups[id])
         }
+        var selectorCount = 0
+        var conditionCount = 0
+        var fixedNodeIDCount = 0
+        for group in proposedGroups {
+            selectorCount += group.memberSelectors.count
+            for selector in group.memberSelectors {
+                conditionCount += selector.include.count + selector.exclude.count
+                fixedNodeIDCount += selector.fixedNodeIDs.count
+            }
+        }
+        let existingSelectorCounts = base.proxyGroups.reduce(
+            into: (selectors: 0, conditions: 0, fixedNodeIDs: 0)
+        ) { totals, group in
+            totals.selectors += group.memberSelectors.count
+            for selector in group.memberSelectors {
+                totals.conditions += selector.include.count + selector.exclude.count
+                totals.fixedNodeIDs += selector.fixedNodeIDs.count
+            }
+        }
+        try requireAutomationCount(
+            selectorCount,
+            maximum: max(
+                ConfigurationAutomationLimits.selectorsPerDocument,
+                existingSelectorCounts.selectors
+            ),
+            field: "proxyGroups.memberSelectors"
+        )
+        try requireAutomationCount(
+            conditionCount,
+            maximum: max(
+                ConfigurationAutomationLimits.selectorConditionsPerDocument,
+                existingSelectorCounts.conditions
+            ),
+            field: "proxyGroups.memberSelectors conditions"
+        )
+        try requireAutomationCount(
+            fixedNodeIDCount,
+            maximum: max(
+                ConfigurationAutomationLimits.selectorFixedNodeIDsPerDocument,
+                existingSelectorCounts.fixedNodeIDs
+            ),
+            field: "proxyGroups.memberSelectors.fixedNodeIDs"
+        )
         let proposedRules = try rules.map { wire -> RoutingRule in
             let id = RoutingRuleID(rawValue: try automationUUID(
                 wire.id,
@@ -852,6 +1104,7 @@ struct ConfigurationAutomationNodeSummary: Codable, Equatable, Sendable {
     let proto: NodeProtocol
     let port: Int
     let sourceLinks: [String]
+    let sourceLinkCount: Int
     let enabled: Bool
     let health: NodeHealthSnapshot
     let userAlias: String?

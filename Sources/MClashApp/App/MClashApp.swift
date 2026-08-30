@@ -73,13 +73,13 @@ struct MClashApp: App {
 
             CommandMenu("Navigate") {
                 navigationCommand("Overview", destination: .overview, key: "1")
-                navigationCommand("Workspaces", destination: .workspaces, key: "2")
-                navigationCommand("Nodes", destination: .nodes, key: "3")
-                navigationCommand("Sources", destination: .sources, key: "4")
-                navigationCommand("Entrances", destination: .entrances, key: "5")
-                navigationCommand("Proxy Groups", destination: .proxyGroups, key: "8")
-                navigationCommand("Proxies", destination: .proxies, key: "6")
-                navigationCommand("Traffic", destination: .connections, key: "7")
+                navigationCommand("Configuration", destination: .workspaces, key: "2")
+                navigationCommand("Rules", destination: .rules, key: "3")
+                navigationCommand("Nodes", destination: .nodes, key: "4")
+                navigationCommand("Sources", destination: .sources, key: "5")
+                navigationCommand("Entrances", destination: .entrances, key: "6")
+                navigationCommand("Node Groups", destination: .proxyGroups, key: "7")
+                navigationCommand("Traffic", destination: .connections, key: "8")
             }
 
             CommandMenu("Routing") {
@@ -88,6 +88,13 @@ struct MClashApp: App {
                 }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(!model.canPerform(.connection) || (!model.isConnected && model.activeProfile == nil))
+
+                Divider()
+
+                Button(AppLocalization.string("Manage Rules…")) {
+                    showMainWindow(destination: .rules)
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
 
                 Divider()
 

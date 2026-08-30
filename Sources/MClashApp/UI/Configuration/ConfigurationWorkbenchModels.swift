@@ -4,17 +4,28 @@ import Foundation
 /// These intentionally contain no Mihomo or imported-profile types: sources
 /// can be replaced without changing the user's workspace organisation.
 enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable {
-    case workspaces, sources, nodes, proxyGroups, rules, entrances
+    case workspaces, sources, nodes, proxyGroups, rules, entrances, dns
 
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .workspaces: "Workspaces"
+        case .workspaces: "Configuration"
         case .sources: "Sources"
         case .nodes: "Nodes"
-        case .proxyGroups: "Proxy Groups"
+        case .proxyGroups: "Node Groups"
         case .rules: "Rules"
         case .entrances: "Entrances"
+        case .dns: "DNS"
+        }
+    }
+    /// User-facing terminology. “Workspace” and “Proxy Group” are retained in
+    /// the model/API for migration, but the navigation speaks in terms users
+    /// can act on immediately.
+    var presentationTitle: String {
+        switch self {
+        case .workspaces: "Configuration"
+        case .proxyGroups: "Node Groups"
+        default: title
         }
     }
     var singularTitle: String {
@@ -22,9 +33,17 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         case .workspaces: "Workspace"
         case .sources: "Source"
         case .nodes: "Node"
-        case .proxyGroups: "Proxy Group"
+        case .proxyGroups: "Node Group"
         case .rules: "Rule"
         case .entrances: "Entrance"
+        case .dns: "DNS"
+        }
+    }
+    var presentationSingularTitle: String {
+        switch self {
+        case .workspaces: "Configuration"
+        case .proxyGroups: "Node Group"
+        default: singularTitle
         }
     }
     var symbol: String {
@@ -35,6 +54,7 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         case .proxyGroups: "square.3.layers.3d"
         case .rules: "list.bullet.indent"
         case .entrances: "arrow.triangle.branch"
+        case .dns: "network"
         }
     }
 }
@@ -122,6 +142,16 @@ extension EntranceKind {
         case .socks5: "SOCKS5"
         case .appRouting: AppLocalization.string("App Routing")
         case .tun: "TUN"
+        }
+    }
+}
+
+extension DNSMode {
+    var localizedTitle: String {
+        switch self {
+        case .system: AppLocalization.string("System DNS")
+        case .fakeIP: AppLocalization.string("Fake IP")
+        case .redirHost: AppLocalization.string("Redir Host")
         }
     }
 }

@@ -2,7 +2,7 @@
 
 - 任务 ID：`mclash-config-orchestration-2026-08-30`
 - 创建时间：`2026-08-30`
-- 状态：已实施并发布 `v1.4.1`；后续可继续以 fix-forward 方式扩展能力
+- 状态：统一配置工作台已实施；本轮导航/入口与刷新保护改动已通过本地验证，真实窗口验收与新版本发布待后续门禁
 
 ## 目标
 
@@ -113,6 +113,7 @@ Source 不保存可执行代理组、规则或 DNS。它只产生 NodeCandidate 
 字段建议：
 
 - `id`：由协议、主机、端口和必要连接参数生成稳定身份；不得只使用名称。
+- 实现采用规范化 endpoint SHA-256 派生 UUID；名称、标签、地区和轮换凭据不参与主身份。相同 endpoint 的多凭据用完整 connection fingerprint 仅作冲突拆分，不把凭据本身展示为身份。
 - `displayName`
 - `protocol`
 - `endpoint`
@@ -274,10 +275,10 @@ HTTP / SOCKS5 / App Routing / TUN 流量
 
 ## App Routing 的最终定位
 
-App Routing 在产品层面淡化为一个能力开关：
+App Routing 在产品层面淡化为 Entrances 内的一个能力开关：
 
-- Overview 展示“应用流量捕获”开关和状态。
-- Settings 提供 Network Extension、系统权限、DNS 接管等运维选项。
+- Entrances 展示唯一的“应用流量捕获”开关和入口状态。
+- Overview/Settings 只展示状态、权限提示和跳转，不复制管理开关。
 - Rules 中应用/进程只是普通匹配条件。
 - Connections 中展示应用流量、匹配规则、代理组和最终节点。
 - 不保留 App Routing 顶层规则管理页面。
@@ -312,7 +313,7 @@ Connections
 Diagnostics / Settings
 ```
 
-App Routing 从主导航移除，变成 Overview/Settings 中的能力开关。
+App Routing 从主导航移除，归入 Entrances，作为“应用流量”能力开关；规则仍在一级 Rules 页面统一管理。Settings/Overview 只提供状态与跳转，不再复制第二个管理入口。
 
 ### Workspaces
 
@@ -363,6 +364,7 @@ App Routing 从主导航移除，变成 Overview/Settings 中的能力开关。
 - 中等窗口折叠 Inspector 为 sheet/popover。
 - 窄窗口优先保留列表主标签和当前动作，隐藏次要元数据。
 - 遵循现有系统颜色、SF Pro/SF Mono、原生控件和无自定义阴影原则。
+- Entrances 页面把 HTTP、SOCKS5、TUN 作为可编辑入口列表；App Routing 不作为可编辑列表项重复出现，只保留页面顶部的单一开关。
 
 ## 导入与刷新语义
 
@@ -483,7 +485,7 @@ App Routing 从主导航移除，变成 Overview/Settings 中的能力开关。
 - 搭建共享 List + Inspector + toolbar/filter 组件。
 - 实现 Sources、Nodes、Proxy Groups、Rules、Workspaces 工作台。
 - 将 Connections 的 Live/Apps/Routes/History 接入统一入口字段和 Inspector。
-- 从主导航移除 App Routing 页面，把它降为 Overview/Settings 开关。
+- 从主导航移除 App Routing 页面，把它降为 Entrances 内的开关；Overview/Settings 仅保留状态与跳转。
 - 在 900×600、窄 Inspector、键盘导航、VoiceOver、深色模式下验证。
 
 交付物：完整信息架构、原生 SwiftUI/AppKit 页面、状态和空态、可访问性验证。
@@ -628,12 +630,15 @@ App Routing 当前以独立 JSON snapshot 保存 schema/revision，并通过 Aut
 - [x] MClash 统一管理节点库、代理组、规则、DNS、入口和 Workspace。
 - [x] HTTP、SOCKS5、App Routing、TUN 作为多个入口，共享统一策略引擎。
 - [x] App Routing 淡化为应用流量捕获开关，不再作为独立规则管理模块。
+- [x] App Routing 不出现在 Sidebar 或独立 Proxy/Rules 页面；唯一主操作位于 Entrances 页面。
+- [x] Node Groups 使用自动选择器（名称/Host/IP/来源/协议/标签/排除）与固定节点 pin，不使用逐节点开关列表。
+- [x] 节点身份使用规范化 endpoint fingerprint；凭据轮换保留 NodeID，跨凭据冲突拆分并给出诊断。
 - [x] Rockxy 仅作为交互组织参考：列表、Inspector、实时活动、搜索过滤和上下文操作。
 - [x] MClash 保持原生 macOS、系统语义颜色、克制密度和可恢复状态设计。
 
 ## 实施结果
 
-本计划已按“来源只提供节点、MClash 统一策略、多个入口共享引擎、App Routing 仅为开关、Rockxy 式工作台交互”的方向实施。实现经过两轮独立 review、完整本地 direct 验证和 GitHub Actions 的 macOS typecheck/unit/integration、签名、公证、发布验证。
+本计划已按“来源只提供节点、MClash 统一策略、多个入口共享引擎、App Routing 仅为 Entrances 内的开关、Rockxy 式工作台交互”的方向实施。既有 `v1.4.1` 发布门禁已通过；本轮功能分支改动的本地 typecheck、direct tests 与 integration smoke 已重新通过，不能把它们误写成新版本发布证据。
 
 ## 确认门
 

@@ -233,17 +233,19 @@ parameter hints from the running version.
 
 The Configuration API edits MClash's desired Configuration manifest. It does
 not expose source locations, node host values, node parameter values,
-subscription secrets, or generated Mihomo YAML. `configuration.snapshot` and
-`configuration.plan` require `read.sensitive`; `configuration.apply`, `configuration.delete`, and
+subscription secrets, or generated Mihomo YAML. `configuration.snapshot`,
+`configuration.proxyGroup.selectors.export`, and `configuration.plan` require
+`read.sensitive`; `configuration.apply`, `configuration.delete`, and
 `configuration.workspace.activate` are destructive operations. A standard
 client must pass `--allow-interaction` and receive local approval for each
 destructive call; a trusted client may run them unattended.
 
-The five methods are:
+The six methods are:
 
 | Method | Parameters | Result |
 | --- | --- | --- |
 | `configuration.snapshot` | Optional `nodeOffset`, `nodeLimit`, `sourceOffset`, `sourceLimit` | Safe document, paged source/node summaries, revision, runtime metadata, diagnostics, and `diagnosticCount` |
+| `configuration.proxyGroup.selectors.export` | `groupID`, `expectedRevision`, optional `offset`, `limitBytes` | One selector policy encoded as revision-bound Base64 byte chunks with total size and SHA-256 |
 | `configuration.plan` | `document`, `expectedRevision` | `changed`, `valid`, `diagnostics`, `diagnosticCount`, `compilations` |
 | `configuration.apply` | `document`, `expectedRevision` | Compact apply receipt |
 | `configuration.delete` | `kind`, `id`, `expectedRevision` | Compact delete receipt; referenced objects are rejected rather than cascaded |
@@ -261,8 +263,8 @@ mclashctl configuration.snapshot \
 ```
 
 Build one request containing the snapshot's opaque `configurationRevision` and
-its complete safe `document`. This example renames one proxy group while
-leaving its write-only member list unchanged:
+its compact safe `document`. This example renames one proxy group while
+leaving its write-only member list and selector policy unchanged:
 
 ```sh
 GROUP_ID='replace-with-proxy-group-uuid'
@@ -326,6 +328,55 @@ saved manifest. Use `configuration.workspace.activate` to select and compile a
 workspace immediately. It reconnects the core only when a proxy session was
 already running; it does not start a stopped core.
 
+### Export and replace selectors
+
+Snapshots return `selectorCount` but omit selector bodies. Export one group's
+complete typed selector JSON before changing that policy. Every chunk must use
+the same snapshot revision. Decode and concatenate bytes by `offset`; a chunk
+may split a UTF-8 sequence or JSON token, so parse only after the byte count and
+full-payload SHA-256 match.
+
+```sh
+REV="$(jq -r '.result.configurationRevision' snapshot.json)"
+GROUP_ID='replace-with-proxy-group-uuid'
+OFFSET=0
+EXPECTED_SHA=''
+TOTAL_BYTES=''
+: > selectors.json
+
+while :; do
+  jq -n \
+    --arg groupID "$GROUP_ID" \
+    --arg expectedRevision "$REV" \
+    --argjson offset "$OFFSET" \
+    '{groupID:$groupID,expectedRevision:$expectedRevision,offset:$offset,limitBytes:262144}' \
+    | mclashctl configuration.proxyGroup.selectors.export --params-stdin \
+    > selector-chunk.json
+
+  CHUNK_SHA="$(jq -r '.result.sha256' selector-chunk.json)"
+  CHUNK_TOTAL="$(jq -r '.result.totalBytes' selector-chunk.json)"
+  if [ -z "$EXPECTED_SHA" ]; then
+    EXPECTED_SHA="$CHUNK_SHA"
+    TOTAL_BYTES="$CHUNK_TOTAL"
+  fi
+  [ "$CHUNK_SHA" = "$EXPECTED_SHA" ] && [ "$CHUNK_TOTAL" = "$TOTAL_BYTES" ] || exit 1
+  jq -r '.result.dataBase64' selector-chunk.json | base64 -D >> selectors.json
+
+  NEXT_OFFSET="$(jq -r '.result.nextOffset // empty' selector-chunk.json)"
+  [ -n "$NEXT_OFFSET" ] || break
+  OFFSET="$NEXT_OFFSET"
+done
+
+[ "$(wc -c < selectors.json | tr -d ' ')" = "$TOTAL_BYTES" ] || exit 1
+[ "$(shasum -a 256 selectors.json | awk '{print $1}')" = "$EXPECTED_SHA" ] || exit 1
+jq empty selectors.json
+```
+
+To preserve selectors, omit `memberSelectors`. To replace them, put the complete
+decoded array in that group's `memberSelectors`; use `[]` only to clear the
+policy. Exported legacy data may exceed current write limits and remain readable,
+but it must be omitted to preserve it or replaced with a bounded array.
+
 ### Delete and activate
 
 Fetch a fresh snapshot before either operation and use its
@@ -370,17 +421,21 @@ replacements. They are omitted from snapshots and preserve an existing value
 when omitted; for a new object, an omitted collection becomes empty. Count and
 workspace `revision` fields are informational and do not perform writes. A
 workspace revision is not the opaque Configuration `expectedRevision`.
+`proxyGroups.memberSelectors` is also a write-only whole replacement. Snapshots
+omit its body and return only `selectorCount`; use
+`configuration.proxyGroup.selectors.export` to read it. Omitting the field
+preserves an existing group's selectors, and an empty array clears them.
 
 | `document` field | Exact item fields |
 | --- | --- |
 | `schemaVersion` | v1 requires integer `1` |
 | `nodeSettings[]` | `id`, `enabled?`, `userAliasUpdate?`, `removeUserAlias?`, `tagsUpdate?`, `regionUpdate?`, `removeRegion?` |
-| `proxyGroups[]` | `id`, `name`, `type`, `enabled`, `membersUpdate?`, `memberCount?` |
+| `proxyGroups[]` | `id`, `name`, `type`, `enabled`, `membersUpdate?`, `memberCount?`, `memberSelectors?`, `selectorCount?` |
 | `rules[]` | `id`, `enabled`, `priority`, `matchersUpdate?`, `matcherCount?`, `action`, `unavailableFallback`, `workspaceScope?` |
 | `ruleSets[]` | `id`, `name`, `rulesUpdate?`, `ruleCount?`, `defaultAction`, `sourceURLUpdate?`, `removeSourceURL?` |
 | `dnsPolicies[]` | `id`, `name`, `mode`, `nameserversUpdate?`, `nameserverCount?`, `fallbackNameserversUpdate?`, `fallbackNameserverCount?`, `proxyServerUpdate?`, `removeProxyServer?`, `rulesUpdate?`, `ruleCount?`, `takeoverEnabled` |
 | `entrances[]` | `id`, `kind`, `enabled`, `bindAddress`, `port?`, `defaultAction`, `workspaceOverride?` |
-| `workspaces[]` | `id`, `name`, `nodeIDsUpdate?`, `nodeCount?`, `proxyGroupIDsUpdate?`, `proxyGroupCount?`, `ruleIDsUpdate?`, `ruleCount?`, `ruleSetIDsUpdate?`, `ruleSetCount?`, `dnsPolicyID`, `entranceIDsUpdate?`, `entranceCount?`, `revision?` |
+| `workspaces[]` | `id`, `name`, `nodeScope?`, `nodeIDsUpdate?`, `nodeCount?`, `effectiveNodeCount?`, `proxyGroupIDsUpdate?`, `proxyGroupCount?`, `ruleIDsUpdate?`, `ruleCount?`, `ruleSetIDsUpdate?`, `ruleSetCount?`, `dnsPolicyID`, `entranceIDsUpdate?`, `entranceCount?`, `revision?` |
 
 `?` marks an optional field; its key may be absent when the value is nil.
 
@@ -388,21 +443,40 @@ workspace revision is not the opaque Configuration `expectedRevision`.
 or delete nodes. It is empty in a snapshot; read current values from the paged
 `nodes` summaries and add only the node IDs to change. Within one item, omitted
 fields preserve their values. Empty `tagsUpdate` clears the tags.
+If a node summary's `tags.count` differs from `tagCount`, legacy tags exceed
+the supported projection and must not be copied back. Clear them with an empty
+`tagsUpdate` before setting a new bounded list.
 `userAliasUpdate` cannot be combined with `removeUserAlias: true`, and
 `regionUpdate` cannot be combined with `removeRegion: true`.
 
 Every other document array is the complete object catalog. Ordinary optional
 model fields such as `workspaceScope` and `port` are part of that full object;
 preserve the snapshot value unless clearing it is intentional.
+Group `memberCount` counts only explicit `members`; `selectorCount` counts
+dynamic policies. Effective runtime membership is their de-duplicated union,
+including each selector's fixed pins and current matches.
 `workspaceOverride` must remain nil in v1. `remove...` fields are sparse
 removal flags. Each write-only array is a whole replacement, not an
 append/remove delta. `sourceURLUpdate` and
 `removeSourceURL`, or `proxyServerUpdate` and `removeProxyServer`, are mutually
 exclusive. A rule-set source URL must be HTTP or HTTPS and have a host.
+Workspace `nodeScope` is `allEnabled` when the stored ID list is empty and
+`listed` otherwise. `allEnabled` accepts only an omitted or empty
+`nodeIDsUpdate`; `listed` requires at least one ID. Switching from `allEnabled`
+to `listed` therefore requires an explicit non-empty `nodeIDsUpdate`. New
+workspaces must state the scope. `nodeCount` reports stored IDs, while
+`effectiveNodeCount` reports currently runtime-eligible nodes.
 
 Nested tagged objects have these exact shapes:
 
 - Group member example: `{"kind":"node","id":"uuid"}`.
+- A member selector is
+  `{"id":"uuid","name":"US nodes","include":[{"kind":"tagContains","value":"US"}],"exclude":[],"fixedNodeIDs":[]}`.
+  Conditions are ANDed within one selector; multiple selectors on a group are
+  ORed. Any matching `exclude` removes an automatic match; explicit
+  `fixedNodeIDs` remain pinned. Condition kinds are `nameContains`, `nameEquals`, `hostContains`,
+  `hostEquals`, `ipEquals`, `source`, `protocolIs`, and `tagContains`. `source`
+  uses a source UUID value and `protocolIs` uses a node protocol enum value.
 - Matcher examples: `{"kind":"domainSuffix","value":"example.com"}` and
   `{"kind":"portRange","lowerBound":443,"upperBound":8443}`. `port` and
   `userID` also use a string `value`; `userID` must be a decimal UInt32. Ports
@@ -417,6 +491,8 @@ The exact enum values are:
 | --- | --- |
 | Proxy-group `type` | `select`, `fallback`, `urlTest`, `loadBalance`, `direct`, `reject`, `relay` |
 | Member `kind` | `node`, `group` |
+| Workspace `nodeScope` | `allEnabled`, `listed` |
+| Selector condition `kind` | `nameContains`, `nameEquals`, `hostContains`, `hostEquals`, `ipEquals`, `source`, `protocolIs`, `tagContains` |
 | Matcher `kind` | `application`, `processPath`, `userID`, `domainExact`, `domainSuffix`, `domainWildcard`, `ipCIDR`, `transport`, `port`, `portRange` |
 | Action `kind` | `direct`, `reject`, `proxyGroup` |
 | `unavailableFallback` | `direct`, `reject` |
@@ -433,20 +509,32 @@ nameservers plus 512 policy rules; and a node patch may contain 64 tags. Proxy
 group nesting is limited to 64 levels.
 Workspace group, rule, rule-set, and entrance references are each capped by
 their corresponding top-level catalog limit.
+Each group may contain 64 selectors; each selector may contain 32 total
+include/exclude conditions and 512 fixed node IDs. One document may contain
+512 selectors, 2,048 selector conditions, and 4,096 fixed selector IDs.
 
 Names and aliases are limited to 256 UTF-8 bytes; tags and regions to 128;
 matcher and DNS values to 1,024; inline rule-set entries and source URLs to
 2,048; and bind addresses to 255. Non-source matcher expansion is limited to
 4,096 entries per rule, 16,384 per workspace, and 65,536 per plan. DNS
 expansion is limited to 4,096 per workspace and 16,384 per plan. Each compiled
-workspace YAML is limited to 4 MiB. At most 256 diagnostics are returned while
-`diagnosticCount` reports the full number.
+workspace YAML is limited to 4 MiB. At most 256 diagnostics and 256 KiB of
+encoded diagnostic entries are returned while `diagnosticCount` reports the
+full number.
+Selector names and text values are limited to 256 UTF-8 bytes. Selector match
+work is limited to 4,194,304 operations per workspace and 16,777,216 per plan.
+Persistence reserves response, diagnostic, and minimum-page space for the
+compact snapshot. Each compact document plus one changed group's encoded
+selector array must also fit the 1 MiB request envelope after response
+headroom. Unchanged oversized legacy selector arrays remain readable through
+export, but any replacement must satisfy the current limits.
 
 Enabled relay groups and enabled TUN entrances are rejected by v1, as is any
-entrance `workspaceOverride`. A source-less Mihomo rule cannot combine the
-destination, port, and transport matcher categories. Rules with application,
-process-path, or user-ID matchers keep their AND semantics in App Routing and
-are not widened into Mihomo rules. Inline rule-set entries must be a safe domain
+entrance `workspaceOverride`. Source-less Mihomo rules combine destination,
+port, and transport categories with AND; multiple values inside one category
+remain OR alternatives. Rules with application, process-path, or user-ID
+matchers keep the same semantics in App Routing and are not widened into Mihomo
+rules. Inline rule-set entries must be a safe domain
 suffix or a two-field `DOMAIN`, `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, or
 `IP-CIDR6` entry; MClash appends the rule set's `defaultAction` when compiling.
 
@@ -463,7 +551,9 @@ Its `sources` and `nodes` are pages shaped as
 `{id,kind,displayName,revision,lastFetchedAt?,lastSuccessfulParseAt?,diagnosticCount}`;
 source `kind` is `subscription`, `localFile`, or `pastedConfig`. Node items
 contain
-`{id,displayName,proto,port,sourceLinks,enabled,health,userAlias?,tags,tagCount,region?,lastSeenAt?,parameterKeys,parameterKeyCount}`.
+`{id,displayName,proto,port,sourceLinks,sourceLinkCount,enabled,health,userAlias?,tags,tagCount,region?,lastSeenAt?,parameterKeys,parameterKeyCount}`.
+`sourceLinks` returns at most 256 source IDs; compare it with `sourceLinkCount`
+before treating the page as a complete provenance list.
 `health` is `{availability,latencyMilliseconds?,checkedAt?}`, with availability
 `unknown`, `available`, `unavailable`, `sourceRemoved`, or `unsupported`. Node
 `proto` is `http`, `https`, `socks5`, `shadowsocks`, `vmess`, `vless`, `trojan`,
@@ -474,8 +564,8 @@ Every JSON request and response payload, including params read from
 prefix is not part of that limit. Pagination does not change the payload limit.
 Large member, matcher, DNS, rule-set, and workspace arrays are therefore
 count-only in snapshots and appear only when explicitly supplied through their
-`Update` fields. Fields not listed above are outside the v1 contract and must
-not be sent.
+`Update` fields. Selector bodies are also omitted and use the byte-chunk export
+above. Fields not listed above are outside the v1 contract and must not be sent.
 
 Dates use ISO 8601. A snapshot offset beyond the current total returns an empty
 page whose `offset` equals that total. Important Configuration error data is:
@@ -486,7 +576,7 @@ page whose `offset` equals that total. Important Configuration error data is:
 | `configuration_invalid` | `diagnostics: [{severity,code,subject,message}]`, `retryWithNewRequestID: true`; correct and start a new execution |
 | `configuration_dependencies` | `dependencies: [{kind,id}]`, `retryWithNewRequestID: true`; remove references and start a new execution. Dependency kinds are `workspace`, `proxyGroup`, `rule`, `ruleSet`, `entrance`, `currentWorkspace`, or `runtimeSnapshot` |
 | `operation_in_progress` | `retryWithSameRequestID: true`; retry the identical request ID after the other operation finishes; this busy response is not cached |
-| `response_too_large` | No retry marker. For a snapshot, reduce its node/source page. Plan and mutation response budgets are checked before durable writes; if the transport fallback still returns this for a mutation, treat its outcome as unknown, inspect a fresh snapshot, and do not blindly replay it with a new ID |
+| `response_too_large` | No retry marker. For a snapshot, first reduce its node/source page; selector bodies use their separate bounded export. If the minimum page still fails, simplify the Configuration catalog in the app. Plan and mutation response budgets are checked before durable writes; if the transport fallback still returns this for a mutation, treat its outcome as unknown, inspect a fresh snapshot, and do not blindly replay it with a new ID |
 
 The `configuration_invalid` error's compact diagnostics omit `id`; diagnostics
 in plans, receipts, and snapshots use the full
