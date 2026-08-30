@@ -278,7 +278,13 @@ public struct NodeOnlyImporter: Sendable {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
             let indent = indentation(line)
-            if indent <= sectionIndent { break }
+            // YAML permits an indentationless block sequence as the value of
+            // a mapping key (`proxies:\n- name: ...`). Keep those root-level
+            // sequence items attached to `proxies`; a subsequent root mapping
+            // key still terminates the section as usual.
+            if indent < sectionIndent || (indent == sectionIndent && !trimmed.hasPrefix("-")) {
+                break
+            }
 
             if trimmed.hasPrefix("- {") || trimmed.hasPrefix("-{ ") || trimmed.hasPrefix("-{") {
                 flush()

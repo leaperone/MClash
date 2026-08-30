@@ -329,6 +329,33 @@ struct ConfigurationOrchestrationTests {
         #expect(report.nodes.first?.port == 443)
     }
 
+    @Test func nodeOnlyImporterAcceptsIndentationlessRootProxySequence() throws {
+        let sourceID = SourceID()
+        let yaml = """
+        proxies:
+        - name: Root sequence node
+          type: vless
+          server: root.example.com
+          port: 443
+          uuid: account
+        proxy-groups:
+        - name: ignored
+          type: select
+          proxies: [Root sequence node]
+        rules:
+        - MATCH,DIRECT
+        """
+        let report = NodeOnlyImporter().importNodes(
+            sourceID: sourceID,
+            yaml: Data(yaml.utf8)
+        )
+        #expect(report.nodes.count == 1)
+        #expect(report.nodes.first?.displayName == "Root sequence node")
+        #expect(report.nodes.first?.host == "root.example.com")
+        #expect(report.ignoredSections == ["proxy-groups", "rules"])
+        #expect(!report.hasErrors)
+    }
+
     @Test func nodeOnlyImporterAcceptsInlineProxySequence() throws {
         let sourceID = SourceID()
         let yaml = """
