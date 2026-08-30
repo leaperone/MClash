@@ -46,3 +46,8 @@
 - [x] Add/verify explicit UI localization keys for the new workbench copy.
 - [x] Complete final typecheck/direct tests/integration smoke and app-level smoke validation; no real-window acceptance has been performed in this CLI environment.
 - Update release notes/version, build the signed app through the repository release workflow, and verify exact tag/SHA, artifacts, appcast, checksums and installation/runtime acceptance.
+
+## Release gate result
+
+- [x] Release notes/version, signed build, notarization, appcast/deltas, checksums and public GitHub Release verified for `v1.4.5` (Actions run `33306910186`).
+- [ ] Real interactive window acceptance remains a separate manual macOS gate; it was not claimed from CLI or CI evidence.

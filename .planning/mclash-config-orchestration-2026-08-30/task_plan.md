@@ -2,7 +2,7 @@
 
 - 任务 ID：`mclash-config-orchestration-2026-08-30`
 - 创建时间：`2026-08-30`
-- 状态：统一配置工作台已实施；本轮导航/入口与刷新保护改动已通过本地验证，真实窗口验收与新版本发布待后续门禁
+- 状态：统一配置工作台已实施并发布为 `v1.4.5`；真实交互窗口验收仍待后续手工门禁
 
 ## 目标
 
@@ -638,7 +638,7 @@ App Routing 当前以独立 JSON snapshot 保存 schema/revision，并通过 Aut
 
 ## 实施结果
 
-本计划已按“来源只提供节点、MClash 统一策略、多个入口共享引擎、App Routing 仅为 Entrances 内的开关、Rockxy 式工作台交互”的方向实施。既有 `v1.4.1` 发布门禁已通过；本轮功能分支改动的本地 typecheck、direct tests 与 integration smoke 已重新通过，不能把它们误写成新版本发布证据。
+本计划已按“来源只提供节点、MClash 统一策略、多个入口共享引擎、App Routing 仅为 Entrances 内的开关、Rockxy 式工作台交互”的方向实施。`v1.4.5` 已由 GitHub Actions run `33306910186` 完成验证、签名、公证与发布；本地与 CI 证据均已记录，不能把本地测试误写成发布证据。
 
 ## 确认门
 
