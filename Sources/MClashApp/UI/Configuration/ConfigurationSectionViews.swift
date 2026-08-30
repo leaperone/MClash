@@ -427,13 +427,15 @@ private enum RuleMatcherFamily: String, CaseIterable, Hashable {
 }
 
 private func ruleConditionPresentation(_ matchers: [RoutingMatcher]) -> String {
+    let andWord = AppLocalization.string("and")
+    let orWord = AppLocalization.string("or")
     let grouped = Dictionary(grouping: matchers, by: ruleMatcherFamily)
     let parts = RuleMatcherFamily.allCases.compactMap { family -> String? in
         let values = grouped[family, default: []].map(ruleMatcherPresentation)
         guard !values.isEmpty else { return nil }
-        return values.count == 1 ? values[0] : values.joined(separator: " or ")
+        return values.count == 1 ? values[0] : values.joined(separator: " \(orWord) ")
     }
-    return parts.joined(separator: " and ")
+    return parts.joined(separator: " \(andWord) ")
 }
 
 private func ruleMatcherFamily(_ matcher: RoutingMatcher) -> RuleMatcherFamily {
@@ -566,14 +568,15 @@ private extension ConfigurationWorkbenchItem {
                 isEnabled: node.enabled
             )
         }
+        let selectorNodes = document.nodes.filter {
+            $0.enabled
+                && $0.health.availability != .sourceRemoved
+                && $0.health.availability != .unsupported
+        }
         let groupItems = document.proxyGroups.map { group in
             let resolution = NodeSelectorResolver.resolve(
                 selectors: group.memberSelectors,
-                nodes: document.nodes.filter {
-                    $0.enabled
-                        && $0.health.availability != .sourceRemoved
-                        && $0.health.availability != .unsupported
-                }
+                nodes: selectorNodes
             )
             let explicitNodeIDs = Set(group.members.compactMap { member -> NodeID? in
                 if case let .node(id) = member { return id }

@@ -82,14 +82,19 @@ public enum NodeSelectorCondition: Codable, Hashable, Sendable {
     case tagContains(String)
 
     public func matches(_ node: Node) -> Bool {
-        let name = (node.userAlias ?? node.displayName).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        let host = node.host.lowercased()
         switch self {
-        case let .nameContains(value): return Self.matchesText(name, pattern: value)
-        case let .nameEquals(value): return name.caseInsensitiveCompare(value) == .orderedSame
-        case let .hostContains(value): return Self.matchesText(host, pattern: value.lowercased())
-        case let .hostEquals(value): return host == normalizeHost(value)
-        case let .ipEquals(value): return host == normalizeHost(value)
+        case let .nameContains(value):
+            return Self.matchesText(node.userAlias ?? node.displayName, pattern: value)
+        case let .nameEquals(value):
+            return (node.userAlias ?? node.displayName)
+                .compare(value, options: [.caseInsensitive, .diacriticInsensitive])
+                == .orderedSame
+        case let .hostContains(value):
+            return Self.matchesText(node.host, pattern: value)
+        case let .hostEquals(value):
+            return node.host.lowercased() == normalizeHost(value)
+        case let .ipEquals(value):
+            return node.host.lowercased() == normalizeHost(value)
         case let .source(id): return node.sourceLinks.contains(id)
         case let .protocolIs(proto): return node.proto == proto
         case let .tagContains(value): return node.tags.contains { Self.matchesText($0, pattern: value) }
@@ -170,10 +175,12 @@ public enum NodeSelectorResolver {
     /// user-facing name, endpoint and stable ID. Missing pins are retained as
     /// diagnostics rather than silently replaced by a different node.
     public static func resolve(selectors: [NodeSelector], nodes: [Node]) -> NodeSelectorResolution {
+        guard !selectors.isEmpty else { return NodeSelectorResolution(nodeIDs: []) }
         var byID: [NodeID: Node] = [:]
         var ids: [NodeID] = []
         var seen = Set<NodeID>()
         var diagnostics: [ConfigurationDiagnostic] = []
+        let sortedNodes = nodes.sorted(by: stableNodeOrder)
         for node in nodes {
             if byID[node.id] != nil {
                 diagnostics.append(.init(
@@ -207,8 +214,10 @@ public enum NodeSelectorResolver {
                 // exclusions only affect automatic matches.
                 if seen.insert(id).inserted { ids.append(id) }
             }
-            let matches = nodes.filter { selector.matches($0) }.sorted(by: stableNodeOrder)
-            for node in matches where seen.insert(node.id).inserted { ids.append(node.id) }
+            for node in sortedNodes where selector.matches(node)
+                && seen.insert(node.id).inserted {
+                ids.append(node.id)
+            }
         }
 
         // A stable identity collision means two records claim the same

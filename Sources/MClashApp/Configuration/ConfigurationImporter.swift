@@ -79,7 +79,10 @@ public struct NodeOnlyImporter: Sendable {
                 continue
             }
 
-            let proto = NodeProtocol(rawValue: (fields["type"] ?? "unknown").lowercased()) ?? .unknown
+            let rawProtocol = (fields["type"] ?? "unknown").lowercased()
+            let proto = rawProtocol == "ss"
+                ? NodeProtocol.shadowsocks
+                : NodeProtocol(rawValue: rawProtocol) ?? .unknown
             guard proto != .unknown else {
                 diagnostics.append(ConfigurationDiagnostic(
                     severity: .warning,
@@ -94,7 +97,21 @@ public struct NodeOnlyImporter: Sendable {
                 return !["name", "type", "server", "port"].contains(normalizedKey)
                     && !NodeIdentity.isPresentationParameter(normalizedKey)
             }
-            let tags = metadataTags(in: fields, keys: ["tags", "tag"])
+            let importedTags = metadataTags(in: fields, keys: ["tags", "tag"])
+            let tags: Set<String>
+            if configurationAutomationTagsAreValid(importedTags) {
+                tags = importedTags
+            } else {
+                tags = []
+                diagnostics.append(ConfigurationDiagnostic(
+                    severity: .warning,
+                    code: "node_tags_ignored",
+                    subject: subject,
+                    message: AppLocalization.string(
+                        "Configuration exceeds a supported resource limit."
+                    )
+                ))
+            }
             let region = metadataValue(in: fields, keys: ["region", "country"])
             let fingerprint = Node.makeFingerprint(
                 protocol: proto,

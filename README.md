@@ -116,25 +116,25 @@ Release builds include a signed `mclashctl` helper at
 needed, discovers the current user's private Unix socket, sends one JSON-RPC
 request, and prints one JSON-RPC response to stdout.
 
-```sh
-/Applications/MClash.app/Contents/Helpers/mclashctl capabilities --pretty
-/Applications/MClash.app/Contents/Helpers/mclashctl status --pretty
-/Applications/MClash.app/Contents/Helpers/mclashctl core.connect
-/Applications/MClash.app/Contents/Helpers/mclashctl routing.mode.set \
-  --params '{"mode":"rule"}'
-```
-
-For a stable shell command, link the helper instead of copying it:
+In **Settings → Advanced**, choose **Install Command Line Tool** to create
+`~/.local/bin/mclashctl`. MClash must be directly inside `/Applications`; it
+links to that trusted helper and never replaces an existing file or different
+link. Add `~/.local/bin` to your shell or agent `PATH` if it is not already present.
 
 ```sh
-mkdir -p ~/.local/bin
-ln -sf /Applications/MClash.app/Contents/Helpers/mclashctl ~/.local/bin/mclashctl
+mclashctl capabilities --pretty
+mclashctl status --pretty
+mclashctl core.connect
+mclashctl routing.mode.set --params '{"mode":"rule"}'
 ```
 
 `system.capabilities` is the authoritative operation list for the installed
 version. The API covers app and core lifecycle, profiles and backups, settings,
-routing and proxy selection, Mihomo rules/providers, System Proxy, App Routing,
-traffic/history, logs, and diagnostics.
+routing and proxy selection, unified Configuration planning and activation,
+Mihomo rules/providers, System Proxy, App Routing, traffic/history, logs, and
+diagnostics. If moving MClash leaves an old command link, follow the verified
+`readlink` and `unlink` recovery in [Automation API v1](docs/AUTOMATION.md);
+do not overwrite it with `ln -sf`.
 
 ### Trusted local clients
 

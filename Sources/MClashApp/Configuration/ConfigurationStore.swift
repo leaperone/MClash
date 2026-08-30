@@ -1,4 +1,5 @@
 import Foundation
+import MClashAutomationProtocol
 
 /// The durable, strategy-owned configuration document. Profile YAML is not
 /// embedded here: sources and their raw snapshots are inputs, while this
@@ -77,6 +78,15 @@ public struct ConfigurationStoreRecovery: Equatable, Sendable {
     }
 }
 
+struct ConfigurationActivationJournal: Codable, Equatable, Sendable {
+    let previousNetworkCapturePreferences: NetworkCapturePreferences
+    let previousUnifiedConfigurationEnabled: Bool
+    let previousSystemProxyWasOn: Bool
+    let previousSnapshotID: RuntimeSnapshotID?
+    let targetWorkspaceID: WorkspaceID
+    let targetConfigHash: String
+}
+
 /// Serializes the authoritative configuration document with private file
 /// permissions and recoverable quarantine for malformed state.
 public actor ConfigurationStore {
@@ -143,9 +153,87 @@ public actor ConfigurationStore {
         guard document.schemaVersion == ConfigurationDocument.currentSchemaVersion else {
             throw ConfigurationStoreError.unsupportedSchemaVersion(document.schemaVersion)
         }
-        let data = try encoder.encode(document)
-        try data.write(to: layout.configurationManifestURL, options: [.atomic])
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: layout.configurationManifestURL.path)
+        let maximumProjectionSize = MClashAutomationProtocol.maximumFrameSize
+            - ConfigurationAutomationLimits.responseHeadroomBytes
+            - ConfigurationAutomationLimits.returnedDiagnosticBytes
+            - ConfigurationAutomationLimits.snapshotPageHeadroomBytes
+        let documentProjection = try JSONEncoder.automation.encode(
+            ConfigurationAutomationDocument(document)
+        )
+        guard documentProjection.count <= maximumProjectionSize else {
+            throw ConfigurationStoreError.automationProjectionTooLarge
+        }
+        let selectorBudget = MClashAutomationProtocol.maximumFrameSize
+            - ConfigurationAutomationLimits.responseHeadroomBytes
+            - documentProjection.count
+        let existingSelectors = Dictionary(
+            ((try? load())?.proxyGroups ?? []).map { ($0.id, $0.memberSelectors) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for group in document.proxyGroups {
+            let selectors = try JSONEncoder.automation.encode(
+                group.memberSelectors.map(ConfigurationAutomationNodeSelector.init)
+            )
+            guard selectors.count <= selectorBudget
+                    || existingSelectors[group.id] == group.memberSelectors else {
+                throw ConfigurationStoreError.automationProjectionTooLarge
+            }
+        }
+        try writePrivately(
+            encoder.encode(document),
+            to: layout.configurationManifestURL
+        )
+    }
+
+    func loadActivationJournal() throws -> ConfigurationActivationJournal? {
+        guard fileManager.fileExists(atPath: activationJournalURL.path) else { return nil }
+        return try decoder.decode(
+            ConfigurationActivationJournal.self,
+            from: Data(contentsOf: activationJournalURL, options: .mappedIfSafe)
+        )
+    }
+
+    func saveActivationJournal(_ journal: ConfigurationActivationJournal) throws {
+        try writePrivately(encoder.encode(journal), to: activationJournalURL)
+    }
+
+    func clearActivationJournal() throws {
+        guard fileManager.fileExists(atPath: activationJournalURL.path) else { return }
+        try fileManager.removeItem(at: activationJournalURL)
+    }
+
+    private var activationJournalURL: URL {
+        layout.configurationDirectory.appendingPathComponent(
+            "activation-journal.json",
+            isDirectory: false
+        )
+    }
+
+    private func writePrivately(_ data: Data, to destinationURL: URL) throws {
+        let stagedURL = layout.configurationDirectory.appendingPathComponent(
+            ".\(UUID().uuidString.lowercased())-\(destinationURL.lastPathComponent)",
+            isDirectory: false
+        )
+        do {
+            try data.write(to: stagedURL, options: .withoutOverwriting)
+            try fileManager.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: stagedURL.path
+            )
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                _ = try fileManager.replaceItemAt(
+                    destinationURL,
+                    withItemAt: stagedURL,
+                    backupItemName: nil,
+                    options: .usingNewMetadataOnly
+                )
+            } else {
+                try fileManager.moveItem(at: stagedURL, to: destinationURL)
+            }
+        } catch {
+            try? fileManager.removeItem(at: stagedURL)
+            throw error
+        }
     }
 
     public func update(_ mutation: (inout ConfigurationDocument) throws -> Void) throws -> ConfigurationDocument {
@@ -163,6 +251,7 @@ public actor ConfigurationStore {
 
 public enum ConfigurationStoreError: Error, Equatable, Sendable {
     case unavailable
+    case automationProjectionTooLarge
     case unsupportedSchemaVersion(Int)
 }
 
@@ -171,6 +260,8 @@ extension ConfigurationStoreError: LocalizedError {
         switch self {
         case .unavailable:
             AppLocalization.string("MClash configuration storage is unavailable.")
+        case .automationProjectionTooLarge:
+            AppLocalization.string("Configuration exceeds a supported resource limit.")
         case let .unsupportedSchemaVersion(version):
             AppLocalization.format(
                 "MClash configuration uses unsupported schema version %d.",

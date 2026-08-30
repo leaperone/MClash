@@ -36,7 +36,8 @@ final class AutomationCommandGateway {
 
     func execute(
         _ request: AutomationRPCRequest,
-        peer: AutomationPeerIdentity
+        peer: AutomationPeerIdentity,
+        pairingMayCommit: @Sendable () -> Bool = { true }
     ) async -> AutomationRPCResponse {
         var mutationCacheContext: MutationCacheContext?
         do {
@@ -64,7 +65,11 @@ final class AutomationCommandGateway {
                 defer { mutationInProgress = false }
                 return AutomationRPCResponse(
                     id: request.id,
-                    result: try pair(request: request, peer: peer)
+                    result: try pair(
+                        request: request,
+                        peer: peer,
+                        mayCommit: pairingMayCommit
+                    )
                 )
             }
             var authorizedClient: AutomationAuthorizationStore.PublicClient?
@@ -228,6 +233,146 @@ final class AutomationCommandGateway {
                 model.closeConnectionsOnRoutingChange = value
             }
             return settings()
+        case "configuration.snapshot":
+            let nodePage = try pageBounds(
+                count: model.configurationDocument.nodes.count,
+                request: request,
+                maximumLimit: 200,
+                offsetParameter: "nodeOffset",
+                limitParameter: "nodeLimit",
+                defaultLimit: 100
+            )
+            let sourcePage = try pageBounds(
+                count: model.configurationDocument.sources.count,
+                request: request,
+                maximumLimit: 100,
+                offsetParameter: "sourceOffset",
+                limitParameter: "sourceLimit",
+                defaultLimit: 50
+            )
+            return try encode(model.configurationAutomationSnapshot(
+                nodeOffset: nodePage.offset,
+                nodeLimit: nodePage.limit,
+                sourceOffset: sourcePage.offset,
+                sourceLimit: sourcePage.limit
+            ))
+        case "configuration.proxyGroup.selectors.export":
+            do {
+                guard let groupUUID = UUID(uuidString: try request.string("groupID")) else {
+                    throw GatewayError.invalidParameters("groupID must be a proxy group UUID")
+                }
+                let data = try model.configurationAutomationSelectorData(
+                    groupID: ProxyGroupID(rawValue: groupUUID),
+                    expectedRevision: try request.configurationRevision()
+                )
+                let page = try pageBounds(
+                    count: data.count,
+                    request: request,
+                    maximumLimit: 512 * 1_024,
+                    limitParameter: "limitBytes",
+                    defaultLimit: 256 * 1_024
+                )
+                let hasMore = page.range.upperBound < data.count
+                let digest = SHA256.hash(data: data).map {
+                    String(format: "%02x", $0)
+                }.joined()
+                return .object([
+                    "configurationRevision": .string(
+                        model.configurationRevision.uuidString.lowercased()
+                    ),
+                    "groupID": .string(groupUUID.uuidString.lowercased()),
+                    "offset": .integer(Int64(page.offset)),
+                    "limitBytes": .integer(Int64(page.limit)),
+                    "totalBytes": .integer(Int64(data.count)),
+                    "hasMore": .bool(hasMore),
+                    "nextOffset": hasMore
+                        ? .integer(Int64(page.range.upperBound)) : .null,
+                    "sha256": .string(digest),
+                    "dataBase64": .string(Data(data[page.range]).base64EncodedString()),
+                ])
+            } catch {
+                throw configurationGatewayError(error)
+            }
+        case "configuration.plan":
+            do {
+                let document: ConfigurationAutomationDocument = try request.decode("document")
+                return try encode(model.planConfigurationAutomationDocument(
+                    document,
+                    expectedRevision: try request.configurationRevision()
+                ))
+            } catch {
+                throw configurationGatewayError(error)
+            }
+        case "configuration.apply":
+            do {
+                let document: ConfigurationAutomationDocument = try request.decode("document")
+                let plan = try await model.applyConfigurationAutomationDocument(
+                    document,
+                    expectedRevision: try request.configurationRevision()
+                )
+                return try configurationMutationReceipt(
+                    plan: plan,
+                    currentSessionChanged: false
+                )
+            } catch {
+                throw configurationGatewayError(error)
+            }
+        case "configuration.delete":
+            do {
+                guard let kind = ConfigurationAutomationObjectKind(
+                    rawValue: try request.string("kind")
+                ) else {
+                    throw GatewayError.invalidParameters(
+                        "kind must be proxyGroup, rule, ruleSet, dnsPolicy, entrance, or workspace"
+                    )
+                }
+                guard let id = UUID(uuidString: try request.string("id")) else {
+                    throw GatewayError.invalidParameters("id must be an object UUID")
+                }
+                let plan = try await model.deleteConfigurationAutomationObject(
+                    kind: kind,
+                    id: id,
+                    expectedRevision: try request.configurationRevision()
+                )
+                var receipt = try configurationMutationReceipt(
+                    plan: plan,
+                    currentSessionChanged: false
+                ).objectValue ?? [:]
+                receipt["deletedKind"] = .string(kind.rawValue)
+                receipt["deletedID"] = .string(id.uuidString.lowercased())
+                return .object(receipt)
+            } catch {
+                throw configurationGatewayError(error)
+            }
+        case "configuration.workspace.activate":
+            do {
+                guard let id = UUID(uuidString: try request.string("id")) else {
+                    throw GatewayError.invalidParameters("id must be a workspace UUID")
+                }
+                let currentSessionChanged = try await model.activateConfigurationWorkspace(
+                    WorkspaceID(rawValue: id),
+                    expectedConfigurationRevision: try request.configurationRevision()
+                )
+                guard let runtimeSnapshot = model.configurationDocument.lastRuntimeSnapshot else {
+                    throw GatewayError.operationFailed(
+                        "The activated workspace did not produce a runtime snapshot",
+                        false
+                    )
+                }
+                return .object([
+                    "configurationRevision": .string(
+                        model.configurationRevision.uuidString.lowercased()
+                    ),
+                    "workspaceID": .string(id.uuidString.lowercased()),
+                    "activated": .bool(true),
+                    "currentSessionChanged": .bool(currentSessionChanged),
+                    "runtimeSnapshot": try encode(
+                        ConfigurationAutomationRuntimeSnapshot(runtimeSnapshot)
+                    ),
+                ])
+            } catch {
+                throw configurationGatewayError(error)
+            }
         case "core.status":
             return coreStatus()
         case "core.toggle":
@@ -901,7 +1046,8 @@ final class AutomationCommandGateway {
 
     private func pair(
         request: AutomationRPCRequest,
-        peer: AutomationPeerIdentity
+        peer: AutomationPeerIdentity,
+        mayCommit: @Sendable () -> Bool
     ) throws -> AutomationJSONValue {
         guard peer.teamIdentifier != nil || peer.codeHash != nil else {
             throw GatewayError.untrustedClient
@@ -968,6 +1114,7 @@ final class AutomationCommandGateway {
         default:
             throw GatewayError.permissionDenied("auth.pair")
         }
+        guard mayCommit() else { throw CancellationError() }
         let issued = try authorizationStore.issue(
             name: name,
             scopes: scopes,
@@ -993,6 +1140,34 @@ final class AutomationCommandGateway {
 
     private func requestSummary(_ request: AutomationRPCRequest) -> String {
         switch request.method {
+        case "configuration.apply":
+            let document = request.params["document"]?.objectValue ?? [:]
+            let counts = [
+                "nodeSettings", "proxyGroups", "rules", "ruleSets",
+                "dnsPolicies", "entrances", "workspaces",
+            ].map { key in
+                "\(key)=\(document[key]?.arrayValue?.count ?? 0)"
+            }.joined(separator: ", ")
+            let revision = request.params["expectedRevision"]?.stringValue
+                ?? AppLocalization.string("Missing")
+            return AppLocalization.format(
+                "Expected revision: %@\nObjects: %@",
+                displaySafe(revision),
+                counts
+            )
+        case "configuration.delete":
+            return AppLocalization.format(
+                "Configuration object: %@\nID: %@\nExpected revision: %@",
+                displaySafe(request.params["kind"]?.stringValue ?? AppLocalization.string("Missing")),
+                displaySafe(request.params["id"]?.stringValue ?? AppLocalization.string("Missing")),
+                displaySafe(request.params["expectedRevision"]?.stringValue ?? AppLocalization.string("Missing"))
+            )
+        case "configuration.workspace.activate":
+            return AppLocalization.format(
+                "Workspace ID: %@\nExpected revision: %@",
+                displaySafe(request.params["id"]?.stringValue ?? AppLocalization.string("Missing")),
+                displaySafe(request.params["expectedRevision"]?.stringValue ?? AppLocalization.string("Missing"))
+            )
         case "appRouting.rules.replace":
             let ruleCount = request.params["rules"]?.arrayValue?.count ?? 0
             let revision = request.params["expectedRevision"]?.intValue.map(String.init)
@@ -1105,6 +1280,7 @@ final class AutomationCommandGateway {
         context: MutationCacheContext?
     ) {
         guard let context else { return }
+        guard response.error?.type != "operation_in_progress" else { return }
         removeCachedMutation(context.key)
         let responseBytes = (try? JSONEncoder.automation.encode(response).count) ?? 0
         let entry = CachedMutation(
@@ -1197,6 +1373,23 @@ final class AutomationCommandGateway {
         return try JSONDecoder.automation.decode(AutomationJSONValue.self, from: data)
     }
 
+    private func configurationMutationReceipt(
+        plan: ConfigurationAutomationPlan,
+        currentSessionChanged: Bool
+    ) throws -> AutomationJSONValue {
+        .object([
+            "configurationRevision": .string(
+                model.configurationRevision.uuidString.lowercased()
+            ),
+            "changed": .bool(plan.changed),
+            "valid": .bool(plan.valid),
+            "diagnostics": try encode(plan.diagnostics),
+            "diagnosticCount": .integer(Int64(plan.diagnosticCount)),
+            "compilations": try encode(plan.compilations),
+            "currentSessionChanged": .bool(currentSessionChanged),
+        ])
+    }
+
     private func paged<T: Encodable>(
         _ values: [T],
         request: AutomationRPCRequest,
@@ -1213,16 +1406,19 @@ final class AutomationCommandGateway {
     private func pageBounds(
         count: Int,
         request: AutomationRPCRequest,
-        maximumLimit: Int
+        maximumLimit: Int,
+        offsetParameter: String = "offset",
+        limitParameter: String = "limit",
+        defaultLimit: Int? = nil
     ) throws -> AutomationPage {
-        let offset = try request.int("offset", default: 0)
-        let limit = try request.int("limit", default: maximumLimit)
+        let offset = try request.int(offsetParameter, default: 0)
+        let limit = try request.int(limitParameter, default: defaultLimit ?? maximumLimit)
         guard offset >= 0 else {
-            throw GatewayError.invalidParameters("offset must be at least 0")
+            throw GatewayError.invalidParameters("\(offsetParameter) must be at least 0")
         }
         guard (1...maximumLimit).contains(limit) else {
             throw GatewayError.invalidParameters(
-                "limit must be between 1 and \(maximumLimit)"
+                "\(limitParameter) must be between 1 and \(maximumLimit)"
             )
         }
         let lower = min(offset, count)
@@ -2013,6 +2209,66 @@ final class AutomationCommandGateway {
         return redactedURL(url)
     }
 
+    private func configurationGatewayError(
+        _ error: Error
+    ) -> GatewayError {
+        if let error = error as? GatewayError {
+            return error
+        }
+        if error is CancellationError {
+            return .operationInProgress
+        }
+        if let error = error as? ConfigurationCompilationError {
+            switch error {
+            case let .invalid(diagnostics):
+                return .configurationInvalid(diagnostics)
+            case let .invalidText(message):
+                return .operationFailed(message, false)
+            }
+        }
+        guard let error = error as? ConfigurationAutomationError else {
+            return .operationFailed(error.localizedDescription, false)
+        }
+        return switch error {
+        case .operationInProgress:
+            .operationInProgress
+        case .invalidRevision:
+            .invalidParameters(error.localizedDescription)
+        case let .invalidInput(message):
+            .invalidParameters(message)
+        case let .revisionConflict(currentRevision):
+            .configurationRevisionConflict(currentRevision)
+        case let .invalidConfiguration(diagnostics):
+            .configurationInvalid(diagnostics)
+        case let .dependencies(dependencies):
+            .configurationDependencies(dependencies)
+        }
+    }
+
+    private static let configurationDocumentHint =
+        "Compact projection from configuration.snapshot.document; preserve every top-level array. "
+        + "Snapshots omit proxyGroups.memberSelectors; export them with "
+        + "configuration.proxyGroup.selectors.export. "
+        + "Sparse writes use nodeSettings enabled/userAliasUpdate/removeUserAlias/tagsUpdate/"
+        + "regionUpdate/removeRegion, proxyGroups.membersUpdate/memberSelectors, rules.matchersUpdate, "
+        + "ruleSets.rulesUpdate/sourceURLUpdate/removeSourceURL, dnsPolicies.nameserversUpdate/"
+        + "fallbackNameserversUpdate/proxyServerUpdate/removeProxyServer/rulesUpdate, and "
+        + "workspaces nodeScope/nodeIDsUpdate/proxyGroupIDsUpdate/ruleIDsUpdate/ruleSetIDsUpdate/"
+        + "entranceIDsUpdate; *Count fields are read-only summaries. Enums: nodeScope="
+        + "allEnabled|listed; member.kind="
+        + "node|group; proxyGroups.type=select|fallback|urlTest|loadBalance|direct|reject|relay; "
+        + "selector condition.kind=nameContains|nameEquals|hostContains|hostEquals|ipEquals|"
+        + "source|protocolIs|tagContains; memberCount is explicit-only and selectorCount is policy count; "
+        + "memberSelectors is a write-only whole replacement: omit to preserve, [] to clear; "
+        + "selector include conditions are ANDed, excludes remove automatic matches, and selectors are ORed; "
+        + "matcher.kind=application|processPath|userID|domainExact|domainSuffix|domainWildcard|"
+        + "ipCIDR|transport|port|portRange; action.kind=direct|reject|proxyGroup; "
+        + "unavailableFallback=direct|reject; dnsPolicies.mode=system|fakeIP|redirHost; "
+        + "entrances.kind=http|socks5|appRouting|tun"
+
+    private static let configurationRevisionHint =
+        "Exact configurationRevision returned by configuration.snapshot"
+
     static let capabilities: [AutomationCapability] = [
         capability("system.capabilities", "List supported automation methods", .read),
         capability("auth.pair", "Pair and authorize an external client", .write),
@@ -2029,6 +2285,35 @@ final class AutomationCommandGateway {
         capability("app.update.configure", "Change automatic update settings", .write),
         capability("settings.get", "Read application settings", .read),
         capability("settings.patch", "Change application settings", .write),
+        capability("configuration.snapshot", "Read the safe editable Configuration projection", .read, [
+            "nodeOffset": "0-based node offset",
+            "nodeLimit": "node page size; default 100, maximum 200",
+            "sourceOffset": "0-based source offset",
+            "sourceLimit": "source page size; default 50, maximum 100",
+        ]),
+        capability("configuration.proxyGroup.selectors.export", "Export one proxy group's selector policy as byte chunks", .read, [
+            "groupID": "proxy group UUID",
+            "expectedRevision": configurationRevisionHint,
+            "offset": "0-based byte offset; default 0",
+            "limitBytes": "chunk size; default 262144, maximum 524288",
+        ]),
+        capability("configuration.plan", "Validate and compile a Configuration projection without saving it", .read, [
+            "document": configurationDocumentHint,
+            "expectedRevision": configurationRevisionHint,
+        ]),
+        capability("configuration.apply", "Save desired Configuration without changing the current proxy session", .destructive, [
+            "document": configurationDocumentHint,
+            "expectedRevision": configurationRevisionHint,
+        ]),
+        capability("configuration.delete", "Delete one unreferenced Configuration object", .destructive, [
+            "kind": "proxyGroup|rule|ruleSet|dnsPolicy|entrance|workspace",
+            "id": "object UUID",
+            "expectedRevision": configurationRevisionHint,
+        ]),
+        capability("configuration.workspace.activate", "Compile and activate one Configuration workspace", .destructive, [
+            "id": "workspace UUID",
+            "expectedRevision": configurationRevisionHint,
+        ]),
         capability("core.status", "Read core status", .read),
         capability("core.toggle", "Toggle the Mihomo core", .write),
         capability("core.connect", "Start the Mihomo core", .write),
@@ -2185,6 +2470,35 @@ final class AutomationCommandGateway {
             "menuBarDisplayStyle": .optional(.string, maximumStringBytes: 32),
             "closeConnectionsOnRoutingChange": .optional(.bool),
         ],
+        "configuration.plan": [
+            "document": .required(.object),
+            "expectedRevision": .required(.string, maximumStringBytes: 36),
+        ],
+        "configuration.snapshot": [
+            "nodeOffset": .optional(.integer),
+            "nodeLimit": .optional(.integer),
+            "sourceOffset": .optional(.integer),
+            "sourceLimit": .optional(.integer),
+        ],
+        "configuration.proxyGroup.selectors.export": [
+            "groupID": .required(.string, maximumStringBytes: 36),
+            "expectedRevision": .required(.string, maximumStringBytes: 36),
+            "offset": .optional(.integer),
+            "limitBytes": .optional(.integer),
+        ],
+        "configuration.apply": [
+            "document": .required(.object),
+            "expectedRevision": .required(.string, maximumStringBytes: 36),
+        ],
+        "configuration.delete": [
+            "kind": .required(.string, maximumStringBytes: 32),
+            "id": .required(.string, maximumStringBytes: 36),
+            "expectedRevision": .required(.string, maximumStringBytes: 36),
+        ],
+        "configuration.workspace.activate": [
+            "id": .required(.string, maximumStringBytes: 36),
+            "expectedRevision": .required(.string, maximumStringBytes: 36),
+        ],
         "profiles.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
         "profiles.import": [
             "dataBase64": .required(.string, maximumStringBytes: 960 * 1_024),
@@ -2296,6 +2610,7 @@ final class AutomationCommandGateway {
     }
 
     private static let inherentlyInteractiveMethods: Set<String> = [
+        "auth.pair",
         "app.update.check",
         "profiles.importInteractive",
         "backup.exportInteractive",
@@ -2341,9 +2656,193 @@ final class AutomationCommandGateway {
                 }
             }
         }
+        if request.method == "settings.patch",
+           let value = request.params["menuBarDisplayStyle"]?.stringValue,
+           AppModel.MenuBarDisplayStyle(rawValue: value) == nil {
+            throw GatewayError.invalidParameters(
+                "menuBarDisplayStyle must be logo or proxyStatus"
+            )
+        }
+        if request.method == "configuration.plan"
+            || request.method == "configuration.apply",
+           let document = request.params["document"] {
+            try validateConfigurationDocumentShape(document)
+        }
+    }
+
+    private static func validateConfigurationDocumentShape(
+        _ value: AutomationJSONValue
+    ) throws {
+        let document = try configurationObject(value, path: "document")
+        try rejectUnknownConfigurationKeys(document, allowed: [
+            "schemaVersion", "nodeSettings", "proxyGroups", "rules", "ruleSets",
+            "dnsPolicies", "entrances", "workspaces",
+        ], path: "document")
+
+        for (index, value) in try configurationArray(document["nodeSettings"], path: "document.nodeSettings").enumerated() {
+            try rejectUnknownConfigurationKeys(
+                try configurationObject(value, path: "document.nodeSettings[\(index)]"),
+                allowed: [
+                    "id", "enabled", "userAliasUpdate", "removeUserAlias",
+                    "tagsUpdate", "regionUpdate", "removeRegion",
+                ],
+                path: "document.nodeSettings[\(index)]"
+            )
+        }
+        for (index, value) in try configurationArray(document["proxyGroups"], path: "document.proxyGroups").enumerated() {
+            let object = try configurationObject(value, path: "document.proxyGroups[\(index)]")
+            try rejectUnknownConfigurationKeys(object, allowed: [
+                "id", "name", "type", "membersUpdate", "memberCount",
+                "memberSelectors", "selectorCount", "enabled",
+            ], path: "document.proxyGroups[\(index)]")
+            if let members = object["membersUpdate"] {
+                for (memberIndex, member) in try configurationArray(members, path: "document.proxyGroups[\(index)].membersUpdate").enumerated() {
+                    try rejectUnknownConfigurationKeys(
+                        try configurationObject(member, path: "document.proxyGroups[\(index)].membersUpdate[\(memberIndex)]"),
+                        allowed: ["kind", "id"],
+                        path: "document.proxyGroups[\(index)].membersUpdate[\(memberIndex)]"
+                    )
+                }
+            }
+            if let selectors = object["memberSelectors"] {
+                for (selectorIndex, selector) in try configurationArray(
+                    selectors,
+                    path: "document.proxyGroups[\(index)].memberSelectors"
+                ).enumerated() {
+                    let selectorPath = "document.proxyGroups[\(index)].memberSelectors[\(selectorIndex)]"
+                    let selectorObject = try configurationObject(selector, path: selectorPath)
+                    try rejectUnknownConfigurationKeys(
+                        selectorObject,
+                        allowed: ["id", "name", "include", "exclude", "fixedNodeIDs"],
+                        path: selectorPath
+                    )
+                    for field in ["include", "exclude"] {
+                        for (conditionIndex, condition) in try configurationArray(
+                            selectorObject[field],
+                            path: "\(selectorPath).\(field)"
+                        ).enumerated() {
+                            let conditionPath = "\(selectorPath).\(field)[\(conditionIndex)]"
+                            try rejectUnknownConfigurationKeys(
+                                try configurationObject(condition, path: conditionPath),
+                                allowed: ["kind", "value"],
+                                path: conditionPath
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        for (index, value) in try configurationArray(document["rules"], path: "document.rules").enumerated() {
+            let object = try configurationObject(value, path: "document.rules[\(index)]")
+            try rejectUnknownConfigurationKeys(object, allowed: [
+                "id", "enabled", "priority", "matchersUpdate", "matcherCount",
+                "action", "unavailableFallback", "workspaceScope",
+            ], path: "document.rules[\(index)]")
+            if let matchers = object["matchersUpdate"] {
+                for (matcherIndex, matcher) in try configurationArray(matchers, path: "document.rules[\(index)].matchersUpdate").enumerated() {
+                    let path = "document.rules[\(index)].matchersUpdate[\(matcherIndex)]"
+                    let object = try configurationObject(matcher, path: path)
+                    try rejectUnknownConfigurationKeys(
+                        object,
+                        allowed: object["kind"]?.stringValue == "portRange"
+                            ? ["kind", "lowerBound", "upperBound"]
+                            : ["kind", "value"],
+                        path: path
+                    )
+                }
+            }
+            try validateConfigurationAction(object["action"], path: "document.rules[\(index)].action")
+        }
+        for (index, value) in try configurationArray(document["ruleSets"], path: "document.ruleSets").enumerated() {
+            let object = try configurationObject(value, path: "document.ruleSets[\(index)]")
+            try rejectUnknownConfigurationKeys(object, allowed: [
+                "id", "name", "rulesUpdate", "ruleCount", "defaultAction",
+                "sourceURLUpdate", "removeSourceURL",
+            ], path: "document.ruleSets[\(index)]")
+            try validateConfigurationAction(object["defaultAction"], path: "document.ruleSets[\(index)].defaultAction")
+        }
+        for (index, value) in try configurationArray(document["dnsPolicies"], path: "document.dnsPolicies").enumerated() {
+            try rejectUnknownConfigurationKeys(
+                try configurationObject(value, path: "document.dnsPolicies[\(index)]"),
+                allowed: [
+                    "id", "name", "mode", "nameserversUpdate", "nameserverCount",
+                    "fallbackNameserversUpdate", "fallbackNameserverCount",
+                    "proxyServerUpdate", "removeProxyServer", "rulesUpdate",
+                    "ruleCount", "takeoverEnabled",
+                ],
+                path: "document.dnsPolicies[\(index)]"
+            )
+        }
+        for (index, value) in try configurationArray(document["entrances"], path: "document.entrances").enumerated() {
+            let object = try configurationObject(value, path: "document.entrances[\(index)]")
+            try rejectUnknownConfigurationKeys(object, allowed: [
+                "id", "kind", "enabled", "bindAddress", "port", "defaultAction",
+                "workspaceOverride",
+            ], path: "document.entrances[\(index)]")
+            try validateConfigurationAction(object["defaultAction"], path: "document.entrances[\(index)].defaultAction")
+        }
+        for (index, value) in try configurationArray(document["workspaces"], path: "document.workspaces").enumerated() {
+            try rejectUnknownConfigurationKeys(
+                try configurationObject(value, path: "document.workspaces[\(index)]"),
+                allowed: [
+                    "id", "name", "nodeScope", "nodeIDsUpdate", "nodeCount",
+                    "effectiveNodeCount",
+                    "proxyGroupIDsUpdate", "proxyGroupCount", "ruleIDsUpdate",
+                    "ruleCount", "ruleSetIDsUpdate", "ruleSetCount", "dnsPolicyID",
+                    "entranceIDsUpdate", "entranceCount", "revision",
+                ],
+                path: "document.workspaces[\(index)]"
+            )
+        }
+    }
+
+    private static func validateConfigurationAction(
+        _ value: AutomationJSONValue?,
+        path: String
+    ) throws {
+        let object = try configurationObject(value, path: path)
+        try rejectUnknownConfigurationKeys(
+            object,
+            allowed: object["kind"]?.stringValue == "proxyGroup"
+                ? ["kind", "proxyGroupID"] : ["kind"],
+            path: path
+        )
+    }
+
+    private static func configurationObject(
+        _ value: AutomationJSONValue?,
+        path: String
+    ) throws -> [String: AutomationJSONValue] {
+        guard case let .object(object)? = value else {
+            throw GatewayError.invalidParameters("\(path) must be an object")
+        }
+        return object
+    }
+
+    private static func configurationArray(
+        _ value: AutomationJSONValue?,
+        path: String
+    ) throws -> [AutomationJSONValue] {
+        guard case let .array(array)? = value else {
+            throw GatewayError.invalidParameters("\(path) must be an array")
+        }
+        return array
+    }
+
+    private static func rejectUnknownConfigurationKeys(
+        _ object: [String: AutomationJSONValue],
+        allowed: Set<String>,
+        path: String
+    ) throws {
+        if let key = object.keys.filter({ !allowed.contains($0) }).sorted().first {
+            throw GatewayError.invalidParameters("Unknown field: \(path).\(key)")
+        }
     }
 
     private static let sensitiveReadMethods: Set<String> = [
+        "configuration.plan",
+        "configuration.snapshot",
+        "configuration.proxyGroup.selectors.export",
         "appRouting.candidates.list",
         "appRouting.activities.list",
         "traffic.connections.list",
@@ -2392,6 +2891,9 @@ private enum GatewayError: Error, LocalizedError {
     case operationFailed(String, Bool)
     case operationInProgress
     case revisionConflict(UInt64)
+    case configurationRevisionConflict(String)
+    case configurationInvalid([ConfigurationDiagnostic])
+    case configurationDependencies([ConfigurationAutomationDependency])
     case pairingRateLimited
     case interactionRateLimited
 
@@ -2406,7 +2908,13 @@ private enum GatewayError: Error, LocalizedError {
         case let .methodNotFound(method):
             AutomationRPCError(code: -32601, type: "method_not_found", message: "Unknown automation method: \(method)")
         case let .invalidParameters(message):
-            AutomationRPCError(code: -32602, type: "invalid_parameters", message: message)
+            AutomationRPCError(
+                code: -32602,
+                type: "invalid_parameters",
+                message: message,
+                retryable: true,
+                data: retryWithNewRequestIDData
+            )
         case let .confirmationRequired(method):
             AutomationRPCError(
                 code: -32020,
@@ -2446,6 +2954,51 @@ private enum GatewayError: Error, LocalizedError {
                 retryable: true,
                 data: .object([
                     "currentRevision": .unsignedInteger(currentRevision),
+                    "retryWithNewRequestID": .bool(true),
+                ])
+            )
+        case let .configurationRevisionConflict(currentRevision):
+            AutomationRPCError(
+                code: -32033,
+                type: "configuration_revision_conflict",
+                message: "The Configuration document changed before this operation could be applied",
+                retryable: true,
+                data: .object([
+                    "currentRevision": .string(currentRevision),
+                    "retryWithNewRequestID": .bool(true),
+                ])
+            )
+        case let .configurationInvalid(diagnostics):
+            AutomationRPCError(
+                code: -32034,
+                type: "configuration_invalid",
+                message: "The proposed Configuration document is invalid",
+                retryable: true,
+                data: .object([
+                    "diagnostics": .array(diagnostics.map { diagnostic in
+                        .object([
+                            "severity": .string(diagnostic.severity.rawValue),
+                            "code": .string(diagnostic.code),
+                            "subject": .string(diagnostic.subject),
+                            "message": .string(redactedDiagnosticText(diagnostic.message)),
+                        ])
+                    }),
+                    "retryWithNewRequestID": .bool(true),
+                ])
+            )
+        case let .configurationDependencies(dependencies):
+            AutomationRPCError(
+                code: -32035,
+                type: "configuration_dependencies",
+                message: "The Configuration object is still referenced",
+                retryable: true,
+                data: .object([
+                    "dependencies": .array(dependencies.map { dependency in
+                        .object([
+                            "kind": .string(dependency.kind),
+                            "id": .string(dependency.id),
+                        ])
+                    }),
                     "retryWithNewRequestID": .bool(true),
                 ])
             )
@@ -2513,6 +3066,14 @@ private extension AutomationRPCRequest {
             throw GatewayError.invalidParameters("id must be a profile UUID")
         }
         return ProfileID(rawValue: uuid)
+    }
+
+    func configurationRevision() throws -> UUID {
+        let rawValue = try string("expectedRevision")
+        guard let revision = UUID(uuidString: rawValue) else {
+            throw ConfigurationAutomationError.invalidRevision(rawValue)
+        }
+        return revision
     }
 
     func decode<T: Decodable>(_ name: String) throws -> T {

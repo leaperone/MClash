@@ -61,13 +61,28 @@ public struct ConfigurationCompiler: Sendable {
 
     public init() {}
 
-    public func compile(document: ConfigurationDocument, workspaceID: WorkspaceID? = nil) throws -> CompiledConfiguration {
+    public func compile(
+        document: ConfigurationDocument,
+        workspaceID: WorkspaceID? = nil
+    ) throws -> CompiledConfiguration {
+        try compile(
+            document: document,
+            workspaceID: workspaceID,
+            validatedDiagnostics: nil
+        )
+    }
+
+    func compile(
+        document: ConfigurationDocument,
+        workspaceID: WorkspaceID?,
+        validatedDiagnostics: [ConfigurationDiagnostic]?
+    ) throws -> CompiledConfiguration {
         guard let workspace = workspaceID.flatMap({ id in document.workspaces.first(where: { $0.id == id }) }) ?? document.currentWorkspace else {
             throw ConfigurationCompilationError.invalidText(
                 AppLocalization.string("No MClash workspace is configured.")
             )
         }
-        var diagnostics = document.diagnostics(for: workspace)
+        var diagnostics = validatedDiagnostics ?? document.diagnostics(for: workspace)
 
         // Validation reports duplicate identities, but the compiler must not
         // trap while constructing lookup tables for that diagnostic path.
@@ -79,7 +94,23 @@ public struct ConfigurationCompiler: Sendable {
             document.proxyGroups.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let dns = document.dnsPolicies.first(where: { $0.id == workspace.dnsPolicyID })
+        let rulesByID = Dictionary(
+            document.rules.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let ruleSetsByID = Dictionary(
+            document.ruleSets.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let dnsByID = Dictionary(
+            document.dnsPolicies.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let entrancesByID = Dictionary(
+            document.entrances.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let dns = dnsByID[workspace.dnsPolicyID]
         // An empty workspace node scope is intentional: it means “the whole
         // enabled catalog”. This is the default and is what lets selector
         // backed groups follow subscription refreshes automatically.
@@ -87,12 +118,15 @@ public struct ConfigurationCompiler: Sendable {
             ? document.nodes.filter(runtimeEligible)
             : workspace.nodeIDs.compactMap { nodesByID[$0] }.filter(runtimeEligible)
         let workspaceGroups = workspace.proxyGroupIDs.compactMap { groupsByID[$0] }.filter(\.enabled)
-        let workspaceRuleSets = workspace.ruleSetIDs.compactMap { id in document.ruleSets.first(where: { $0.id == id }) }
-        let workspaceRules = workspace.ruleIDs.compactMap { id in document.rules.first(where: { $0.id == id }) }.filter(\.enabled).sorted {
+        let workspaceRuleSets = workspace.ruleSetIDs.compactMap { ruleSetsByID[$0] }
+        let workspaceRules = workspace.ruleIDs.compactMap { rulesByID[$0] }.filter(\.enabled).sorted {
             if $0.priority == $1.priority { return $0.id.rawValue.uuidString < $1.id.rawValue.uuidString }
             return $0.priority < $1.priority
         }
-        let runtimeNodeNames = makeRuntimeNodeNames(workspaceNodes)
+        let runtimeNodeNames = makeRuntimeNodeNames(
+            workspaceNodes,
+            reserving: Set(workspaceGroups.map { $0.name.lowercased() })
+        )
         // Selectors are a user-facing membership policy, not a Mihomo field.
         // Resolve them against the current catalog immediately before render;
         // this is what makes a subscription refresh update dynamic members
@@ -120,8 +154,16 @@ public struct ConfigurationCompiler: Sendable {
             rules: workspaceRules,
             ruleSets: workspaceRuleSets,
             dns: dns,
-            entrances: workspace.entranceIDs.compactMap { id in document.entrances.first(where: { $0.id == id }) }
+            entrances: workspace.entranceIDs.compactMap { entrancesByID[$0] }
         )
+        let yamlData = Data(yaml.utf8)
+        guard yamlData.count <= ConfigurationAutomationLimits.compiledYAMLBytes else {
+            throw ConfigurationCompilationError.invalidText(
+                AppLocalization.string(
+                    "Compiled configuration exceeds the supported size limit."
+                )
+            )
+        }
         let appRules = workspaceRules.filter { rule in
             rule.matchers.contains { matcher in
                 if case .application = matcher { return true }
@@ -144,13 +186,11 @@ public struct ConfigurationCompiler: Sendable {
             action: .mihomo(.profileRules),
             unavailableFallback: .reject
         )
-        let workspaceEntrances = workspace.entranceIDs.compactMap { id in
-            document.entrances.first(where: { $0.id == id })
-        }
+        let workspaceEntrances = workspace.entranceIDs.compactMap { entrancesByID[$0] }
         return CompiledConfiguration(
             workspaceID: workspace.id,
             workspaceRevision: workspace.revision,
-            yaml: Data(yaml.utf8),
+            yaml: yamlData,
             networkExtensionRules: appRules,
             captureRules: capture.rules + [catchAll],
             captureEnabled: workspaceEntrances.contains {
@@ -172,10 +212,14 @@ public struct ConfigurationCompiler: Sendable {
     ) -> String {
         let enabledPortEntrances = entrances.filter { ($0.kind == .http || $0.kind == .socks5) && $0.enabled }
         let bindAddress = enabledPortEntrances.first?.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        let groupNames = Dictionary(
+            groups.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var lines: [String] = [
             "# Generated by MClash \(Self.version)",
             "allow-lan: false",
-            "bind-address: \(yamlScalar(bindAddress?.isEmpty == false ? bindAddress! : "127.0.0.1"))",
+            "bind-address: \(yamlString(bindAddress?.isEmpty == false ? bindAddress! : "127.0.0.1"))",
             "mode: rule",
             "log-level: info",
             "ipv6: true",
@@ -189,8 +233,7 @@ public struct ConfigurationCompiler: Sendable {
             lines.insert("socks-port: \(port)", at: lines.firstIndex(of: "") ?? lines.endIndex)
         }
         if nodes.isEmpty {
-            lines.append("  - name: DIRECT")
-            lines.append("    type: direct")
+            lines[lines.count - 1] = "proxies: []"
         } else {
             for node in nodes {
                 lines.append(contentsOf: render(node: node, name: nodeNames[node.id]))
@@ -200,12 +243,10 @@ public struct ConfigurationCompiler: Sendable {
         lines.append("")
         lines.append("proxy-groups:")
         if groups.isEmpty {
-            lines.append("  - name: MClash Select")
-            lines.append("    type: select")
-            lines.append("    proxies: [DIRECT]")
+            lines[lines.count - 1] = "proxy-groups: []"
         } else {
             for group in groups {
-                lines.append("  - name: \(yamlScalar(group.name))")
+                lines.append("  - name: \(yamlString(group.name))")
                 lines.append("    type: \(mihomoGroupType(group.type))")
                 let members: [String]
                 switch group.type {
@@ -217,14 +258,14 @@ public struct ConfigurationCompiler: Sendable {
                     members = group.members.compactMap { member -> String? in
                         switch member {
                         case let .node(id): return nodeNames[id]
-                        case let .group(id): return groups.first(where: { $0.id == id })?.name
+                        case let .group(id): return groupNames[id]
                         }
                     }
                 }
                 let values = members.isEmpty && group.type != .direct && group.type != .reject
                     ? ["DIRECT"]
                     : members
-                lines.append("    proxies: [\(values.map(yamlScalar).joined(separator: ", "))]")
+                lines.append("    proxies: [\(values.map(yamlString).joined(separator: ", "))]")
             }
         }
 
@@ -232,14 +273,14 @@ public struct ConfigurationCompiler: Sendable {
             lines.append("")
             lines.append("rule-providers:")
             for ruleSet in ruleSets where ruleSet.sourceURL != nil {
-                let providerName = yamlKey(ruleSet.name)
-                lines.append("  \(providerName):")
+                let providerName = Self.ruleSetRuntimeName(ruleSet.name)
+                lines.append("  \(yamlString(providerName)):")
                 lines.append("    type: http")
                 lines.append("    behavior: classical")
                 lines.append("    format: yaml")
                 lines.append("    path: ./providers/\(providerName).yaml")
                 if let sourceURL = ruleSet.sourceURL {
-                    lines.append("    url: \(yamlScalar(sourceURL.absoluteString))")
+                    lines.append("    url: \(yamlString(sourceURL.absoluteString))")
                 }
             }
         }
@@ -247,28 +288,32 @@ public struct ConfigurationCompiler: Sendable {
         lines.append("")
         lines.append("rules:")
         for ruleSet in ruleSets {
-            let action = render(action: ruleSet.defaultAction, groups: groups)
+            let action = render(action: ruleSet.defaultAction, groupNames: groupNames)
             if ruleSet.sourceURL != nil {
-                lines.append("  - RULE-SET,\(yamlKey(ruleSet.name)),\(action)")
+                lines.append("  - \(yamlString("RULE-SET,\(Self.ruleSetRuntimeName(ruleSet.name)),\(action)"))")
             }
             for rawRule in ruleSet.rules {
                 let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty, !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else { continue }
-                if trimmed.contains(",") {
-                    lines.append("  - \(trimmed)")
+                let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
+                if parts.count == 2 {
+                    let rendered = parts[0].trimmingCharacters(in: .whitespaces)
+                        + ",\(parts[1].trimmingCharacters(in: .whitespaces)),\(action)"
+                    lines.append(
+                        "  - \(yamlString(rendered))"
+                    )
                 } else {
-                    lines.append("  - DOMAIN-SUFFIX,\(trimmed),\(action)")
+                    lines.append("  - \(yamlString("DOMAIN-SUFFIX,\(trimmed),\(action)"))")
                 }
             }
         }
         for rule in rules {
-            let action = render(action: rule.action, groups: groups)
+            let action = render(action: rule.action, groupNames: groupNames)
             for line in render(rule: rule, action: action) {
-                lines.append("  - \(line)")
+                lines.append("  - \(yamlString(line))")
             }
         }
         let fallback = entrances.first(where: \.enabled)?.defaultAction ?? .direct
-        lines.append("  - MATCH,\(render(action: fallback, groups: groups))")
+        lines.append("  - \(yamlString("MATCH,\(render(action: fallback, groupNames: groupNames))"))")
 
         lines.append("")
         lines.append("dns:")
@@ -276,39 +321,41 @@ public struct ConfigurationCompiler: Sendable {
         lines.append("  enable: \(dnsEnabled)")
         lines.append("  enhanced-mode: \(mihomoDNSMode(dns?.mode ?? .system))")
         let nameservers = dns?.nameservers.isEmpty == false ? dns!.nameservers : ["223.5.5.5", "1.1.1.1"]
-        lines.append("  nameserver: [\(nameservers.map(yamlScalar).joined(separator: ", "))]")
+        lines.append("  nameserver: [\(nameservers.map(yamlString).joined(separator: ", "))]")
         if let fallback = dns?.fallbackNameservers, !fallback.isEmpty {
-            lines.append("  fallback: [\(fallback.map(yamlScalar).joined(separator: ", "))]")
+            lines.append("  fallback: [\(fallback.map(yamlString).joined(separator: ", "))]")
         }
         if let proxyServer = dns?.proxyServer, !proxyServer.isEmpty {
-            lines.append("  proxy-server: \(yamlScalar(proxyServer))")
+            lines.append("  proxy-server-nameserver: [\(yamlString(proxyServer))]")
         }
         if let dnsRules = dns?.rules, !dnsRules.isEmpty {
             lines.append("  nameserver-policy:")
-            for rule in dnsRules where !rule.contains(where: { $0 == "\n" || $0 == "\r" }) {
-                lines.append("    \(yamlScalar(rule)): [\(nameservers.map(yamlScalar).joined(separator: ", "))]")
+            for rule in dnsRules {
+                lines.append("    \(yamlString(rule)): [\(nameservers.map(yamlString).joined(separator: ", "))]")
             }
         }
 
-        if entrances.contains(where: { $0.kind == .tun && $0.enabled }) {
-            lines.append("")
-            lines.append("tun:")
-            lines.append("  enable: true")
-            lines.append("  stack: system")
-            lines.append("  auto-route: true")
-            lines.append("  auto-detect-interface: true")
-        }
         return lines.joined(separator: "\n") + "\n"
     }
 
     private func render(node: Node, name: String?) -> [String] {
+        let type: String
+        switch node.proto {
+        case .https: type = "http"
+        case .shadowsocks: type = "ss"
+        default: type = node.proto.rawValue
+        }
         var lines = [
-            "  - name: \(yamlScalar(name ?? node.userAlias ?? node.displayName))",
-            "    type: \(node.proto.rawValue)",
-            "    server: \(yamlScalar(node.host))",
+            "  - name: \(yamlString(name ?? node.userAlias ?? node.displayName))",
+            "    type: \(type)",
+            "    server: \(yamlString(node.host))",
             "    port: \(node.port)",
         ]
-        for (key, value) in node.parameters.sorted(by: { $0.key < $1.key }) where !key.isEmpty {
+        if node.proto == .https {
+            lines.append("    tls: true")
+        }
+        for (key, value) in node.parameters.sorted(by: { $0.key < $1.key })
+        where !key.isEmpty && !(node.proto == .https && key == "tls") {
             lines.append("    \(key): \(yamlScalar(value))")
         }
         return lines
@@ -319,7 +366,10 @@ public struct ConfigurationCompiler: Sendable {
     /// without changing the user-facing catalog or stable NodeID. Group
     /// references use this same map, keeping refreshes and duplicate names
     /// unambiguous.
-    private func makeRuntimeNodeNames(_ nodes: [Node]) -> [NodeID: String] {
+    private func makeRuntimeNodeNames(
+        _ nodes: [Node],
+        reserving groupNames: Set<String>
+    ) -> [NodeID: String] {
         let ordered = nodes.sorted { lhs, rhs in
             let left = (lhs.userAlias ?? lhs.displayName).lowercased()
                 + "|" + lhs.host + "|" + String(format: "%05d", lhs.port)
@@ -331,8 +381,11 @@ public struct ConfigurationCompiler: Sendable {
         }
         var counts: [String: Int] = [:]
         var result: [NodeID: String] = [:]
-        var usedNames: Set<String> = []
-        let reserved: Set<String> = ["DIRECT", "REJECT", "GLOBAL"]
+        var usedNames = groupNames
+        let reserved: Set<String> = [
+            "DIRECT", "REJECT", "REJECT-DROP", "COMPATIBLE",
+            "PASS", "PASS-RULE", "GLOBAL",
+        ]
         for node in ordered {
             let raw = (node.userAlias ?? node.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
             let base = raw.isEmpty ? "node-\(node.id.rawValue.uuidString.prefix(8))" : raw
@@ -366,17 +419,16 @@ public struct ConfigurationCompiler: Sendable {
     }
 
     private func render(rule: RoutingRule, action: String) -> [String] {
-        var domains: [String] = []
-        var networks: [String] = []
+        var destinations: [String] = []
         var ports: [String] = []
         var transports: [String] = []
         var hasSourceMatcher = false
         for matcher in rule.matchers {
             switch matcher {
-            case let .domainExact(value): domains.append("DOMAIN,\(safeCSV(value))")
-            case let .domainSuffix(value): domains.append("DOMAIN-SUFFIX,\(safeCSV(value))")
-            case let .domainWildcard(value): domains.append("DOMAIN-KEYWORD,\(safeCSV(value.replacingOccurrences(of: "*", with: "")))")
-            case let .ipCIDR(value): networks.append("IP-CIDR,\(safeCSV(value))")
+            case let .domainExact(value): destinations.append("DOMAIN,\(safeCSV(value))")
+            case let .domainSuffix(value): destinations.append("DOMAIN-SUFFIX,\(safeCSV(value))")
+            case let .domainWildcard(value): destinations.append("DOMAIN-KEYWORD,\(safeCSV(value.replacingOccurrences(of: "*", with: "")))")
+            case let .ipCIDR(value): destinations.append("IP-CIDR,\(safeCSV(value))")
             case let .port(value): ports.append("DST-PORT,\(value)")
             case let .portRange(range): ports.append("DST-PORT,\(range.lowerBound)-\(range.upperBound)")
             case let .transport(value): transports.append("NETWORK,\(safeCSV(value))")
@@ -387,20 +439,14 @@ public struct ConfigurationCompiler: Sendable {
         // Network Extension. Emitting the remaining domain matcher to Mihomo
         // would widen an app-scoped rule to every HTTP/SOCKS/TUN flow.
         if hasSourceMatcher { return [] }
-        let destinations = domains + networks
-        guard !destinations.isEmpty || !ports.isEmpty || !transports.isEmpty else {
-            return hasSourceMatcher ? [] : ["MATCH,\(action)"]
+        let families = [destinations, ports, transports].filter { !$0.isEmpty }
+        guard let first = families.first else { return ["MATCH,\(action)"] }
+        guard families.count > 1 else { return first.map { "\($0),\(action)" } }
+        let combinations = families.dropFirst().reduce(first.map { [$0] }) { partial, family in
+            partial.flatMap { values in family.map { values + [$0] } }
         }
-        let destinationParts = destinations.isEmpty ? [String?](repeating: nil, count: 1) : destinations.map(Optional.some)
-        let portParts = ports.isEmpty ? [String?](repeating: nil, count: 1) : ports.map(Optional.some)
-        let transportParts = transports.isEmpty ? [String?](repeating: nil, count: 1) : transports.map(Optional.some)
-        return destinationParts.flatMap { destination in
-            portParts.flatMap { port in
-                transportParts.compactMap { transport in
-                    let parts = [destination, port, transport].compactMap { $0 }
-                    return parts.isEmpty ? nil : parts.joined(separator: ",") + "," + action
-                }
-            }
+        return combinations.map { values in
+            "AND,(\(values.map { "(\($0))" }.joined(separator: ","))),\(action)"
         }
     }
 
@@ -408,15 +454,18 @@ public struct ConfigurationCompiler: Sendable {
         value.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
     }
 
-    private func render(action: RoutingAction, groups: [ProxyGroup]) -> String {
+    private func render(
+        action: RoutingAction,
+        groupNames: [ProxyGroupID: String]
+    ) -> String {
         switch action {
         case .direct: return "DIRECT"
         case .reject: return "REJECT"
         case let .proxyGroup(id):
-            guard let group = groups.first(where: { $0.id == id }) else {
+            guard let groupName = groupNames[id] else {
                 preconditionFailure("Configuration validation must reject unavailable proxy group actions")
             }
-            return group.name
+            return groupName
         }
     }
 
@@ -440,12 +489,16 @@ public struct ConfigurationCompiler: Sendable {
         }
     }
 
-    private func yamlKey(_ value: String) -> String {
+    static func ruleSetRuntimeName(_ value: String) -> String {
         let sanitized = value.lowercased().map { character in
             character.isLetter || character.isNumber || character == "-" || character == "_" ? character : "-"
         }
         let result = String(sanitized).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return result.isEmpty ? "ruleset" : result
+    }
+
+    private func yamlString(_ value: String) -> String {
+        String(decoding: try! JSONEncoder().encode(value), as: UTF8.self)
     }
 
     private func yamlScalar(_ value: String) -> String {

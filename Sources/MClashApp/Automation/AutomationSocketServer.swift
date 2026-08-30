@@ -250,14 +250,21 @@ final class AutomationSocketServer: @unchecked Sendable {
         to request: AutomationRPCRequest,
         peer: AutomationPeerIdentity
     ) -> AutomationRPCResponse {
+        let serverInstance = currentEndpoint.map {
+            "\($0.processIdentifier):\($0.nonce)"
+        }
         let semaphore = DispatchSemaphore(value: 0)
         let box = ResponseBox()
         Task { @MainActor [weak self] in
             let gateway = self?.stateLock.withLock { self?.gateway }
             if let gateway {
-                box.response = await gateway.execute(request, peer: peer)
+                box.finish(await gateway.execute(
+                    request,
+                    peer: peer,
+                    pairingMayCommit: { box.beginPairingCommit() }
+                ))
             } else {
-                box.response = AutomationRPCResponse(
+                box.finish(AutomationRPCResponse(
                     id: request.id,
                     error: AutomationRPCError(
                         code: -32000,
@@ -265,25 +272,48 @@ final class AutomationSocketServer: @unchecked Sendable {
                         message: "MClash is stopping",
                         retryable: true
                     )
-                )
+                ))
             }
             semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now() + 300) == .success,
-              let response = box.response else {
-            return AutomationRPCResponse(
-                id: request.id,
+        if semaphore.wait(timeout: .now() + 300) != .success {
+            if request.method == "auth.pair", !box.claimPairingTimeout() {
+                semaphore.wait()
+            } else {
+                let pairingTimedOut = request.method == "auth.pair"
+                let sameInstanceRecovery = !pairingTimedOut && serverInstance != nil
+                var data: [String: AutomationJSONValue] = [
+                    "outcomeIndeterminate": .bool(!pairingTimedOut),
+                    "retryWithSameRequestID": .bool(sameInstanceRecovery),
+                ]
+                if sameInstanceRecovery, let serverInstance {
+                    data["serverInstance"] = .string(serverInstance)
+                }
+                return AutomationRPCResponse(
+                    id: request.id,
                     error: AutomationRPCError(
                         code: -32001,
                         type: "operation_timeout",
-                        message: "The MClash operation is still running or its outcome is indeterminate; query the same execution with the same request id",
-                        retryable: true,
-                        data: .object([
-                            "outcomeIndeterminate": .bool(true),
-                            "retryWithSameRequestID": .bool(true),
-                        ])
+                        message: pairingTimedOut
+                            ? "Pairing timed out before authorization was issued; start a new pairing request"
+                            : sameInstanceRecovery
+                                ? "The MClash operation is still running or its outcome is indeterminate; query the same execution with the same request id"
+                                : "The MClash operation outcome is indeterminate and cannot be safely retried because its server instance is unavailable",
+                        retryable: sameInstanceRecovery,
+                        data: .object(data)
                     )
                 )
+            }
+        }
+        guard let response = box.response else {
+            return AutomationRPCResponse(
+                id: request.id,
+                error: AutomationRPCError(
+                    code: -32603,
+                    type: "operation_failed",
+                    message: "The operation completed without a response"
+                )
+            )
         }
         return response
     }
@@ -631,7 +661,45 @@ final class AutomationSocketServer: @unchecked Sendable {
 }
 
 private final class ResponseBox: @unchecked Sendable {
-    var response: AutomationRPCResponse?
+    private enum State {
+        case pending
+        case pairingCommitStarted
+        case pairingTimedOut
+        case completed(AutomationRPCResponse)
+    }
+
+    private let lock = NSLock()
+    private var state = State.pending
+
+    var response: AutomationRPCResponse? {
+        lock.withLock {
+            guard case let .completed(response) = state else { return nil }
+            return response
+        }
+    }
+
+    func beginPairingCommit() -> Bool {
+        lock.withLock {
+            guard case .pending = state else { return false }
+            state = .pairingCommitStarted
+            return true
+        }
+    }
+
+    func claimPairingTimeout() -> Bool {
+        lock.withLock {
+            guard case .pending = state else { return false }
+            state = .pairingTimedOut
+            return true
+        }
+    }
+
+    func finish(_ response: AutomationRPCResponse) {
+        lock.withLock {
+            if case .pairingTimedOut = state { return }
+            state = .completed(response)
+        }
+    }
 }
 
 private enum ServerError: Error, LocalizedError {

@@ -216,10 +216,6 @@ actor NetworkCaptureConfigurationStore {
         }
         do {
             try await replacer.commit(receipt)
-            try fileManager.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: layout.preferencesURL.path
-            )
         } catch {
             try? await replacer.rollback(receipt)
             throw error
