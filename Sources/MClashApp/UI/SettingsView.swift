@@ -424,7 +424,7 @@ struct SettingsView: View {
     private func updateCommandLineToolInstallation() {
         let installer = CommandLineToolInstaller()
         do {
-            if installer.status == .installed {
+            if commandLineToolStatus == .installed {
                 try installer.remove()
             } else {
                 try installer.install()

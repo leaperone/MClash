@@ -10,144 +10,221 @@ struct CommandLineToolInstaller {
         case unavailable
     }
 
-    private enum ItemKind: Equatable {
+    private enum LinkState: Equatable {
         case missing
-        case regularFile
-        case directory
-        case symbolicLink
-        case other
+        case managed
+        case occupied
     }
 
-    private let fileManager: FileManager
-    private let helperURL: URL
-    private let linkURL: URL
+    private static let localDirectoryName = ".local"
+    private static let binDirectoryName = "bin"
+    private static let linkName = "mclashctl"
+    private static let directoryOpenFlags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+
+    private let helperPath: String
+    private let homePath: String
 
     init(bundle: Bundle = .main, fileManager: FileManager = .default) {
-        self.fileManager = fileManager
-        helperURL = bundle.bundleURL
+        helperPath = bundle.bundleURL
             .appendingPathComponent("Contents/Helpers/mclashctl", isDirectory: false)
             .standardizedFileURL
-        linkURL = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".local/bin/mclashctl", isDirectory: false)
-            .standardizedFileURL
+            .path
+        homePath = fileManager.homeDirectoryForCurrentUser.standardizedFileURL.path
     }
 
     var status: Status {
-        guard parentDirectoriesAreSafe else {
+        guard let homeDescriptor = try? openHomeDirectory() else {
             return .unsafeParent
         }
-        if isManagedLink {
-            return .installed
+        defer { close(homeDescriptor) }
+
+        do {
+            guard let localDescriptor = try openDirectory(
+                at: homeDescriptor,
+                name: Self.localDirectoryName,
+                createIfMissing: false
+            ) else {
+                return missingLinkStatus
+            }
+            defer { close(localDescriptor) }
+
+            guard let binDescriptor = try openDirectory(
+                at: localDescriptor,
+                name: Self.binDirectoryName,
+                createIfMissing: false
+            ) else {
+                return missingLinkStatus
+            }
+            defer { close(binDescriptor) }
+
+            return switch linkState(in: binDescriptor) {
+            case .managed: .installed
+            case .occupied: .conflict
+            case .missing: missingLinkStatus
+            }
+        } catch {
+            return .unsafeParent
         }
-        if itemExistsAtLinkURL {
-            return .conflict
-        }
-        return helperIsAvailable
-            ? .notInstalled
-            : .unavailable
     }
 
     func install() throws {
-        guard parentDirectoriesAreSafe else {
-            throw CommandLineToolInstallationError.unsafeParentDirectory
-        }
-        if isManagedLink {
-            return
-        }
+        let homeDescriptor = try openHomeDirectory()
+        defer { close(homeDescriptor) }
+
         guard helperIsAvailable else {
             throw CommandLineToolInstallationError.helperUnavailable
         }
-        guard !itemExistsAtLinkURL else {
-            throw CommandLineToolInstallationError.destinationOccupied
-        }
-
-        try createDirectoryIfMissing(localDirectoryURL)
-        try createDirectoryIfMissing(binDirectoryURL)
-        guard parentDirectoriesAreSafe else {
+        guard let localDescriptor = try openDirectory(
+            at: homeDescriptor,
+            name: Self.localDirectoryName,
+            createIfMissing: true
+        ) else {
             throw CommandLineToolInstallationError.unsafeParentDirectory
         }
-        try fileManager.createSymbolicLink(at: linkURL, withDestinationURL: helperURL)
+        defer { close(localDescriptor) }
+        guard let binDescriptor = try openDirectory(
+            at: localDescriptor,
+            name: Self.binDirectoryName,
+            createIfMissing: true
+        ) else {
+            throw CommandLineToolInstallationError.unsafeParentDirectory
+        }
+        defer { close(binDescriptor) }
+
+        switch linkState(in: binDescriptor) {
+        case .managed:
+            return
+        case .occupied:
+            throw CommandLineToolInstallationError.destinationOccupied
+        case .missing:
+            break
+        }
+
+        guard symlinkat(helperPath, binDescriptor, Self.linkName) == 0 else {
+            let code = errno
+            if code == EEXIST {
+                if linkState(in: binDescriptor) == .managed {
+                    return
+                }
+                throw CommandLineToolInstallationError.destinationOccupied
+            }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
     }
 
     func remove() throws {
-        guard parentDirectoriesAreSafe else {
-            throw CommandLineToolInstallationError.unsafeParentDirectory
-        }
-        if isManagedLink {
-            try fileManager.removeItem(at: linkURL)
+        let homeDescriptor = try openHomeDirectory()
+        defer { close(homeDescriptor) }
+
+        guard let localDescriptor = try openDirectory(
+            at: homeDescriptor,
+            name: Self.localDirectoryName,
+            createIfMissing: false
+        ) else {
             return
         }
-        guard !itemExistsAtLinkURL else {
+        defer { close(localDescriptor) }
+        guard let binDescriptor = try openDirectory(
+            at: localDescriptor,
+            name: Self.binDirectoryName,
+            createIfMissing: false
+        ) else {
+            return
+        }
+        defer { close(binDescriptor) }
+
+        switch linkState(in: binDescriptor) {
+        case .missing:
+            return
+        case .occupied:
             throw CommandLineToolInstallationError.destinationNotManaged
+        case .managed:
+            break
+        }
+
+        guard unlinkat(binDescriptor, Self.linkName, 0) == 0 else {
+            let code = errno
+            if code == ENOENT {
+                return
+            }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
         }
     }
 
-    private var localDirectoryURL: URL {
-        linkURL.deletingLastPathComponent().deletingLastPathComponent()
-    }
-
-    private var binDirectoryURL: URL {
-        linkURL.deletingLastPathComponent()
+    private var missingLinkStatus: Status {
+        helperIsAvailable ? .notInstalled : .unavailable
     }
 
     private var helperIsAvailable: Bool {
-        itemKind(at: helperURL) == .regularFile
-            && access(helperURL.path, X_OK) == 0
-    }
-
-    private var parentDirectoriesAreSafe: Bool {
-        [localDirectoryURL, binDirectoryURL].allSatisfy {
-            let kind = itemKind(at: $0)
-            return kind == .missing || kind == .directory
-        }
-    }
-
-    private var isManagedLink: Bool {
-        guard let destination = try? fileManager.destinationOfSymbolicLink(
-            atPath: linkURL.path
-        ) else {
+        guard helperPath.hasPrefix("/") else {
             return false
         }
-        let destinationURL: URL
-        if destination.hasPrefix("/") {
-            destinationURL = URL(fileURLWithPath: destination)
-        } else {
-            destinationURL = linkURL.deletingLastPathComponent()
-                .appendingPathComponent(destination)
-        }
-        return destinationURL.standardizedFileURL == helperURL
+        var metadata = stat()
+        return lstat(helperPath, &metadata) == 0
+            && metadata.st_mode & S_IFMT == S_IFREG
+            && access(helperPath, X_OK) == 0
     }
 
-    private var itemExistsAtLinkURL: Bool {
-        itemKind(at: linkURL) != .missing
-    }
-
-    private func createDirectoryIfMissing(_ url: URL) throws {
-        switch itemKind(at: url) {
-        case .missing:
-            try fileManager.createDirectory(
-                at: url,
-                withIntermediateDirectories: false,
-                attributes: [.posixPermissions: 0o700]
-            )
-        case .directory:
-            return
-        case .regularFile, .symbolicLink, .other:
+    private func openHomeDirectory() throws -> Int32 {
+        let descriptor = open(homePath, Self.directoryOpenFlags)
+        guard descriptor >= 0 else {
             throw CommandLineToolInstallationError.unsafeParentDirectory
         }
+        return try validateDirectory(descriptor)
     }
 
-    private func itemKind(at url: URL) -> ItemKind {
+    private func openDirectory(
+        at parentDescriptor: Int32,
+        name: String,
+        createIfMissing: Bool
+    ) throws -> Int32? {
+        var descriptor = openat(parentDescriptor, name, Self.directoryOpenFlags)
+        if descriptor < 0 {
+            let openError = errno
+            if !createIfMissing, openError == ENOENT {
+                return nil
+            }
+            guard createIfMissing, openError == ENOENT else {
+                throw CommandLineToolInstallationError.unsafeParentDirectory
+            }
+            if mkdirat(parentDescriptor, name, mode_t(0o700)) != 0, errno != EEXIST {
+                throw CommandLineToolInstallationError.unsafeParentDirectory
+            }
+            descriptor = openat(parentDescriptor, name, Self.directoryOpenFlags)
+        }
+        guard descriptor >= 0 else {
+            throw CommandLineToolInstallationError.unsafeParentDirectory
+        }
+        return try validateDirectory(descriptor)
+    }
+
+    private func validateDirectory(_ descriptor: Int32) throws -> Int32 {
         var metadata = stat()
-        guard lstat(url.path, &metadata) == 0 else {
-            return errno == ENOENT ? .missing : .other
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFDIR,
+              metadata.st_uid == getuid(),
+              metadata.st_mode & mode_t(0o022) == 0 else {
+            close(descriptor)
+            throw CommandLineToolInstallationError.unsafeParentDirectory
         }
-        return switch metadata.st_mode & S_IFMT {
-        case S_IFREG: .regularFile
-        case S_IFDIR: .directory
-        case S_IFLNK: .symbolicLink
-        default: .other
+        return descriptor
+    }
+
+    private func linkState(in binDescriptor: Int32) -> LinkState {
+        let expectedTarget = helperPath.utf8.map { CChar(bitPattern: $0) }
+        var target = [CChar](repeating: 0, count: expectedTarget.count + 1)
+        let length = target.withUnsafeMutableBufferPointer {
+            readlinkat(binDescriptor, Self.linkName, $0.baseAddress, $0.count)
         }
+        guard length >= 0 else {
+            return errno == ENOENT ? .missing : .occupied
+        }
+        guard helperPath.hasPrefix("/"), length == expectedTarget.count else {
+            return .occupied
+        }
+        return target.prefix(Int(length)).elementsEqual(expectedTarget)
+            ? .managed
+            : .occupied
     }
 }
 
