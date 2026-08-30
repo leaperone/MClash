@@ -22,12 +22,13 @@ struct ContentView: View {
                     destinationRow(.nodes)
                     destinationRow(.sources)
                     destinationRow(.entrances)
-                    destinationRow(.proxyGroups, title: "Groups")
+                    destinationRow(.dns)
+                    destinationRow(.proxyGroups, title: "Node Groups")
                 }
 
                 Section(AppLocalization.string("Monitor")) {
                     destinationRow(.connections)
-                    destinationRow(.attention)
+                    destinationRow(.attention, title: "Diagnostics")
                 }
 
                 Section {
@@ -86,6 +87,14 @@ struct ContentView: View {
         }
         .onChange(of: model.selection) { _, destination in
             guard let destination else { return }
+            if destination == .appRouting {
+                model.selection = .entrances
+                return
+            }
+            if destination == .proxies {
+                model.selection = .proxyGroups
+                return
+            }
             restoredDestinationRawValue = destination.rawValue
             if advancedDestinations.contains(destination) {
                 advancedExpanded = true
@@ -143,13 +152,24 @@ struct ContentView: View {
         hasRestoredDestination = true
 
         if let currentDestination = model.selection, currentDestination != .overview {
-            restoredDestinationRawValue = currentDestination.rawValue
+            let normalizedDestination: AppModel.Destination = switch currentDestination {
+            case .appRouting: .entrances
+            case .proxies: .proxyGroups
+            default: currentDestination
+            }
+            restoredDestinationRawValue = normalizedDestination.rawValue
+            if normalizedDestination != currentDestination {
+                model.selection = normalizedDestination
+            }
             return
         }
 
         var destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .overview
         if destination == .appRouting {
             destination = .entrances
+            restoredDestinationRawValue = destination.rawValue
+        } else if destination == .proxies {
+            destination = .proxyGroups
             restoredDestinationRawValue = destination.rawValue
         }
         if advancedDestinations.contains(destination) {
@@ -180,9 +200,11 @@ struct ContentView: View {
             ConfigurationSourcesView(model: model)
         case .entrances:
             ConfigurationEntrancesView(model: model)
+        case .dns:
+            ConfigurationDNSView(model: model)
         case .proxies:
             // Legacy deep link retained for compatibility; the visible
-            // navigation uses the strategy-owned Groups destination.
+            // navigation uses the strategy-owned Node Groups destination.
             ConfigurationProxyGroupsView(model: model)
         case .proxyGroups:
             ConfigurationProxyGroupsView(model: model)

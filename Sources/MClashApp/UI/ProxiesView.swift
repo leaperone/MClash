@@ -115,7 +115,9 @@ struct ProxiesView: View {
                 }
             }
         }
-        .navigationTitle("Proxies")
+        // Legacy controller-backed view retained for migration/deep-link
+        // compatibility; the visible product surface is Node Groups.
+        .navigationTitle(AppLocalization.string("Node Groups"))
         .mclashPageSurface()
         .searchable(text: searchBinding, prompt: "Search nodes in the current group")
         .safeAreaInset(edge: .bottom, spacing: 0) {

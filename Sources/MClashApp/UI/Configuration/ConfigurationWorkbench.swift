@@ -15,8 +15,10 @@ struct ConfigurationWorkbench: View {
 
     @State private var section: ConfigurationWorkbenchSection
     @State private var selectedID: UUID?
-    @SceneStorage("mclash.configuration.query") private var query = ""
+    @State private var query = ""
     @State private var filter: WorkbenchFilter = .all
+    @State private var compactLayout = false
+    @State private var compactInspectorPresented = false
     @SceneStorage("mclash.configuration.inspectorVisible") private var inspectorVisible = true
 
     init(
@@ -43,32 +45,57 @@ struct ConfigurationWorkbench: View {
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
-                workbenchSidebar
-                    .frame(minWidth: geometry.size.width < 700 ? 156 : 196, idealWidth: 214, maxWidth: 250)
-                Divider()
+                if sections.count > 1 {
+                    workbenchSidebar
+                        .frame(minWidth: geometry.size.width < 700 ? 144 : 180, idealWidth: 208, maxWidth: 240)
+                    Divider()
+                }
                 itemList
-                    .frame(minWidth: 260, idealWidth: 350, maxWidth: .infinity)
+                    .frame(minWidth: 0, idealWidth: 350, maxWidth: .infinity)
+            }
+            .onAppear { updateCompactLayout(for: geometry.size.width) }
+            .onChange(of: geometry.size.width) { _, width in
+                updateCompactLayout(for: width)
             }
         }
         .navigationTitle(AppLocalization.string(title))
         .background(Color(nsColor: .windowBackgroundColor))
-        .inspector(isPresented: $inspectorVisible) {
+        .inspector(isPresented: Binding(
+            get: { inspectorVisible && !compactLayout },
+            set: { inspectorVisible = $0 }
+        )) {
             inspector
-                .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
+                .inspectorColumnWidth(min: 220, ideal: 300, max: 400)
         }
         .toolbar {
             ToolbarItem {
-                Button { inspectorVisible.toggle() } label: {
+                Button {
+                    if compactLayout {
+                        compactInspectorPresented = true
+                    } else {
+                        inspectorVisible.toggle()
+                    }
+                } label: {
                     Image(systemName: "sidebar.right")
                 }
-                .help(AppLocalization.string(inspectorVisible ? "Hide Inspector" : "Show Inspector"))
-                .accessibilityLabel(AppLocalization.string(inspectorVisible ? "Hide Inspector" : "Show Inspector"))
+                .help(AppLocalization.string(inspectorButtonTitle))
+                .accessibilityLabel(AppLocalization.string(inspectorButtonTitle))
             }
+        }
+        .sheet(isPresented: $compactInspectorPresented) {
+            inspector
+                .frame(minWidth: 320, minHeight: 420)
         }
         .onChange(of: section) { _, _ in
             query = ""
             filter = .all
-            selectedID = filteredItems.first?.id
+            selectedID = currentItems.first?.id
+        }
+        .onChange(of: currentItemIDs) { _, _ in
+            if let selectedID, currentItems.contains(where: { $0.id == selectedID }) {
+                return
+            }
+            selectedID = currentItems.first?.id
         }
         .onChange(of: statusMessage, initial: true) { _, message in
             guard let message, !message.isEmpty else { return }
@@ -81,10 +108,13 @@ struct ConfigurationWorkbench: View {
                 ]
             )
         }
-        .onAppear { selectedID = filteredItems.first?.id }
+        .onAppear {
+            selectedID = filteredItems.first?.id
+        }
     }
 
     private var currentItems: [ConfigurationWorkbenchItem] { items[section] ?? [] }
+    private var currentItemIDs: [UUID] { currentItems.map(\.id) }
     private var filteredItems: [ConfigurationWorkbenchItem] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return currentItems.filter { item in
@@ -102,6 +132,24 @@ struct ConfigurationWorkbench: View {
     private var selectedItem: ConfigurationWorkbenchItem? {
         filteredItems.first { $0.id == selectedID }
             ?? currentItems.first { $0.id == selectedID }
+    }
+
+    private func updateCompactLayout(for width: CGFloat) {
+        // GeometryReader reports the primary column after the inspector has
+        // taken its share.  Keep the three-pane layout at the normal 1,180pt
+        // window, and fall back to the sheet when the remaining list column
+        // would be too narrow to read (roughly the 900pt minimum window).
+        let compact = width < 600
+        compactLayout = compact
+        // Hiding the system inspector can expand the content column. Keep the
+        // user's explicit visibility choice off after that transition instead
+        // of immediately reopening it and oscillating at the breakpoint.
+        if compact && inspectorVisible {
+            inspectorVisible = false
+        }
+        if !compact {
+            compactInspectorPresented = false
+        }
     }
 
     private var workbenchSidebar: some View {
@@ -177,7 +225,31 @@ struct ConfigurationWorkbench: View {
             }
             .listStyle(.inset)
             .mclashListSurface(horizontalMargin: 8, verticalMargin: 4)
-            .overlay { if filteredItems.isEmpty { ContentUnavailableView(AppLocalization.string("No matching items"), systemImage: "magnifyingglass") } }
+            .overlay {
+                if filteredItems.isEmpty {
+                    ContentUnavailableView {
+                        Label(
+                            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? AppLocalization.string("Nothing here yet")
+                                : AppLocalization.string("No matching items"),
+                            systemImage: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? section.symbol
+                                : "magnifyingglass"
+                        )
+                    } description: {
+                        Text(emptyDescription)
+                    } actions: {
+                        if let onAdd,
+                           query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                           filter == .all {
+                            Button(AppLocalization.format("Add %@", AppLocalization.string(section.presentationSingularTitle))) {
+                                onAdd(section)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -195,12 +267,35 @@ struct ConfigurationWorkbench: View {
 
     private var sectionSubtitle: String {
         switch section {
-        case .nodes: "Search by name, host, protocol or source."
-        case .proxyGroups: "Pin nodes or describe automatic membership conditions."
-        case .rules: "Rules are evaluated from the lowest priority number."
-        case .entrances: "Choose where traffic enters the unified policy."
-        case .sources: "Sources provide node data only."
-        case .workspaces: "The current configuration connects all sections."
+        case .nodes: AppLocalization.string("Search by name, host, protocol or source.")
+        case .proxyGroups: AppLocalization.string("Pin nodes or describe automatic membership conditions.")
+        case .rules: AppLocalization.string("Rules are evaluated from the lowest priority number.")
+        case .entrances: AppLocalization.string("Choose where traffic enters the unified policy.")
+        case .dns: AppLocalization.string("MClash resolves DNS using this shared policy.")
+        case .sources: AppLocalization.string("Sources provide node data only.")
+        case .workspaces: AppLocalization.string("The current configuration connects all sections.")
+        }
+    }
+
+    private var inspectorButtonTitle: String {
+        compactLayout || !inspectorVisible ? "Show Inspector" : "Hide Inspector"
+    }
+
+    private var emptyDescription: String {
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return AppLocalization.string("Try a different search term or clear the filter.")
+        }
+        if filter != .all {
+            return AppLocalization.string("No items match this filter.")
+        }
+        switch section {
+        case .sources: return AppLocalization.string("Add a subscription or local YAML source to import nodes.")
+        case .nodes: return AppLocalization.string("Nodes appear here after a source is imported.")
+        case .proxyGroups: return AppLocalization.string("Add a group, then choose fixed nodes or automatic matches.")
+        case .rules: return AppLocalization.string("Add a rule to route an application, domain, IP or port.")
+        case .entrances: return AppLocalization.string("No traffic entrances are configured yet.")
+        case .dns: return AppLocalization.string("Create a DNS policy to choose resolvers and takeover behavior.")
+        case .workspaces: return AppLocalization.string("Create a configuration to choose the active policy.")
         }
     }
 }
@@ -212,9 +307,9 @@ private enum WorkbenchFilter: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .all: "All"
-        case .enabled: "Enabled"
-        case .attention: "Review"
+        case .all: AppLocalization.string("All")
+        case .enabled: AppLocalization.string("Enabled")
+        case .attention: AppLocalization.string("Review")
         }
     }
 }
@@ -225,16 +320,17 @@ private struct ListFilterBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Picker("Filter", selection: $filter) {
+            Picker(AppLocalization.string("Filter"), selection: $filter) {
                 ForEach(WorkbenchFilter.allCases) { value in
                     Text(value.title).tag(value)
                 }
             }
             .pickerStyle(.segmented)
-            .frame(width: 190)
+            .frame(minWidth: 110, idealWidth: 170, maxWidth: 190)
+            .layoutPriority(1)
             .labelsHidden()
 
-            TextField("Search", text: $query)
+            TextField(AppLocalization.string("Search"), text: $query)
                 .textFieldStyle(.roundedBorder)
                 .overlay(alignment: .trailing) {
                     if !query.isEmpty {
@@ -244,7 +340,7 @@ private struct ListFilterBar: View {
                         }
                         .buttonStyle(.plain)
                         .padding(.trailing, 7)
-                        .accessibilityLabel("Clear search")
+                        .accessibilityLabel(AppLocalization.string("Clear search"))
                     }
                 }
         }

@@ -67,7 +67,7 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
     }
 
     public init(id: NodeID = NodeID(), displayName: String, protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String] = [:], sourceLinks: [SourceID] = [], tags: Set<String> = [], region: String? = nil, enabled: Bool = true, health: NodeHealthSnapshot = NodeHealthSnapshot(), userAlias: String? = nil, lastSeenAt: Date? = nil) throws {
-        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let normalizedHost = Self.normalizeHost(host)
         guard !normalizedHost.isEmpty, (1...65535).contains(port) else { throw ConfigurationModelError.invalidNodeEndpoint(host: host, port: port) }
         self.id = id; self.displayName = displayName; self.proto = proto; self.host = normalizedHost; self.port = port; self.parameters = parameters; self.sourceLinks = sourceLinks; self.tags = tags; self.region = region; self.enabled = enabled; self.health = health; self.userAlias = userAlias; self.lastSeenAt = lastSeenAt
         self.fingerprint = Self.makeFingerprint(protocol: proto, host: normalizedHost, port: port, parameters: parameters)
@@ -82,15 +82,19 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
         let fields = parameters
             .compactMap { key, value -> (String, String)? in
                 let normalizedKey = NodeIdentity.normalizeParameterKey(key)
-                guard !NodeIdentity.isCredentialParameter(normalizedKey) else { return nil }
-                return (normalizedKey, value)
+                guard !NodeIdentity.isCredentialParameter(normalizedKey),
+                      !NodeIdentity.isPresentationParameter(normalizedKey) else { return nil }
+                return (
+                    normalizedKey,
+                    NodeIdentity.normalizeParameterValue(key: normalizedKey, value: value)
+                )
             }
             .sorted { lhs, rhs in
                 lhs.0 == rhs.0 ? lhs.1 < rhs.1 : lhs.0 < rhs.0
             }
             .map { pair in pair.0 + "=" + pair.1 }
             .joined(separator: "&")
-        let material = "\(proto.rawValue)|\(host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")))|\(port)|\(fields)"
+        let material = "\(proto.rawValue)|\(normalizeHost(host))|\(port)|\(fields)"
         return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -98,8 +102,13 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
     /// It must never be used as the persisted NodeID because providers rotate
     /// these values during an otherwise identical subscription refresh.
     public static func makeConnectionFingerprint(protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String]) -> String {
-        let normalizedParameters = parameters.map { key, value in
-            (NodeIdentity.normalizeParameterKey(key), value)
+        let normalizedParameters = parameters.compactMap { key, value -> (String, String)? in
+            let normalizedKey = NodeIdentity.normalizeParameterKey(key)
+            guard !NodeIdentity.isPresentationParameter(normalizedKey) else { return nil }
+            return (
+                normalizedKey,
+                NodeIdentity.normalizeParameterValue(key: key, value: value)
+            )
         }.sorted { lhs, rhs in
             if lhs.0 == rhs.0 { return lhs.1 < rhs.1 }
             return lhs.0 < rhs.0
@@ -107,11 +116,19 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
         let fields = normalizedParameters.map { pair in
             pair.0 + "=" + pair.1
         }.joined(separator: "&")
-        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let normalizedHost = normalizeHost(host)
         let material = "\(proto.rawValue)|\(normalizedHost)|\(port)|\(fields)"
         return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func normalizeHost(_ value: String) -> String {
+        var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.first == "[", normalized.last == "]" {
+            normalized.removeFirst()
+            normalized.removeLast()
+        }
+        return normalized.trimmingCharacters(in: CharacterSet(charactersIn: "."))
     }
 }
 
@@ -144,6 +161,10 @@ public struct ProxyGroup: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// Flat matcher storage maps to CaptureRule fields: different matcher kinds
+/// are ANDed, while multiple values within one kind are ORed. The compiler
+/// preserves that distinction when producing Mihomo and Network Extension
+/// rules.
 public enum RoutingMatcher: Codable, Hashable, Sendable { case application(String), processPath(String), userID(UInt32), domainExact(String), domainSuffix(String), domainWildcard(String), ipCIDR(String), transport(String), port(Int), portRange(ClosedRange<Int>) }
 public enum RoutingAction: Codable, Hashable, Sendable { case direct, reject, proxyGroup(ProxyGroupID) }
 public enum UnavailableNodeFallback: String, Codable, Sendable { case direct, reject }

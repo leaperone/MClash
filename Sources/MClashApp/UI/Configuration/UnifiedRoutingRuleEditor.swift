@@ -1,5 +1,7 @@
 import AppKit
+import MClashNetworkShared
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A task-oriented editor for strategy-owned routing rules.
 ///
@@ -70,25 +72,25 @@ struct UnifiedRoutingRuleEditor: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(initialRule == nil ? "New routing rule" : "Edit routing rule")
+                        Text(AppLocalization.string(initialRule == nil ? "New routing rule" : "Edit routing rule"))
                     .font(.title2.weight(.semibold))
-                Text("Choose what traffic matches, then decide where it goes.")
+                Text(AppLocalization.string("Choose what traffic matches, then decide where it goes."))
                     .foregroundStyle(.secondary)
                     .font(.callout)
             }
             Spacer()
-            Toggle("Enabled", isOn: $enabled)
+            Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .accessibilityLabel("Rule enabled")
+                .accessibilityLabel(AppLocalization.string("Rule enabled"))
         }
         .padding(24)
     }
 
     private var whenSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("When traffic matches", systemImage: "line.3.horizontal.decrease.circle")
-            Text("Conditions in one rule are combined with AND. Add another condition when a rule should be more specific.")
+            sectionHeading(AppLocalization.string("When traffic matches"), systemImage: "line.3.horizontal.decrease.circle")
+            Text(AppLocalization.string("Different condition types are combined with AND. Multiple values of the same type are combined with OR."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -106,14 +108,14 @@ struct UnifiedRoutingRuleEditor: View {
                     Button {
                         criteria.append(RuleCriterion(kind: kind))
                     } label: {
-                        Label(kind.title, systemImage: kind.symbol)
+                        Label(AppLocalization.string(kind.title), systemImage: kind.symbol)
                     }
                 }
             } label: {
-                Label("Add condition", systemImage: "plus.circle")
+                Label(AppLocalization.string("Add condition"), systemImage: "plus.circle")
             }
             .buttonStyle(.bordered)
-            .accessibilityHint("Adds an application, domain, IP, port, or protocol condition")
+            .accessibilityHint(AppLocalization.string("Adds an application, domain, IP, port, or protocol condition"))
         }
         .padding(16)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
@@ -121,15 +123,15 @@ struct UnifiedRoutingRuleEditor: View {
 
     private var thenSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Then send traffic to", systemImage: "arrow.turn.down.right")
-            Picker("Action", selection: $action) {
-                Text("Direct — connect without a proxy").tag(RuleAction.direct)
-                Text("Reject — block the connection").tag(RuleAction.reject)
+            sectionHeading(AppLocalization.string("Then send traffic to"), systemImage: "arrow.turn.down.right")
+            Picker(AppLocalization.string("Action"), selection: $action) {
+                Text(AppLocalization.string("Direct — connect without a proxy")).tag(RuleAction.direct)
+                Text(AppLocalization.string("Reject — block the connection")).tag(RuleAction.reject)
                 if proxyGroups.isEmpty {
-                    Text("Proxy group — create a group first").tag(RuleAction.proxyGroup(nil))
+                    Text(AppLocalization.string("Node group — create a group first")).tag(RuleAction.proxyGroup(nil))
                 } else {
                     ForEach(proxyGroups) { group in
-                        Text("Group — \(group.name)").tag(RuleAction.proxyGroup(group.id))
+                        Text(AppLocalization.format("Group — %@", group.name)).tag(RuleAction.proxyGroup(group.id))
                     }
                 }
             }
@@ -137,11 +139,11 @@ struct UnifiedRoutingRuleEditor: View {
             .frame(maxWidth: 420, alignment: .leading)
 
             HStack {
-                Text("Priority")
+                Text(AppLocalization.string("Priority"))
                 TextField("100", value: $priority, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 90)
-                Text("Lower numbers are evaluated first")
+                Text(AppLocalization.string("Lower numbers are evaluated first"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -152,12 +154,12 @@ struct UnifiedRoutingRuleEditor: View {
 
     private var previewSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeading("Rule preview", systemImage: "text.quote")
+            sectionHeading(AppLocalization.string("Rule preview"), systemImage: "text.quote")
             Text(preview)
                 .font(.body.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
-                .accessibilityLabel("Rule preview: \(preview)")
+                .accessibilityLabel(AppLocalization.format("Rule preview: %@", preview))
         }
         .padding(16)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
@@ -166,9 +168,9 @@ struct UnifiedRoutingRuleEditor: View {
     private var footer: some View {
         HStack {
             Spacer()
-            Button("Cancel", action: onCancel)
+            Button(AppLocalization.string("Cancel"), action: onCancel)
                 .keyboardShortcut(.cancelAction)
-            Button("Save rule", action: save)
+            Button(AppLocalization.string("Save rule"), action: save)
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
         }
@@ -186,24 +188,53 @@ struct UnifiedRoutingRuleEditor: View {
     }
 
     private var preview: String {
-        let conditions = criteria.map(\.summary).filter { !$0.isEmpty }
-        let when = conditions.isEmpty ? "any traffic" : conditions.joined(separator: " and ")
-        return "When \(when), then \(action.summary(proxyGroups: proxyGroups))."
+        let andWord = AppLocalization.string("and")
+        let when = groupedConditionSummaries.isEmpty
+            ? AppLocalization.string("any traffic")
+            : groupedConditionSummaries.joined(separator: " \(andWord) ")
+        return AppLocalization.format(
+            "When %@, send traffic to %@.",
+            when,
+            action.summary(proxyGroups: proxyGroups)
+        )
+    }
+
+    /// CaptureRule evaluates fields (application, destination, protocol and
+    /// port) with AND semantics, while values inside one field are alternatives.
+    /// Grouping here keeps the preview faithful to the runtime evaluator.
+    private var groupedConditionSummaries: [String] {
+        let orWord = AppLocalization.string("or")
+        let grouped = Dictionary(grouping: criteria.filter { !$0.summary.isEmpty }, by: \.family)
+        return RuleCriterion.Family.allCases.compactMap { family in
+            let values = grouped[family, default: []].map(\.summary)
+            guard !values.isEmpty else { return nil }
+            return values.count == 1
+                ? values[0]
+                : AppLocalization.format(
+                    "%@: %@",
+                    family.title,
+                    values.joined(separator: " \(orWord) ")
+                )
+        }
     }
 
     private func save() {
+        if let invalid = criteria.compactMap(\.validationMessage).first {
+            validationMessage = invalid
+            return
+        }
         let matchers = criteria.compactMap(\.matcher)
         guard !matchers.isEmpty else {
-            validationMessage = "Add at least one condition before saving."
+            validationMessage = AppLocalization.string("Add at least one condition before saving.")
             return
         }
         guard (1...65535).contains(priority) else {
-            validationMessage = "Priority must be between 1 and 65535."
+            validationMessage = AppLocalization.string("Priority must be between 1 and 65535.")
             return
         }
         if case let .proxyGroup(groupID) = action,
            (groupID == nil || !proxyGroups.contains(where: { $0.id == groupID })) {
-            validationMessage = "Choose an available MClash proxy group."
+            validationMessage = AppLocalization.string("Choose an available MClash node group.")
             return
         }
 
@@ -231,21 +262,38 @@ struct UnifiedRoutingRuleEditor: View {
 }
 
 private struct RuleCriterion: Identifiable, Equatable {
-    enum Kind: String, CaseIterable, Identifiable {
-        case application, domain, ipCIDR, port, transport
+    enum Family: String, CaseIterable, Hashable {
+        case source, destination, protocolValue, port
+
+        var title: String {
+            switch self {
+            case .source: AppLocalization.string("Application / process")
+            case .destination: AppLocalization.string("Destination")
+            case .protocolValue: AppLocalization.string("Protocol")
+            case .port: AppLocalization.string("Port")
+            }
+        }
+    }
+
+    enum Kind: String, CaseIterable, Identifiable, Hashable {
+        case application, process, userID, domain, ipCIDR, port, transport
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .application: "Application"
-            case .domain: "Domain"
-            case .ipCIDR: "IP / CIDR"
-            case .port: "Port"
-            case .transport: "Protocol"
+            case .application: AppLocalization.string("Application")
+            case .process: AppLocalization.string("Process path")
+            case .userID: AppLocalization.string("User ID")
+            case .domain: AppLocalization.string("Domain")
+            case .ipCIDR: AppLocalization.string("IP / CIDR")
+            case .port: AppLocalization.string("Port")
+            case .transport: AppLocalization.string("Protocol")
             }
         }
         var symbol: String {
             switch self {
             case .application: "app.badge"
+            case .process: "terminal"
+            case .userID: "person.crop.circle"
             case .domain: "globe"
             case .ipCIDR: "network"
             case .port: "number"
@@ -259,9 +307,9 @@ private struct RuleCriterion: Identifiable, Equatable {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .exact: "Exact domain"
-            case .suffix: "Domain and subdomains"
-            case .wildcard: "Wildcard pattern"
+            case .exact: AppLocalization.string("Exact domain")
+            case .suffix: AppLocalization.string("Domain and subdomains")
+            case .wildcard: AppLocalization.string("Wildcard pattern")
             }
         }
     }
@@ -271,6 +319,15 @@ private struct RuleCriterion: Identifiable, Equatable {
     var value: String
     var domainMode: DomainMode
     var protocolValue: String
+
+    var family: Family {
+        switch kind {
+        case .application, .process, .userID: .source
+        case .domain, .ipCIDR: .destination
+        case .transport: .protocolValue
+        case .port: .port
+        }
+    }
 
     init(id: UUID = UUID(), kind: Kind, value: String = "", domainMode: DomainMode = .suffix, protocolValue: String = "TCP") {
         self.id = id
@@ -290,8 +347,8 @@ private struct RuleCriterion: Identifiable, Equatable {
         case let .port(value): self.init(kind: .port, value: String(value))
         case let .portRange(value): self.init(kind: .port, value: "\(value.lowerBound)-\(value.upperBound)")
         case let .transport(value): self.init(kind: .transport, protocolValue: value.uppercased())
-        case let .processPath(value): self.init(kind: .application, value: value)
-        case let .userID(value): self.init(kind: .application, value: String(value))
+        case let .processPath(value): self.init(kind: .process, value: value)
+        case let .userID(value): self.init(kind: .userID, value: String(value))
         }
     }
 
@@ -301,6 +358,12 @@ private struct RuleCriterion: Identifiable, Equatable {
         case .application:
             guard !trimmed.isEmpty, !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else { return nil }
             return .application(trimmed.lowercased())
+        case .process:
+            guard !trimmed.isEmpty, !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else { return nil }
+            return .processPath(trimmed)
+        case .userID:
+            guard let value = UInt32(trimmed) else { return nil }
+            return .userID(value)
         case .domain:
             guard !trimmed.isEmpty, !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else { return nil }
             switch domainMode {
@@ -325,14 +388,57 @@ private struct RuleCriterion: Identifiable, Equatable {
     var summary: String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         switch kind {
-        case .application: return trimmed.isEmpty ? "an application" : "application matching \(trimmed)"
+        case .application:
+            return trimmed.isEmpty ? AppLocalization.string("an application") : AppLocalization.format("App %@", trimmed)
+        case .process:
+            return trimmed.isEmpty ? AppLocalization.string("a process path") : AppLocalization.format("Process %@", trimmed)
+        case .userID:
+            return trimmed.isEmpty ? AppLocalization.string("a user ID") : AppLocalization.format("User %@", trimmed)
         case .domain:
-            let label = domainMode == .wildcard ? "domain wildcard" : domainMode == .exact ? "domain" : "domain or subdomain"
-            return trimmed.isEmpty ? "a domain" : "\(label) \(trimmed)"
-        case .ipCIDR: return trimmed.isEmpty ? "an IP/CIDR" : "IP/CIDR \(trimmed)"
-        case .port: return trimmed.isEmpty ? "a port" : "port \(trimmed)"
-        case .transport: return "\(protocolValue) traffic"
+            let label = domainMode == .wildcard
+                ? AppLocalization.string("domain wildcard")
+                : domainMode == .exact
+                    ? AppLocalization.string("domain")
+                    : AppLocalization.string("domain or subdomain")
+            return trimmed.isEmpty ? AppLocalization.string("a domain") : "\(label) \(trimmed)"
+        case .ipCIDR: return trimmed.isEmpty ? AppLocalization.string("an IP/CIDR") : trimmed
+        case .port: return trimmed.isEmpty ? AppLocalization.string("a port") : AppLocalization.format("Port %@", trimmed)
+        case .transport: return AppLocalization.format("%@ traffic", protocolValue)
         }
+    }
+
+    var validationMessage: String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return AppLocalization.string("Enter a value.") }
+        do {
+            switch kind {
+            case .application:
+                _ = try ApplicationIdentifierPatternMatcher(pattern: trimmed)
+            case .process:
+                guard !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else {
+                    return AppLocalization.string("Process path contains a line break.")
+                }
+            case .userID:
+                guard UInt32(trimmed) != nil else { return AppLocalization.string("User ID must be a number.") }
+            case .domain:
+                switch domainMode {
+                case .exact: _ = try HostMatcher(kind: .exact, value: trimmed)
+                case .suffix: _ = try HostMatcher(kind: .suffix, value: trimmed)
+                case .wildcard: _ = try HostPatternMatcher(pattern: trimmed)
+                }
+            case .ipCIDR:
+                _ = try IPNetwork(trimmed)
+            case .port, .transport:
+                guard matcher != nil else {
+                    return kind == .port
+                        ? AppLocalization.string("Enter a port from 1 to 65535, or a valid range.")
+                        : AppLocalization.string("Choose TCP or UDP.")
+                }
+            }
+        } catch {
+            return error.localizedDescription
+        }
+        return nil
     }
 }
 
@@ -354,9 +460,13 @@ private enum RuleAction: Hashable {
 
     func summary(proxyGroups: [ProxyGroup]) -> String {
         switch self {
-        case .direct: return "Direct"
-        case .reject: return "Reject"
-        case let .proxyGroup(id): return "proxy group \(proxyGroups.first(where: { $0.id == id })?.name ?? "(not selected)")"
+        case .direct: return AppLocalization.string("Direct")
+        case .reject: return AppLocalization.string("Reject")
+        case let .proxyGroup(id):
+            return AppLocalization.format(
+                "Group — %@",
+                proxyGroups.first(where: { $0.id == id })?.name ?? AppLocalization.string("(not selected)")
+            )
         }
     }
 }
@@ -366,11 +476,12 @@ private struct RuleCriterionRow: View {
     let applicationCandidates: [ApplicationCaptureCandidate]
     let onRemove: () -> Void
     @State private var applicationSearch = ""
+    @State private var applicationError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Picker("Match type", selection: $criterion.kind) {
+                Picker(AppLocalization.string("Match type"), selection: $criterion.kind) {
                     ForEach(RuleCriterion.Kind.allCases) { kind in
                         Label(kind.title, systemImage: kind.symbol).tag(kind)
                     }
@@ -378,13 +489,20 @@ private struct RuleCriterionRow: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 Spacer()
-                Button("Remove", systemImage: "minus.circle", action: onRemove)
+                Button(AppLocalization.string("Remove"), systemImage: "minus.circle", action: onRemove)
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel("Remove \(criterion.kind.title) condition")
+                    .accessibilityLabel(AppLocalization.format("Remove %@ condition", criterion.kind.title))
             }
             editor
+            if let validationMessage = criterion.validationMessage,
+               !criterion.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Label(validationMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(12)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
@@ -394,10 +512,15 @@ private struct RuleCriterionRow: View {
         switch criterion.kind {
         case .application:
             VStack(alignment: .leading, spacing: 8) {
-                TextField("App name, bundle ID, or wildcard (for example com.example.*)", text: $criterion.value)
+                TextField(AppLocalization.string("App name, bundle ID, or wildcard (for example com.example.*)"), text: $criterion.value)
                     .textFieldStyle(.roundedBorder)
+                Button(AppLocalization.string("Choose an installed app…")) {
+                    chooseInstalledApplication()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 if !applicationCandidates.isEmpty {
-                    TextField("Search installed applications", text: $applicationSearch)
+                    TextField(AppLocalization.string("Search installed applications"), text: $applicationSearch)
                         .textFieldStyle(.roundedBorder)
                         .font(.callout)
                     ScrollView(.horizontal) {
@@ -412,29 +535,44 @@ private struct RuleCriterionRow: View {
                             }
                         }
                     }
+                } else {
+                    Text(AppLocalization.string("No running apps were detected. Enter a bundle ID or use the installed-app picker."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text("Use * as a wildcard. The application identity is matched by its stable identifier; selecting a discovered app fills the safest pattern.")
+                if let applicationError {
+                    Label(applicationError, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                Text(AppLocalization.string("Use * as a wildcard. The application identity is matched by its stable identifier; selecting a discovered app fills the safest pattern."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        case .process:
+            TextField(AppLocalization.string("Executable path"), text: $criterion.value)
+                .textFieldStyle(.roundedBorder)
+        case .userID:
+            TextField(AppLocalization.string("Numeric user ID"), text: $criterion.value)
+                .textFieldStyle(.roundedBorder)
         case .domain:
             HStack {
-                Picker("Domain match", selection: $criterion.domainMode) {
+                Picker(AppLocalization.string("Domain match"), selection: $criterion.domainMode) {
                     ForEach(RuleCriterion.DomainMode.allCases) { Text($0.title).tag($0) }
                 }
                 .frame(width: 190)
-                TextField("example.com or *.example.com", text: $criterion.value)
+                TextField(AppLocalization.string("example.com or *.example.com"), text: $criterion.value)
                     .textFieldStyle(.roundedBorder)
             }
         case .ipCIDR:
-            TextField("192.168.0.0/16 or 2001:db8::/32", text: $criterion.value)
+            TextField(AppLocalization.string("192.168.0.0/16 or 2001:db8::/32"), text: $criterion.value)
                 .textFieldStyle(.roundedBorder)
         case .port:
-            TextField("443 or 8000-9000", text: $criterion.value)
+            TextField(AppLocalization.string("443 or 8000-9000"), text: $criterion.value)
                 .textFieldStyle(.roundedBorder)
         case .transport:
-            Picker("Transport protocol", selection: $criterion.protocolValue) {
+            Picker(AppLocalization.string("Transport protocol"), selection: $criterion.protocolValue) {
                 Text("TCP").tag("TCP")
                 Text("UDP").tag("UDP")
             }
@@ -450,6 +588,25 @@ private struct RuleCriterionRow: View {
             $0.displayName.localizedCaseInsensitiveContains(query)
                 || ($0.bundleIdentifier?.localizedCaseInsensitiveContains(query) ?? false)
                 || $0.fallbackIdentifierPatterns.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private func chooseInstalledApplication() {
+        let panel = NSOpenPanel()
+        panel.title = AppLocalization.string("Choose an installed application")
+        panel.prompt = AppLocalization.string("Choose")
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let candidate = try ApplicationCaptureCandidateProvider().candidate(bundleURL: url)
+            criterion.value = candidate.fallbackIdentifierPatterns.first
+                ?? candidate.bundleIdentifier
+                ?? candidate.displayName
+            applicationError = nil
+        } catch {
+            applicationError = error.localizedDescription
         }
     }
 }

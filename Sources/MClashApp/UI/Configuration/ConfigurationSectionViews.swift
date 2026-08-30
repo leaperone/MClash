@@ -35,29 +35,72 @@ struct ConfigurationView: View {
                             }
                         }
                         Spacer(minLength: MClashLayout.compactSpacing)
+                        if let workspace = model.configurationDocument.currentWorkspace {
+                            if model.unifiedConfigurationEnabled {
+                                if configurationIsApplied(workspace) {
+                                    Label(AppLocalization.string("Active"), systemImage: "bolt.fill")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.green)
+                                } else {
+                                    Button(AppLocalization.string("Apply changes")) {
+                                        Task {
+                                            do {
+                                                try await model.activateConfigurationWorkspace(workspace.id)
+                                            } catch {
+                                                model.errorMessage = error.localizedDescription
+                                            }
+                                        }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                }
+                            } else {
+                                Button(AppLocalization.string("Use This Configuration")) {
+                                    Task {
+                                        do {
+                                            try await model.activateConfigurationWorkspace(workspace.id)
+                                        } catch {
+                                            model.errorMessage = error.localizedDescription
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                    if !model.unifiedConfigurationEnabled {
                         Label(
-                            AppLocalization.string(model.unifiedConfigurationEnabled ? "Active" : "Ready"),
-                            systemImage: model.unifiedConfigurationEnabled ? "bolt.fill" : "circle"
+                            AppLocalization.string("Activate this configuration to let MClash replace imported profile strategies with its own nodes, rules, groups and DNS."),
+                            systemImage: "arrow.triangle.2.circlepath"
                         )
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(model.unifiedConfigurationEnabled ? .green : .secondary)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 8)
                     }
                 }
 
                 let document = model.configurationDocument
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: MClashLayout.controlSpacing)], spacing: MClashLayout.controlSpacing) {
                     configurationMetric(AppLocalization.string("Nodes"), value: document.nodes.count, symbol: "point.3.connected.trianglepath.dotted")
-                    configurationMetric(AppLocalization.string("Groups"), value: document.proxyGroups.count, symbol: "square.3.layers.3d")
+                    configurationMetric(AppLocalization.string("Node Groups"), value: document.proxyGroups.count, symbol: "square.3.layers.3d")
                     configurationMetric(AppLocalization.string("Rules"), value: document.rules.count, symbol: "list.bullet.indent")
                     configurationMetric(AppLocalization.string("Entrances"), value: document.entrances.count, symbol: "arrow.triangle.branch")
+                    configurationMetric(AppLocalization.string("DNS"), value: document.dnsPolicies.count, symbol: "network")
                 }
 
                 GroupBox(AppLocalization.string("Open a section")) {
-                    HStack(spacing: MClashLayout.controlSpacing) {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 140), alignment: .leading)],
+                        alignment: .leading,
+                        spacing: MClashLayout.compactSpacing
+                    ) {
                         configurationLink(AppLocalization.string("Rules"), symbol: "list.bullet.indent", destination: .rules)
-                        configurationLink(AppLocalization.string("Groups"), symbol: "square.3.layers.3d", destination: .proxyGroups)
+                        configurationLink(AppLocalization.string("Node Groups"), symbol: "square.3.layers.3d", destination: .proxyGroups)
                         configurationLink(AppLocalization.string("Nodes"), symbol: "point.3.connected.trianglepath.dotted", destination: .nodes)
                         configurationLink(AppLocalization.string("Entrances"), symbol: "arrow.triangle.branch", destination: .entrances)
+                        configurationLink(AppLocalization.string("DNS"), symbol: "network", destination: .dns)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -95,6 +138,12 @@ struct ConfigurationView: View {
             Label(title, systemImage: symbol)
         }
         .buttonStyle(.bordered)
+    }
+
+    private func configurationIsApplied(_ workspace: Workspace) -> Bool {
+        model.configurationDiagnostics.contains(where: { $0.code == "configuration_compile_failed" }) == false
+            && model.compiledConfiguration?.workspaceID == workspace.id
+            && model.compiledConfiguration?.workspaceRevision == workspace.revision
     }
 }
 
@@ -142,20 +191,15 @@ struct ConfigurationProxyGroupsView: View {
     @State private var editRequest: ConfigurationEditRequest?
     var body: some View {
         ConfigurationWorkbench(
-            title: AppLocalization.string("Groups"),
+            title: AppLocalization.string("Node Groups"),
             sections: [.proxyGroups],
             items: model.configurationWorkbenchItems,
             onAdd: { _ in
-                Task {
-                    do {
-                        let id = try await model.createConfigurationProxyGroup()
-                        editRequest = ConfigurationEditRequest(
-                            section: .proxyGroups,
-                            itemID: id.rawValue
-                        )
-                    }
-                    catch { model.errorMessage = error.localizedDescription }
-                }
+                editRequest = ConfigurationEditRequest(
+                    section: .proxyGroups,
+                    itemID: UUID(),
+                    isNew: true
+                )
             },
             statusMessage: model.configurationStatusMessage,
             onToggleEnabled: { section, id in
@@ -167,7 +211,7 @@ struct ConfigurationProxyGroupsView: View {
             onEdit: { section, id in editRequest = ConfigurationEditRequest(section: section, itemID: id) }
         )
         .sheet(item: $editRequest) { request in
-            ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID)
+            ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)
         }
     }
 }
@@ -234,7 +278,14 @@ struct ConfigurationEntrancesView: View {
             ConfigurationWorkbench(
                 title: AppLocalization.string("Entrances"),
                 sections: [.entrances],
-                items: model.configurationWorkbenchItems,
+                items: entranceWorkbenchItems,
+                onAdd: { _ in
+                    editRequest = ConfigurationEditRequest(
+                        section: .entrances,
+                        itemID: UUID(),
+                        isNew: true
+                    )
+                },
                 statusMessage: model.configurationStatusMessage,
                 onToggleEnabled: { section, id in
                     Task {
@@ -246,8 +297,20 @@ struct ConfigurationEntrancesView: View {
             )
         }
         .sheet(item: $editRequest) { request in
-            ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID)
+            ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)
         }
+    }
+
+    private var entranceWorkbenchItems: [ConfigurationWorkbenchSection: [ConfigurationWorkbenchItem]] {
+        var items = model.configurationWorkbenchItems
+        // App Routing is a capability switch, not a second editable entrance.
+        // Keep its state in the card above and remove the duplicate row from
+        // the resource list so there is one obvious control surface.
+        items[.entrances] = items[.entrances, default: []].filter {
+            $0.title != AppLocalization.string("Application traffic")
+                && $0.title != AppLocalization.string("App Routing")
+        }
+        return items
     }
 
     private var appRoutingCapability: some View {
@@ -283,6 +346,33 @@ struct ConfigurationEntrancesView: View {
     }
 }
 
+struct ConfigurationDNSView: View {
+    @Bindable var model: AppModel
+    @State private var editRequest: ConfigurationEditRequest?
+
+    var body: some View {
+        ConfigurationWorkbench(
+            title: AppLocalization.string("DNS"),
+            sections: [.dns],
+            items: model.configurationWorkbenchItems,
+            onAdd: { _ in
+                editRequest = ConfigurationEditRequest(
+                    section: .dns,
+                    itemID: UUID(),
+                    isNew: true
+                )
+            },
+            statusMessage: model.configurationStatusMessage,
+            onEdit: { section, id in
+                editRequest = ConfigurationEditRequest(section: section, itemID: id)
+            }
+        )
+        .sheet(item: $editRequest) { request in
+            ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)
+        }
+    }
+}
+
 struct ConfigurationWorkspacesView: View {
     @Bindable var model: AppModel
     @State private var editRequest: ConfigurationEditRequest?
@@ -315,7 +405,8 @@ struct ConfigurationWorkspacesView: View {
 struct ConfigurationEditRequest: Identifiable {
     let section: ConfigurationWorkbenchSection
     let itemID: UUID
-    var id: String { "\(section.rawValue):\(itemID.uuidString)" }
+    var isNew = false
+    var id: String { "\(section.rawValue):\(itemID.uuidString):\(isNew)" }
 }
 
 struct ConfigurationRuleEditRequest: Identifiable {
@@ -324,11 +415,34 @@ struct ConfigurationRuleEditRequest: Identifiable {
 }
 
 private func rulePresentationDetail(_ rule: RoutingRule, action: String) -> String {
-    let conditions = rule.matchers.map(ruleMatcherPresentation).joined(separator: " and ")
+    let conditions = ruleConditionPresentation(rule.matchers)
     if conditions.isEmpty {
         return AppLocalization.format("Matches traffic and sends it to %@.", action)
     }
     return AppLocalization.format("When %@, send traffic to %@.", conditions, action)
+}
+
+private enum RuleMatcherFamily: String, CaseIterable, Hashable {
+    case application, destination, protocolValue, port
+}
+
+private func ruleConditionPresentation(_ matchers: [RoutingMatcher]) -> String {
+    let grouped = Dictionary(grouping: matchers, by: ruleMatcherFamily)
+    let parts = RuleMatcherFamily.allCases.compactMap { family -> String? in
+        let values = grouped[family, default: []].map(ruleMatcherPresentation)
+        guard !values.isEmpty else { return nil }
+        return values.count == 1 ? values[0] : values.joined(separator: " or ")
+    }
+    return parts.joined(separator: " and ")
+}
+
+private func ruleMatcherFamily(_ matcher: RoutingMatcher) -> RuleMatcherFamily {
+    switch matcher {
+    case .application, .processPath, .userID: .application
+    case .domainExact, .domainSuffix, .domainWildcard, .ipCIDR: .destination
+    case .transport: .protocolValue
+    case .port, .portRange: .port
+    }
 }
 
 private func ruleMatcherPresentation(_ matcher: RoutingMatcher) -> String {
@@ -358,19 +472,19 @@ private extension ConfigurationWorkbenchItem {
         )
         let workspaceItems = document.workspaces.map { workspace in
             let nodeScope = workspace.nodeIDs.isEmpty
-                ? AppLocalization.string("All nodes")
-                : AppLocalization.number(workspace.nodeIDs.count)
+                ? AppLocalization.string("All enabled nodes")
+                : AppLocalization.format("%@ nodes", AppLocalization.number(workspace.nodeIDs.count))
             return Self(
                 id: workspace.id.rawValue,
                 title: configurationDisplayName(workspace.name),
                 subtitle: AppLocalization.format(
-                    "%@ nodes · %@ rules",
+                    "%@ · %@ rules",
                     nodeScope,
                     AppLocalization.number(workspace.ruleIDs.count)
                 ),
                 symbol: "rectangle.3.group",
                 detail: AppLocalization.string(
-                    "A MClash strategy workspace shared by the configured traffic entrances."
+                    "A MClash configuration shared by the configured traffic entrances."
                 ),
                 metadata: [
                     (
@@ -382,7 +496,7 @@ private extension ConfigurationWorkbenchItem {
                         )
                     ),
                     (
-                        AppLocalization.string("Proxy Groups"),
+                        AppLocalization.string("Node Groups"),
                         AppLocalization.number(workspace.proxyGroupIDs.count)
                     ),
                     (
@@ -414,12 +528,12 @@ private extension ConfigurationWorkbenchItem {
                     (AppLocalization.string("Kind"), source.kind.localizedTitle),
                     (
                         AppLocalization.string("Location"),
-                        source.location == "local"
-                            ? AppLocalization.string("Local")
-                            : source.location
+                        Self.sourceDisplayLocation(source)
                     ),
                     (AppLocalization.string("Nodes"), AppLocalization.number(count)),
-                ]
+                ] + (!source.parseDiagnostics.isEmpty
+                    ? [(AppLocalization.string("Diagnostics"), AppLocalization.number(source.parseDiagnostics.count))]
+                    : [])
             )
         }
         let nodeItems = document.nodes.map { node in
@@ -445,23 +559,29 @@ private extension ConfigurationWorkbenchItem {
                         AppLocalization.string("Fingerprint"),
                         String(node.fingerprint.prefix(12))
                     ),
-                ],
+                ] + (node.region.map { [(AppLocalization.string("Region"), $0)] } ?? [])
+                    + (!node.tags.isEmpty
+                        ? [(AppLocalization.string("Tags"), node.tags.sorted().joined(separator: ", "))]
+                        : []),
                 isEnabled: node.enabled
             )
         }
         let groupItems = document.proxyGroups.map { group in
             let resolution = NodeSelectorResolver.resolve(
                 selectors: group.memberSelectors,
-                nodes: document.nodes.filter(\.enabled)
+                nodes: document.nodes.filter {
+                    $0.enabled
+                        && $0.health.availability != .sourceRemoved
+                        && $0.health.availability != .unsupported
+                }
             )
-            let fixedCount = group.members.count(where: {
-                if case .node = $0 { return true }
-                return false
-            })
-            let effectiveCount = Set(group.members.compactMap { member -> NodeID? in
+            let explicitNodeIDs = Set(group.members.compactMap { member -> NodeID? in
                 if case let .node(id) = member { return id }
                 return nil
-            }).union(resolution.nodeIDs).count
+            })
+            let selectorPinnedIDs = Set(group.memberSelectors.flatMap(\.fixedNodeIDs))
+            let fixedCount = explicitNodeIDs.union(selectorPinnedIDs).count
+            let effectiveCount = explicitNodeIDs.union(selectorPinnedIDs).union(resolution.nodeIDs).count
             return Self(
                 id: group.id.rawValue,
                 title: configurationDisplayName(group.name),
@@ -518,7 +638,8 @@ private extension ConfigurationWorkbenchItem {
             }
             return Self(
                 id: rule.id.rawValue,
-                title: AppLocalization.format("Rule %d", rule.priority),
+                title: rule.matchers.first.map(ruleMatcherPresentation)
+                    ?? AppLocalization.format("Rule %d", rule.priority),
                 subtitle: AppLocalization.format(
                     "%@ conditions · %@",
                     AppLocalization.number(rule.matchers.count),
@@ -533,7 +654,7 @@ private extension ConfigurationWorkbenchItem {
                     ),
                     (
                         AppLocalization.string("When"),
-                        rule.matchers.map(ruleMatcherPresentation).joined(separator: " · ")
+                        ruleConditionPresentation(rule.matchers)
                     ),
                     (AppLocalization.string("Action"), action),
                     (
@@ -542,6 +663,29 @@ private extension ConfigurationWorkbenchItem {
                     ),
                 ],
                 isEnabled: rule.enabled
+            )
+        }
+        let dnsItems = document.dnsPolicies.map { policy in
+            let isCurrent = document.currentWorkspace?.dnsPolicyID == policy.id
+            return Self(
+                id: policy.id.rawValue,
+                title: policy.name,
+                subtitle: AppLocalization.format(
+                    "%@ · %@ nameservers",
+                    policy.mode.rawValue,
+                    AppLocalization.number(policy.nameservers.count)
+                ),
+                symbol: "network",
+                detail: AppLocalization.string(
+                    "A MClash-owned DNS policy shared by the active configuration."
+                ),
+                metadata: [
+                    (AppLocalization.string("Status"), AppLocalization.string(isCurrent ? "Active" : "Available")),
+                    (AppLocalization.string("Mode"), policy.mode.rawValue),
+                    (AppLocalization.string("Nameservers"), AppLocalization.number(policy.nameservers.count)),
+                    (AppLocalization.string("Fallback resolvers"), AppLocalization.number(policy.fallbackNameservers.count)),
+                    (AppLocalization.string("DNS takeover"), AppLocalization.string(policy.takeoverEnabled ? "Enabled" : "Disabled")),
+                ]
             )
         }
         let entranceItems = document.entrances.map { entrance in
@@ -556,10 +700,10 @@ private extension ConfigurationWorkbenchItem {
                 symbol: entrance.kind == .appRouting ? "app.badge" : "arrow.triangle.branch",
                 detail: entrance.kind == .appRouting
                     ? AppLocalization.string(
-                        "Application capture is a capability switch. Its rules are managed in the unified Rules workspace."
+                    "Application capture is a capability switch. Its rules are managed on the unified Rules page."
                     )
                     : AppLocalization.string(
-                        "A MClash traffic entrance that follows the active Workspace."
+                        "A MClash traffic entrance that follows the active configuration."
                     ),
                 metadata: [
                     (
@@ -568,10 +712,10 @@ private extension ConfigurationWorkbenchItem {
                     ),
                     (AppLocalization.string("Bind Address"), entrance.bindAddress),
                     (
-                        AppLocalization.string("Workspace"),
+                            AppLocalization.string("Configuration"),
                         AppLocalization.string(
                             entrance.workspaceOverride == nil
-                                ? "Current Workspace"
+                                ? "Current configuration"
                                 : "Override"
                         )
                     ),
@@ -586,7 +730,32 @@ private extension ConfigurationWorkbenchItem {
             .proxyGroups: groupItems,
             .rules: ruleItems,
             .entrances: entranceItems,
+            .dns: dnsItems,
         ]
+    }
+
+    private static func sourceDisplayLocation(_ source: Source) -> String {
+        guard source.location != "local",
+              source.kind == .subscription,
+              var components = URLComponents(string: source.location) else {
+            if source.location == "local" {
+                return AppLocalization.string("Local")
+            }
+            return source.kind == .subscription
+                ? AppLocalization.string("Subscription")
+                : source.location
+        }
+        // Subscription URLs can contain access tokens in query/userinfo. Keep
+        // the persisted source untouched, but never expose those credentials
+        // in the ordinary Source inspector.
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        if let host = components.host {
+            return components.port.map { "\(host):\($0)" } ?? host
+        }
+        return components.host ?? AppLocalization.string("Subscription")
     }
 }
 

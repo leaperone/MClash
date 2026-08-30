@@ -37,6 +37,18 @@ public struct NodeIdentity: Hashable, Codable, Sendable {
         credentialParameterKeys.contains(normalizeParameterKey(key))
     }
 
+    /// Presentation metadata is useful for grouping and display, but it does
+    /// not describe how a connection reaches its endpoint. Keeping it out of
+    /// the identity prevents a provider changing a tag/region from orphaning
+    /// a user's fixed node pin.
+    public static let presentationParameterKeys: Set<String> = [
+        "name", "display-name", "remark", "tag", "tags", "region", "country"
+    ]
+
+    public static func isPresentationParameter(_ key: String) -> Bool {
+        presentationParameterKeys.contains(normalizeParameterKey(key))
+    }
+
     /// Provider YAML is inconsistent about key casing and underscore versus
     /// hyphen spelling. Identity material uses one canonical representation so
     /// a harmless presentation change does not create a new node ID.
@@ -44,6 +56,18 @@ public struct NodeIdentity: Hashable, Codable, Sendable {
         key.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "_", with: "-")
+    }
+
+    public static func normalizeParameterValue(key: String, value: String) -> String {
+        let normalizedKey = normalizeParameterKey(key)
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch normalizedKey {
+        case "sni", "servername", "server-name", "alpn":
+            return trimmed.lowercased()
+        default:
+            let lowercased = trimmed.lowercased()
+            return ["true", "false"].contains(lowercased) ? lowercased : trimmed
+        }
     }
 }
 
@@ -61,25 +85,61 @@ public enum NodeSelectorCondition: Codable, Hashable, Sendable {
         let name = (node.userAlias ?? node.displayName).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
         let host = node.host.lowercased()
         switch self {
-        case let .nameContains(value): return name.localizedCaseInsensitiveContains(value)
+        case let .nameContains(value): return Self.matchesText(name, pattern: value)
         case let .nameEquals(value): return name.caseInsensitiveCompare(value) == .orderedSame
-        case let .hostContains(value): return host.localizedCaseInsensitiveContains(value.lowercased())
+        case let .hostContains(value): return Self.matchesText(host, pattern: value.lowercased())
         case let .hostEquals(value): return host == normalizeHost(value)
         case let .ipEquals(value): return host == normalizeHost(value)
         case let .source(id): return node.sourceLinks.contains(id)
         case let .protocolIs(proto): return node.proto == proto
-        case let .tagContains(value): return node.tags.contains { $0.localizedCaseInsensitiveContains(value) }
+        case let .tagContains(value): return node.tags.contains { Self.matchesText($0, pattern: value) }
         }
     }
 
     private func normalizeHost(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.first == "[", normalized.last == "]" {
+            normalized.removeFirst()
+            normalized.removeLast()
+        }
+        return normalized.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    }
+
+    private static func matchesText(_ text: String, pattern: String) -> Bool {
+        let normalizedText = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let normalizedPattern = pattern.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        guard normalizedPattern.contains("*") || normalizedPattern.contains("?") else {
+            return normalizedText.localizedCaseInsensitiveContains(normalizedPattern)
+        }
+        return wildcardMatch(pattern: Array(normalizedPattern), value: Array(normalizedText))
+    }
+
+    private static func wildcardMatch(pattern: [Character], value: [Character]) -> Bool {
+        var p = 0
+        var v = 0
+        var star: Int?
+        var starValue = 0
+        while v < value.count {
+            if p < pattern.count, pattern[p] == "?" || pattern[p] == value[v] {
+                p += 1; v += 1
+            } else if p < pattern.count, pattern[p] == "*" {
+                star = p; p += 1; starValue = v
+            } else if let star {
+                p = star + 1; starValue += 1; v = starValue
+            } else {
+                return false
+            }
+        }
+        while p < pattern.count, pattern[p] == "*" { p += 1 }
+        return p == pattern.count
     }
 }
 
 /// A selector is an AND expression. Multiple selectors on a group are ORed;
 /// this makes common policies readable ("US" OR "United States") while
-/// retaining an explicit, durable pin for nodes that must never disappear.
+/// retaining an explicit, durable pin for nodes that must never be replaced
+/// by a different match. Exclusions apply only to automatic matches; fixed
+/// pins remain explicit group members.
 public struct NodeSelector: Codable, Hashable, Sendable, Identifiable {
     public let id: UUID
     public var name: String
@@ -120,7 +180,9 @@ public enum NodeSelectorResolver {
                     severity: .error,
                     code: "duplicate_node_id",
                     subject: node.id.rawValue.uuidString.lowercased(),
-                    message: "Node catalog contains more than one record with the same stable node ID."
+                    message: AppLocalization.string(
+                        "Node catalog contains more than one record with the same stable node ID."
+                    )
                 ))
             } else {
                 byID[node.id] = node
@@ -129,7 +191,15 @@ public enum NodeSelectorResolver {
         for selector in selectors {
             for id in selector.fixedNodeIDs {
                 guard byID[id] != nil else {
-                    diagnostics.append(.init(severity: .warning, code: "selector_missing_fixed_node", subject: "\(selector.id):\(id.rawValue)", message: "Selector \"\(selector.name)\" pins a node that is no longer available."))
+                    diagnostics.append(.init(
+                        severity: .warning,
+                        code: "selector_missing_fixed_node",
+                        subject: "\(selector.id):\(id.rawValue)",
+                        message: AppLocalization.format(
+                            "Selector \"%@\" pins a node that is no longer available.",
+                            selector.name
+                        )
+                    ))
                     continue
                 }
                 // A fixed pin is an explicit user decision. It remains in the
@@ -148,7 +218,15 @@ public enum NodeSelectorResolver {
             .filter { $0.value.count > 1 }
         for (fingerprint, collisionNodes) in collisions {
             let names = collisionNodes.map { $0.userAlias ?? $0.displayName }.sorted().joined(separator: ", ")
-            diagnostics.append(.init(severity: .warning, code: "node_identity_conflict", subject: String(fingerprint.prefix(16)), message: "Multiple nodes share one stable identity: \(names). Review provider credentials or keep one record."))
+            diagnostics.append(.init(
+                severity: .warning,
+                code: "node_identity_conflict",
+                subject: String(fingerprint.prefix(16)),
+                message: AppLocalization.format(
+                    "Multiple nodes share one stable identity: %@. Review provider credentials or keep one record.",
+                    names
+                )
+            ))
         }
         return NodeSelectorResolution(nodeIDs: ids, diagnostics: diagnostics)
     }

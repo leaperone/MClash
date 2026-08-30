@@ -62,6 +62,20 @@ public enum ConfigurationValidator {
         for id in workspace.ruleSetIDs where !setIDs.contains(id) { result.append(.error("missing_ruleset", id, AppLocalization.string("Workspace references a rule set that does not exist."))) }
         for id in workspace.entranceIDs where !entranceIDs.contains(id) { result.append(.error("missing_entrance", id, AppLocalization.string("Workspace references an entrance that does not exist."))) }
         let enabledEntrances = entrances.filter { workspace.entranceIDs.contains($0.id) && $0.enabled }
+        var enabledEntranceKinds: [String: Int] = [:]
+        for entrance in enabledEntrances {
+            enabledEntranceKinds[entrance.kind.rawValue, default: 0] += 1
+        }
+        for (kind, count) in enabledEntranceKinds where count > 1 {
+            result.append(.init(
+                severity: .error,
+                code: "duplicate_entrance_kind",
+                subject: kind,
+                message: AppLocalization.string(
+                    "Only one entrance of each type can be enabled in the current Mihomo runtime."
+                )
+            ))
+        }
         var ports: [Int: EntranceID] = [:]
         for entrance in enabledEntrances {
             validate(
@@ -85,7 +99,12 @@ public enum ConfigurationValidator {
                 result.append(.init(severity: .error, code: "invalid_bind_address", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("An enabled entrance requires a bind address.")))
             }
         }
-        let bindAddresses = Set(enabledEntrances.map { $0.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        let bindAddresses = Set(
+            enabledEntrances
+                .filter { $0.kind == .http || $0.kind == .socks5 }
+                .map { $0.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
         if bindAddresses.count > 1 {
             result.append(.init(severity: .error, code: "inconsistent_bind_addresses", subject: "entrances", message: AppLocalization.string("Enabled HTTP and SOCKS entrances must share one Mihomo bind address.")))
         }
@@ -97,8 +116,20 @@ public enum ConfigurationValidator {
                 case let .node(id):
                     if !nodeIDs.contains(id) {
                         result.append(.error("missing_group_node", id, AppLocalization.string("Proxy group references a missing node.")))
-                    } else if !hasImplicitNodeScope && !enabledNodeIDs.contains(id) {
+                    } else if !hasImplicitNodeScope && !effectiveWorkspaceNodeIDs.contains(id) {
                         result.append(.error("group_node_outside_workspace", id, AppLocalization.string("Proxy group references a node that is not included in this workspace.")))
+                    } else {
+                        let nodeUnavailable = !enabledNodeIDs.contains(id)
+                            || nodes.first(where: { $0.id == id })?.health.availability == .sourceRemoved
+                            || nodes.first(where: { $0.id == id })?.health.availability == .unsupported
+                        if nodeUnavailable {
+                            result.append(.init(
+                                severity: .warning,
+                                code: "group_node_unavailable",
+                                subject: String(describing: id.rawValue),
+                                message: AppLocalization.string("Proxy group references a disabled or source-removed node.")
+                            ))
+                        }
                     }
                 case let .group(id):
                     if !groupIDs.contains(id) {
@@ -118,7 +149,12 @@ public enum ConfigurationValidator {
         for group in groups where enabledGroupIDs.contains(group.id) && group.type != .direct && group.type != .reject {
             let selectorResolution = NodeSelectorResolver.resolve(
                 selectors: group.memberSelectors,
-                nodes: nodes.filter { effectiveWorkspaceNodeIDs.contains($0.id) && $0.enabled }
+                nodes: nodes.filter {
+                    effectiveWorkspaceNodeIDs.contains($0.id)
+                        && $0.enabled
+                        && $0.health.availability != .sourceRemoved
+                        && $0.health.availability != .unsupported
+                }
             )
             result.append(contentsOf: selectorResolution.diagnostics)
             for selector in group.memberSelectors {

@@ -27,9 +27,22 @@
 - Fixed UI navigation wiring so Proxy Groups and Rules point to the new authoritative workbench instead of the legacy Mihomo projections.
 - Fixed literal interpolation errors in synchronization, rollback and quarantine diagnostics.
 
+## 2026-08-30 follow-up review and corrections
+
+- App Routing was confirmed as an entrance capability, not a navigation/resource type. The visible control is the Application traffic switch in Entrances; old deep links are normalized to Entrances and Node Groups for compatibility.
+- Rules remain a first-level configuration destination and use the unified matcher editor for application, process, user, domain, IP/CIDR, transport and port conditions.
+- Node Group membership no longer requires hundreds of toggles: automatic selectors and fixed pins are persisted separately, with deterministic refresh-time resolution.
+- A refresh with unsupported or incomplete node entries is now non-authoritative and cannot mark all prior nodes source-removed. A source file read failure is isolated to that source so healthy sources continue synchronizing.
+- Source synchronization diagnostics are merged by stable diagnostic ID to avoid duplicate warnings in the source inspector and Attention surface.
+- Top-level ignored-section detection now considers only zero-indent YAML keys, preventing nested node parameters named `dns`/`tun` from being misclassified.
+- Imported `tag`/`tags` and `region`/`country` are retained as grouping metadata while excluded from endpoint identity, so provider presentation changes do not create a new pinned node.
+- The workbench uses a compact inspector sheet below the readable list width, flexible filter controls, and localized filter/search/default selector copy.
+- Because Mihomo exposes one managed HTTP, SOCKS5, TUN and App Routing listener per runtime, validation now rejects multiple enabled entrances of the same kind instead of silently ignoring the extra listener.
+- Ordinary source details redact subscription query/userinfo/path data to a host-only label; node fingerprints and diagnostics remain credential-safe hashes/messages.
+
 ## Remaining gates before release
 
-- Run the final focused and full direct test suites after the last edits.
-- Add/verify explicit UI localization keys for the new workbench copy.
-- Complete a second review of runtime compiler/Network Extension behavior and perform app-level smoke validation.
+- [x] Run the final focused and full direct test suites after the last edits.
+- [x] Add/verify explicit UI localization keys for the new workbench copy.
+- [x] Complete final typecheck/direct tests/integration smoke and app-level smoke validation; no real-window acceptance has been performed in this CLI environment.
 - Update release notes/version, build the signed app through the repository release workflow, and verify exact tag/SHA, artifacts, appcast, checksums and installation/runtime acceptance.

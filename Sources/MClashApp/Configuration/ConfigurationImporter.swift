@@ -47,14 +47,14 @@ public struct NodeOnlyImporter: Sendable {
                     severity: .error,
                     code: "invalid_encoding",
                     subject: "source",
-                    message: "The configuration is not valid UTF-8 YAML."
+                    message: AppLocalization.string("The configuration is not valid UTF-8 YAML.")
                 )],
                 importedAt: now
             )
         }
 
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let rootKeys = Set(lines.compactMap { rootKey(in: stripComment($0)) })
+        let rootKeys = Set(lines.compactMap { rootKey(in: $0) })
         let ignoredNames = [
             "proxy-groups", "rules", "rule-providers", "proxy-providers", "dns", "tun", "listeners",
             "tunnels", "external-controller", "external-controller-tls", "profile",
@@ -63,8 +63,8 @@ public struct NodeOnlyImporter: Sendable {
         let entries = proxyEntries(in: lines)
         var diagnostics: [ConfigurationDiagnostic] = []
         var nodes: [Node] = []
-        var fingerprints = Set<String>()
-        var connectionFingerprints: [String: String] = [:]
+        var connectionFingerprints = Set<String>()
+        var candidates: [(subject: String, proto: NodeProtocol, host: String, port: Int, parameters: [String: String], tags: Set<String>, region: String?, fingerprint: String, connectionFingerprint: String)] = []
 
         for (index, fields) in entries.enumerated() {
             let subject = fields["name"] ?? "proxy-\(index + 1)"
@@ -74,7 +74,7 @@ public struct NodeOnlyImporter: Sendable {
                     severity: .warning,
                     code: "node_missing_endpoint",
                     subject: subject,
-                    message: "Skipped a proxy without a valid server and port."
+                    message: AppLocalization.string("Skipped a proxy without a valid server and port.")
                 ))
                 continue
             }
@@ -85,43 +85,68 @@ public struct NodeOnlyImporter: Sendable {
                     severity: .warning,
                     code: "node_unsupported_protocol",
                     subject: subject,
-                    message: "Skipped a proxy with an unsupported protocol type."
+                    message: AppLocalization.string("Skipped a proxy with an unsupported protocol type.")
                 ))
                 continue
             }
             let parameters = fields.filter { key, _ in
-                !["name", "type", "server", "port"].contains(key)
+                let normalizedKey = NodeIdentity.normalizeParameterKey(key)
+                return !["name", "type", "server", "port"].contains(normalizedKey)
+                    && !NodeIdentity.isPresentationParameter(normalizedKey)
             }
+            let tags = metadataTags(in: fields, keys: ["tags", "tag"])
+            let region = metadataValue(in: fields, keys: ["region", "country"])
             let fingerprint = Node.makeFingerprint(
                 protocol: proto,
                 host: host,
                 port: port,
                 parameters: parameters
             )
-            guard fingerprints.insert(fingerprint).inserted else {
-                let connectionFingerprint = Node.makeConnectionFingerprint(protocol: proto, host: host, port: port, parameters: parameters)
-                let code = connectionFingerprints[fingerprint] == connectionFingerprint ? "duplicate_node" : "node_identity_conflict"
+            let connectionFingerprint = Node.makeConnectionFingerprint(protocol: proto, host: host, port: port, parameters: parameters)
+            guard connectionFingerprints.insert(connectionFingerprint).inserted else {
                 diagnostics.append(ConfigurationDiagnostic(
                     severity: .warning,
-                    code: code,
+                    code: "duplicate_node",
                     subject: subject,
-                    message: code == "duplicate_node"
-                        ? "Skipped a duplicate node with the same stable and connection identity."
-                        : "Skipped a node whose endpoint identity matches another node but whose credentials or connection parameters differ."
+                    message: AppLocalization.string("Skipped a duplicate node with the same stable and connection identity.")
                 ))
                 continue
             }
-            connectionFingerprints[fingerprint] = Node.makeConnectionFingerprint(protocol: proto, host: host, port: port, parameters: parameters)
+            candidates.append((subject, proto, host, port, parameters, tags, region, fingerprint, connectionFingerprint))
+        }
 
+        // Assign collision identities after the complete source has been
+        // parsed. For one endpoint, IDs are derived from the endpoint alone;
+        // when multiple credentials share it, every ID includes the full
+        // connection fingerprint. Sorting/grouping this way makes identities
+        // independent of provider entry order, so refreshing a subscription
+        // cannot swap which account owns a pinned ID.
+        let candidatesByFingerprint = Dictionary(grouping: candidates, by: { $0.fingerprint })
+        for candidate in candidates {
+            let siblings = candidatesByFingerprint[candidate.fingerprint] ?? []
+            if siblings.count > 1 {
+                diagnostics.append(ConfigurationDiagnostic(
+                    severity: .warning,
+                    code: "node_identity_conflict",
+                    subject: candidate.subject,
+                    message: AppLocalization.string("The source contains the same node endpoint with different credentials; both connection identities were retained for review.")
+                ))
+            }
+            let identityMaterial = siblings.count > 1
+                ? candidate.fingerprint + "|" + candidate.connectionFingerprint
+                : candidate.fingerprint
+            let stableID = NodeID.stable(for: identityMaterial)
             do {
                 let node = try Node(
-                    id: NodeID.stable(for: fingerprint),
-                    displayName: subject,
-                    protocol: proto,
-                    host: host,
-                    port: port,
-                    parameters: parameters,
+                    id: stableID,
+                    displayName: candidate.subject,
+                    protocol: candidate.proto,
+                    host: candidate.host,
+                    port: candidate.port,
+                    parameters: candidate.parameters,
                     sourceLinks: [sourceID],
+                    tags: candidate.tags,
+                    region: candidate.region,
                     lastSeenAt: now
                 )
                 nodes.append(node)
@@ -129,7 +154,7 @@ public struct NodeOnlyImporter: Sendable {
                 diagnostics.append(ConfigurationDiagnostic(
                     severity: .warning,
                     code: "node_invalid_endpoint",
-                    subject: subject,
+                    subject: candidate.subject,
                     message: error.localizedDescription
                 ))
             }
@@ -140,7 +165,7 @@ public struct NodeOnlyImporter: Sendable {
                 severity: .error,
                 code: "missing_proxies",
                 subject: "proxies",
-                message: "The source did not contain a supported proxies sequence."
+                message: AppLocalization.string("The source did not contain a supported proxies sequence.")
             ))
         }
 
@@ -149,7 +174,10 @@ public struct NodeOnlyImporter: Sendable {
                 severity: .warning,
                 code: "strategy_sections_ignored",
                 subject: "source",
-                message: "MClash ignored source strategy sections: \(ignored.joined(separator: ", "))."
+                message: AppLocalization.format(
+                    "MClash ignored source strategy sections: %@",
+                    ignored.joined(separator: ", ")
+                )
             ))
         }
 
@@ -217,6 +245,10 @@ public struct NodeOnlyImporter: Sendable {
     }
 
     private func rootKey(in line: String) -> String? {
+        // Only zero-indent mappings are document-level keys.  Looking at every
+        // mapping line would mistake a node's nested parameter (for example a
+        // transport field named `dns` or `tun`) for a strategy section.
+        guard indentation(line) == 0 else { return nil }
         let value = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !value.hasPrefix("-"), let colon = topLevelColon(in: value) else {
             return nil
@@ -248,6 +280,30 @@ public struct NodeOnlyImporter: Sendable {
             return String(value.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
         }
         return value
+    }
+
+    private func metadataValue(in fields: [String: String], keys: [String]) -> String? {
+        for key in keys {
+            if let value = fields.first(where: {
+                NodeIdentity.normalizeParameterKey($0.key) == key
+            })?.value {
+                let normalized = scalar(value).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalized.isEmpty { return normalized }
+            }
+        }
+        return nil
+    }
+
+    private func metadataTags(in fields: [String: String], keys: [String]) -> Set<String> {
+        guard let raw = metadataValue(in: fields, keys: keys) else { return [] }
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.first == "[", value.last == "]" {
+            value = String(value.dropFirst().dropLast())
+        }
+        return Set(value
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == " " || $0 == "\t" || $0 == "\n" || $0 == "\r" })
+            .map { scalar(String($0)).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty })
     }
 
     private func splitTopLevel(_ value: String, separator: Character) -> [String] {

@@ -65,6 +65,21 @@ struct ConfigurationModelsTests {
         #expect(upper.fingerprint == lower.fingerprint)
     }
 
+    @Test func selectorContainsFieldsAcceptWildcardPatterns() throws {
+        let us = try Node(displayName: "US Premium", protocol: .vless, host: "us-01.example.com", port: 443)
+        let jp = try Node(displayName: "Japan", protocol: .vless, host: "jp.example.com", port: 443)
+        let selector = NodeSelector(name: "US", include: [.nameContains("US*"), .hostContains("us-*")])
+        let resolution = NodeSelectorResolver.resolve(selectors: [selector], nodes: [us, jp])
+        #expect(resolution.nodeIDs == [us.id])
+    }
+
+    @Test func defaultConfigurationUsesAWholeCatalogSelector() {
+        let document = ConfigurationDocument.mclashDefault()
+        #expect(document.currentWorkspace?.nodeIDs.isEmpty == true)
+        #expect(document.proxyGroups.first?.memberSelectors.count == 1)
+        #expect(document.proxyGroups.first?.members.isEmpty == true)
+    }
+
     @Test func proxyGroupWithoutNewSelectorFieldRemainsCodableCompatible() throws {
         let group = ProxyGroup(name: "US", members: [])
         let data = try JSONEncoder().encode(group)
@@ -77,6 +92,26 @@ struct ConfigurationModelsTests {
         let workspace = Workspace(name: "Test", nodeIDs: [missing], dnsPolicyID: dnsID)
         let diagnostics = ConfigurationValidator.validate(workspace: workspace, nodes: [], groups: [], rules: [], dnsPolicies: [], entrances: [])
         #expect(diagnostics.map(\.code) == ["missing_dns_policy", "missing_node"])
+    }
+
+    @Test func validatorRejectsMultipleEnabledListenersOfOneType() throws {
+        let dns = DNSPolicy(name: "DNS")
+        let first = Entrance(kind: .http, enabled: true, port: 7890)
+        let second = Entrance(kind: .http, enabled: true, port: 7892)
+        let workspace = Workspace(
+            name: "Everyday",
+            dnsPolicyID: dns.id,
+            entranceIDs: [first.id, second.id]
+        )
+        let diagnostics = ConfigurationValidator.validate(
+            workspace: workspace,
+            nodes: [],
+            groups: [],
+            rules: [],
+            dnsPolicies: [dns],
+            entrances: [first, second]
+        )
+        #expect(diagnostics.contains { $0.code == "duplicate_entrance_kind" })
     }
 
     @Test func modelsRoundTripCodable() throws {

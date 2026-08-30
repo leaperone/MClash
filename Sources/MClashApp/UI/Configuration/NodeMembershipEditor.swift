@@ -10,8 +10,11 @@ struct NodeMembershipEditor: View {
     @Binding var selectors: [NodeSelector]
 
     @State private var activeSelectorID: UUID?
+    @State private var selectorName = ""
     @State private var nameContains = ""
+    @State private var nameEquals = ""
     @State private var hostContains = ""
+    @State private var hostEquals = ""
     @State private var sourceChoice: SourceID?
     @State private var protocolChoice: NodeProtocol?
     @State private var tagContains = ""
@@ -20,6 +23,7 @@ struct NodeMembershipEditor: View {
     @State private var fixedSearch = ""
     @State private var librarySearch = ""
     @State private var isLoading = false
+    @FocusState private var librarySearchFocused: Bool
 
     private var activeSelector: NodeSelector? {
         guard let activeSelectorID else { return nil }
@@ -28,13 +32,15 @@ struct NodeMembershipEditor: View {
 
     private var activeCriteria: [String] {
         var result: [String] = []
-        if !nameContains.trimmed.isEmpty { result.append("Name contains " + nameContains.trimmed) }
-        if !hostContains.trimmed.isEmpty { result.append("Host/IP contains " + hostContains.trimmed) }
-        if let sourceChoice { result.append("Source is " + (sourceNames[sourceChoice] ?? "selected source")) }
-        if let protocolChoice { result.append("Protocol is " + protocolChoice.rawValue.uppercased()) }
-        if !tagContains.trimmed.isEmpty { result.append("Tag contains " + tagContains.trimmed) }
-        if !excludeNameContains.trimmed.isEmpty { result.append("Exclude name " + excludeNameContains.trimmed) }
-        if !excludeHostContains.trimmed.isEmpty { result.append("Exclude host/IP " + excludeHostContains.trimmed) }
+        if !nameContains.trimmed.isEmpty { result.append(AppLocalization.format("Name contains %@", nameContains.trimmed)) }
+        if !nameEquals.trimmed.isEmpty { result.append(AppLocalization.format("Name is %@", nameEquals.trimmed)) }
+        if !hostContains.trimmed.isEmpty { result.append(AppLocalization.format("Host/IP contains %@", hostContains.trimmed)) }
+        if !hostEquals.trimmed.isEmpty { result.append(AppLocalization.format("Host/IP is %@", hostEquals.trimmed)) }
+        if let sourceChoice { result.append(AppLocalization.format("Source is %@", sourceNames[sourceChoice] ?? AppLocalization.string("selected source"))) }
+        if let protocolChoice { result.append(AppLocalization.format("Protocol is %@", protocolChoice.rawValue.uppercased())) }
+        if !tagContains.trimmed.isEmpty { result.append(AppLocalization.format("Tag contains %@", tagContains.trimmed)) }
+        if !excludeNameContains.trimmed.isEmpty { result.append(AppLocalization.format("Exclude name %@", excludeNameContains.trimmed)) }
+        if !excludeHostContains.trimmed.isEmpty { result.append(AppLocalization.format("Exclude host/IP %@", excludeHostContains.trimmed)) }
         return result
     }
 
@@ -44,7 +50,11 @@ struct NodeMembershipEditor: View {
         // An empty include expression intentionally means all enabled nodes;
         // show that result explicitly so the default group never looks empty
         // merely because it has no text condition.
-        let candidates = nodes.filter(\.enabled)
+        let candidates = nodes.filter {
+            $0.enabled
+                && $0.health.availability != .sourceRemoved
+                && $0.health.availability != .unsupported
+        }
         return candidates.filter { selector.matchesForPreview($0) }.sorted(by: stableNodeOrder)
     }
 
@@ -83,13 +93,16 @@ struct NodeMembershipEditor: View {
             automaticPreview
             fixedMembers
         } header: {
-            Label("Which nodes should be in this group?", systemImage: "line.3.horizontal.decrease.circle")
+            Label(AppLocalization.string("Which nodes should be in this group?"), systemImage: "line.3.horizontal.decrease.circle")
         } footer: {
-            Text("Each selector combines its filled conditions with AND. Multiple selectors are combined with OR. Fixed nodes stay selected until you remove them.")
+            Text(AppLocalization.string("Each selector combines its filled conditions with AND. Multiple selectors are combined with OR. Fixed nodes stay selected until you remove them."))
         }
         .onAppear(perform: prepare)
         .onChange(of: nameContains) { _, _ in syncSelector() }
+        .onChange(of: selectorName) { _, _ in syncSelector() }
+        .onChange(of: nameEquals) { _, _ in syncSelector() }
         .onChange(of: hostContains) { _, _ in syncSelector() }
+        .onChange(of: hostEquals) { _, _ in syncSelector() }
         .onChange(of: sourceChoice) { _, _ in syncSelector() }
         .onChange(of: protocolChoice) { _, _ in syncSelector() }
         .onChange(of: tagContains) { _, _ in syncSelector() }
@@ -100,25 +113,36 @@ struct NodeMembershipEditor: View {
     private var selectorPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Automatic selectors")
+                Text(AppLocalization.string("Automatic selectors"))
                     .font(.headline)
                 Spacer()
                 Button {
                     addSelector()
                 } label: {
-                    Label("Add selector", systemImage: "plus")
+                    Label(AppLocalization.string("Add selector"), systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
             if selectors.isEmpty {
-                Text("No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”.")
+                Text(AppLocalization.string("No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button(AppLocalization.string("Add automatic selector"), action: addSelector)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    Button(AppLocalization.string("Pin a fixed node")) {
+                        addSelector()
+                        librarySearchFocused = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(selectors) { selector in
                             Button {
                                 selectSelector(selector.id)
@@ -126,17 +150,19 @@ struct NodeMembershipEditor: View {
                                 HStack(spacing: 5) {
                                     Image(systemName: selector.id == activeSelectorID ? "checkmark.circle.fill" : "line.3.horizontal.decrease.circle")
                                     Text(selector.name)
-                                    Text("\(selector.fixedNodeIDs.count)")
+                                    Text(AppLocalization.number(selector.fixedNodeIDs.count))
                                         .font(.caption2.monospacedDigit())
                                         .foregroundStyle(.secondary)
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .accessibilityLabel("Selector " + selector.name)
+                            .accessibilityLabel(AppLocalization.format("Selector %@", selector.name))
                         }
                     }
                 }
+                .frame(maxHeight: 144)
             }
         }
     }
@@ -146,43 +172,52 @@ struct NodeMembershipEditor: View {
         if activeSelectorID != nil {
             VStack(alignment: .leading, spacing: 9) {
                 HStack {
-                    Text("Match conditions")
+                    Text(AppLocalization.string("Match conditions"))
                         .font(.headline)
+                    TextField(AppLocalization.string("Selector name"), text: $selectorName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 220)
                     Spacer()
-                    Button("Remove selector", role: .destructive) {
+                    Button(AppLocalization.string("Remove selector"), role: .destructive) {
                         removeActiveSelector()
                     }
                     .buttonStyle(.borderless)
                     .font(.caption)
                 }
-                Text("All included conditions must match. Exclusions are applied last.")
+                Text(AppLocalization.string("All included conditions must match. Exclusions apply to automatic matches; fixed pins remain in the group."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
                     Image(systemName: "textformat")
                         .foregroundStyle(.secondary)
-                    TextField("Name contains (for example United States)", text: $nameContains)
+                    TextField(AppLocalization.string("Name contains or matches (for example US or US*)"), text: $nameContains)
                 }
                 HStack(spacing: 8) {
                     Image(systemName: "network")
                         .foregroundStyle(.secondary)
-                    TextField("Host or IP contains (for example us.)", text: $hostContains)
+                    TextField(AppLocalization.string("Host/IP contains or matches (for example us.*)"), text: $hostContains)
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "equal.circle")
+                        .foregroundStyle(.secondary)
+                    TextField(AppLocalization.string("Exact name (optional)"), text: $nameEquals)
+                    TextField(AppLocalization.string("Exact Host/IP (optional)"), text: $hostEquals)
                 }
                 HStack(spacing: 8) {
                     Image(systemName: "tag")
                         .foregroundStyle(.secondary)
-                    TextField("Tag contains (for example premium)", text: $tagContains)
+                    TextField(AppLocalization.string("Tag contains (for example premium)"), text: $tagContains)
                 }
                 HStack {
-                    Picker("Source", selection: $sourceChoice) {
-                        Text("Any source").tag(Optional<SourceID>.none)
+                    Picker(AppLocalization.string("Source"), selection: $sourceChoice) {
+                        Text(AppLocalization.string("Any source")).tag(Optional<SourceID>.none)
                         ForEach(sortedSourceIDs, id: \.self) { sourceID in
                             Text(sourceNames[sourceID] ?? "Source").tag(Optional(sourceID))
                         }
                     }
-                    Picker("Protocol", selection: $protocolChoice) {
-                        Text("Any protocol").tag(Optional<NodeProtocol>.none)
+                    Picker(AppLocalization.string("Protocol"), selection: $protocolChoice) {
+                        Text(AppLocalization.string("Any protocol")).tag(Optional<NodeProtocol>.none)
                         ForEach(NodeProtocol.allCases, id: \.self) { proto in
                             Text(proto.rawValue.uppercased()).tag(Optional(proto))
                         }
@@ -191,8 +226,8 @@ struct NodeMembershipEditor: View {
                 HStack(spacing: 8) {
                     Image(systemName: "minus.circle")
                         .foregroundStyle(.secondary)
-                    TextField("Exclude name contains (optional)", text: $excludeNameContains)
-                    TextField("Exclude host/IP contains (optional)", text: $excludeHostContains)
+                    TextField(AppLocalization.string("Exclude name contains (optional)"), text: $excludeNameContains)
+                    TextField(AppLocalization.string("Exclude host/IP contains (optional)"), text: $excludeHostContains)
                 }
 
                 if !activeCriteria.isEmpty {
@@ -214,19 +249,19 @@ struct NodeMembershipEditor: View {
     private var automaticPreview: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Automatic preview", systemImage: "wand.and.stars")
+                Label(AppLocalization.string("Automatic preview"), systemImage: "wand.and.stars")
                     .font(.headline)
                 Spacer()
-                Text("\(matchedNodes.count) matches")
+                Text(AppLocalization.format("%d matches", matchedNodes.count))
                     .font(.caption.weight(.medium).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             if activeSelectorID == nil {
-                Text("Add a selector to describe which nodes belong to this group.")
+                Text(AppLocalization.string("Add a selector to describe which nodes belong to this group."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if activeCriteria.isEmpty {
-                Text("No include condition means all enabled nodes. Add a condition to narrow the match.")
+                Text(AppLocalization.string("No include condition means all enabled nodes. Add a condition to narrow the match."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if !matchedNodes.isEmpty {
@@ -242,7 +277,7 @@ struct NodeMembershipEditor: View {
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                 }
             } else if matchedNodes.isEmpty {
-                Label("No nodes match these conditions", systemImage: "magnifyingglass")
+                Label(AppLocalization.string("No nodes match these conditions"), systemImage: "magnifyingglass")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -263,22 +298,32 @@ struct NodeMembershipEditor: View {
     private var fixedMembers: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Fixed nodes", systemImage: "pin")
+                Label(AppLocalization.string("Fixed nodes"), systemImage: "pin")
                     .font(.headline)
                 Spacer()
-                Text("\(activeFixedIDs.count) pinned")
+                Text(AppLocalization.format("%d pinned", activeFixedIDs.count))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            let missingFixedCount = activeFixedIDs.subtracting(Set(nodes.map(\.id))).count
+            if missingFixedCount > 0 {
+                Label(
+                    AppLocalization.format("%d pinned nodes are unavailable after the last source refresh.", missingFixedCount),
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            }
             if activeSelectorID == nil {
-                Text("Add a selector before pinning a node. Pins are attached to the selected selector and never replaced silently.")
+                Text(AppLocalization.string("Add a selector before pinning a node. Pins are attached to the selected selector and never replaced silently."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                TextField("Search pinned nodes", text: $fixedSearch)
+                TextField(AppLocalization.string("Search pinned nodes"), text: $fixedSearch)
                     .textFieldStyle(.roundedBorder)
                 if fixedNodes.isEmpty {
-                    Text("No pinned nodes for this selector.")
+                    Text(AppLocalization.string("No pinned nodes for this selector."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -290,8 +335,9 @@ struct NodeMembershipEditor: View {
                         }
                     }
                 }
-                TextField("Search node library to pin a node", text: $librarySearch)
+                TextField(AppLocalization.string("Search node library to pin a node"), text: $librarySearch)
                     .textFieldStyle(.roundedBorder)
+                    .focused($librarySearchFocused)
                 if !availableLibraryNodes.isEmpty {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 3) {
@@ -304,7 +350,7 @@ struct NodeMembershipEditor: View {
                     }
                     .frame(maxHeight: 130)
                     if availableLibraryNodes.count > 100 {
-                        Text("Showing the first 100 matches. Refine your search.")
+                        Text(AppLocalization.string("Showing the first 100 matches. Refine your search."))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -319,7 +365,7 @@ struct NodeMembershipEditor: View {
                 .foregroundStyle(selected ? Color.accentColor : Color.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(node.userAlias ?? node.displayName).lineLimit(1)
-                Text("\(node.proto.rawValue.uppercased()) · \(node.host):\(node.port)")
+                Text(AppLocalization.format("%@ · %@:%d", node.proto.rawValue.uppercased(), node.host, node.port))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -327,6 +373,12 @@ struct NodeMembershipEditor: View {
             Spacer(minLength: 4)
             if let region = node.region, !region.isEmpty {
                 Text(region).font(.caption2).foregroundStyle(.secondary)
+            }
+            if node.health.availability == .sourceRemoved || node.health.availability == .unsupported {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .help(AppLocalization.string("This node is no longer available from its source."))
             }
         }
         .padding(.vertical, 3)
@@ -340,7 +392,9 @@ struct NodeMembershipEditor: View {
     private var draftSelector: NodeSelector {
         var include: [NodeSelectorCondition] = []
         if !nameContains.trimmed.isEmpty { include.append(.nameContains(nameContains.trimmed)) }
+        if !nameEquals.trimmed.isEmpty { include.append(.nameEquals(nameEquals.trimmed)) }
         if !hostContains.trimmed.isEmpty { include.append(.hostContains(hostContains.trimmed)) }
+        if !hostEquals.trimmed.isEmpty { include.append(.hostEquals(hostEquals.trimmed)) }
         if let sourceChoice { include.append(.source(sourceChoice)) }
         if let protocolChoice { include.append(.protocolIs(protocolChoice)) }
         if !tagContains.trimmed.isEmpty { include.append(.tagContains(tagContains.trimmed)) }
@@ -349,7 +403,9 @@ struct NodeMembershipEditor: View {
         if !excludeHostContains.trimmed.isEmpty { exclude.append(.hostContains(excludeHostContains.trimmed)) }
         return NodeSelector(
             id: activeSelectorID ?? UUID(),
-            name: activeSelector?.name ?? "Selector",
+            name: selectorName.trimmed.isEmpty
+                ? (activeSelector?.name ?? AppLocalization.string("Selector"))
+                : selectorName.trimmed,
             include: include,
             exclude: exclude,
             fixedNodeIDs: activeSelector?.fixedNodeIDs ?? []
@@ -360,18 +416,26 @@ struct NodeMembershipEditor: View {
         isLoading = true
         if selectors.isEmpty {
             if !selectedNodeIDs.isEmpty {
-                let selector = NodeSelector(name: "Pinned nodes", fixedNodeIDs: selectedNodeIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString })
+                let selector = NodeSelector(name: AppLocalization.string("Pinned nodes"), fixedNodeIDs: selectedNodeIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString })
                 selectors = [selector]
             }
-        } else if !selectedNodeIDs.isEmpty {
+        } else {
             // Older manifests stored fixed node members in `members` rather
             // than selector.fixedNodeIDs. Fold those durable pins into the
             // first selector so opening and saving the editor cannot lose them.
+            let selectorPins = Set(selectors.flatMap(\.fixedNodeIDs))
+            let legacyPins = selectedNodeIDs.subtracting(selectorPins)
+            guard !legacyPins.isEmpty else {
+                activeSelectorID = selectors.first?.id
+                loadActiveSelector()
+                isLoading = false
+                return
+            }
             let firstID = selectors[0].id
             if let index = selectors.firstIndex(where: { $0.id == firstID }) {
                 let existing = Set(selectors[index].fixedNodeIDs)
                 selectors[index].fixedNodeIDs = existing
-                    .union(selectedNodeIDs)
+                    .union(legacyPins)
                     .sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
             }
         }
@@ -381,9 +445,12 @@ struct NodeMembershipEditor: View {
     }
 
     private func addSelector() {
-        let selector = NodeSelector(name: "Selector " + String(selectors.count + 1))
+        let selector = NodeSelector(
+            name: AppLocalization.format("Selector %@", AppLocalization.number(selectors.count + 1))
+        )
         selectors.append(selector)
         activeSelectorID = selector.id
+        selectorName = selector.name
         clearFields()
     }
 
@@ -398,13 +465,17 @@ struct NodeMembershipEditor: View {
         guard let activeSelectorID else { return }
         selectors.removeAll { $0.id == activeSelectorID }
         self.activeSelectorID = selectors.first?.id
-        if self.activeSelectorID == nil { clearFields() } else { loadActiveSelector() }
+        if self.activeSelectorID == nil {
+            selectorName = ""
+            clearFields()
+        } else { loadActiveSelector() }
         refreshSelectedPins()
     }
 
     private func loadActiveSelector() {
         guard let selector = activeSelector else { return }
         isLoading = true
+        selectorName = selector.name
         clearFields()
         for condition in selector.include {
             apply(condition, to: false)
@@ -418,7 +489,9 @@ struct NodeMembershipEditor: View {
 
     private func clearFields() {
         nameContains = ""
+        nameEquals = ""
         hostContains = ""
+        hostEquals = ""
         sourceChoice = nil
         protocolChoice = nil
         tagContains = ""
@@ -431,7 +504,9 @@ struct NodeMembershipEditor: View {
     private func apply(_ condition: NodeSelectorCondition, to exclusion: Bool) {
         switch condition {
         case let .nameContains(value): exclusion ? (excludeNameContains = value) : (nameContains = value)
+        case let .nameEquals(value): if !exclusion { nameEquals = value }
         case let .hostContains(value): exclusion ? (excludeHostContains = value) : (hostContains = value)
+        case let .hostEquals(value): if !exclusion { hostEquals = value }
         case let .source(id): if !exclusion { sourceChoice = id }
         case let .protocolIs(value): if !exclusion { protocolChoice = value }
         case let .tagContains(value): if !exclusion { tagContains = value }
@@ -443,6 +518,7 @@ struct NodeMembershipEditor: View {
         guard !isLoading, let activeSelectorID,
               let index = selectors.firstIndex(where: { $0.id == activeSelectorID }) else { return }
         var selector = selectors[index]
+        selector.name = selectorName.trimmed.isEmpty ? selector.name : selectorName.trimmed
         selector.include = draftSelector.include
         selector.exclude = draftSelector.exclude
         selectors[index] = selector

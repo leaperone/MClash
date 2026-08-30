@@ -84,14 +84,15 @@ public struct ConfigurationCompiler: Sendable {
         // enabled catalog”. This is the default and is what lets selector
         // backed groups follow subscription refreshes automatically.
         let workspaceNodes = workspace.nodeIDs.isEmpty
-            ? document.nodes.filter(\.enabled)
-            : workspace.nodeIDs.compactMap { nodesByID[$0] }.filter(\.enabled)
+            ? document.nodes.filter(runtimeEligible)
+            : workspace.nodeIDs.compactMap { nodesByID[$0] }.filter(runtimeEligible)
         let workspaceGroups = workspace.proxyGroupIDs.compactMap { groupsByID[$0] }.filter(\.enabled)
         let workspaceRuleSets = workspace.ruleSetIDs.compactMap { id in document.ruleSets.first(where: { $0.id == id }) }
         let workspaceRules = workspace.ruleIDs.compactMap { id in document.rules.first(where: { $0.id == id }) }.filter(\.enabled).sorted {
             if $0.priority == $1.priority { return $0.id.rawValue.uuidString < $1.id.rawValue.uuidString }
             return $0.priority < $1.priority
         }
+        let runtimeNodeNames = makeRuntimeNodeNames(workspaceNodes)
         // Selectors are a user-facing membership policy, not a Mihomo field.
         // Resolve them against the current catalog immediately before render;
         // this is what makes a subscription refresh update dynamic members
@@ -114,6 +115,7 @@ public struct ConfigurationCompiler: Sendable {
         guard errors.isEmpty else { throw ConfigurationCompilationError.invalid(errors) }
         let yaml = render(
             nodes: workspaceNodes,
+            nodeNames: runtimeNodeNames,
             groups: resolvedGroups,
             rules: workspaceRules,
             ruleSets: workspaceRuleSets,
@@ -161,6 +163,7 @@ public struct ConfigurationCompiler: Sendable {
 
     private func render(
         nodes: [Node],
+        nodeNames: [NodeID: String],
         groups: [ProxyGroup],
         rules: [RoutingRule],
         ruleSets: [RuleSet],
@@ -190,7 +193,7 @@ public struct ConfigurationCompiler: Sendable {
             lines.append("    type: direct")
         } else {
             for node in nodes {
-                lines.append(contentsOf: render(node: node))
+                lines.append(contentsOf: render(node: node, name: nodeNames[node.id]))
             }
         }
 
@@ -213,7 +216,7 @@ public struct ConfigurationCompiler: Sendable {
                 default:
                     members = group.members.compactMap { member -> String? in
                         switch member {
-                        case let .node(id): return nodes.first(where: { $0.id == id }).map { $0.userAlias ?? $0.displayName }
+                        case let .node(id): return nodeNames[id]
                         case let .group(id): return groups.first(where: { $0.id == id })?.name
                         }
                     }
@@ -298,9 +301,9 @@ public struct ConfigurationCompiler: Sendable {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private func render(node: Node) -> [String] {
+    private func render(node: Node, name: String?) -> [String] {
         var lines = [
-            "  - name: \(yamlScalar(node.userAlias ?? node.displayName))",
+            "  - name: \(yamlScalar(name ?? node.userAlias ?? node.displayName))",
             "    type: \(node.proto.rawValue)",
             "    server: \(yamlScalar(node.host))",
             "    port: \(node.port)",
@@ -309,6 +312,57 @@ public struct ConfigurationCompiler: Sendable {
             lines.append("    \(key): \(yamlScalar(value))")
         }
         return lines
+    }
+
+    /// Mihomo identifies proxies by their rendered name. Providers often
+    /// reuse names (for example “US 01”), so assign deterministic suffixes
+    /// without changing the user-facing catalog or stable NodeID. Group
+    /// references use this same map, keeping refreshes and duplicate names
+    /// unambiguous.
+    private func makeRuntimeNodeNames(_ nodes: [Node]) -> [NodeID: String] {
+        let ordered = nodes.sorted { lhs, rhs in
+            let left = (lhs.userAlias ?? lhs.displayName).lowercased()
+                + "|" + lhs.host + "|" + String(format: "%05d", lhs.port)
+                + "|" + lhs.id.rawValue.uuidString
+            let right = (rhs.userAlias ?? rhs.displayName).lowercased()
+                + "|" + rhs.host + "|" + String(format: "%05d", rhs.port)
+                + "|" + rhs.id.rawValue.uuidString
+            return left < right
+        }
+        var counts: [String: Int] = [:]
+        var result: [NodeID: String] = [:]
+        var usedNames: Set<String> = []
+        let reserved: Set<String> = ["DIRECT", "REJECT", "GLOBAL"]
+        for node in ordered {
+            let raw = (node.userAlias ?? node.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
+            let base = raw.isEmpty ? "node-\(node.id.rawValue.uuidString.prefix(8))" : raw
+            let normalized = base.uppercased()
+            let nameKey = base.lowercased()
+            counts[nameKey, default: 0] += 1
+            let occurrence = counts[nameKey] ?? 1
+            var candidate: String
+            if reserved.contains(normalized) {
+                candidate = "\(base) (node \(occurrence))"
+            } else if occurrence == 1 {
+                candidate = base
+            } else {
+                candidate = "\(base) (\(occurrence))"
+            }
+            var suffix = occurrence
+            while usedNames.contains(candidate.lowercased()) {
+                suffix += 1
+                candidate = "\(base) (\(suffix))"
+            }
+            usedNames.insert(candidate.lowercased())
+            result[node.id] = candidate
+        }
+        return result
+    }
+
+    private func runtimeEligible(_ node: Node) -> Bool {
+        node.enabled
+            && node.health.availability != .sourceRemoved
+            && node.health.availability != .unsupported
     }
 
     private func render(rule: RoutingRule, action: String) -> [String] {

@@ -161,7 +161,7 @@ final class AppModel {
                 policy.traffic = true
                 policy.connections = true
                 policy.appRoutingActivity = true
-            case .workspaces, .nodes, .sources, .entrances, .proxyGroups:
+            case .workspaces, .nodes, .sources, .entrances, .proxyGroups, .dns:
                 break
             case .proxies:
                 policy.connections = true
@@ -403,6 +403,7 @@ final class AppModel {
         case nodes
         case sources
         case entrances
+        case dns
         case proxies
         case proxyGroups
         case appRouting
@@ -419,15 +420,16 @@ final class AppModel {
         var title: String {
             switch self {
             case .overview: "Overview"
-            case .workspaces: "Workspaces"
+            case .workspaces: "Configuration"
             case .nodes: "Nodes"
             case .sources: "Sources"
             case .entrances: "Entrances"
-            case .proxies: "Proxies"
-            case .proxyGroups: "Proxy Groups"
+            case .dns: "DNS"
+            case .proxies: "Node Groups"
+            case .proxyGroups: "Node Groups"
             case .appRouting: "App Routing"
             case .profiles: "Profiles"
-            case .rules: "Mihomo Rules"
+            case .rules: "Rules"
             case .providers: "Providers"
             case .connections: "Traffic"
             case .attention: "Attention"
@@ -443,6 +445,7 @@ final class AppModel {
             case .nodes: "point.3.connected.trianglepath.dotted"
             case .sources: "arrow.down.circle"
             case .entrances: "arrow.triangle.branch"
+            case .dns: "network"
             case .proxies: "square.3.layers.3d"
             case .proxyGroups: "rectangle.3.group"
             case .appRouting: "app.badge"
@@ -1130,7 +1133,7 @@ final class AppModel {
                         configurationDocument = recovery.document == .empty
                             ? .mclashDefault()
                             : recovery.document
-                        configurationDiagnostics = configurationDocument.diagnostics()
+                        configurationDiagnostics = allConfigurationDiagnostics(for: configurationDocument)
                         if recovery.document == .empty {
                             try await configurationStore.save(configurationDocument)
                         }
@@ -1460,14 +1463,19 @@ final class AppModel {
     /// Rebuilds only the source/node side of the authoritative configuration.
     /// Existing MClash groups, rules, DNS policies and workspace choices are
     /// intentionally preserved across every refresh.
-    private func synchronizeConfigurationSources() async {
+    // Internal so the configuration refresh path can be exercised without
+    // starting a core in integration/unit tests. Production callers still
+    // invoke it through the profile lifecycle below.
+    func synchronizeConfigurationSources() async {
         guard let configurationStore, let profileStore else { return }
         var document = configurationDocument
         if document == .empty { document = .mclashDefault() }
         do {
             let storedProfiles = try await profileStore.profiles()
             let now = Date()
-            var fingerprintsSeenBySource: [SourceID: Set<String>] = [:]
+            var sourceRefreshSucceeded: [SourceID: Bool] = [:]
+            var sourceNodeIDsSeen: [SourceID: Set<NodeID>] = [:]
+            var synchronizationDiagnosticsBySource: [SourceID: [ConfigurationDiagnostic]] = [:]
             for profile in storedProfiles {
                 let sourceID = SourceID(rawValue: profile.id.rawValue)
                 let sourceKind: ConfigurationSourceKind
@@ -1483,7 +1491,39 @@ final class AppModel {
                     sourceKind = .subscription
                     location = remote.url.absoluteString
                 }
-                let data = try await profileStore.configurationData(for: profile.id)
+                let data: Data
+                do {
+                    data = try await profileStore.configurationData(for: profile.id)
+                } catch {
+                    let diagnostic = ConfigurationDiagnostic(
+                        severity: .error,
+                        code: "source_read_failed",
+                        subject: sourceID.rawValue.uuidString.lowercased(),
+                        message: AppLocalization.format(
+                            "Configuration source could not be read: %@",
+                            error.localizedDescription
+                        )
+                    )
+                    var failedSource = document.sources.first(where: { $0.id == sourceID }) ?? Source(
+                        id: sourceID,
+                        kind: sourceKind,
+                        displayName: profile.name,
+                        location: location
+                    )
+                    failedSource.kind = sourceKind
+                    failedSource.displayName = profile.name
+                    failedSource.location = location
+                    failedSource.lastFetchedAt = now
+                    failedSource.parseDiagnostics = [diagnostic]
+                    if let index = document.sources.firstIndex(where: { $0.id == sourceID }) {
+                        document.sources[index] = failedSource
+                    } else {
+                        document.sources.append(failedSource)
+                    }
+                    sourceRefreshSucceeded[sourceID] = false
+                    synchronizationDiagnosticsBySource[sourceID, default: []].append(diagnostic)
+                    continue
+                }
                 let report = NodeOnlyImporter().importNodes(sourceID: sourceID, yaml: data, now: now)
                 var source = document.sources.first(where: { $0.id == sourceID }) ?? Source(
                     id: sourceID,
@@ -1496,33 +1536,200 @@ final class AppModel {
                 source.location = location
                 source.revision += 1
                 source.lastFetchedAt = now
-                source.lastSuccessfulParseAt = report.hasErrors ? source.lastSuccessfulParseAt : now
+                let existingSourceNodeIDs = Set(document.nodes.compactMap { node in
+                    node.sourceLinks.contains(sourceID) ? node.id : nil
+                })
+                let parseWasPartial = report.diagnostics.contains { diagnostic in
+                    switch diagnostic.code {
+                    case "node_unsupported_protocol", "node_missing_endpoint", "node_invalid_endpoint":
+                        true
+                    default:
+                        false
+                    }
+                }
+                let degradedRefresh = !report.hasErrors && parseWasPartial
+                let degradedEmptyRefresh = !report.hasErrors
+                    && report.nodes.isEmpty
+                    && !existingSourceNodeIDs.isEmpty
+                let refreshAuthoritative = !report.hasErrors
+                    && !degradedRefresh
+                    && !degradedEmptyRefresh
+                source.lastSuccessfulParseAt = refreshAuthoritative
+                    ? now
+                    : source.lastSuccessfulParseAt
                 source.rawSnapshotReference = profile.id.description
                 source.parseDiagnostics = report.diagnostics
-                fingerprintsSeenBySource[sourceID] = Set(report.nodes.map(\.fingerprint))
+                sourceRefreshSucceeded[sourceID] = refreshAuthoritative
+                if degradedRefresh || degradedEmptyRefresh {
+                    let diagnostic = ConfigurationDiagnostic(
+                        severity: .warning,
+                        code: "source_refresh_degraded",
+                        subject: sourceID.rawValue.uuidString.lowercased(),
+                        message: AppLocalization.string(
+                            "The source refresh was incomplete; existing nodes were kept until the source can be parsed successfully."
+                        )
+                    )
+                    source.parseDiagnostics.append(diagnostic)
+                    synchronizationDiagnosticsBySource[sourceID, default: []].append(diagnostic)
+                }
                 if let index = document.sources.firstIndex(where: { $0.id == sourceID }) {
                     document.sources[index] = source
                 } else {
                     document.sources.append(source)
                 }
 
+                let sourceSnapshotNodes = document.nodes
+                let reportCountByFingerprint = Dictionary(
+                    grouping: report.nodes,
+                    by: { $0.fingerprint }
+                ).mapValues(\.count)
+                var claimedIndices = Set<Int>()
                 for node in report.nodes {
-                    if let index = document.nodes.firstIndex(where: { $0.fingerprint == node.fingerprint }) {
-                        var merged = document.nodes[index]
-                        merged.displayName = merged.userAlias ?? node.displayName
-                        merged.proto = node.proto
-                        merged.host = node.host
-                        merged.port = node.port
-                        merged.parameters = node.parameters
-                        if !merged.sourceLinks.contains(sourceID) { merged.sourceLinks.append(sourceID) }
-                        merged.lastSeenAt = now
-                        merged.health.availability = .available
-                        document.nodes[index] = merged
+                    let matchingIndices = sourceSnapshotNodes.indices.filter {
+                        sourceSnapshotNodes[$0].fingerprint == node.fingerprint
+                            || Node.makeFingerprint(
+                                protocol: sourceSnapshotNodes[$0].proto,
+                                host: sourceSnapshotNodes[$0].host,
+                                port: sourceSnapshotNodes[$0].port,
+                                parameters: sourceSnapshotNodes[$0].parameters
+                            ) == node.fingerprint
+                    }.filter { !claimedIndices.contains($0) }
+                    let prioritizedMatchingIndices = matchingIndices.sorted { lhs, rhs in
+                        let leftIsSourceLinked = sourceSnapshotNodes[lhs].sourceLinks.contains(sourceID)
+                        let rightIsSourceLinked = sourceSnapshotNodes[rhs].sourceLinks.contains(sourceID)
+                        if leftIsSourceLinked != rightIsSourceLinked { return leftIsSourceLinked }
+                        return lhs < rhs
+                    }
+                    let exactIndex = prioritizedMatchingIndices.first {
+                        sourceSnapshotNodes[$0].connectionFingerprint == node.connectionFingerprint
+                    }
+                    let knownSourceIndices = prioritizedMatchingIndices.filter {
+                        sourceSnapshotNodes[$0].sourceLinks.contains(sourceID)
+                    }
+                    let mergeIndex: Int?
+                    if let exactIndex {
+                        mergeIndex = exactIndex
+                    } else if reportCountByFingerprint[node.fingerprint] == 1,
+                              knownSourceIndices.count == 1,
+                              Set(sourceSnapshotNodes[knownSourceIndices[0]].sourceLinks) == Set([sourceID]) {
+                        // A single advertised endpoint with changed
+                        // credentials is the unambiguous refresh case only
+                        // when this source exclusively owns the old record.
+                        // A shared record may still be used by another source
+                        // with the previous credential; split it instead of
+                        // silently overwriting that source's connection.
+                        mergeIndex = knownSourceIndices[0]
                     } else {
-                        document.nodes.append(node)
+                        // Multiple credentials at one endpoint are ambiguous
+                        // without a provider-issued stable ID. Keep each new
+                        // connection as a separate record and mark unmatched
+                        // old records source-removed below.
+                        mergeIndex = nil
+                    }
+                    if let index = mergeIndex {
+                        claimedIndices.insert(index)
+                        let merged = document.nodes[index]
+                        var sourceLinks = merged.sourceLinks
+                        if !sourceLinks.contains(sourceID) { sourceLinks.append(sourceID) }
+                        // Rebuild through Node.init so a node loaded from an
+                        // older manifest receives the current normalized
+                        // endpoint fingerprint instead of retaining stale
+                        // credential-sensitive identity material.
+                        document.nodes[index] = try Node(
+                            id: merged.id,
+                            displayName: merged.userAlias ?? node.displayName,
+                            protocol: node.proto,
+                            host: node.host,
+                            port: node.port,
+                            parameters: node.parameters,
+                            sourceLinks: sourceLinks,
+                            tags: node.tags.isEmpty ? merged.tags : node.tags,
+                            region: node.region ?? merged.region,
+                            enabled: merged.enabled,
+                            health: NodeHealthSnapshot(
+                                availability: .available,
+                                latencyMilliseconds: merged.health.latencyMilliseconds,
+                                checkedAt: merged.health.checkedAt
+                            ),
+                            userAlias: merged.userAlias,
+                            lastSeenAt: now
+                        )
+                        sourceNodeIDsSeen[sourceID, default: []].insert(merged.id)
+                    } else {
+                        if !matchingIndices.isEmpty {
+                            synchronizationDiagnosticsBySource[sourceID, default: []].append(.init(
+                                severity: .warning,
+                                code: "node_identity_conflict",
+                                subject: node.fingerprint,
+                                message: AppLocalization.string(
+                                    "Two sources provide the same node endpoint with different credentials; both connection identities were retained."
+                                )
+                            ))
+                        }
+                        let nodeToAppend: Node
+                        if document.nodes.contains(where: { $0.id == node.id }) {
+                            // A malformed provider can still reuse the
+                            // disambiguated ID. Derive a source-scoped fallback
+                            // rather than creating a duplicate persisted ID.
+                            let fallbackID = NodeID.stable(for: node.fingerprint + "|" + node.connectionFingerprint + "|" + sourceID.rawValue.uuidString)
+                            nodeToAppend = try Node(
+                                id: fallbackID,
+                                displayName: node.displayName,
+                                protocol: node.proto,
+                                host: node.host,
+                                port: node.port,
+                                parameters: node.parameters,
+                                sourceLinks: node.sourceLinks,
+                                tags: node.tags,
+                                region: node.region,
+                                enabled: node.enabled,
+                                health: node.health,
+                                userAlias: node.userAlias,
+                                lastSeenAt: node.lastSeenAt
+                            )
+                        } else {
+                            nodeToAppend = node
+                        }
+                        document.nodes.append(nodeToAppend)
+                        sourceNodeIDsSeen[sourceID, default: []].insert(nodeToAppend.id)
+                    }
+                }
+
+                // A successful refresh is authoritative for this source. Any
+                // previously linked node that was not matched is retained for
+                // audit, but marked source-removed rather than silently
+                // re-used for a different endpoint or credential.
+                if refreshAuthoritative {
+                    let liveIDs = sourceNodeIDsSeen[sourceID, default: []]
+                    for index in document.nodes.indices
+                    where existingSourceNodeIDs.contains(document.nodes[index].id)
+                        && !liveIDs.contains(document.nodes[index].id) {
+                        document.nodes[index].sourceLinks.removeAll { $0 == sourceID }
+                        if document.nodes[index].sourceLinks.isEmpty {
+                            document.nodes[index].health.availability = .sourceRemoved
+                        }
                     }
                 }
             }
+
+            // Source diagnostics are persisted for the next launch, while
+            // synchronization diagnostics are also kept in the in-memory
+            // aggregate used by the attention UI.  Merge by stable diagnostic
+            // ID so a read/degraded/conflict warning is never shown twice.
+            for (sourceID, diagnostics) in synchronizationDiagnosticsBySource {
+                guard let sourceIndex = document.sources.firstIndex(where: { $0.id == sourceID }) else { continue }
+                var knownIDs = Set(document.sources[sourceIndex].parseDiagnostics.map(\.id))
+                for diagnostic in diagnostics where knownIDs.insert(diagnostic.id).inserted {
+                    document.sources[sourceIndex].parseDiagnostics.append(diagnostic)
+                }
+            }
+            let synchronizationDiagnostics = synchronizationDiagnosticsBySource
+                .values
+                .flatMap { $0 }
+                .reduce(into: [String: ConfigurationDiagnostic]()) { result, diagnostic in
+                    result[diagnostic.id] = diagnostic
+                }
+                .values
 
             let activeSourceIDs = Set(storedProfiles.map { SourceID(rawValue: $0.id.rawValue) })
             for index in document.sources.indices where !activeSourceIDs.contains(document.sources[index].id) {
@@ -1540,11 +1747,14 @@ final class AppModel {
 
             for index in document.nodes.indices {
                 let hasLiveSource = document.nodes[index].sourceLinks.contains { sourceID in
-                    fingerprintsSeenBySource[sourceID]?.contains(document.nodes[index].fingerprint) == true
+                    sourceNodeIDsSeen[sourceID]?.contains(document.nodes[index].id) == true
+                }
+                let hasFailedSourceRefresh = document.nodes[index].sourceLinks.contains { sourceID in
+                    sourceRefreshSucceeded[sourceID] == false
                 }
                 if hasLiveSource {
                     document.nodes[index].health.availability = .available
-                } else if !document.nodes[index].sourceLinks.isEmpty {
+                } else if !hasFailedSourceRefresh && !document.nodes[index].sourceLinks.isEmpty {
                     document.nodes[index].health.availability = .sourceRemoved
                 }
             }
@@ -1572,7 +1782,53 @@ final class AppModel {
             }
             try await configurationStore.save(document)
             configurationDocument = document
-            configurationDiagnostics = document.diagnostics()
+            let sourceDiagnostics = document.sources.flatMap(\.parseDiagnostics)
+            var synchronizationResults = document.diagnostics()
+                + sourceDiagnostics
+                + Array(synchronizationDiagnostics)
+            if unifiedConfigurationEnabled {
+                do {
+                    let refreshedCompiledConfiguration = try ConfigurationCompiler().compile(
+                        document: document
+                    )
+                    compiledConfiguration = refreshedCompiledConfiguration
+                    synchronizationResults.append(contentsOf: refreshedCompiledConfiguration.diagnostics)
+                    do {
+                        try await synchronizeCompiledCaptureState(
+                            refreshedCompiledConfiguration
+                        )
+                    } catch {
+                        synchronizationResults.append(.init(
+                            severity: .error,
+                            code: "configuration_compile_failed",
+                            subject: "runtime",
+                            message: AppLocalization.format(
+                                "MClash could not synchronize the refreshed runtime configuration: %@",
+                                error.localizedDescription
+                            )
+                        ))
+                    }
+                } catch {
+                    // Keep the last known-good compiled snapshot for recovery,
+                    // but make the failed refresh actionable instead of
+                    // silently presenting a stale runtime as current.
+                    synchronizationResults.append(.init(
+                        severity: .error,
+                        code: "configuration_compile_failed",
+                        subject: "configuration",
+                        message: AppLocalization.format(
+                            "MClash could not compile the refreshed configuration: %@",
+                            error.localizedDescription
+                        )
+                    ))
+                }
+            }
+            configurationDiagnostics = synchronizationResults
+                .reduce(into: [String: ConfigurationDiagnostic]()) { result, diagnostic in
+                    result[diagnostic.id] = diagnostic
+                }
+                .map(\.value)
+                .sorted { $0.id < $1.id }
         } catch {
             appendSupervisorLog(
                 AppLocalization.format(
@@ -1627,10 +1883,21 @@ final class AppModel {
 
     private func persistConfigurationDocument(_ document: ConfigurationDocument) async throws {
         guard let configurationStore else { throw ConfigurationStoreError.unavailable }
-        let diagnostics = document.diagnostics()
+        let diagnostics = allConfigurationDiagnostics(for: document)
         try await configurationStore.save(document)
         configurationDocument = document
         configurationDiagnostics = diagnostics
+    }
+
+    private func allConfigurationDiagnostics(
+        for document: ConfigurationDocument
+    ) -> [ConfigurationDiagnostic] {
+        (document.diagnostics() + document.sources.flatMap(\.parseDiagnostics))
+            .reduce(into: [String: ConfigurationDiagnostic]()) { result, diagnostic in
+                result[diagnostic.id] = diagnostic
+            }
+            .map(\.value)
+            .sorted { $0.id < $1.id }
     }
 
     @discardableResult
@@ -1682,6 +1949,29 @@ final class AppModel {
     }
 
     @discardableResult
+    func createConfigurationDNSPolicy(
+        name: String = "MClash DNS"
+    ) async throws -> DNSPolicyID {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
+        var document = configurationDocument
+        let policy = DNSPolicy(
+            name: name,
+            mode: .redirHost,
+            nameservers: ["223.5.5.5", "1.1.1.1"],
+            takeoverEnabled: true
+        )
+        document.dnsPolicies.append(policy)
+        if let workspace = document.currentWorkspace,
+           let index = document.workspaces.firstIndex(where: { $0.id == workspace.id }) {
+            document.workspaces[index].dnsPolicyID = policy.id
+            document.workspaces[index].revision += 1
+        }
+        try await persistConfigurationDocument(document)
+        return policy.id
+    }
+
+    @discardableResult
     func createConfigurationRule() async throws -> RoutingRuleID {
         guard begin(.changeRuntimeSettings) else { throw CancellationError() }
         defer { end(.changeRuntimeSettings) }
@@ -1713,6 +2003,7 @@ final class AppModel {
     /// silently remain inactive in the current configuration.
     func saveConfigurationRule(_ rule: RoutingRule) async throws {
         var document = configurationDocument
+        let existed = document.rules.contains { $0.id == rule.id }
         if let index = document.rules.firstIndex(where: { $0.id == rule.id }) {
             document.rules[index] = rule
         } else {
@@ -1721,6 +2012,8 @@ final class AppModel {
         for index in document.workspaces.indices {
             if !document.workspaces[index].ruleIDs.contains(rule.id) {
                 document.workspaces[index].ruleIDs.append(rule.id)
+                document.workspaces[index].revision += 1
+            } else if existed {
                 document.workspaces[index].revision += 1
             }
         }
@@ -1747,8 +2040,25 @@ final class AppModel {
         case .entrances:
             guard let index = document.entrances.firstIndex(where: { $0.id.rawValue == id }) else { return }
             document.entrances[index].enabled.toggle()
-        case .workspaces, .sources:
+        case .dns, .workspaces, .sources:
             return
+        }
+        for workspaceIndex in document.workspaces.indices {
+            let workspace = document.workspaces[workspaceIndex]
+            let affectsWorkspace: Bool
+            switch section {
+            case .nodes:
+                affectsWorkspace = workspace.nodeIDs.isEmpty || workspace.nodeIDs.contains { $0.rawValue == id }
+            case .proxyGroups:
+                affectsWorkspace = workspace.proxyGroupIDs.contains { $0.rawValue == id }
+            case .rules:
+                affectsWorkspace = workspace.ruleIDs.contains { $0.rawValue == id }
+            case .entrances:
+                affectsWorkspace = workspace.entranceIDs.contains { $0.rawValue == id }
+            case .dns, .workspaces, .sources:
+                affectsWorkspace = false
+            }
+            if affectsWorkspace { document.workspaces[workspaceIndex].revision += 1 }
         }
         try await persistConfigurationDocument(document)
     }
@@ -1782,12 +2092,33 @@ final class AppModel {
         let compiled = try compileConfiguration(workspaceID: workspace.id)
         let shouldReconnect = isConnected || isBusy
         let previousProfileID = activeProfileID
-        guard let profileStore, let runtimeOverrideCoordinator, let activeProfileID else {
+        guard let profileStore, let runtimeOverrideCoordinator else {
             throw AppModelError.profileStoreUnavailable
+        }
+        let activationProfileID: ProfileID?
+        if let activeProfileID {
+            activationProfileID = activeProfileID
+        } else if let firstProfileID = profiles.first?.id {
+            activationProfileID = firstProfileID
+        } else {
+            activationProfileID = try await profileStore.profiles().first?.id
+        }
+        guard let activationProfileID else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        // A source imported through the Configuration surface is deliberately
+        // not activated as a legacy profile.  Select it as the atomic runtime
+        // bookkeeping profile only when the user explicitly applies the
+        // MClash configuration.
+        if activeProfileID == nil {
+            activeProfileID = activationProfileID
+            await refreshActiveProfileListenerPorts()
         }
 
         if shouldReconnect {
             guard await performDisconnect() else {
+                activeProfileID = previousProfileID
+                await refreshActiveProfileListenerPorts()
                 throw AppModelError.profileActivationFailed(
                     errorMessage ?? AppLocalization.string(
                         "The current proxy session could not be stopped safely."
@@ -1799,7 +2130,7 @@ final class AppModel {
         do {
             try await synchronizeCompiledCaptureState(compiled)
             let activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
-                activeProfileID,
+                activationProfileID,
                 baseConfiguration: compiled.yaml,
                 overrides: .empty,
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
@@ -1817,9 +2148,10 @@ final class AppModel {
                 mihomoConfigHash: compiled.configHash,
                 entranceIDs: workspace.entranceIDs,
                 previousSnapshotID: previousSnapshot?.id,
-                applicationSucceeded: false
+                applicationSucceeded: !shouldReconnect
             )
             try await persistConfigurationDocument(candidate)
+            activeProfileID = activation.profileID
             activeConfigURL = activation.configurationURL
             unifiedConfigurationEnabled = true
             compiledConfiguration = compiled
@@ -1858,9 +2190,14 @@ final class AppModel {
             restoredDocument.currentWorkspaceID = previousWorkspaceID
             restoredDocument.lastRuntimeSnapshot = previousSnapshot
             configurationDocument = restoredDocument
-            configurationDiagnostics = restoredDocument.diagnostics()
+            configurationDiagnostics = allConfigurationDiagnostics(for: restoredDocument)
             unifiedConfigurationEnabled = previousUnifiedConfigurationEnabled
             compiledConfiguration = previousCompiledConfiguration
+            activeProfileID = previousProfileID
+            if previousProfileID == nil {
+                activeConfigURL = nil
+            }
+            try? await profileStore.setActiveProfile(previousProfileID)
             if networkCapturePreferences != previousNetworkCapturePreferences,
                let store = networkCaptureConfigurationStore {
                 do {
@@ -2510,7 +2847,7 @@ final class AppModel {
             configurationDocument = recovery.document == .empty
                 ? .mclashDefault()
                 : recovery.document
-            configurationDiagnostics = configurationDocument.diagnostics()
+            configurationDiagnostics = allConfigurationDiagnostics(for: configurationDocument)
             if recovery.document == .empty {
                 try await configurationStore.save(configurationDocument)
             }
@@ -4536,16 +4873,26 @@ final class AppModel {
 
     func setNetworkCaptureEnabled(_ enabled: Bool) async {
         if unifiedConfigurationEnabled {
+            let appRoutingEntrance = configurationDocument.entrances.first(where: { $0.kind == .appRouting })
             let currentEnabled = configurationDocument.currentWorkspace?.entranceIDs
                 .compactMap { id in configurationDocument.entrances.first(where: { $0.id == id }) }
-                .first(where: { $0.kind == .appRouting })?.enabled ?? false
+                .first(where: { $0.kind == .appRouting })?.enabled
+                ?? appRoutingEntrance?.enabled
+                ?? false
             guard enabled != currentEnabled else { return }
             var candidate = configurationDocument
-            if let workspace = candidate.currentWorkspace,
-               let entranceID = workspace.entranceIDs.first(where: { id in
-                   candidate.entrances.first(where: { $0.id == id })?.kind == .appRouting
-               }),
-               let index = candidate.entrances.firstIndex(where: { $0.id == entranceID }) {
+            if let appRoutingEntrance,
+               let workspaceID = candidate.currentWorkspace?.id,
+               let workspaceIndex = candidate.workspaces.firstIndex(where: { $0.id == workspaceID }) {
+                if !candidate.workspaces[workspaceIndex].entranceIDs.contains(appRoutingEntrance.id) {
+                    candidate.workspaces[workspaceIndex].entranceIDs.append(appRoutingEntrance.id)
+                    candidate.workspaces[workspaceIndex].revision += 1
+                }
+                if let index = candidate.entrances.firstIndex(where: { $0.id == appRoutingEntrance.id }) {
+                    candidate.entrances[index].enabled = enabled
+                }
+            } else if let appRoutingEntrance,
+                      let index = candidate.entrances.firstIndex(where: { $0.id == appRoutingEntrance.id }) {
                 candidate.entrances[index].enabled = enabled
             }
             do {
@@ -4641,7 +4988,7 @@ final class AppModel {
         } catch {
             if candidateDocument != nil {
                 configurationDocument = previousDocument
-                configurationDiagnostics = previousDocument.diagnostics()
+                configurationDiagnostics = allConfigurationDiagnostics(for: previousDocument)
                 try? await configurationStore?.save(previousDocument)
             }
             recordOperationFailure(error, context: "Network capture update")
@@ -4920,7 +5267,7 @@ final class AppModel {
             var rollbackFailures: [String] = []
 
             configurationDocument = previousConfigurationDocument
-            configurationDiagnostics = previousConfigurationDocument.diagnostics()
+            configurationDiagnostics = allConfigurationDiagnostics(for: previousConfigurationDocument)
             compiledConfiguration = previousCompiledConfiguration
             do {
                 try await configurationStore?.save(previousConfigurationDocument)
