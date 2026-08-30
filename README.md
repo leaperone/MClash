@@ -130,8 +130,11 @@ mclashctl routing.mode.set --params '{"mode":"rule"}'
 
 `system.capabilities` is the authoritative operation list for the installed
 version. The API covers app and core lifecycle, profiles and backups, settings,
-routing and proxy selection, Mihomo rules/providers, System Proxy, App Routing,
-traffic/history, logs, and diagnostics.
+routing and proxy selection, unified Configuration planning and activation,
+Mihomo rules/providers, System Proxy, App Routing, traffic/history, logs, and
+diagnostics. If moving MClash leaves an old command link, follow the verified
+`readlink` and `unlink` recovery in [Automation API v1](docs/AUTOMATION.md);
+do not overwrite it with `ln -sf`.
 
 ### Trusted local clients
 
