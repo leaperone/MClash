@@ -37,63 +37,115 @@ public struct AutomationSocketClient: Sendable {
         _ request: AutomationRPCRequest,
         timeout: TimeInterval = 10
     ) throws -> AutomationRPCResponse {
-        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { throw AutomationSocketError.systemCall("socket", errno) }
-        defer { Darwin.close(descriptor) }
-        guard fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0 else {
-            throw AutomationSocketError.systemCall("fcntl", errno)
-        }
-
-        var noSignal: Int32 = 1
-        guard setsockopt(
-            descriptor,
-            SOL_SOCKET,
-            SO_NOSIGPIPE,
-            &noSignal,
-            socklen_t(MemoryLayout<Int32>.size)
-        ) == 0 else {
-            throw AutomationSocketError.systemCall("setsockopt", errno)
-        }
-
-        var timeValue = timeval(
-            tv_sec: Int(timeout),
-            tv_usec: Int32((timeout.truncatingRemainder(dividingBy: 1)) * 1_000_000)
-        )
-        guard setsockopt(
-            descriptor,
-            SOL_SOCKET,
-            SO_RCVTIMEO,
-            &timeValue,
-            socklen_t(MemoryLayout<timeval>.size)
-        ) == 0,
-        setsockopt(
-            descriptor,
-            SOL_SOCKET,
-            SO_SNDTIMEO,
-            &timeValue,
-            socklen_t(MemoryLayout<timeval>.size)
-        ) == 0 else {
-            throw AutomationSocketError.systemCall("setsockopt", errno)
-        }
-
-        try withUnixSocketAddress(path: socketPath) { address, length in
-            var address = address
-            let result = withUnsafePointer(to: &address) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.connect(descriptor, $0, length)
-                }
-            }
-            guard result == 0 else {
-                throw AutomationSocketError.systemCall("connect", errno)
-            }
-        }
-        try verifyServer(descriptor: descriptor)
-
         let payload = try JSONEncoder.automation.encode(request)
-        try writeAll(try AutomationFrameCodec.encode(payload), to: descriptor)
-        let header = try readExactly(MemoryLayout<UInt32>.size, from: descriptor)
-        let payloadLength = try AutomationFrameCodec.payloadLength(from: header)
-        let responseData = try readExactly(payloadLength, from: descriptor)
+        let frame = try AutomationFrameCodec.encode(payload)
+        let deadline = try automationDeadline(after: timeout)
+
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .connect,
+                outcomeIndeterminate: false,
+                underlyingError: .systemCall("socket", errno)
+            )
+        }
+        defer { Darwin.close(descriptor) }
+        do {
+            guard fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0 else {
+                throw AutomationSocketError.systemCall("fcntl", errno)
+            }
+            let flags = fcntl(descriptor, F_GETFL)
+            guard flags >= 0,
+                  fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+                throw AutomationSocketError.systemCall("fcntl", errno)
+            }
+
+            var noSignal: Int32 = 1
+            guard setsockopt(
+                descriptor,
+                SOL_SOCKET,
+                SO_NOSIGPIPE,
+                &noSignal,
+                socklen_t(MemoryLayout<Int32>.size)
+            ) == 0 else {
+                throw AutomationSocketError.systemCall("setsockopt", errno)
+            }
+        } catch let error as AutomationSocketError {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .connect,
+                outcomeIndeterminate: false,
+                underlyingError: error
+            )
+        }
+
+        do {
+            try connectUnixSocket(
+                descriptor,
+                path: socketPath,
+                deadline: deadline
+            )
+        } catch let error as AutomationSocketError {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .connect,
+                outcomeIndeterminate: false,
+                underlyingError: error
+            )
+        }
+
+        do {
+            try ensureAutomationDeadline(deadline)
+            try verifyServer(descriptor: descriptor)
+            try ensureAutomationDeadline(deadline)
+        } catch let error as AutomationSocketError {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .verifyServer,
+                outcomeIndeterminate: false,
+                underlyingError: error
+            )
+        }
+
+        do {
+            try writeAll(frame, to: descriptor, deadline: deadline)
+        } catch let error as AutomationSocketError {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .writeRequest,
+                outcomeIndeterminate: false,
+                underlyingError: error
+            )
+        }
+
+        let responseData: Data
+        do {
+            let header = try readExactly(
+                MemoryLayout<UInt32>.size,
+                from: descriptor,
+                deadline: deadline
+            )
+            let payloadLength = try AutomationFrameCodec.payloadLength(from: header)
+            responseData = try readExactly(
+                payloadLength,
+                from: descriptor,
+                deadline: deadline
+            )
+        } catch let error as AutomationSocketError {
+            throw AutomationSocketRequestError(
+                requestID: request.id,
+                method: request.method,
+                phase: .readResponse,
+                outcomeIndeterminate: true,
+                underlyingError: error
+            )
+        }
         return try JSONDecoder.automation.decode(AutomationRPCResponse.self, from: responseData)
     }
 
@@ -137,6 +189,23 @@ public struct AutomationSocketClient: Sendable {
             throw AutomationSocketError.serverIdentityMismatch
         }
     }
+}
+
+public enum AutomationSocketPhase: String, Sendable {
+    case connect
+    case verifyServer = "verify_server"
+    case writeRequest = "write_request"
+    case readResponse = "read_response"
+}
+
+public struct AutomationSocketRequestError: Error, LocalizedError, Sendable {
+    public let requestID: String
+    public let method: String
+    public let phase: AutomationSocketPhase
+    public let outcomeIndeterminate: Bool
+    public let underlyingError: AutomationSocketError
+
+    public var errorDescription: String? { underlyingError.localizedDescription }
 }
 
 public enum AutomationCodeSignature {
@@ -319,37 +388,137 @@ private func withUnixSocketAddress<Result>(
     return try body(address, length)
 }
 
-private func writeAll(_ data: Data, to descriptor: Int32) throws {
+private func automationDeadline(after timeout: TimeInterval) throws -> UInt64 {
+    guard timeout.isFinite, timeout > 0 else {
+        throw AutomationSocketError.systemCall("timeout", EINVAL)
+    }
+    let maximumSeconds = Double(UInt64.max / NSEC_PER_SEC)
+    let interval = timeout >= maximumSeconds
+        ? UInt64.max
+        : UInt64((timeout * Double(NSEC_PER_SEC)).rounded(.up))
+    let now = DispatchTime.now().uptimeNanoseconds
+    let result = now.addingReportingOverflow(interval)
+    return result.overflow ? UInt64.max : result.partialValue
+}
+
+private func ensureAutomationDeadline(_ deadline: UInt64) throws {
+    guard DispatchTime.now().uptimeNanoseconds < deadline else {
+        throw AutomationSocketError.systemCall("poll", ETIMEDOUT)
+    }
+}
+
+private func connectUnixSocket(
+    _ descriptor: Int32,
+    path: String,
+    deadline: UInt64
+) throws {
+    try withUnixSocketAddress(path: path) { address, length in
+        var address = address
+        while true {
+            let result = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(descriptor, $0, length)
+                }
+            }
+            if result == 0 { return }
+            let code = errno
+            if code == EINTR { continue }
+            if code == EISCONN { return }
+            guard code == EINPROGRESS || code == EALREADY
+                    || code == EAGAIN || code == EWOULDBLOCK else {
+                throw AutomationSocketError.systemCall("connect", code)
+            }
+
+            while true {
+                try waitForSocket(descriptor, events: Int16(POLLOUT), deadline: deadline)
+                var socketError: Int32 = 0
+                var size = socklen_t(MemoryLayout<Int32>.size)
+                guard getsockopt(
+                    descriptor,
+                    SOL_SOCKET,
+                    SO_ERROR,
+                    &socketError,
+                    &size
+                ) == 0 else {
+                    throw AutomationSocketError.systemCall("getsockopt", errno)
+                }
+                if socketError == 0 { return }
+                if socketError == EINPROGRESS || socketError == EALREADY { continue }
+                throw AutomationSocketError.systemCall("connect", socketError)
+            }
+        }
+    }
+}
+
+private func waitForSocket(
+    _ descriptor: Int32,
+    events: Int16,
+    deadline: UInt64
+) throws {
+    while true {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now < deadline else {
+            throw AutomationSocketError.systemCall("poll", ETIMEDOUT)
+        }
+        let remaining = deadline - now
+        let milliseconds = min(
+            UInt64(Int32.max),
+            remaining / NSEC_PER_MSEC + (remaining % NSEC_PER_MSEC == 0 ? 0 : 1)
+        )
+        var pollDescriptor = pollfd(fd: descriptor, events: events, revents: 0)
+        let result = poll(&pollDescriptor, 1, Int32(max(1, milliseconds)))
+        if result > 0 { return }
+        if result == 0 {
+            throw AutomationSocketError.systemCall("poll", ETIMEDOUT)
+        }
+        if errno == EINTR { continue }
+        throw AutomationSocketError.systemCall("poll", errno)
+    }
+}
+
+private func writeAll(
+    _ data: Data,
+    to descriptor: Int32,
+    deadline: UInt64
+) throws {
     try data.withUnsafeBytes { rawBuffer in
         guard let baseAddress = rawBuffer.baseAddress else { return }
         var offset = 0
         while offset < rawBuffer.count {
+            try waitForSocket(descriptor, events: Int16(POLLOUT), deadline: deadline)
             let count = Darwin.write(
                 descriptor,
                 baseAddress.advanced(by: offset),
                 rawBuffer.count - offset
             )
             if count < 0, errno == EINTR { continue }
+            if count < 0, errno == EAGAIN || errno == EWOULDBLOCK { continue }
             guard count > 0 else {
-                throw AutomationSocketError.systemCall("write", errno)
+                throw AutomationSocketError.systemCall("write", count == 0 ? EPIPE : errno)
             }
             offset += count
         }
     }
 }
 
-private func readExactly(_ count: Int, from descriptor: Int32) throws -> Data {
+private func readExactly(
+    _ count: Int,
+    from descriptor: Int32,
+    deadline: UInt64
+) throws -> Data {
     var data = Data(count: count)
     try data.withUnsafeMutableBytes { rawBuffer in
         guard let baseAddress = rawBuffer.baseAddress else { return }
         var offset = 0
         while offset < count {
+            try waitForSocket(descriptor, events: Int16(POLLIN), deadline: deadline)
             let received = Darwin.read(
                 descriptor,
                 baseAddress.advanced(by: offset),
                 count - offset
             )
             if received < 0, errno == EINTR { continue }
+            if received < 0, errno == EAGAIN || errno == EWOULDBLOCK { continue }
             guard received > 0 else {
                 if received == 0 { throw AutomationSocketError.connectionClosed }
                 throw AutomationSocketError.systemCall("read", errno)

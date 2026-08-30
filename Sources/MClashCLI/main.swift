@@ -5,8 +5,9 @@ import Security
 
 @main
 struct MClashCLI {
+    private static let interactiveRequestTimeout: TimeInterval = 315
+
     static func main() {
-        var diagnosticRequestID: String?
         do {
             let invocation = try Invocation(arguments: Array(CommandLine.arguments.dropFirst()))
             let discovery = try loadDiscovery(invocation: invocation)
@@ -29,7 +30,6 @@ struct MClashCLI {
                 )
             }
             let requestID = invocation.requestID ?? UUID().uuidString
-            diagnosticRequestID = requestID
             var token = invocation.socketPath == nil
                 ? try? AutomationTokenKeychain.load()
                 : nil
@@ -41,7 +41,7 @@ struct MClashCLI {
                 authorization: token
             )
             let requestTimeout = invocation.requiresInteractiveTimeout
-                ? max(invocation.timeout, 300)
+                ? max(invocation.timeout, interactiveRequestTimeout)
                 : invocation.timeout
             var response = try client.send(request, timeout: requestTimeout)
             if let responseType = response.error?.type,
@@ -61,7 +61,10 @@ struct MClashCLI {
                     ],
                     allowInteraction: true
                 )
-                let pairingResponse = try client.send(pairing, timeout: 300)
+                let pairingResponse = try client.send(
+                    pairing,
+                    timeout: interactiveRequestTimeout
+                )
                 guard pairingResponse.error == nil,
                       case let .object(pairingResult)? = pairingResponse.result,
                       let pairedToken = pairingResult["token"]?.stringValue else {
@@ -87,16 +90,22 @@ struct MClashCLI {
         } catch InvocationError.help {
             print(Invocation.usage)
         } catch {
-            var payload: [String: String] = [
-                "type": "client_error",
-                "message": error.localizedDescription,
+            var payload: [String: AutomationJSONValue] = [
+                "type": .string("client_error"),
+                "message": .string(error.localizedDescription),
             ]
-            if let diagnosticRequestID {
-                payload["requestID"] = diagnosticRequestID
+            if let requestError = error as? AutomationSocketRequestError {
+                payload["requestID"] = .string(requestError.requestID)
+                payload["phase"] = .string(requestError.phase.rawValue)
+                payload["outcomeIndeterminate"] = .bool(
+                    requestError.outcomeIndeterminate
+                )
+                payload["retryWithSameRequestID"] = .bool(
+                    requestError.outcomeIndeterminate
+                        && requestError.method != "auth.pair"
+                )
             }
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            if let data = try? encoder.encode(payload) {
+            if let data = try? JSONEncoder.automation.encode(payload) {
                 FileHandle.standardError.write(data)
                 FileHandle.standardError.write(Data([0x0A]))
             }
