@@ -2,7 +2,7 @@
 
 - 任务 ID：`agent-automation-configuration-2026-08-30_15-52-16`
 - 创建时间：`2026-08-30_15-52-16`
-- 当前状态：`ready_for_preflight`
+- 当前状态：`ready_for_preflight_rerun`
 
 ## 已完成
 
@@ -19,10 +19,14 @@
 - PATH 父目录安全校验已覆盖 macOS 扩展 ACL，拒绝写入型 allow 权限并兼容系统默认 deny ACL。
 - 统一配置工作台的德语、西班牙语、法语、日语和韩语英文占位已完成本地化；中文剩余同值均为技术或纯格式字面。
 - 规则卡片摘要已与规则编辑器一样复用本地化 `and` / `or`，不再向非英语界面拼接英文连接词。
+- PR #37 已完成首轮 preflight；本轮因构建和 2 个 High 审查项阻塞，未合并。
+- 已按 macOS SDK 修正 PATH 安装器 ACL Swift 类型适配。
+- 已拒绝 Automation 控制字符、统一纯字符串 YAML 引用并修正 Mihomo proxy resolver 键。
+- 已修正 same-ID 恢复再次前置失败时的实例绑定与安全重试标志。
 
 ## 进行中
 
-- push、创建 PR 并进入 preflight；构建与测试结果尚未产生。
+- 提交、推送首轮 preflight 修复，并从新固定基线全量重跑五门闸。
 
 ## 修改文件
 
@@ -63,6 +67,8 @@
 | 8 语言资源 | 每语种 2206 个唯一键、键集一致、placeholder signature 一致、AppLocalization 字面键完整；新增自然语言英文占位已清除 | 通过（静态） |
 | 规则摘要 i18n | 卡片摘要的同类 OR / 跨类 AND 连接词改用已有本地化键 | 通过（静态） |
 | locale 临时 worktree | 五个单语言分支成为任务分支祖先后，worktree 与本地分支均按安全规则删除 | 通过 |
+| 首轮 preflight | check/build 失败；review 2 High / 1 Medium；merge probe、planning 与 PR 身份通过 | 未通过，已修复待重跑 |
+| 首轮修复静态复核 | DNS 专项与完整增量两路复核均无剩余 P0/P1；`git diff --check` 通过 | 通过（静态） |
 | 编译 / 测试 / UI 手测 | preflight 前按项目约束未执行；UI 手测不在本任务授权范围 | 待 preflight / 未执行 |
 
 ## 错误与恢复
@@ -71,3 +77,6 @@
 |---|---:|---|
 | `leaperone-dev-init --check`: command not found | 1 | 使用 skill 脚本的绝对路径执行，检查通过 |
 | 系统 Ruby 不支持 `Array#filter_map` | 1 | 改用 `map.compact` 完成 8 语言重复键检查，未发现重复 |
+| 首轮 check 的 ACL Swift 类型错误 | 1 | 按 SDK `acl_free(void *)` 与 `acl_get_entry(..., int, ...)` 签名修正 |
+| 首轮 build 的 GitHub API 403 | 1 | 确认为匿名配额耗尽；重跑时从本机 `gh` 凭据仅注入进程环境 |
+| 首轮 review 2 High / 1 Medium | 1 | 统一 Automation 文本/YAML 边界、修正 DNS key 与 same-ID 恢复标志 |

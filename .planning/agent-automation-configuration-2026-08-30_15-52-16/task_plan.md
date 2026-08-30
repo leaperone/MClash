@@ -67,6 +67,7 @@
 - [x] 完成实现
 - [x] 完成 PR 前针对性静态验证
 - [x] 完成交付前收敛检查
+- [x] 修复首轮 preflight 的构建与审查阻断项
 
 ## 决策
 
@@ -82,9 +83,15 @@
 | Mihomo 跨类别规则使用原生 AND | 与 UI 的同类 OR/跨类 AND 承诺一致，并复用现有笛卡尔预算 |
 | 旧超限 tags 必须先显式清空 | 防止 snapshot 前缀被回填后静默改变 selector 成员 |
 | 旧超限 selector 省略时原样保留 | 新写入继续受限；旧值可导出、保持或缩减，避免无关配置修改被锁死 |
+| Automation 文本统一拒绝控制字符 | 防止 `plan.valid` 后 DNS/入口值被 YAML 改型或静默丢弃 |
+| `proxyServerUpdate` 映射为单项 resolver 列表 | 匹配固定 Mihomo 的 `proxy-server-nameserver` schema |
+| same-ID 恢复继续绑定已核验实例 | 再次前置失败不会终止仍可安全重放的原执行 |
 
 ## 错误与处理
 
 | 错误 | 尝试 | 处理结果 |
 |---|---:|---|
 | `leaperone-dev-init` 命令不在 PATH | 1 | 改用 skill 自带 `scripts/init-project.sh --check`，基线通过 |
+| 首轮 preflight check 编译失败 | 1 | 按 macOS SDK 导入类型修正 ACL 指针、枚举和可变 entry；等待全量重跑 |
+| 首轮 preflight build 下载 403 | 1 | 确认为匿名 GitHub API 配额耗尽；后续仅在 preflight 进程内注入现有 `gh` 凭据 |
+| 首轮 preflight review 有 2 High / 1 Medium | 1 | 修复 Automation 文本/YAML、Mihomo DNS 键与 same-ID 恢复提示；等待全量重跑 |

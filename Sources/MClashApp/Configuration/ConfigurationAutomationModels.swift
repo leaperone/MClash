@@ -62,9 +62,13 @@ private func requireAutomationText(
     nonempty: Bool = false
 ) throws {
     guard (!nonempty || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+          !value.unicodeScalars.contains(where: {
+              CharacterSet.controlCharacters.contains($0)
+                  || CharacterSet.newlines.contains($0)
+          }),
           value.utf8.count <= maximumBytes else {
         throw ConfigurationAutomationError.invalidInput(
-            "\(field) must be \(nonempty ? "non-empty and " : "")at most \(maximumBytes) UTF-8 bytes"
+            "\(field) must \(nonempty ? "be non-empty, " : "")contain no control characters, and be at most \(maximumBytes) UTF-8 bytes"
         )
     }
 }

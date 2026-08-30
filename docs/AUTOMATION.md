@@ -198,6 +198,12 @@ binding it reports `retryWithSameRequestID: false`. If `retryWithNewRequestID`
 is true instead, fix the reported precondition and begin a new execution with a
 new ID.
 
+If a bound same-ID recovery attempt itself fails before completing the request,
+the CLI keeps the original `serverInstance` and reports
+`retryWithSameRequestID: true` while discovery still matches. Retry the same
+request and binding; a later server restart is rejected by the next discovery
+check.
+
 `auth.pair` is the exception: an indeterminate transport failure must not be
 retried automatically or recovered with the same request ID. If the server
 reports a pairing timeout, no token was issued. Start a new pairing request only
@@ -298,6 +304,10 @@ mclashctl configuration.apply \
   --allow-interaction \
   --pretty
 ```
+
+A valid plan means the bounded MClash model and deterministic YAML compilation
+passed. It does not start Mihomo; workspace activation performs the final
+runtime acceptance check.
 
 Plan and apply are separate executions, so they use different request IDs, but
 apply must reuse the original `document` and `expectedRevision`. If a CAS
@@ -459,7 +469,9 @@ including each selector's fixed pins and current matches.
 removal flags. Each write-only array is a whole replacement, not an
 append/remove delta. `sourceURLUpdate` and
 `removeSourceURL`, or `proxyServerUpdate` and `removeProxyServer`, are mutually
-exclusive. A rule-set source URL must be HTTP or HTTPS and have a host.
+exclusive. `proxyServerUpdate` sets one `proxy-server-nameserver` resolver in
+the generated Mihomo DNS section. A rule-set source URL must be HTTP or HTTPS
+and have a host.
 Workspace `nodeScope` is `allEnabled` when the stored ID list is empty and
 `listed` otherwise. `allEnabled` accepts only an omitted or empty
 `nodeIDsUpdate`; `listed` requires at least one ID. Switching from `allEnabled`
@@ -515,8 +527,9 @@ include/exclude conditions and 512 fixed node IDs. One document may contain
 
 Names and aliases are limited to 256 UTF-8 bytes; tags and regions to 128;
 matcher and DNS values to 1,024; inline rule-set entries and source URLs to
-2,048; and bind addresses to 255. Non-source matcher expansion is limited to
-4,096 entries per rule, 16,384 per workspace, and 65,536 per plan. DNS
+2,048; and bind addresses to 255. Automation text values reject control and
+line-break characters. Non-source matcher expansion is limited to 4,096 entries
+per rule, 16,384 per workspace, and 65,536 per plan. DNS
 expansion is limited to 4,096 per workspace and 16,384 per plan. Each compiled
 workspace YAML is limited to 4 MiB. At most 256 diagnostics and 256 KiB of
 encoded diagnostic entries are returned while `diagnosticCount` reports the

@@ -163,7 +163,7 @@ struct CommandLineToolInstaller {
 
     private var missingLinkStatus: Status {
         guard appIsDirectlyInApplications else { return .unsafeSource }
-        helperIsAvailable ? .notInstalled : .unavailable
+        return helperIsAvailable ? .notInstalled : .unavailable
     }
 
     private var helperIsAvailable: Bool {
@@ -293,16 +293,20 @@ struct CommandLineToolInstaller {
         guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
             return errno != ENOENT
         }
-        defer { acl_free(acl) }
+        defer { acl_free(UnsafeMutableRawPointer(acl)) }
         var entry: acl_entry_t?
-        var result = acl_get_entry(acl, ACL_FIRST_ENTRY, &entry)
+        var result = acl_get_entry(
+            acl,
+            Int32(ACL_FIRST_ENTRY.rawValue),
+            &entry
+        )
         while result == 0 {
-            guard let entry else { return true }
+            guard let currentEntry = entry else { return true }
             var tag = ACL_UNDEFINED_TAG
-            guard acl_get_tag_type(entry, &tag) == 0 else { return true }
+            guard acl_get_tag_type(currentEntry, &tag) == 0 else { return true }
             if tag == ACL_EXTENDED_ALLOW {
                 var permissions: acl_permset_t?
-                guard acl_get_permset(entry, &permissions) == 0,
+                guard acl_get_permset(currentEntry, &permissions) == 0,
                       let permissions else { return true }
                 for permission in [
                     ACL_WRITE_DATA, ACL_APPEND_DATA, ACL_DELETE,
@@ -313,9 +317,13 @@ struct CommandLineToolInstaller {
                     return true
                 }
             }
-            result = acl_get_entry(acl, ACL_NEXT_ENTRY, &entry)
+            result = acl_get_entry(
+                acl,
+                Int32(ACL_NEXT_ENTRY.rawValue),
+                &entry
+            )
         }
-        return errno != EINVAL
+        return result != -1 || errno != EINVAL
     }
 
     private func linkState(in binDescriptor: Int32) -> LinkState {

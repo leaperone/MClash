@@ -89,6 +89,11 @@
 - 最新 `origin/main@94f1f07` 仅补充 `v1.4.5` 发布验证 planning 记录，不触及运行代码；已在功能分支成为祖先。
 - 最新 API、docs、activation 与不可信输入 trap 交叉审计均为 0 Critical/High；构建与测试证据仍留待 PR 后 preflight。
 - 规则卡片摘要曾硬编码英文 `and`/`or`；catalog 已有对应键，摘要生成器应与编辑器预览一样复用本地化连接词。
+- 首轮 preflight 固定 `base=94f1f07`、`head=c9f8b77`：merge probe 和 PR/planning 收敛通过；check 因 Darwin ACL Swift 导入类型错误失败；build 在 GeoData 元数据请求前因匿名 GitHub API 额度耗尽连续 403。
+- 首轮完整 diff 审查确认 2 个 P1：Automation DNS/Entrance 文本只有限长约束，可在 `plan.valid` 后被 YAML 改型或静默过滤；`proxyServerUpdate` 被编译为固定 Mihomo 不识别的 `proxy-server`。
+- 同轮 P2：携带已核验 `serverInstance` 的 same-ID 恢复若再次在 connect/verify/write 前失败，CLI 仍返回 `retryWithSameRequestID=false`，会让 Agent 错误终止安全恢复。
+- 最小修复边界：复用 Automation 文本入口拒绝控制字符；纯字符串统一走 `yamlString`；单值 proxy resolver 输出为 `proxy-server-nameserver` 列表；已绑定实例的非 pairing 恢复继续返回同 ID 重试。
+- 两路修复后只读复核均确认首轮 2 个 P1 与 1 个 P2 已关闭，未发现新增 P0/P1；ACL 改动逐项匹配 macOS SDK 编译诊断，仍须由新一轮 preflight 给出编译/测试实证。
 
 ## 参考指针
 

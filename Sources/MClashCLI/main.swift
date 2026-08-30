@@ -121,6 +121,8 @@ struct MClashCLI {
             }
             if let requestError = error as? AutomationSocketRequestError {
                 let isRecoveryAttempt = expectedServerInstance != nil
+                let retrySameRecovery = isRecoveryAttempt
+                    && requestError.method != "auth.pair"
                 payload["requestID"] = .string(requestError.requestID)
                 payload["method"] = .string(requestError.method)
                 payload["phase"] = .string(requestError.phase.rawValue)
@@ -128,12 +130,12 @@ struct MClashCLI {
                     requestError.outcomeIndeterminate || isRecoveryAttempt
                 )
                 payload["retryWithSameRequestID"] = .bool(
-                    requestError.retryWithSameRequestID
+                    requestError.retryWithSameRequestID || retrySameRecovery
                 )
                 if let serverInstance = requestError.serverInstance {
                     payload["serverInstance"] = .string(serverInstance)
                 } else if let expectedServerInstance {
-                    payload["expectedServerInstance"] = .string(expectedServerInstance)
+                    payload["serverInstance"] = .string(expectedServerInstance)
                 }
                 if let originalRequestID,
                    originalRequestID != requestError.requestID {
