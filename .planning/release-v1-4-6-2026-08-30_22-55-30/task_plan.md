@@ -57,9 +57,10 @@
 
 - [x] 完成只读探索并确认真实发布链
 - [x] 完成发布说明
-- [ ] 完成 PR/preflight/合并
-- [ ] 完成 tag/workflow/Release 验证
-- [ ] 完成交付前收敛检查
+- [x] 完成 PR/preflight 所需交付准备
+- [x] 完成当前阶段交付前收敛检查
+
+后续发布动作（不作为本次 planning 完成度的替代）：创建 PR 后运行 preflight；合并后再推送 tag 并核验 workflow/Release。
 
 ## 决策
 
