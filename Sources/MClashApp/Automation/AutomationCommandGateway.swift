@@ -229,11 +229,27 @@ final class AutomationCommandGateway {
             }
             return settings()
         case "configuration.snapshot":
+            let nodePage = try pageBounds(
+                count: model.configurationDocument.nodes.count,
+                request: request,
+                maximumLimit: 200,
+                offsetParameter: "nodeOffset",
+                limitParameter: "nodeLimit",
+                defaultLimit: 100
+            )
+            let sourcePage = try pageBounds(
+                count: model.configurationDocument.sources.count,
+                request: request,
+                maximumLimit: 100,
+                offsetParameter: "sourceOffset",
+                limitParameter: "sourceLimit",
+                defaultLimit: 50
+            )
             return try encode(model.configurationAutomationSnapshot(
-                nodeOffset: try request.int("nodeOffset", default: 0),
-                nodeLimit: try request.int("nodeLimit", default: 100),
-                sourceOffset: try request.int("sourceOffset", default: 0),
-                sourceLimit: try request.int("sourceLimit", default: 50)
+                nodeOffset: nodePage.offset,
+                nodeLimit: nodePage.limit,
+                sourceOffset: sourcePage.offset,
+                sourceLimit: sourcePage.limit
             ))
         case "configuration.plan":
             do {
@@ -242,7 +258,7 @@ final class AutomationCommandGateway {
                     document,
                     expectedRevision: try request.configurationRevision()
                 ))
-            } catch let error as ConfigurationAutomationError {
+            } catch {
                 throw configurationGatewayError(error)
             }
         case "configuration.apply":
@@ -252,11 +268,11 @@ final class AutomationCommandGateway {
                     document,
                     expectedRevision: try request.configurationRevision()
                 )
-                return .object([
-                    "plan": try encode(plan),
-                    "snapshot": try encode(model.configurationAutomationSnapshot()),
-                ])
-            } catch let error as ConfigurationAutomationError {
+                return try configurationMutationReceipt(
+                    plan: plan,
+                    currentSessionChanged: false
+                )
+            } catch {
                 throw configurationGatewayError(error)
             }
         case "configuration.delete":
@@ -276,11 +292,14 @@ final class AutomationCommandGateway {
                     id: id,
                     expectedRevision: try request.configurationRevision()
                 )
-                return .object([
-                    "plan": try encode(plan),
-                    "snapshot": try encode(model.configurationAutomationSnapshot()),
-                ])
-            } catch let error as ConfigurationAutomationError {
+                var receipt = try configurationMutationReceipt(
+                    plan: plan,
+                    currentSessionChanged: false
+                ).objectValue ?? [:]
+                receipt["kind"] = .string(kind.rawValue)
+                receipt["id"] = .string(id.uuidString.lowercased())
+                return .object(receipt)
+            } catch {
                 throw configurationGatewayError(error)
             }
         case "configuration.workspace.activate":
@@ -288,12 +307,28 @@ final class AutomationCommandGateway {
                 guard let id = UUID(uuidString: try request.string("id")) else {
                     throw GatewayError.invalidParameters("id must be a workspace UUID")
                 }
-                try await model.activateConfigurationWorkspace(
+                let currentSessionChanged = try await model.activateConfigurationWorkspace(
                     WorkspaceID(rawValue: id),
                     expectedConfigurationRevision: try request.configurationRevision()
                 )
-                return try encode(model.configurationAutomationSnapshot())
-            } catch let error as ConfigurationAutomationError {
+                guard let runtimeSnapshot = model.configurationDocument.lastRuntimeSnapshot else {
+                    throw GatewayError.operationFailed(
+                        "The activated workspace did not produce a runtime snapshot",
+                        false
+                    )
+                }
+                return .object([
+                    "configurationRevision": .string(
+                        model.configurationRevision.uuidString.lowercased()
+                    ),
+                    "workspaceID": .string(id.uuidString.lowercased()),
+                    "activated": .bool(true),
+                    "currentSessionChanged": .bool(currentSessionChanged),
+                    "runtimeSnapshot": try encode(
+                        ConfigurationAutomationRuntimeSnapshot(runtimeSnapshot)
+                    ),
+                ])
+            } catch {
                 throw configurationGatewayError(error)
             }
         case "core.status":
@@ -1061,6 +1096,17 @@ final class AutomationCommandGateway {
 
     private func requestSummary(_ request: AutomationRPCRequest) -> String {
         switch request.method {
+        case "configuration.apply":
+            let document = request.params["document"]?.objectValue ?? [:]
+            let counts = [
+                "nodeSettings", "proxyGroups", "rules", "ruleSets",
+                "dnsPolicies", "entrances", "workspaces",
+            ].map { key in
+                "\(key)=\(document[key]?.arrayValue?.count ?? 0)"
+            }.joined(separator: ", ")
+            let revision = request.params["expectedRevision"]?.stringValue
+                ?? AppLocalization.string("Missing")
+            return "Expected revision: \(displaySafe(revision))\nObjects: \(counts)"
         case "configuration.delete":
             return AppLocalization.format(
                 "Configuration object: %@\nID: %@\nExpected revision: %@",
@@ -1186,6 +1232,7 @@ final class AutomationCommandGateway {
         context: MutationCacheContext?
     ) {
         guard let context else { return }
+        guard response.error?.type != "operation_in_progress" else { return }
         removeCachedMutation(context.key)
         let responseBytes = (try? JSONEncoder.automation.encode(response).count) ?? 0
         let entry = CachedMutation(
@@ -1278,6 +1325,22 @@ final class AutomationCommandGateway {
         return try JSONDecoder.automation.decode(AutomationJSONValue.self, from: data)
     }
 
+    private func configurationMutationReceipt(
+        plan: ConfigurationAutomationPlan,
+        currentSessionChanged: Bool
+    ) throws -> AutomationJSONValue {
+        .object([
+            "configurationRevision": .string(
+                model.configurationRevision.uuidString.lowercased()
+            ),
+            "changed": .bool(plan.changed),
+            "valid": .bool(plan.valid),
+            "diagnostics": try encode(plan.diagnostics),
+            "compilations": try encode(plan.compilations),
+            "currentSessionChanged": .bool(currentSessionChanged),
+        ])
+    }
+
     private func paged<T: Encodable>(
         _ values: [T],
         request: AutomationRPCRequest,
@@ -1294,16 +1357,19 @@ final class AutomationCommandGateway {
     private func pageBounds(
         count: Int,
         request: AutomationRPCRequest,
-        maximumLimit: Int
+        maximumLimit: Int,
+        offsetParameter: String = "offset",
+        limitParameter: String = "limit",
+        defaultLimit: Int? = nil
     ) throws -> AutomationPage {
-        let offset = try request.int("offset", default: 0)
-        let limit = try request.int("limit", default: maximumLimit)
+        let offset = try request.int(offsetParameter, default: 0)
+        let limit = try request.int(limitParameter, default: defaultLimit ?? maximumLimit)
         guard offset >= 0 else {
-            throw GatewayError.invalidParameters("offset must be at least 0")
+            throw GatewayError.invalidParameters("\(offsetParameter) must be at least 0")
         }
         guard (1...maximumLimit).contains(limit) else {
             throw GatewayError.invalidParameters(
-                "limit must be between 1 and \(maximumLimit)"
+                "\(limitParameter) must be between 1 and \(maximumLimit)"
             )
         }
         let lower = min(offset, count)
@@ -2095,9 +2161,28 @@ final class AutomationCommandGateway {
     }
 
     private func configurationGatewayError(
-        _ error: ConfigurationAutomationError
+        _ error: Error
     ) -> GatewayError {
-        switch error {
+        if let error = error as? GatewayError {
+            return error
+        }
+        if error is CancellationError {
+            return .operationInProgress
+        }
+        if let error = error as? ConfigurationCompilationError {
+            switch error {
+            case let .invalid(diagnostics):
+                return .configurationInvalid(diagnostics)
+            case let .invalidText(message):
+                return .operationFailed(message, false)
+            }
+        }
+        guard let error = error as? ConfigurationAutomationError else {
+            return .operationFailed(error.localizedDescription, false)
+        }
+        return switch error {
+        case .operationInProgress:
+            .operationInProgress
         case .invalidRevision:
             .invalidParameters(error.localizedDescription)
         case let .invalidInput(message):
@@ -2110,6 +2195,23 @@ final class AutomationCommandGateway {
             .configurationDependencies(dependencies)
         }
     }
+
+    private static let configurationDocumentHint =
+        "Full projection from configuration.snapshot.document; preserve every top-level array. "
+        + "Sparse writes use nodeSettings enabled/userAliasUpdate/removeUserAlias/tagsUpdate/"
+        + "regionUpdate/removeRegion, proxyGroups.membersUpdate, rules.matchersUpdate, "
+        + "ruleSets.rulesUpdate/sourceURLUpdate/removeSourceURL, dnsPolicies.nameserversUpdate/"
+        + "fallbackNameserversUpdate/proxyServerUpdate/removeProxyServer/rulesUpdate, and "
+        + "workspaces nodeIDsUpdate/proxyGroupIDsUpdate/ruleIDsUpdate/ruleSetIDsUpdate/"
+        + "entranceIDsUpdate; *Count fields are read-only summaries. Enums: member.kind="
+        + "node|group; proxyGroups.type=select|fallback|urlTest|loadBalance|direct|reject|relay; "
+        + "matcher.kind=application|processPath|userID|domainExact|domainSuffix|domainWildcard|"
+        + "ipCIDR|transport|port|portRange; action.kind=direct|reject|proxyGroup; "
+        + "unavailableFallback=direct|reject; dnsPolicies.mode=system|fakeIP|redirHost; "
+        + "entrances.kind=http|socks5|appRouting|tun"
+
+    private static let configurationRevisionHint =
+        "Exact configurationRevision returned by configuration.snapshot"
 
     static let capabilities: [AutomationCapability] = [
         capability("system.capabilities", "List supported automation methods", .read),
@@ -2127,11 +2229,29 @@ final class AutomationCommandGateway {
         capability("app.update.configure", "Change automatic update settings", .write),
         capability("settings.get", "Read application settings", .read),
         capability("settings.patch", "Change application settings", .write),
-        capability("configuration.snapshot", "Read the safe editable Configuration projection", .read),
-        capability("configuration.plan", "Validate and compile a Configuration projection without saving it", .write),
-        capability("configuration.apply", "Atomically save a validated Configuration projection without activating it", .write),
-        capability("configuration.delete", "Delete one unreferenced Configuration object", .destructive),
-        capability("configuration.workspace.activate", "Compile and activate one Configuration workspace", .destructive),
+        capability("configuration.snapshot", "Read the safe editable Configuration projection", .read, [
+            "nodeOffset": "0-based node offset",
+            "nodeLimit": "node page size; default 100, maximum 200",
+            "sourceOffset": "0-based source offset",
+            "sourceLimit": "source page size; default 50, maximum 100",
+        ]),
+        capability("configuration.plan", "Validate and compile a Configuration projection without saving it", .read, [
+            "document": configurationDocumentHint,
+            "expectedRevision": configurationRevisionHint,
+        ]),
+        capability("configuration.apply", "Save desired Configuration without changing the current proxy session", .destructive, [
+            "document": configurationDocumentHint,
+            "expectedRevision": configurationRevisionHint,
+        ]),
+        capability("configuration.delete", "Delete one unreferenced Configuration object", .destructive, [
+            "kind": "proxyGroup|rule|ruleSet|dnsPolicy|entrance|workspace",
+            "id": "object UUID",
+            "expectedRevision": configurationRevisionHint,
+        ]),
+        capability("configuration.workspace.activate", "Compile and activate one Configuration workspace", .destructive, [
+            "id": "workspace UUID",
+            "expectedRevision": configurationRevisionHint,
+        ]),
         capability("core.status", "Read core status", .read),
         capability("core.toggle", "Toggle the Mihomo core", .write),
         capability("core.connect", "Start the Mihomo core", .write),
@@ -2470,6 +2590,7 @@ final class AutomationCommandGateway {
     }
 
     private static let sensitiveReadMethods: Set<String> = [
+        "configuration.plan",
         "configuration.snapshot",
         "appRouting.candidates.list",
         "appRouting.activities.list",
@@ -2595,6 +2716,7 @@ private enum GatewayError: Error, LocalizedError {
                 code: -32034,
                 type: "configuration_invalid",
                 message: "The proposed Configuration document is invalid",
+                retryable: true,
                 data: .object([
                     "diagnostics": .array(diagnostics.map { diagnostic in
                         .object([
@@ -2604,6 +2726,7 @@ private enum GatewayError: Error, LocalizedError {
                             "message": .string(redactedDiagnosticText(diagnostic.message)),
                         ])
                     }),
+                    "retryWithNewRequestID": .bool(true),
                 ])
             )
         case let .configurationDependencies(dependencies):
@@ -2611,6 +2734,7 @@ private enum GatewayError: Error, LocalizedError {
                 code: -32035,
                 type: "configuration_dependencies",
                 message: "The Configuration object is still referenced",
+                retryable: true,
                 data: .object([
                     "dependencies": .array(dependencies.map { dependency in
                         .object([
@@ -2618,6 +2742,7 @@ private enum GatewayError: Error, LocalizedError {
                             "id": .string(dependency.id),
                         ])
                     }),
+                    "retryWithNewRequestID": .bool(true),
                 ])
             )
         case .pairingRateLimited:

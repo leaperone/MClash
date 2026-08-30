@@ -71,8 +71,14 @@ public struct ConfigurationCompiler: Sendable {
         let errors = diagnostics.filter { $0.severity == .error }
         guard errors.isEmpty else { throw ConfigurationCompilationError.invalid(errors) }
 
-        let nodesByID = Dictionary(uniqueKeysWithValues: document.nodes.map { ($0.id, $0) })
-        let groupsByID = Dictionary(uniqueKeysWithValues: document.proxyGroups.map { ($0.id, $0) })
+        let nodesByID = Dictionary(
+            document.nodes.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let groupsByID = Dictionary(
+            document.proxyGroups.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let dns = document.dnsPolicies.first(where: { $0.id == workspace.dnsPolicyID })
         let workspaceNodes = workspace.nodeIDs.compactMap { nodesByID[$0] }.filter(\.enabled)
         let workspaceGroups = workspace.proxyGroupIDs.compactMap { groupsByID[$0] }.filter(\.enabled)
@@ -155,8 +161,7 @@ public struct ConfigurationCompiler: Sendable {
             lines.insert("socks-port: \(port)", at: lines.firstIndex(of: "") ?? lines.endIndex)
         }
         if nodes.isEmpty {
-            lines.append("  - name: DIRECT")
-            lines.append("    type: direct")
+            lines[lines.count - 1] = "proxies: []"
         } else {
             for node in nodes {
                 lines.append(contentsOf: render(node: node))
@@ -166,12 +171,12 @@ public struct ConfigurationCompiler: Sendable {
         lines.append("")
         lines.append("proxy-groups:")
         if groups.isEmpty {
-            lines.append("  - name: MClash Select")
+            lines.append("  - name: \(yamlString("MClash Select"))")
             lines.append("    type: select")
-            lines.append("    proxies: [DIRECT]")
+            lines.append("    proxies: [\(yamlString("DIRECT"))]")
         } else {
             for group in groups {
-                lines.append("  - name: \(yamlScalar(group.name))")
+                lines.append("  - name: \(yamlString(group.name))")
                 lines.append("    type: \(mihomoGroupType(group.type))")
                 let members: [String]
                 switch group.type {
@@ -187,7 +192,7 @@ public struct ConfigurationCompiler: Sendable {
                         }
                     }
                 }
-                lines.append("    proxies: [\(members.map(yamlScalar).joined(separator: ", "))]")
+                lines.append("    proxies: [\(members.map(yamlString).joined(separator: ", "))]")
             }
         }
 
@@ -195,8 +200,8 @@ public struct ConfigurationCompiler: Sendable {
             lines.append("")
             lines.append("rule-providers:")
             for ruleSet in ruleSets where ruleSet.sourceURL != nil {
-                let providerName = yamlKey(ruleSet.name)
-                lines.append("  \(providerName):")
+                let providerName = Self.ruleSetRuntimeName(ruleSet.name)
+                lines.append("  \(yamlString(providerName)):")
                 lines.append("    type: http")
                 lines.append("    behavior: classical")
                 lines.append("    format: yaml")
@@ -212,7 +217,7 @@ public struct ConfigurationCompiler: Sendable {
         for ruleSet in ruleSets {
             let action = render(action: ruleSet.defaultAction, groups: groups)
             if ruleSet.sourceURL != nil {
-                lines.append("  - RULE-SET,\(yamlKey(ruleSet.name)),\(action)")
+                lines.append("  - RULE-SET,\(Self.ruleSetRuntimeName(ruleSet.name)),\(action)")
             }
             for rawRule in ruleSet.rules {
                 let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -266,7 +271,7 @@ public struct ConfigurationCompiler: Sendable {
 
     private func render(node: Node) -> [String] {
         var lines = [
-            "  - name: \(yamlScalar(node.userAlias ?? node.displayName))",
+            "  - name: \(yamlString(node.userAlias ?? node.displayName))",
             "    type: \(node.proto.rawValue)",
             "    server: \(yamlScalar(node.host))",
             "    port: \(node.port)",
@@ -352,12 +357,16 @@ public struct ConfigurationCompiler: Sendable {
         }
     }
 
-    private func yamlKey(_ value: String) -> String {
+    static func ruleSetRuntimeName(_ value: String) -> String {
         let sanitized = value.lowercased().map { character in
             character.isLetter || character.isNumber || character == "-" || character == "_" ? character : "-"
         }
         let result = String(sanitized).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return result.isEmpty ? "ruleset" : result
+    }
+
+    private func yamlString(_ value: String) -> String {
+        String(decoding: try! JSONEncoder().encode(value), as: UTF8.self)
     }
 
     private func yamlScalar(_ value: String) -> String {

@@ -1633,7 +1633,7 @@ final class AppModel {
         let sourceOffset = min(max(0, sourceOffset), configurationDocument.sources.count)
         let sourceLimit = min(max(1, sourceLimit), 100)
         let sourceEnd = min(configurationDocument.sources.count, sourceOffset + sourceLimit)
-        ConfigurationAutomationSnapshot(
+        return ConfigurationAutomationSnapshot(
             configurationRevision: configurationRevision.uuidString.lowercased(),
             document: ConfigurationAutomationDocument(configurationDocument),
             sources: ConfigurationAutomationPage(
@@ -1717,7 +1717,9 @@ final class AppModel {
         _ document: ConfigurationAutomationDocument,
         expectedRevision: UUID
     ) async throws -> ConfigurationAutomationPlan {
-        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        guard begin(.changeRuntimeSettings) else {
+            throw ConfigurationAutomationError.operationInProgress
+        }
         defer { end(.changeRuntimeSettings) }
         try requireConfigurationRevision(expectedRevision)
         let candidate = try document.applying(to: configurationDocument)
@@ -1736,7 +1738,9 @@ final class AppModel {
         id: UUID,
         expectedRevision: UUID
     ) async throws -> ConfigurationAutomationPlan {
-        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        guard begin(.changeRuntimeSettings) else {
+            throw ConfigurationAutomationError.operationInProgress
+        }
         defer { end(.changeRuntimeSettings) }
         try requireConfigurationRevision(expectedRevision)
         let dependencies = configurationAutomationDependencies(kind: kind, id: id)
@@ -1806,8 +1810,10 @@ final class AppModel {
         candidate: ConfigurationDocument
     ) throws -> ConfigurationAutomationPlan {
         var diagnostics = configurationAutomationStructuralDiagnostics(candidate)
-        for workspace in candidate.workspaces {
-            diagnostics.append(contentsOf: candidate.diagnostics(for: workspace))
+        if !diagnostics.contains(where: { $0.severity == .error }) {
+            for workspace in candidate.workspaces {
+                diagnostics.append(contentsOf: candidate.diagnostics(for: workspace))
+            }
         }
         diagnostics = Dictionary(grouping: diagnostics, by: \.id)
             .compactMap { $0.value.first }
@@ -1874,7 +1880,6 @@ final class AppModel {
                 )
             }
         return ConfigurationAutomationPlan(
-            document: ConfigurationAutomationDocument(candidate),
             changed: candidate != configurationDocument,
             valid: !diagnostics.contains(where: { $0.severity == .error }),
             diagnostics: diagnostics,
@@ -2167,45 +2172,56 @@ final class AppModel {
     /// profile bookkeeping needed by the current core fleet. The generated
     /// bytes are complete MClash YAML; source profile strategy sections are
     /// never read by this path.
+    @discardableResult
     func activateConfigurationWorkspace(
         _ workspaceID: WorkspaceID,
         expectedConfigurationRevision: UUID? = nil
-    ) async throws {
-        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+    ) async throws -> Bool {
+        guard begin(.changeRuntimeSettings) else {
+            throw ConfigurationAutomationError.operationInProgress
+        }
         defer { end(.changeRuntimeSettings) }
         if let expectedConfigurationRevision {
             try requireConfigurationRevision(expectedConfigurationRevision)
         }
         guard let workspace = configurationDocument.workspaces.first(where: { $0.id == workspaceID }) else {
-            throw ConfigurationCompilationError.invalidText(
-                AppLocalization.string(
-                    "The selected MClash workspace no longer exists."
-                )
+            throw ConfigurationAutomationError.invalidInput(
+                "The selected MClash workspace does not exist"
             )
         }
-        let previousWorkspaceID = configurationDocument.currentWorkspaceID
-        let previousSnapshot = configurationDocument.lastRuntimeSnapshot
+        let previousDocument = configurationDocument
         let previousCompiledConfiguration = compiledConfiguration
         let previousUnifiedConfigurationEnabled = unifiedConfigurationEnabled
         let previousNetworkCapturePreferences = networkCapturePreferences
-        let compiled = try compileConfiguration(workspaceID: workspace.id)
+        let previousActiveConfigURL = activeConfigURL
+        let shouldRestoreSystemProxy = systemProxyEnabled
+        let compiled: CompiledConfiguration
+        do {
+            compiled = try compileConfiguration(workspaceID: workspace.id)
+        } catch let error as ConfigurationCompilationError {
+            switch error {
+            case let .invalid(diagnostics):
+                throw ConfigurationAutomationError.invalidConfiguration(diagnostics)
+            case let .invalidText(message):
+                throw ConfigurationAutomationError.invalidInput(message)
+            }
+        }
         let shouldReconnect = isConnected || isBusy
         let previousProfileID = activeProfileID
+        guard let configurationStore else {
+            throw ConfigurationStoreError.unavailable
+        }
         guard let profileStore, let runtimeOverrideCoordinator, let activeProfileID else {
             throw AppModelError.profileStoreUnavailable
         }
 
-        if shouldReconnect {
-            guard await performDisconnect() else {
-                throw AppModelError.profileActivationFailed(
-                    errorMessage ?? AppLocalization.string(
-                        "The current proxy session could not be stopped safely."
-                    )
-                )
-            }
-        }
-
         do {
+            if shouldReconnect, !(await performDisconnect()) {
+                let disconnectError = errorMessage ?? AppLocalization.string(
+                    "The current proxy session could not be stopped safely."
+                )
+                throw AppModelError.profileActivationFailed(disconnectError)
+            }
             try await synchronizeCompiledCaptureState(compiled)
             let activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
                 activeProfileID,
@@ -2217,18 +2233,6 @@ final class AppModel {
                 in: profileStore,
                 validator: try makeProfileValidator()
             )
-            var candidate = configurationDocument
-            candidate.currentWorkspaceID = workspace.id
-            candidate.lastRuntimeSnapshot = RuntimeSnapshot(
-                workspaceID: workspace.id,
-                workspaceRevision: workspace.revision,
-                compilerVersion: ConfigurationCompiler.version,
-                mihomoConfigHash: compiled.configHash,
-                entranceIDs: workspace.entranceIDs,
-                previousSnapshotID: previousSnapshot?.id,
-                applicationSucceeded: false
-            )
-            try await persistConfigurationDocument(candidate)
             activeConfigURL = activation.configurationURL
             unifiedConfigurationEnabled = true
             compiledConfiguration = compiled
@@ -2256,20 +2260,41 @@ final class AppModel {
                         )
                     }
                 }
-                var succeeded = configurationDocument
-                succeeded.lastRuntimeSnapshot?.applicationSucceeded = true
-                try await persistConfigurationDocument(succeeded)
             }
+            if shouldRestoreSystemProxy, !compiled.captureEnabled {
+                await enableSystemProxyAfterConnect()
+                guard systemProxyState == .on else {
+                    throw AppModelError.systemProxyRestoreFailed
+                }
+            }
+            var succeeded = previousDocument
+            succeeded.currentWorkspaceID = workspace.id
+            succeeded.lastRuntimeSnapshot = RuntimeSnapshot(
+                workspaceID: workspace.id,
+                workspaceRevision: workspace.revision,
+                compilerVersion: ConfigurationCompiler.version,
+                mihomoConfigHash: compiled.configHash,
+                entranceIDs: workspace.entranceIDs,
+                previousSnapshotID: previousDocument.lastRuntimeSnapshot?.id,
+                applicationSucceeded: true
+            )
+            try await persistConfigurationDocument(succeeded)
+            return shouldReconnect
         } catch {
             let activationError = error
             var rollbackFailures: [String] = []
-            var restoredDocument = configurationDocument
-            restoredDocument.currentWorkspaceID = previousWorkspaceID
-            restoredDocument.lastRuntimeSnapshot = previousSnapshot
-            configurationDocument = restoredDocument
-            configurationDiagnostics = restoredDocument.diagnostics()
+            var failedSessionStopped = true
+            if shouldReconnect, !(await performDisconnect()) {
+                rollbackFailures.append(
+                    AppLocalization.string(
+                        "the failed MClash Workspace session could not be stopped"
+                    )
+                )
+                failedSessionStopped = await cleanupFailedConnectionAttempt()
+            }
             unifiedConfigurationEnabled = previousUnifiedConfigurationEnabled
             compiledConfiguration = previousCompiledConfiguration
+            activeConfigURL = previousActiveConfigURL
             if networkCapturePreferences != previousNetworkCapturePreferences,
                let store = networkCaptureConfigurationStore {
                 do {
@@ -2289,7 +2314,9 @@ final class AppModel {
                 }
             }
             do {
-                try await configurationStore?.save(restoredDocument)
+                try await configurationStore.save(previousDocument)
+                configurationDocument = previousDocument
+                configurationDiagnostics = previousDocument.diagnostics()
             } catch {
                 rollbackFailures.append(
                     AppLocalization.format(
@@ -2297,6 +2324,18 @@ final class AppModel {
                         error.localizedDescription
                     )
                 )
+                do {
+                    let durableDocument = try await configurationStore.load()
+                    configurationDocument = durableDocument
+                    configurationDiagnostics = durableDocument.diagnostics()
+                } catch {
+                    rollbackFailures.append(
+                        AppLocalization.format(
+                            "MClash Workspace durable state reload failed: %@",
+                            error.localizedDescription
+                        )
+                    )
+                }
             }
             // Re-activate the previous compiled workspace when possible. The
             // legacy profile path is only a fallback for upgrades that have
@@ -2324,12 +2363,25 @@ final class AppModel {
                     }
                     activeConfigURL = restored.configurationURL
                     self.activeProfileID = previousProfileID
-                    if shouldReconnect, !(await performConnect()) {
-                        rollbackFailures.append(
-                            AppLocalization.string(
-                                "the previous session could not be restarted"
+                    if shouldReconnect, failedSessionStopped {
+                        if await performConnect() {
+                            if shouldRestoreSystemProxy {
+                                await enableSystemProxyAfterConnect()
+                                if systemProxyState != .on {
+                                    rollbackFailures.append(
+                                        AppLocalization.string(
+                                            "the previous macOS system proxy could not be restored"
+                                        )
+                                    )
+                                }
+                            }
+                        } else {
+                            rollbackFailures.append(
+                                AppLocalization.string(
+                                    "the previous session could not be restarted"
+                                )
                             )
-                        )
+                        }
                     }
                 } catch {
                     rollbackFailures.append(
@@ -4149,10 +4201,12 @@ final class AppModel {
         }
     }
 
-    private func cleanupFailedConnectionAttempt() async {
+    @discardableResult
+    private func cleanupFailedConnectionAttempt() async -> Bool {
         let auxiliaryStops = await coreFleet.stopAll()
         auxiliaryCoreStates = await coreFleet.states()
-        if !auxiliaryStops.values.allSatisfy({ $0 }) {
+        let auxiliaryStopped = auxiliaryStops.values.allSatisfy({ $0 })
+        if !auxiliaryStopped {
             appendSupervisorLog(
                 "Connection cleanup could not confirm every auxiliary profile core stopped."
             )
@@ -4167,6 +4221,7 @@ final class AppModel {
                 "Connection cleanup could not confirm the primary core stopped."
             )
         }
+        return auxiliaryStopped && primaryStopped
     }
 
     @discardableResult

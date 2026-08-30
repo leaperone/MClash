@@ -13,21 +13,42 @@ private func automationUUID(_ value: String, field: String) throws -> UUID {
 
 struct ConfigurationAutomationNodeSettings: Codable, Equatable, Sendable {
     let id: String
-    var enabled: Bool
-    var userAlias: String?
-    var tags: [String]
-    var region: String?
-
-    init(_ node: Node) {
-        id = node.id.rawValue.uuidString.lowercased()
-        enabled = node.enabled
-        userAlias = node.userAlias
-        tags = node.tags.sorted()
-        region = node.region
-    }
+    var enabled: Bool?
+    var userAliasUpdate: String?
+    var removeUserAlias: Bool?
+    var tagsUpdate: [String]?
+    var regionUpdate: String?
+    var removeRegion: Bool?
 
     var nodeID: NodeID {
         get throws { NodeID(rawValue: try automationUUID(id, field: "nodeSettings.id")) }
+    }
+
+    func apply(to node: Node) throws -> Node {
+        guard !(removeUserAlias == true && userAliasUpdate != nil) else {
+            throw ConfigurationAutomationError.invalidInput(
+                "userAliasUpdate and removeUserAlias cannot be used together"
+            )
+        }
+        guard !(removeRegion == true && regionUpdate != nil) else {
+            throw ConfigurationAutomationError.invalidInput(
+                "regionUpdate and removeRegion cannot be used together"
+            )
+        }
+        var updated = node
+        if let enabled { updated.enabled = enabled }
+        if removeUserAlias == true {
+            updated.userAlias = nil
+        } else if let userAliasUpdate {
+            updated.userAlias = userAliasUpdate
+        }
+        if let tagsUpdate { updated.tags = Set(tagsUpdate) }
+        if removeRegion == true {
+            updated.region = nil
+        } else if let regionUpdate {
+            updated.region = regionUpdate
+        }
+        return updated
     }
 }
 
@@ -56,23 +77,26 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
     let id: String
     var name: String
     var type: ProxyGroupType
-    var members: [ConfigurationAutomationGroupMember]
+    var membersUpdate: [ConfigurationAutomationGroupMember]?
+    let memberCount: Int?
     var enabled: Bool
 
     init(_ group: ProxyGroup) {
         id = group.id.rawValue.uuidString.lowercased()
         name = group.name
         type = group.type
-        members = group.members.map(ConfigurationAutomationGroupMember.init)
+        membersUpdate = nil
+        memberCount = group.members.count
         enabled = group.enabled
     }
 
-    func value() throws -> ProxyGroup {
+    func applying(to existing: ProxyGroup?) throws -> ProxyGroup {
         ProxyGroup(
             id: ProxyGroupID(rawValue: try automationUUID(id, field: "proxyGroups.id")),
             name: name,
             type: type,
-            members: try members.map { try $0.value() },
+            members: try membersUpdate?.map { try $0.value() }
+                ?? existing?.members ?? [],
             enabled: enabled
         )
     }
@@ -111,9 +135,12 @@ struct ConfigurationAutomationMatcher: Codable, Equatable, Sendable {
 
     func valueType() throws -> RoutingMatcher {
         if kind == .portRange {
-            guard let lowerBound, let upperBound, lowerBound <= upperBound else {
+            guard let lowerBound, let upperBound,
+                  (1...65_535).contains(lowerBound),
+                  (1...65_535).contains(upperBound),
+                  lowerBound <= upperBound else {
                 throw ConfigurationAutomationError.invalidInput(
-                    "portRange requires lowerBound <= upperBound"
+                    "portRange requires 1 <= lowerBound <= upperBound <= 65535"
                 )
             }
             return .portRange(lowerBound...upperBound)
@@ -135,8 +162,10 @@ struct ConfigurationAutomationMatcher: Codable, Equatable, Sendable {
         case .ipCIDR: return .ipCIDR(value)
         case .transport: return .transport(value)
         case .port:
-            guard let parsed = Int(value) else {
-                throw ConfigurationAutomationError.invalidInput("port value must be an integer")
+            guard let parsed = Int(value), (1...65_535).contains(parsed) else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "port value must be an integer between 1 and 65535"
+                )
             }
             return .port(parsed)
         case .portRange: preconditionFailure("portRange handled above")
@@ -181,7 +210,8 @@ struct ConfigurationAutomationRule: Codable, Equatable, Sendable {
     let id: String
     var enabled: Bool
     var priority: Int
-    var matchers: [ConfigurationAutomationMatcher]
+    var matchersUpdate: [ConfigurationAutomationMatcher]?
+    let matcherCount: Int?
     var action: ConfigurationAutomationAction
     var unavailableFallback: UnavailableNodeFallback
     var workspaceScope: String?
@@ -190,18 +220,20 @@ struct ConfigurationAutomationRule: Codable, Equatable, Sendable {
         id = rule.id.rawValue.uuidString.lowercased()
         enabled = rule.enabled
         priority = rule.priority
-        matchers = rule.matchers.map(ConfigurationAutomationMatcher.init)
+        matchersUpdate = nil
+        matcherCount = rule.matchers.count
         action = ConfigurationAutomationAction(rule.action)
         unavailableFallback = rule.unavailableFallback
         workspaceScope = rule.workspaceScope?.rawValue.uuidString.lowercased()
     }
 
-    func value() throws -> RoutingRule {
+    func applying(to existing: RoutingRule?) throws -> RoutingRule {
         RoutingRule(
             id: RoutingRuleID(rawValue: try automationUUID(id, field: "rules.id")),
             enabled: enabled,
             priority: priority,
-            matchers: try matchers.map { try $0.valueType() },
+            matchers: try matchersUpdate?.map { try $0.valueType() }
+                ?? existing?.matchers ?? [],
             action: try action.value(),
             unavailableFallback: unavailableFallback,
             workspaceScope: try workspaceScope.map {
@@ -227,7 +259,7 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
         ruleCount = ruleSet.rules.count
         defaultAction = ConfigurationAutomationAction(ruleSet.defaultAction)
         sourceURLUpdate = nil
-        removeSourceURL = false
+        removeSourceURL = nil
     }
 
     func applying(to existing: RuleSet?) throws -> RuleSet {
@@ -241,9 +273,10 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
             sourceURL = nil
         } else if let sourceURLUpdate {
             guard let parsed = URL(string: sourceURLUpdate),
-                  ["http", "https"].contains(parsed.scheme?.lowercased() ?? "") else {
+                  ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""),
+                  parsed.host?.isEmpty == false else {
                 throw ConfigurationAutomationError.invalidInput(
-                    "sourceURLUpdate must be an HTTP or HTTPS URL"
+                    "sourceURLUpdate must be an HTTP or HTTPS URL with a host"
                 )
             }
             sourceURL = parsed
@@ -264,7 +297,9 @@ struct ConfigurationAutomationDNSPolicy: Codable, Equatable, Sendable {
     var name: String
     var mode: DNSMode
     var nameserversUpdate: [String]?
+    let nameserverCount: Int?
     var fallbackNameserversUpdate: [String]?
+    let fallbackNameserverCount: Int?
     var proxyServerUpdate: String?
     var removeProxyServer: Bool?
     var rulesUpdate: [String]?
@@ -276,9 +311,11 @@ struct ConfigurationAutomationDNSPolicy: Codable, Equatable, Sendable {
         name = policy.name
         mode = policy.mode
         nameserversUpdate = nil
+        nameserverCount = policy.nameservers.count
         fallbackNameserversUpdate = nil
+        fallbackNameserverCount = policy.fallbackNameservers.count
         proxyServerUpdate = nil
-        removeProxyServer = false
+        removeProxyServer = nil
         rulesUpdate = nil
         ruleCount = policy.rules.count
         takeoverEnabled = policy.takeoverEnabled
@@ -341,47 +378,67 @@ struct ConfigurationAutomationEntrance: Codable, Equatable, Sendable {
 struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
     let id: String
     var name: String
-    var nodeIDs: [String]
-    var proxyGroupIDs: [String]
-    var ruleIDs: [String]
-    var ruleSetIDs: [String]
+    var nodeIDsUpdate: [String]?
+    let nodeCount: Int?
+    var proxyGroupIDsUpdate: [String]?
+    let proxyGroupCount: Int?
+    var ruleIDsUpdate: [String]?
+    let ruleCount: Int?
+    var ruleSetIDsUpdate: [String]?
+    let ruleSetCount: Int?
     var dnsPolicyID: String
-    var entranceIDs: [String]
+    var entranceIDsUpdate: [String]?
+    let entranceCount: Int?
     let revision: Int?
 
     init(_ workspace: Workspace) {
         id = workspace.id.rawValue.uuidString.lowercased()
         name = workspace.name
-        nodeIDs = workspace.nodeIDs.map { $0.rawValue.uuidString.lowercased() }
-        proxyGroupIDs = workspace.proxyGroupIDs.map { $0.rawValue.uuidString.lowercased() }
-        ruleIDs = workspace.ruleIDs.map { $0.rawValue.uuidString.lowercased() }
-        ruleSetIDs = workspace.ruleSetIDs.map { $0.rawValue.uuidString.lowercased() }
+        nodeIDsUpdate = nil
+        nodeCount = workspace.nodeIDs.count
+        proxyGroupIDsUpdate = nil
+        proxyGroupCount = workspace.proxyGroupIDs.count
+        ruleIDsUpdate = nil
+        ruleCount = workspace.ruleIDs.count
+        ruleSetIDsUpdate = nil
+        ruleSetCount = workspace.ruleSetIDs.count
         dnsPolicyID = workspace.dnsPolicyID.rawValue.uuidString.lowercased()
-        entranceIDs = workspace.entranceIDs.map { $0.rawValue.uuidString.lowercased() }
+        entranceIDsUpdate = nil
+        entranceCount = workspace.entranceIDs.count
         revision = workspace.revision
     }
 
-    func value(revision: Int) throws -> Workspace {
+    func applying(to existing: Workspace?, revision: Int) throws -> Workspace {
         Workspace(
             id: WorkspaceID(rawValue: try automationUUID(id, field: "workspaces.id")),
             name: name,
-            nodeIDs: try nodeIDs.map {
+            nodeIDs: try (nodeIDsUpdate ?? existing?.nodeIDs.map {
+                $0.rawValue.uuidString.lowercased()
+            } ?? []).map {
                 NodeID(rawValue: try automationUUID($0, field: "workspaces.nodeIDs"))
             },
-            proxyGroupIDs: try proxyGroupIDs.map {
+            proxyGroupIDs: try (proxyGroupIDsUpdate ?? existing?.proxyGroupIDs.map {
+                $0.rawValue.uuidString.lowercased()
+            } ?? []).map {
                 ProxyGroupID(rawValue: try automationUUID($0, field: "workspaces.proxyGroupIDs"))
             },
-            ruleIDs: try ruleIDs.map {
+            ruleIDs: try (ruleIDsUpdate ?? existing?.ruleIDs.map {
+                $0.rawValue.uuidString.lowercased()
+            } ?? []).map {
                 RoutingRuleID(rawValue: try automationUUID($0, field: "workspaces.ruleIDs"))
             },
-            ruleSetIDs: try ruleSetIDs.map {
+            ruleSetIDs: try (ruleSetIDsUpdate ?? existing?.ruleSetIDs.map {
+                $0.rawValue.uuidString.lowercased()
+            } ?? []).map {
                 RuleSetID(rawValue: try automationUUID($0, field: "workspaces.ruleSetIDs"))
             },
             dnsPolicyID: DNSPolicyID(rawValue: try automationUUID(
                 dnsPolicyID,
                 field: "workspaces.dnsPolicyID"
             )),
-            entranceIDs: try entranceIDs.map {
+            entranceIDs: try (entranceIDsUpdate ?? existing?.entranceIDs.map {
+                $0.rawValue.uuidString.lowercased()
+            } ?? []).map {
                 EntranceID(rawValue: try automationUUID($0, field: "workspaces.entranceIDs"))
             },
             revision: revision
@@ -399,10 +456,9 @@ struct ConfigurationAutomationDocument: Codable, Equatable, Sendable {
     var entrances: [ConfigurationAutomationEntrance]
     var workspaces: [ConfigurationAutomationWorkspace]
 
-    init(_ document: ConfigurationDocument, includeNodeSettings: Bool = false) {
+    init(_ document: ConfigurationDocument) {
         schemaVersion = document.schemaVersion
-        nodeSettings = includeNodeSettings
-            ? document.nodes.map(ConfigurationAutomationNodeSettings.init) : []
+        nodeSettings = []
         proxyGroups = document.proxyGroups.map(ConfigurationAutomationProxyGroup.init)
         rules = document.rules.map(ConfigurationAutomationRule.init)
         ruleSets = document.ruleSets.map(ConfigurationAutomationRuleSet.init)
@@ -417,8 +473,28 @@ struct ConfigurationAutomationDocument: Codable, Equatable, Sendable {
                 "Unsupported configuration schema version: \(schemaVersion)"
             )
         }
-        let proposedGroups = try proxyGroups.map { try $0.value() }
-        let proposedRules = try rules.map { try $0.value() }
+        let existingGroups = Dictionary(
+            base.proxyGroups.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let existingRules = Dictionary(
+            base.rules.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let proposedGroups = try proxyGroups.map { wire -> ProxyGroup in
+            let id = ProxyGroupID(rawValue: try automationUUID(
+                wire.id,
+                field: "proxyGroups.id"
+            ))
+            return try wire.applying(to: existingGroups[id])
+        }
+        let proposedRules = try rules.map { wire -> RoutingRule in
+            let id = RoutingRuleID(rawValue: try automationUUID(
+                wire.id,
+                field: "rules.id"
+            ))
+            return try wire.applying(to: existingRules[id])
+        }
         try requireNoDeletion(base.proxyGroups.map(\.id), proposedGroups.map(\.id), "proxyGroups")
         try requireNoDeletion(base.rules.map(\.id), proposedRules.map(\.id), "rules")
 
@@ -463,21 +539,23 @@ struct ConfigurationAutomationDocument: Codable, Equatable, Sendable {
             base.workspaces.map { ($0.id, $0.revision) },
             uniquingKeysWith: { first, _ in first }
         )
+        let existingWorkspaces = Dictionary(
+            base.workspaces.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let proposedWorkspaces = try workspaces.map { wire -> Workspace in
             let id = WorkspaceID(rawValue: try automationUUID(wire.id, field: "workspaces.id"))
-            return try wire.value(revision: oldWorkspaceRevisions[id] ?? 0)
+            return try wire.applying(
+                to: existingWorkspaces[id],
+                revision: oldWorkspaceRevisions[id] ?? 0
+            )
         }
         try requireNoDeletion(base.workspaces.map(\.id), proposedWorkspaces.map(\.id), "workspaces")
 
         var candidate = base
-        candidate.nodes = base.nodes.map { node in
+        candidate.nodes = try base.nodes.map { node in
             guard let settings = nodeSettingsByID[node.id] else { return node }
-            var updated = node
-            updated.enabled = settings.enabled
-            updated.userAlias = settings.userAlias
-            updated.tags = Set(settings.tags)
-            updated.region = settings.region
-            return updated
+            return try settings.apply(to: node)
         }
         candidate.proxyGroups = proposedGroups
         candidate.rules = proposedRules
@@ -552,7 +630,6 @@ struct ConfigurationAutomationCompilation: Codable, Equatable, Sendable {
 }
 
 struct ConfigurationAutomationPlan: Codable, Equatable, Sendable {
-    let document: ConfigurationAutomationDocument
     let changed: Bool
     let valid: Bool
     let diagnostics: [ConfigurationDiagnostic]
@@ -600,6 +677,7 @@ struct ConfigurationAutomationDependency: Codable, Equatable, Sendable {
 }
 
 enum ConfigurationAutomationError: Error, LocalizedError, Sendable {
+    case operationInProgress
     case invalidRevision(String)
     case revisionConflict(String)
     case invalidInput(String)
@@ -608,6 +686,7 @@ enum ConfigurationAutomationError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .operationInProgress: "Another configuration operation is already in progress"
         case .invalidRevision: "expectedRevision must be a configuration revision UUID"
         case .revisionConflict: "The configuration changed before this operation could be applied"
         case let .invalidInput(message): message

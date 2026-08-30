@@ -36,11 +36,67 @@ public enum ConfigurationValidator {
     public static func validate(workspace: Workspace, nodes: [Node], groups: [ProxyGroup], rules: [RoutingRule], ruleSets: [RuleSet] = [], dnsPolicies: [DNSPolicy], entrances: [Entrance]) -> [ConfigurationDiagnostic] {
         var result: [ConfigurationDiagnostic] = []
         let nodeIDs = Set(nodes.map(\.id)); let groupIDs = Set(groups.map(\.id)); let ruleIDs = Set(rules.map(\.id)); let setIDs = Set(ruleSets.map(\.id)); let entranceIDs = Set(entrances.map(\.id)); let dnsIDs = Set(dnsPolicies.map(\.id))
-        let enabledNodeIDs = Set(nodes.filter { workspace.nodeIDs.contains($0.id) && $0.enabled }.map(\.id))
-        let enabledGroupIDs = Set(groups.filter { workspace.proxyGroupIDs.contains($0.id) && $0.enabled }.map(\.id))
+        let workspaceNodes = nodes.filter { workspace.nodeIDs.contains($0.id) && $0.enabled }
+        let workspaceGroups = groups.filter { workspace.proxyGroupIDs.contains($0.id) && $0.enabled }
+        let workspaceRuleSets = ruleSets.filter { workspace.ruleSetIDs.contains($0.id) }
+        let enabledNodeIDs = Set(workspaceNodes.map(\.id))
+        let enabledGroupIDs = Set(workspaceGroups.map(\.id))
         result += duplicateDiagnostics(nodes.map(\.id), code: "duplicate_node", message: AppLocalization.string("Node catalog contains duplicate identities."))
         result += duplicateDiagnostics(groups.map(\.id), code: "duplicate_group", message: AppLocalization.string("Configuration contains duplicate proxy group identities."))
         result += duplicateDiagnostics(rules.map(\.id), code: "duplicate_rule", message: AppLocalization.string("Configuration contains duplicate routing rule identities."))
+        result += duplicateDiagnostics(workspace.nodeIDs, code: "duplicate_workspace_node", message: AppLocalization.string("A workspace cannot reference the same node more than once."))
+        result += duplicateDiagnostics(workspace.proxyGroupIDs, code: "duplicate_workspace_group", message: AppLocalization.string("A workspace cannot reference the same proxy group more than once."))
+        result += duplicateDiagnostics(workspace.ruleIDs, code: "duplicate_workspace_rule", message: AppLocalization.string("A workspace cannot reference the same routing rule more than once."))
+        result += duplicateDiagnostics(workspace.ruleSetIDs, code: "duplicate_workspace_ruleset", message: AppLocalization.string("A workspace cannot reference the same rule set more than once."))
+        result += duplicateDiagnostics(workspace.entranceIDs, code: "duplicate_workspace_entrance", message: AppLocalization.string("A workspace cannot reference the same entrance more than once."))
+        var runtimeNames: [Data: [String]] = [:]
+        for node in workspaceNodes {
+            let name = node.userAlias ?? node.displayName
+            let subject = node.id.rawValue.uuidString.lowercased()
+            if invalidNodeName(name) {
+                result.append(.init(severity: .error, code: "invalid_node_name", subject: subject, message: AppLocalization.string("Node names cannot be empty or contain line breaks.")))
+            }
+            if !(1...65_535).contains(node.port) {
+                result.append(.init(severity: .error, code: "invalid_node_port", subject: subject, message: AppLocalization.string("Node ports must be between 1 and 65535.")))
+            }
+            let runtimeName = Data(name.utf8)
+            if reservedRuntimeNames.contains(runtimeName) {
+                result.append(.init(severity: .error, code: "reserved_runtime_name", subject: subject, message: AppLocalization.string("Nodes and proxy groups cannot use reserved Mihomo runtime names.")))
+            }
+            runtimeNames[runtimeName, default: []].append(subject)
+        }
+        for group in workspaceGroups {
+            let subject = group.id.rawValue.uuidString.lowercased()
+            if invalidGroupName(group.name) {
+                result.append(.init(severity: .error, code: "invalid_group_name", subject: subject, message: AppLocalization.string("Proxy group names cannot be empty or contain commas or line breaks.")))
+            }
+            let runtimeName = Data(group.name.utf8)
+            if reservedRuntimeNames.contains(runtimeName) {
+                result.append(.init(severity: .error, code: "reserved_runtime_name", subject: subject, message: AppLocalization.string("Nodes and proxy groups cannot use reserved Mihomo runtime names.")))
+            }
+            runtimeNames[runtimeName, default: []].append(subject)
+        }
+        for subjects in runtimeNames.values where subjects.count > 1 {
+            for subject in subjects {
+                result.append(.init(severity: .error, code: "duplicate_runtime_name", subject: subject, message: AppLocalization.string("Nodes and proxy groups in a workspace must have unique runtime names.")))
+            }
+        }
+        var ruleSetRuntimeNames: [Data: [String]] = [:]
+        for ruleSet in workspaceRuleSets {
+            let subject = ruleSet.id.rawValue.uuidString.lowercased()
+            if ruleSet.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                result.append(.init(severity: .error, code: "invalid_ruleset_name", subject: subject, message: AppLocalization.string("Rule set name cannot be empty.")))
+            }
+            if ruleSet.sourceURL != nil {
+                let runtimeName = ConfigurationCompiler.ruleSetRuntimeName(ruleSet.name)
+                ruleSetRuntimeNames[Data(runtimeName.utf8), default: []].append(subject)
+            }
+        }
+        for subjects in ruleSetRuntimeNames.values where subjects.count > 1 {
+            for subject in subjects {
+                result.append(.init(severity: .error, code: "duplicate_ruleset_runtime_name", subject: subject, message: AppLocalization.string("Rule sets in a workspace must have unique runtime names.")))
+            }
+        }
         for id in workspace.nodeIDs where !nodeIDs.contains(id) { result.append(.init(severity: .error, code: "missing_node", subject: String(describing: id.rawValue), message: AppLocalization.string("Workspace references a node that is not in the catalog."))) }
         for node in nodes where workspace.nodeIDs.contains(node.id) && node.proto == .unknown {
             result.append(.init(severity: .error, code: "unsupported_node_protocol", subject: String(describing: node.id.rawValue), message: AppLocalization.string("Workspace references a node with an unsupported protocol.")))
@@ -56,7 +112,6 @@ public enum ConfigurationValidator {
         for id in workspace.ruleSetIDs where !setIDs.contains(id) { result.append(.error("missing_ruleset", id, AppLocalization.string("Workspace references a rule set that does not exist."))) }
         for id in workspace.entranceIDs where !entranceIDs.contains(id) { result.append(.error("missing_entrance", id, AppLocalization.string("Workspace references an entrance that does not exist."))) }
         let enabledEntrances = entrances.filter { workspace.entranceIDs.contains($0.id) && $0.enabled }
-        var ports: [Int: EntranceID] = [:]
         for entrance in enabledEntrances {
             validate(
                 action: entrance.defaultAction,
@@ -66,20 +121,26 @@ public enum ConfigurationValidator {
                 message: AppLocalization.string("Routing rule targets a missing proxy group."),
                 into: &result
             )
-            if let port = entrance.port {
-                if !(1...65_535).contains(port) {
-                    result.append(.init(severity: .error, code: "invalid_entrance_port", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("Entrance port must be between 1 and 65535.")))
-                } else if ports[port] != nil {
-                    result.append(.init(severity: .error, code: "duplicate_entrance_port", subject: String(port), message: AppLocalization.string("Enabled entrances cannot share a listening port.")))
-                } else {
-                    ports[port] = entrance.id
-                }
+        }
+        let enabledPortEntrances = enabledEntrances.filter {
+            $0.kind == .http || $0.kind == .socks5
+        }
+        var ports: [Int: EntranceID] = [:]
+        for entrance in enabledPortEntrances {
+            guard let port = entrance.port, (1...65_535).contains(port) else {
+                result.append(.init(severity: .error, code: "invalid_entrance_port", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("Entrance port must be between 1 and 65535.")))
+                continue
+            }
+            if ports[port] != nil {
+                result.append(.init(severity: .error, code: "duplicate_entrance_port", subject: String(port), message: AppLocalization.string("Enabled entrances cannot share a listening port.")))
+            } else {
+                ports[port] = entrance.id
             }
             if entrance.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.append(.init(severity: .error, code: "invalid_bind_address", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("An enabled entrance requires a bind address.")))
             }
         }
-        let bindAddresses = Set(enabledEntrances.map { $0.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        let bindAddresses = Set(enabledPortEntrances.map { $0.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
         if bindAddresses.count > 1 {
             result.append(.init(severity: .error, code: "inconsistent_bind_addresses", subject: "entrances", message: AppLocalization.string("Enabled HTTP and SOCKS entrances must share one Mihomo bind address.")))
         }
@@ -108,7 +169,10 @@ public enum ConfigurationValidator {
         }
         // Nested groups must form a DAG; cycle reporting is anchored to the lowest
         // stable UUID so the same invalid graph always produces the same diagnostic.
-        let groupMap = Dictionary(uniqueKeysWithValues: groups.filter { enabledGroupIDs.contains($0.id) }.map { ($0.id, $0) })
+        let groupMap = Dictionary(
+            groups.filter { enabledGroupIDs.contains($0.id) }.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         for group in groups where enabledGroupIDs.contains(group.id) {
             if hasCycle(from: group.id, map: groupMap, visiting: [], visited: []) {
                 result.append(.init(severity: .error, code: "group_cycle", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Proxy group references itself through nested groups.")))
@@ -128,6 +192,14 @@ public enum ConfigurationValidator {
             )
             if rule.matchers.isEmpty { result.append(.init(severity: .warning, code: "rule_matches_everything", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Routing rule has no matchers and may match all traffic."))) }
             for matcher in rule.matchers {
+                switch matcher {
+                case let .port(value) where !(1...65_535).contains(value):
+                    result.append(.init(severity: .error, code: "invalid_rule_port", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Rule ports must be between 1 and 65535.")))
+                case let .portRange(value) where !(1...65_535).contains(value.lowerBound) || !(1...65_535).contains(value.upperBound):
+                    result.append(.init(severity: .error, code: "invalid_rule_port", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Rule ports must be between 1 and 65535.")))
+                default:
+                    break
+                }
                 let value: String? = switch matcher {
                 case let .application(value), let .processPath(value), let .domainExact(value), let .domainSuffix(value), let .domainWildcard(value), let .ipCIDR(value), let .transport(value): value
                 case let .userID(value): String(value)
@@ -140,7 +212,7 @@ public enum ConfigurationValidator {
                 }
             }
         }
-        for ruleSet in ruleSets where workspace.ruleSetIDs.contains(ruleSet.id) {
+        for ruleSet in workspaceRuleSets {
             validate(
                 action: ruleSet.defaultAction,
                 availableGroupIDs: enabledGroupIDs,
@@ -149,9 +221,6 @@ public enum ConfigurationValidator {
                 message: AppLocalization.string("Routing rule targets a missing proxy group."),
                 into: &result
             )
-            if ruleSet.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                result.append(.init(severity: .error, code: "invalid_ruleset_name", subject: String(describing: ruleSet.id.rawValue), message: AppLocalization.string("Rule set name cannot be empty.")))
-            }
             for rawRule in ruleSet.rules {
                 let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
                 let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
@@ -165,6 +234,26 @@ public enum ConfigurationValidator {
     }
 
     private static func sorted(_ values: [ConfigurationDiagnostic]) -> [ConfigurationDiagnostic] { values.sorted { $0.id < $1.id } }
+
+    private static let reservedRuntimeNames: Set<Data> = [
+        Data("DIRECT".utf8),
+        Data("REJECT".utf8),
+        Data("REJECT-DROP".utf8),
+        Data("COMPATIBLE".utf8),
+        Data("PASS".utf8),
+        Data("PASS-RULE".utf8),
+        Data("GLOBAL".utf8),
+    ]
+
+    private static func invalidNodeName(_ value: String) -> Bool {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || value.contains(where: { $0 == "\n" || $0 == "\r" })
+    }
+
+    private static func invalidGroupName(_ value: String) -> Bool {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || value.contains(where: { $0 == "," || $0 == "\n" || $0 == "\r" })
+    }
 
     private static func validate(
         action: RoutingAction,
