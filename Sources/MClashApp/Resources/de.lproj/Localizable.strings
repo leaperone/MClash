@@ -1923,6 +1923,13 @@
 "Source Removed" = "Quelle entfernt";
 "System Capability" = "Systemfunktion";
 "The MClash Workspace could not be started." = "Der MClash-Arbeitsbereich konnte nicht gestartet werden.";
+"MClash could not adopt the unified configuration during upgrade: %@" = "MClash konnte die einheitliche Konfiguration während des Upgrades nicht übernehmen: %@";
+"The upgraded installation now uses the MClash unified configuration." = "Die aktualisierte Installation verwendet jetzt die einheitliche MClash-Konfiguration.";
+"A legacy App Routing application identity could not be represented safely and was retained for review." = "Eine alte App-Routing-Anwendungsidentität konnte nicht sicher dargestellt werden und wurde zur Prüfung beibehalten.";
+"A legacy App Routing rule referenced the source group %@, which is not imported; MClash routed it to the default node group." = "Eine alte App-Routing-Regel verwies auf die nicht importierte Quellgruppe %@; MClash leitete sie an die Standardknotengruppe weiter.";
+"The legacy App Routing target %@ has no imported nodes; its migrated rule will wait for a matching source refresh." = "Das alte App-Routing-Ziel %@ enthält keine importierten Knoten; die migrierte Regel wartet auf eine passende Quellenaktualisierung.";
+"The legacy App Routing rule %@ was retained but disabled because its application identity could not be represented safely in the unified Rules editor." = "Die alte App-Routing-Regel %@ wurde beibehalten, aber deaktiviert, weil ihre Anwendungsidentität im einheitlichen Regeleditor nicht sicher dargestellt werden konnte.";
+"Migrated %@ legacy App Routing rules into the unified Rules workspace; %@ rules require review." = "%@ alte App-Routing-Regeln wurden in den einheitlichen Regelarbeitsbereich migriert; %@ Regeln müssen geprüft werden.";
 "The MClash configuration document was invalid and was quarantined; a clean strategy document was created." = "Das MClash-Konfigurationsdokument war ungültig und wurde isoliert; ein neues Strategiedokument wurde erstellt.";
 "The current proxy session could not be stopped safely." = "Die aktuelle Proxysitzung konnte nicht sicher beendet werden.";
 "The node endpoint %@:%d is invalid." = "Der Knotenendpunkt %@:%d ist ungültig.";

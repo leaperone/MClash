@@ -488,8 +488,9 @@ final class AppModel {
     private(set) var compiledConfiguration: CompiledConfiguration?
     private(set) var configurationDiagnostics: [ConfigurationDiagnostic] = []
     /// Whether the selected MClash Workspace is authoritative for the next
-    /// activation. Existing installs remain on the legacy path until the user
-    /// explicitly enables this once, preserving a safe upgrade boundary.
+    /// activation. Populated installs are adopted automatically once during
+    /// the node-only configuration migration; the legacy path remains only as
+    /// an explicit recovery fallback.
     var unifiedConfigurationEnabled: Bool {
         didSet { preferenceDefaults.set(unifiedConfigurationEnabled, forKey: Self.unifiedConfigurationEnabledKey) }
     }
@@ -1052,6 +1053,10 @@ final class AppModel {
         preparationInProgress = true
         defer { preparationInProgress = false }
 
+        var startupUnifiedMigrationPending = false
+        var startupUnifiedMigrationActivated = false
+        var startupUnifiedMigrationPreviousProfileID: ProfileID?
+        var startupUnifiedMigrationPreviousDocument: ConfigurationDocument?
         do {
             try LoginItemManager().migrateLegacyRegistrationIfNeeded()
             let loginItemManager = LoginItemManager()
@@ -1158,10 +1163,41 @@ final class AppModel {
                 }
                 try await recoverInterruptedConfigurationActivationIfNeeded()
                 await synchronizeConfigurationSources()
-                if unifiedConfigurationEnabled {
-                    let compiled = try compileConfiguration()
-                    compiledConfiguration = compiled
-                    try await synchronizeCompiledCaptureState(compiled)
+                startupUnifiedMigrationPending =
+                    shouldAutomaticallyMigrateToUnifiedConfiguration()
+                if startupUnifiedMigrationPending {
+                    startupUnifiedMigrationPreviousProfileID = activeProfileID
+                    startupUnifiedMigrationPreviousDocument = configurationDocument
+                    try await prepareDocumentForUnifiedMigration()
+                }
+                if startupUnifiedMigrationPending || unifiedConfigurationEnabled {
+                    do {
+                        let compiled = try compileConfiguration()
+                        compiledConfiguration = compiled
+                        try await synchronizeCompiledCaptureState(compiled)
+                        if startupUnifiedMigrationPending {
+                            unifiedConfigurationEnabled = true
+                        }
+                    } catch {
+                        if startupUnifiedMigrationPending {
+                            unifiedConfigurationEnabled = false
+                            compiledConfiguration = nil
+                            appendSupervisorLog(
+                                AppLocalization.format(
+                                    "MClash could not adopt the unified configuration during upgrade: %@",
+                                    error.localizedDescription
+                                )
+                            )
+                        }
+                        throw error
+                    }
+                }
+                if startupUnifiedMigrationPending, activeProfileID == nil {
+                    guard let firstProfileID = profiles.first?.id else {
+                        throw AppModelError.profileStoreUnavailable
+                    }
+                    activeProfileID = firstProfileID
+                    await refreshActiveProfileListenerPorts()
                 }
                 if activeProfileID != nil {
                     // A restarted host has no trustworthy in-memory provider
@@ -1187,6 +1223,16 @@ final class AppModel {
                             validator: try makeProfileValidator()
                         )
                         activeConfigURL = activation.configurationURL
+                        if !unifiedConfigurationMigrationCompleted,
+                           !configurationDocument.nodes.isEmpty {
+                            startupUnifiedMigrationActivated = true
+                            markUnifiedConfigurationMigrationCompleted()
+                            appendSupervisorLog(
+                                AppLocalization.string(
+                                    "The upgraded installation now uses the MClash unified configuration."
+                                )
+                            )
+                        }
                     } else if unifiedConfigurationEnabled {
                         throw AppModelError.profileStoreUnavailable
                     } else if FileManager.default.fileExists(
@@ -1232,6 +1278,19 @@ final class AppModel {
             return
         } catch {
             await cleanupFailedConnectionAttempt()
+            if startupUnifiedMigrationPending && !startupUnifiedMigrationActivated {
+                unifiedConfigurationEnabled = false
+                compiledConfiguration = nil
+                activeProfileID = startupUnifiedMigrationPreviousProfileID
+                await refreshActiveProfileListenerPorts()
+                if let previousDocument = startupUnifiedMigrationPreviousDocument {
+                    configurationDocument = previousDocument
+                    configurationDiagnostics = allConfigurationDiagnostics(
+                        for: previousDocument
+                    )
+                    try? await configurationStore?.save(previousDocument)
+                }
+            }
             let message = error.localizedDescription
             startupPreparationErrorMessage = message
             errorMessage = message
@@ -1445,6 +1504,105 @@ final class AppModel {
         configurationDiagnostics.first(where: { $0.severity == .error })?.message ?? errorMessage
     }
 
+    private var unifiedConfigurationMigrationCompleted: Bool {
+        preferenceDefaults.integer(
+            forKey: Self.unifiedConfigurationMigrationVersionKey
+        ) >= Self.unifiedConfigurationMigrationVersion
+    }
+
+    private func shouldAutomaticallyMigrateToUnifiedConfiguration() -> Bool {
+        guard !unifiedConfigurationEnabled,
+              !unifiedConfigurationMigrationCompleted,
+              !profiles.isEmpty,
+              !configurationDocument.nodes.isEmpty,
+              configurationDocument.currentWorkspace != nil else {
+            return false
+        }
+        return true
+    }
+
+    private func markUnifiedConfigurationMigrationCompleted() {
+        preferenceDefaults.set(
+            Self.unifiedConfigurationMigrationVersion,
+            forKey: Self.unifiedConfigurationMigrationVersionKey
+        )
+    }
+
+    private func prepareDocumentForUnifiedMigration() async throws {
+        guard let workspace = configurationDocument.currentWorkspace else { return }
+        var candidate = configurationDocument
+        var changed = false
+        var migrationDiagnostics: [ConfigurationDiagnostic] = []
+        let workspaceIndex = candidate.workspaces.firstIndex(where: { $0.id == workspace.id })
+        let workspaceEntranceIDs = Set(workspace.entranceIDs)
+        for index in candidate.entrances.indices
+        where workspaceEntranceIDs.contains(candidate.entrances[index].id)
+            && candidate.entrances[index].kind == .appRouting {
+            if candidate.entrances[index].enabled != networkCapturePreferences.enabled {
+                candidate.entrances[index].enabled = networkCapturePreferences.enabled
+                changed = true
+            }
+        }
+        let hasMeaningfulUnifiedRules = candidate.rules.contains {
+            $0.enabled || !$0.matchers.isEmpty
+        }
+        if !hasMeaningfulUnifiedRules,
+           !networkCapturePreferences.snapshot.rules.isEmpty,
+           let workspaceIndex {
+            let sourceNames = Dictionary(
+                uniqueKeysWithValues: profiles.map {
+                    (SourceID(rawValue: $0.id.rawValue), $0.name)
+                }
+            )
+            let migration = ConfigurationLegacyMigration.migrate(
+                captureRules: networkCapturePreferences.snapshot.rules,
+                document: candidate,
+                workspace: workspace,
+                sourceNames: sourceNames
+            )
+            if !migration.rules.isEmpty {
+                candidate.rules = migration.rules
+                candidate.proxyGroups = migration.proxyGroups
+                candidate.workspaces[workspaceIndex].proxyGroupIDs =
+                    migration.workspaceProxyGroupIDs
+                candidate.workspaces[workspaceIndex].ruleIDs =
+                    migration.rules.map(\.id)
+                migrationDiagnostics = migration.diagnostics
+                changed = true
+                appendSupervisorLog(
+                    AppLocalization.format(
+                        "Migrated %@ legacy App Routing rules into the unified Rules workspace; %@ rules require review.",
+                        AppLocalization.number(migration.migratedCount),
+                        AppLocalization.number(migration.skippedCount)
+                    )
+                )
+            }
+        }
+        if networkCapturePreferences.dnsEnabled,
+           let dnsIndex = candidate.dnsPolicies.firstIndex(
+               where: { $0.id == workspace.dnsPolicyID }
+           ),
+           !candidate.dnsPolicies[dnsIndex].takeoverEnabled {
+            candidate.dnsPolicies[dnsIndex].takeoverEnabled = true
+            changed = true
+        }
+        guard changed else { return }
+        if let workspaceIndex {
+            candidate.workspaces[workspaceIndex].revision += 1
+        }
+        try await persistConfigurationDocument(candidate)
+        if !migrationDiagnostics.isEmpty {
+            configurationDiagnostics = (
+                configurationDiagnostics + migrationDiagnostics
+            )
+            .reduce(into: [String: ConfigurationDiagnostic]()) {
+                $0[$1.id] = $1
+            }
+            .map(\.value)
+            .sorted { $0.id < $1.id }
+        }
+    }
+
     func isPerforming(_ operation: Operation) -> Bool {
         operations.contains(operation)
     }
@@ -1614,6 +1772,39 @@ final class AppModel {
                     let knownSourceIndices = prioritizedMatchingIndices.filter {
                         sourceSnapshotNodes[$0].sourceLinks.contains(sourceID)
                     }
+                    // v1.4.5's first node-only importer could persist an
+                    // empty quoted placeholder for a nested transport map
+                    // (for example ws-opts or reality-opts). The repaired
+                    // importer now has a different endpoint fingerprint, so
+                    // use the source-scoped endpoint and presentation name as
+                    // a one-time reconciliation bridge. This preserves fixed
+                    // NodeIDs and group pins without merging two credentials
+                    // that share an endpoint.
+                    let legacyRepairCandidates = sourceSnapshotNodes.indices.filter { index in
+                        let existing = sourceSnapshotNodes[index]
+                        guard existing.sourceLinks.contains(sourceID),
+                              !claimedIndices.contains(index),
+                              existing.proto == node.proto,
+                              existing.host == node.host,
+                              existing.port == node.port,
+                              existing.parameters.contains(where: { key, value in
+                                  Self.legacyNestedParameterKeys.contains(
+                                      NodeIdentity.normalizeParameterKey(key)
+                                  ) && Self.isLegacyNestedValuePlaceholder(value)
+                              })
+                        else {
+                            return false
+                        }
+                        return true
+                    }
+                    let namedLegacyRepairCandidates = legacyRepairCandidates.filter { index in
+                        let existing = sourceSnapshotNodes[index]
+                        let existingName = (existing.userAlias ?? existing.displayName)
+                            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                        let incomingName = node.displayName
+                            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                        return existingName == incomingName
+                    }
                     let mergeIndex: Int?
                     if let exactIndex {
                         mergeIndex = exactIndex
@@ -1627,6 +1818,10 @@ final class AppModel {
                         // with the previous credential; split it instead of
                         // silently overwriting that source's connection.
                         mergeIndex = knownSourceIndices[0]
+                    } else if namedLegacyRepairCandidates.count == 1 {
+                        mergeIndex = namedLegacyRepairCandidates[0]
+                    } else if legacyRepairCandidates.count == 1 {
+                        mergeIndex = legacyRepairCandidates[0]
                     } else {
                         // Multiple credentials at one endpoint are ambiguous
                         // without a provider-issued stable ID. Keep each new
@@ -1855,6 +2050,21 @@ final class AppModel {
             )]
         }
     }
+
+    private static func isLegacyNestedValuePlaceholder(_ value: String) -> Bool {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized.isEmpty
+            || normalized == "''"
+            || normalized == "\"\""
+            || normalized == "{}"
+            || normalized == "[]"
+    }
+
+    private static let legacyNestedParameterKeys: Set<String> = [
+        "ws-opts", "reality-opts", "grpc-opts", "http-opts", "h2-opts",
+        "quic-opts", "obfs-opts", "smux", "dialer-proxy",
+    ]
 
     private func unifiedCaptureRules() throws -> [CaptureRule] {
         guard let compiledConfiguration else {
@@ -2745,6 +2955,9 @@ final class AppModel {
                 "Select an active Profile before activating a MClash workspace"
             )
         }
+        if profileRuntimePlan.primaryProfileID != activationProfileID {
+            try await loadProfileRuntimePlan()
+        }
 
         try await configurationStore.saveActivationJournal(
             ConfigurationActivationJournal(
@@ -2798,7 +3011,7 @@ final class AppModel {
             let activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
                 activationProfileID,
                 baseConfiguration: compiled.yaml,
-                overrides: .empty,
+                overrides: compiledRuntimeOverrides(for: activationProfileID),
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
                 profileMixedListener: nil,
                 routeListeners: [],
@@ -2861,6 +3074,9 @@ final class AppModel {
                         error.localizedDescription
                     )
                 )
+            }
+            if !configurationDocument.nodes.isEmpty {
+                markUnifiedConfigurationMigrationCompleted()
             }
             return shouldReconnect
         } catch {
@@ -2971,7 +3187,7 @@ final class AppModel {
                         restored = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
                             previousProfileID,
                             baseConfiguration: previousCompiledConfiguration.yaml,
-                            overrides: .empty,
+                            overrides: compiledRuntimeOverrides(for: previousProfileID),
                             networkExtensionListener: activeNetworkExtensionMihomoListener,
                             profileMixedListener: nil,
                             routeListeners: [],
@@ -3954,7 +4170,7 @@ final class AppModel {
                 .activateCompiledConfiguration(
                     id,
                     baseConfiguration: compiledConfiguration.yaml,
-                    overrides: .empty,
+                    overrides: compiledRuntimeOverrides(for: id),
                     networkExtensionListener: activeNetworkExtensionMihomoListener,
                     profileMixedListener: nil,
                     routeListeners: [],
@@ -4003,7 +4219,7 @@ final class AppModel {
                 .activateCompiledConfiguration(
                     id,
                     baseConfiguration: compiledConfiguration.yaml,
-                    overrides: .empty,
+                    overrides: compiledRuntimeOverrides(for: id),
                     networkExtensionListener: activeNetworkExtensionMihomoListener,
                     profileMixedListener: nil,
                     routeListeners: [],
@@ -10991,14 +11207,20 @@ final class AppModel {
             throw AppModelError.profileStoreUnavailable
         }
         if let compiled = try compiledConfigurationForCurrentWorkspace() {
-            return try RuntimeConfigurationComposer().boundListenerPorts(in: compiled.yaml)
+            var ports = try RuntimeConfigurationComposer().boundListenerPorts(in: compiled.yaml)
+            if unifiedConfigurationEnabled {
+                ports.insert(profileRuntimePlan.defaultMixedPort)
+            }
+            return ports
         }
         let composer = RuntimeConfigurationComposer()
         if unifiedConfigurationEnabled {
             guard let compiledConfiguration else {
                 throw AppModelError.profileStoreUnavailable
             }
-            return try composer.boundListenerPorts(in: compiledConfiguration.yaml)
+            var ports = try composer.boundListenerPorts(in: compiledConfiguration.yaml)
+            ports.insert(profileRuntimePlan.defaultMixedPort)
+            return ports
         }
         let sourceData = try await profileStore.configurationData(for: profileID)
         let managedSourceData = try composer.sanitizingForManagedSession(sourceData)
@@ -11327,7 +11549,9 @@ final class AppModel {
     }
 
     private func effectiveRuntimeOverrides(for profileID: ProfileID) -> RuntimeOverrides {
-        if unifiedConfigurationEnabled { return .empty }
+        if unifiedConfigurationEnabled {
+            return compiledRuntimeOverrides(for: profileID)
+        }
         // Advanced runtime overrides belong to the active profile. Applying
         // its DNS, rules, interface, or LAN policy to another airport would
         // silently merge two otherwise independent profiles. Auxiliary
@@ -11352,6 +11576,19 @@ final class AppModel {
             ? profileRuntimePlan.defaultMixedPort
             : profileSessionSpec(for: profileID)?.mixedPort
         return overrides
+    }
+
+    /// The unified compiler owns every policy field, but the core fleet still
+    /// needs one managed Mixed listener for local tools, system proxy
+    /// compatibility, and the Network Extension relay. Keep that listener as
+    /// a runtime-only override so it never leaks back into source YAML.
+    private func compiledRuntimeOverrides(for profileID: ProfileID) -> RuntimeOverrides {
+        let mixedPort = profileID == activeProfileID
+            ? profileRuntimePlan.defaultMixedPort
+            : profileSessionSpec(for: profileID)?.mixedPort
+        return RuntimeOverrides(
+            ports: RuntimePortOverrides(mixedPort: mixedPort)
+        )
     }
 
     private func prepareProfileRoutingSessions(
@@ -12169,6 +12406,9 @@ final class AppModel {
     static let openAtLoginSilentlyKey = "application.openAtLoginSilently"
     static let lightweightModeKey = "application.lightweightMode"
     static let unifiedConfigurationEnabledKey = "configuration.unifiedEnabled"
+    static let unifiedConfigurationMigrationVersionKey =
+        "configuration.unifiedMigrationVersion"
+    static let unifiedConfigurationMigrationVersion = 1
     static let systemProxyGuardFailureThreshold = 3
     static let appRoutingProviderFailureThreshold = 3
     static let appRoutingProviderStatusCheckInterval = 5

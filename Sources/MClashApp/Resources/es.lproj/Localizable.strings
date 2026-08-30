@@ -1923,6 +1923,13 @@
 "Source Removed" = "Origen eliminado";
 "System Capability" = "Función del sistema";
 "The MClash Workspace could not be started." = "No se pudo iniciar el espacio de trabajo de MClash.";
+"MClash could not adopt the unified configuration during upgrade: %@" = "MClash no pudo adoptar la configuración unificada durante la actualización: %@";
+"The upgraded installation now uses the MClash unified configuration." = "La instalación actualizada ahora usa la configuración unificada de MClash.";
+"A legacy App Routing application identity could not be represented safely and was retained for review." = "No se pudo representar de forma segura una identidad de aplicación de App Routing heredada y se conservó para su revisión.";
+"A legacy App Routing rule referenced the source group %@, which is not imported; MClash routed it to the default node group." = "Una regla de App Routing heredada hacía referencia al grupo de origen %@, que no se importó; MClash la dirigió al grupo de nodos predeterminado.";
+"The legacy App Routing target %@ has no imported nodes; its migrated rule will wait for a matching source refresh." = "El destino de App Routing heredado %@ no tiene nodos importados; su regla migrada esperará a una actualización de origen coincidente.";
+"The legacy App Routing rule %@ was retained but disabled because its application identity could not be represented safely in the unified Rules editor." = "La regla de App Routing heredada %@ se conservó pero se desactivó porque su identidad de aplicación no se pudo representar de forma segura en el editor de Reglas unificado.";
+"Migrated %@ legacy App Routing rules into the unified Rules workspace; %@ rules require review." = "Se migraron %@ reglas de App Routing heredadas al espacio de trabajo de Reglas unificado; %@ reglas requieren revisión.";
 "The MClash configuration document was invalid and was quarantined; a clean strategy document was created." = "El documento de configuración de MClash no era válido y se puso en cuarentena; se creó un documento de estrategia nuevo.";
 "The current proxy session could not be stopped safely." = "No se pudo detener de forma segura la sesión de proxy actual.";
 "The node endpoint %@:%d is invalid." = "El extremo de nodo %@:%d no es válido.";

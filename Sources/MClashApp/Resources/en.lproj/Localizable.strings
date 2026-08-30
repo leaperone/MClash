@@ -1922,6 +1922,13 @@
 "Source Removed" = "Source Removed";
 "System Capability" = "System Capability";
 "The MClash Workspace could not be started." = "The MClash Workspace could not be started.";
+"MClash could not adopt the unified configuration during upgrade: %@" = "MClash could not adopt the unified configuration during upgrade: %@";
+"The upgraded installation now uses the MClash unified configuration." = "The upgraded installation now uses the MClash unified configuration.";
+"A legacy App Routing application identity could not be represented safely and was retained for review." = "A legacy App Routing application identity could not be represented safely and was retained for review.";
+"A legacy App Routing rule referenced the source group %@, which is not imported; MClash routed it to the default node group." = "A legacy App Routing rule referenced the source group %@, which is not imported; MClash routed it to the default node group.";
+"The legacy App Routing target %@ has no imported nodes; its migrated rule will wait for a matching source refresh." = "The legacy App Routing target %@ has no imported nodes; its migrated rule will wait for a matching source refresh.";
+"The legacy App Routing rule %@ was retained but disabled because its application identity could not be represented safely in the unified Rules editor." = "The legacy App Routing rule %@ was retained but disabled because its application identity could not be represented safely in the unified Rules editor.";
+"Migrated %@ legacy App Routing rules into the unified Rules workspace; %@ rules require review." = "Migrated %@ legacy App Routing rules into the unified Rules workspace; %@ rules require review.";
 "The MClash configuration document was invalid and was quarantined; a clean strategy document was created." = "The MClash configuration document was invalid and was quarantined; a clean strategy document was created.";
 "The current proxy session could not be stopped safely." = "The current proxy session could not be stopped safely.";
 "The node endpoint %@:%d is invalid." = "The node endpoint %@:%d is invalid.";

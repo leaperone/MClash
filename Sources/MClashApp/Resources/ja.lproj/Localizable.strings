@@ -1923,6 +1923,13 @@
 "Source Removed" = "ソース削除済み";
 "System Capability" = "システム機能";
 "The MClash Workspace could not be started." = "MClash ワークスペースを開始できませんでした。";
+"MClash could not adopt the unified configuration during upgrade: %@" = "アップグレード中に MClash の統合構成を適用できませんでした: %@";
+"The upgraded installation now uses the MClash unified configuration." = "アップグレード後のインストールでは MClash の統合構成を使用します。";
+"A legacy App Routing application identity could not be represented safely and was retained for review." = "旧 App Routing のアプリケーション ID を安全に表現できないため、確認用に保持しました。";
+"A legacy App Routing rule referenced the source group %@, which is not imported; MClash routed it to the default node group." = "旧 App Routing ルールが未インポートのソースグループ %@ を参照していたため、MClash は既定のノードグループへ振り替えました。";
+"The legacy App Routing target %@ has no imported nodes; its migrated rule will wait for a matching source refresh." = "旧 App Routing の対象 %@ にインポート済みノードがないため、移行したルールは一致するソースの更新を待ちます。";
+"The legacy App Routing rule %@ was retained but disabled because its application identity could not be represented safely in the unified Rules editor." = "アプリケーション ID を統合ルールエディタで安全に表現できないため、旧 App Routing ルール %@ は保持したまま無効にしました。";
+"Migrated %@ legacy App Routing rules into the unified Rules workspace; %@ rules require review." = "%@ 件の旧 App Routing ルールを統合ルールワークスペースへ移行しました。%@ 件は確認が必要です。";
 "The MClash configuration document was invalid and was quarantined; a clean strategy document was created." = "MClash の設定書類が無効だったため隔離し、新しい戦略書類を作成しました。";
 "The current proxy session could not be stopped safely." = "現在のプロキシセッションを安全に停止できませんでした。";
 "The node endpoint %@:%d is invalid." = "ノードエンドポイント %@:%d は無効です。";

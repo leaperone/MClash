@@ -1454,11 +1454,25 @@ final class AutomationCommandGateway {
                 "destination": model.selection.map { .string($0.rawValue) } ?? .null,
             ]),
             "core": coreStatus(),
+            "configuration": configurationStatus(),
             "routing": routingStatus(),
             "systemProxy": systemProxyStatus(),
             "appRouting": appRoutingStatus(),
             "traffic": trafficSnapshot(),
             "diagnostics": diagnostics(),
+        ])
+    }
+
+    private func configurationStatus() -> AutomationJSONValue {
+        let workspace = model.configurationDocument.currentWorkspace
+        return .object([
+            "unified": .bool(model.unifiedConfigurationEnabled),
+            "workspaceID": workspace.map { .string($0.id.rawValue.uuidString.lowercased()) } ?? .null,
+            "workspaceName": workspace.map { .string($0.name) } ?? .null,
+            "nodeCount": .integer(Int64(model.configurationDocument.nodes.count)),
+            "groupCount": .integer(Int64(model.configurationDocument.proxyGroups.count)),
+            "ruleCount": .integer(Int64(model.configurationDocument.rules.count)),
+            "runtimeHash": model.compiledConfiguration.map { .string($0.configHash) } ?? .null,
         ])
     }
 

@@ -31,6 +31,17 @@ public struct NodeImportReport: Codable, Equatable, Sendable {
 /// importer deliberately never interprets proxy-groups, rules, DNS, TUN or
 /// other strategy sections as executable configuration.
 public struct NodeOnlyImporter: Sendable {
+    private struct YAMLLine {
+        var indent: Int
+        let content: String
+    }
+
+    private indirect enum YAMLFragment {
+        case scalar(String)
+        case mapping([(String, YAMLFragment)])
+        case sequence([YAMLFragment])
+    }
+
     public init() {}
 
     public func importNodes(
@@ -208,18 +219,58 @@ public struct NodeOnlyImporter: Sendable {
     }
 
     private func proxyEntries(in lines: [String]) -> [[String: String]] {
-        guard let section = lines.firstIndex(where: {
-            stripComment($0).trimmingCharacters(in: .whitespacesAndNewlines) == "proxies:"
-        }) else { return [] }
+        guard let section = lines.firstIndex(where: { rootKey(in: $0)?.lowercased() == "proxies" }) else {
+            return []
+        }
+
+        let sectionLine = stripComment(lines[section])
+        guard let sectionColon = topLevelColon(in: sectionLine) else { return [] }
+        let inlineValue = String(sectionLine[sectionLine.index(after: sectionColon)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !inlineValue.isEmpty {
+            let withoutAnchor = inlineValue.replacingOccurrences(
+                of: #"^&[^\s]+\s*"#,
+                with: "",
+                options: .regularExpression
+            )
+            if withoutAnchor.first == "[", withoutAnchor.last == "]" {
+                return parseInlineSequence(withoutAnchor)
+            }
+            // A tagged/anchored block sequence may continue on following
+            // lines. A non-empty scalar here is not a supported proxies
+            // sequence and must not be mistaken for one.
+            if !withoutAnchor.isEmpty,
+               withoutAnchor != "~",
+               withoutAnchor.lowercased() != "null" {
+                return []
+            }
+        }
 
         let sectionIndent = indentation(lines[section])
         var entries: [[String: String]] = []
-        var current: [String: String] = [:]
-        var currentIndent: Int?
+        var blockLines: [YAMLLine] = []
+        var itemIndent: Int?
 
         func flush() {
-            if !current.isEmpty { entries.append(current) }
-            current = [:]
+            guard !blockLines.isEmpty else { return }
+            var index = 0
+            let fragment = parseYAMLBlock(
+                blockLines,
+                index: &index,
+                indent: blockLines[0].indent
+            )
+            if case let .mapping(fields) = fragment {
+                let entry = fields.reduce(into: [String: String]()) { result, field in
+                    switch field.1 {
+                    case let .scalar(value):
+                        result[field.0] = value
+                    case .mapping, .sequence:
+                        result[field.0] = renderFlow(field.1)
+                    }
+                }
+                if !entry.isEmpty { entries.append(entry) }
+            }
+            blockLines = []
         }
 
         for raw in lines.dropFirst(section + 1) {
@@ -232,33 +283,230 @@ public struct NodeOnlyImporter: Sendable {
             if trimmed.hasPrefix("- {") || trimmed.hasPrefix("-{ ") || trimmed.hasPrefix("-{") {
                 flush()
                 let body = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-                current = parseInlineMap(String(body))
-                flush()
+                let entry = parseInlineMap(String(body))
+                if !entry.isEmpty { entries.append(entry) }
+                itemIndent = nil
                 continue
             }
 
             if trimmed == "-" || trimmed.hasPrefix("- ") {
-                if trimmed == "-" || topLevelColon(in: String(trimmed.dropFirst())) != nil {
+                if itemIndent == nil || indent <= (itemIndent ?? indent) {
                     flush()
-                    currentIndent = indent
+                    itemIndent = indent
                     let body = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-                    if let colon = topLevelColon(in: body) {
-                        let key = String(body[..<colon]).trimmingCharacters(in: .whitespaces)
-                        let value = String(body[body.index(after: colon)...])
-                        current[key] = scalar(value)
+                    if !body.isEmpty {
+                        blockLines.append(YAMLLine(indent: indent + 2, content: body))
                     }
                     continue
                 }
             }
 
-            guard currentIndent != nil, indent > (currentIndent ?? sectionIndent),
-                  let colon = topLevelColon(in: trimmed) else { continue }
-            let key = String(trimmed[..<colon]).trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty else { continue }
-            current[key] = scalar(String(trimmed[trimmed.index(after: colon)...]))
+            guard let itemIndent, indent > itemIndent else { continue }
+            // The first mapping field after a sequence marker is initially
+            // assigned the conventional +2 indentation. YAML also permits a
+            // wider sibling indentation (for example four spaces after a
+            // two-space list marker). Once the first real sibling is seen,
+            // align that provisional field to the actual indentation. Do not
+            // realign an empty-value field: its following line is a nested
+            // value, not a sibling.
+            if blockLines.count == 1,
+               blockLines[0].indent == itemIndent + 2,
+               let firstColon = topLevelColon(in: blockLines[0].content),
+               !String(blockLines[0].content[blockLines[0].content.index(after: firstColon)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               indent > blockLines[0].indent {
+                blockLines[0].indent = indent
+            }
+            blockLines.append(YAMLLine(indent: indent, content: trimmed))
         }
         flush()
         return entries
+    }
+
+    private func parseInlineSequence(_ raw: String) -> [[String: String]] {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.first == "[", value.last == "]" else { return [] }
+        value.removeFirst()
+        value.removeLast()
+        return splitTopLevel(value, separator: ",").compactMap { element in
+            let trimmed = element.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.first == "{", trimmed.last == "}" else { return nil }
+            let fields = parseInlineMap(trimmed)
+            return fields.isEmpty ? nil : fields
+        }
+    }
+
+    private func parseYAMLBlock(
+        _ lines: [YAMLLine],
+        index: inout Int,
+        indent: Int
+    ) -> YAMLFragment {
+        guard index < lines.count else { return .mapping([]) }
+        if lines[index].content == "-" || lines[index].content.hasPrefix("- ") {
+            return parseYAMLSequence(lines, index: &index, indent: indent)
+        }
+        return parseYAMLMapping(lines, index: &index, indent: indent)
+    }
+
+    private func parseYAMLMapping(
+        _ lines: [YAMLLine],
+        index: inout Int,
+        indent: Int
+    ) -> YAMLFragment {
+        var fields: [(String, YAMLFragment)] = []
+        while index < lines.count {
+            let line = lines[index]
+            guard line.indent == indent,
+                  line.content != "-",
+                  !line.content.hasPrefix("- "),
+                  let colon = topLevelColon(in: line.content) else { break }
+            let key = scalar(String(line.content[..<colon]))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawValue = String(line.content[line.content.index(after: colon)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            index += 1
+            let value: YAMLFragment
+            if !rawValue.isEmpty {
+                value = parseFlowFragment(rawValue) ?? .scalar(scalar(rawValue))
+            } else if index < lines.count,
+                      lines[index].indent > indent
+                        || (lines[index].indent == indent
+                            && (lines[index].content == "-"
+                                || lines[index].content.hasPrefix("- "))) {
+                value = parseYAMLBlock(lines, index: &index, indent: lines[index].indent)
+            } else {
+                value = .mapping([])
+            }
+            if !key.isEmpty { fields.append((key, value)) }
+        }
+        return .mapping(fields)
+    }
+
+    private func parseYAMLSequence(
+        _ lines: [YAMLLine],
+        index: inout Int,
+        indent: Int
+    ) -> YAMLFragment {
+        var values: [YAMLFragment] = []
+        while index < lines.count {
+            let line = lines[index]
+            guard line.indent == indent,
+                  line.content == "-" || line.content.hasPrefix("- ") else { break }
+            let body = line.content.dropFirst()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            index += 1
+            if body.isEmpty {
+                if index < lines.count, lines[index].indent > indent {
+                    values.append(parseYAMLBlock(lines, index: &index, indent: lines[index].indent))
+                } else {
+                    values.append(.scalar(""))
+                }
+            } else if topLevelColon(in: body) != nil {
+                let provisionalIndent = indent + 2
+                let bodyColon = topLevelColon(in: body)
+                let bodyHasValue = bodyColon.map {
+                    !String(body[body.index(after: $0)...])
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                } ?? false
+                let firstChildIndent = index < lines.count && lines[index].indent > indent
+                    ? lines[index].indent
+                    : provisionalIndent
+                let itemIndent = bodyHasValue && firstChildIndent > provisionalIndent
+                    ? firstChildIndent
+                    : provisionalIndent
+                var itemLines = [YAMLLine(indent: itemIndent, content: body)]
+                let childStart = index
+                while index < lines.count, lines[index].indent > indent {
+                    itemLines.append(lines[index])
+                    index += 1
+                }
+                var itemIndex = 0
+                values.append(parseYAMLBlock(itemLines, index: &itemIndex, indent: itemIndent))
+                if index == childStart { continue }
+            } else {
+                values.append(.scalar(scalar(body)))
+            }
+        }
+        return .sequence(values)
+    }
+
+    private func renderFlow(_ fragment: YAMLFragment) -> String {
+        switch fragment {
+        case let .scalar(value):
+            return flowScalar(value)
+        case let .mapping(fields):
+            guard !fields.isEmpty else { return "{}" }
+            let orderedFields = fields.sorted { lhs, rhs in
+                lhs.0 == rhs.0 ? renderFlow(lhs.1) < renderFlow(rhs.1) : lhs.0 < rhs.0
+            }
+            return "{ " + orderedFields.map { field in
+                "\(flowScalar(field.0)): \(renderFlow(field.1))"
+            }.joined(separator: ", ") + " }"
+        case let .sequence(values):
+            guard !values.isEmpty else { return "[]" }
+            return "[" + values.map(renderFlow).joined(separator: ", ") + "]"
+        }
+    }
+
+    private func parseFlowFragment(_ raw: String) -> YAMLFragment? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = value.first, let last = value.last else { return nil }
+        if first == "{" && last == "}" {
+            value.removeFirst()
+            value.removeLast()
+            let components = splitTopLevel(value, separator: ",")
+            var fields: [(String, YAMLFragment)] = []
+            for field in components {
+                let trimmed = field.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty { continue }
+                guard let colon = topLevelColon(in: trimmed) else { return nil }
+                let key = scalar(String(trimmed[..<colon])).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !key.isEmpty else { return nil }
+                let rawValue = String(trimmed[trimmed.index(after: colon)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                fields.append((key, parseFlowFragment(rawValue) ?? .scalar(scalar(rawValue))))
+            }
+            return .mapping(fields)
+        }
+        if first == "[" && last == "]" {
+            value.removeFirst()
+            value.removeLast()
+            let values = splitTopLevel(value, separator: ",")
+                .map { parseFlowFragment($0) ?? .scalar(scalar($0)) }
+            return .sequence(values.filter { fragment in
+                if case let .scalar(value) = fragment {
+                    return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                return true
+            })
+        }
+        return nil
+    }
+
+    private func flowScalar(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ((trimmed.first == "{" && trimmed.last == "}")
+            || (trimmed.first == "[" && trimmed.last == "]")),
+           !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) {
+            return trimmed
+        }
+        let lowercased = trimmed.lowercased()
+        if ["true", "false", "null"].contains(lowercased) {
+            return lowercased
+        }
+        if Double(trimmed) != nil { return trimmed }
+        // JSON escaping is almost, but not quite, YAML escaping: JSON emits
+        // a backslash before slashes, which YAML rejects as an unknown escape
+        // inside a double-quoted flow scalar. Escape only characters YAML
+        // double quotes actually reserve.
+        let escaped = trimmed
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\u{0}", with: "")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
+        return "\"\(escaped)\""
     }
 
     private func rootKey(in line: String) -> String? {
@@ -281,7 +529,12 @@ public struct NodeOnlyImporter: Sendable {
             guard let colon = topLevelColon(in: field) else { return }
             let key = scalar(String(field[..<colon])).trimmingCharacters(in: .whitespaces)
             guard !key.isEmpty else { return }
-            result[key] = scalar(String(field[field.index(after: colon)...]))
+            let rawValue = String(field[field.index(after: colon)...])
+            if let fragment = parseFlowFragment(rawValue) {
+                result[key] = renderFlow(fragment)
+            } else {
+                result[key] = scalar(rawValue)
+            }
         }
     }
 
@@ -375,7 +628,7 @@ public struct NodeOnlyImporter: Sendable {
     }
 }
 
-public extension NodeID {
+public extension ConfigurationIdentifier {
     /// Stable UUID derived from a SHA-256 fingerprint without retaining any
     /// provider-controlled display name.
     static func stable(for fingerprint: String) -> Self {
@@ -385,7 +638,7 @@ public extension NodeID {
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
         ))
-        return Self(rawValue: uuid)
+        return Self(rawValue: uuid)!
     }
 }
 

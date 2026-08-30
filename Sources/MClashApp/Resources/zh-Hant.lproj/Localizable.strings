@@ -1923,6 +1923,13 @@
 "Source Removed" = "來源已移除";
 "System Capability" = "系統功能";
 "The MClash Workspace could not be started." = "無法啟動 MClash 工作區。";
+"MClash could not adopt the unified configuration during upgrade: %@" = "MClash 無法在升級期間接管統一設定：%@";
+"The upgraded installation now uses the MClash unified configuration." = "升級後的安裝現在使用 MClash 統一設定。";
+"A legacy App Routing application identity could not be represented safely and was retained for review." = "舊版 App Routing 應用程式身分無法安全表示，已保留供檢查。";
+"A legacy App Routing rule referenced the source group %@, which is not imported; MClash routed it to the default node group." = "舊版 App Routing 規則參照了未匯入的來源群組 %@；MClash 已將其改為預設節點群組。";
+"The legacy App Routing target %@ has no imported nodes; its migrated rule will wait for a matching source refresh." = "舊版 App Routing 目標 %@ 尚無匯入節點；遷移後的規則會等待來源重新整理。";
+"The legacy App Routing rule %@ was retained but disabled because its application identity could not be represented safely in the unified Rules editor." = "舊版 App Routing 規則 %@ 已保留但停用，因為其應用程式身分無法在統一規則編輯器中安全表示。";
+"Migrated %@ legacy App Routing rules into the unified Rules workspace; %@ rules require review." = "已將 %@ 條舊版 App Routing 規則遷移到統一規則工作區；其中 %@ 條需要檢查。";
 "The MClash configuration document was invalid and was quarantined; a clean strategy document was created." = "MClash 設定文件無效，已被隔離；系統已建立乾淨的策略文件。";
 "The current proxy session could not be stopped safely." = "無法安全停止目前的代理工作階段。";
 "The node endpoint %@:%d is invalid." = "節點端點 %@:%d 無效。";

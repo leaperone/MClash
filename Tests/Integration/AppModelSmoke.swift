@@ -29,6 +29,14 @@ struct AppModelSmoke {
             throw SmokeFailure.preferencesUnavailable
         }
         defaults.set(false, forKey: AppModel.autoEnableSystemProxyKey)
+        // This smoke fixture intentionally exercises the legacy profile fleet
+        // (including per-profile route listeners). Mark the one-time unified
+        // migration as already completed so startup does not auto-adopt this
+        // synthetic legacy scenario.
+        defaults.set(
+            AppModel.unifiedConfigurationMigrationVersion,
+            forKey: AppModel.unifiedConfigurationMigrationVersionKey
+        )
         defer { defaults.removePersistentDomain(forName: preferencesSuiteName) }
 
         let appRoutingFixtureURL = stateRoot.appending(
