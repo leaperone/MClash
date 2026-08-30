@@ -1671,6 +1671,7 @@ final class AppModel {
                     tags: $0.tags.sorted().prefix(64).map {
                         String(redactedDiagnosticText($0).prefix(128))
                     }.sorted(),
+                    tagCount: $0.tags.count,
                     region: $0.region.map {
                         String(redactedDiagnosticText($0).prefix(128))
                     },
@@ -1890,7 +1891,9 @@ final class AppModel {
     private func configurationAutomationStructuralDiagnostics(
         _ document: ConfigurationDocument
     ) -> [ConfigurationDiagnostic] {
-        var result: [ConfigurationDiagnostic] = []
+        var result = ConfigurationValidator.automationPlanDiagnostics(
+            document: document
+        )
         result += configurationAutomationDuplicateDiagnostics(
             document.sources.map(\.id), code: "duplicate_source"
         )
@@ -1920,7 +1923,7 @@ final class AppModel {
                 severity: .error,
                 code: "missing_workspace",
                 subject: "workspaces",
-                message: "At least one workspace is required."
+                message: AppLocalization.string("At least one workspace is required.")
             ))
         }
         if let currentWorkspaceID = document.currentWorkspaceID,
@@ -1929,7 +1932,7 @@ final class AppModel {
                 severity: .error,
                 code: "missing_current_workspace",
                 subject: currentWorkspaceID.rawValue.uuidString.lowercased(),
-                message: "The current workspace does not exist."
+                message: AppLocalization.string("The current workspace does not exist.")
             ))
         }
         let workspaceIDs = Set(document.workspaces.map(\.id))
@@ -1939,7 +1942,7 @@ final class AppModel {
                     severity: .error,
                     code: "missing_rule_workspace",
                     subject: rule.id.rawValue.uuidString.lowercased(),
-                    message: "A routing rule references a workspace that does not exist."
+                    message: AppLocalization.string("A routing rule references a workspace that does not exist.")
                 ))
             }
         }
@@ -1949,7 +1952,7 @@ final class AppModel {
                     severity: .error,
                     code: "missing_entrance_workspace",
                     subject: entrance.id.rawValue.uuidString.lowercased(),
-                    message: "An entrance references a workspace that does not exist."
+                    message: AppLocalization.string("An entrance references a workspace that does not exist.")
                 ))
             }
         }
@@ -1968,7 +1971,7 @@ final class AppModel {
                 severity: .error,
                 code: code,
                 subject: id.rawValue.uuidString.lowercased(),
-                message: "Configuration contains duplicate identities."
+                message: AppLocalization.string("Configuration contains duplicate identities.")
             )
         }
     }
@@ -2215,13 +2218,14 @@ final class AppModel {
             throw AppModelError.profileStoreUnavailable
         }
 
+        if shouldReconnect, !(await performDisconnect()) {
+            let disconnectError = errorMessage ?? AppLocalization.string(
+                "The current proxy session could not be stopped safely."
+            )
+            throw AppModelError.profileActivationFailed(disconnectError)
+        }
+        var candidateConnectionAttempted = false
         do {
-            if shouldReconnect, !(await performDisconnect()) {
-                let disconnectError = errorMessage ?? AppLocalization.string(
-                    "The current proxy session could not be stopped safely."
-                )
-                throw AppModelError.profileActivationFailed(disconnectError)
-            }
             try await synchronizeCompiledCaptureState(compiled)
             let activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
                 activeProfileID,
@@ -2237,6 +2241,7 @@ final class AppModel {
             unifiedConfigurationEnabled = true
             compiledConfiguration = compiled
             if shouldReconnect {
+                candidateConnectionAttempted = true
                 guard await performConnect() else {
                     throw AppModelError.profileActivationFailed(
                         errorMessage ?? AppLocalization.string(
@@ -2283,14 +2288,18 @@ final class AppModel {
         } catch {
             let activationError = error
             var rollbackFailures: [String] = []
-            var failedSessionStopped = true
-            if shouldReconnect, !(await performDisconnect()) {
+            if candidateConnectionAttempted, !(await performDisconnect()) {
                 rollbackFailures.append(
                     AppLocalization.string(
                         "the failed MClash Workspace session could not be stopped"
                     )
                 )
-                failedSessionStopped = await cleanupFailedConnectionAttempt()
+                guard await cleanupFailedConnectionAttempt() else {
+                    throw NetworkCaptureTransactionFailure(
+                        updateReason: activationError.localizedDescription,
+                        rollbackReason: rollbackFailures.joined(separator: "; ")
+                    )
+                }
             }
             unifiedConfigurationEnabled = previousUnifiedConfigurationEnabled
             compiledConfiguration = previousCompiledConfiguration
@@ -2363,7 +2372,7 @@ final class AppModel {
                     }
                     activeConfigURL = restored.configurationURL
                     self.activeProfileID = previousProfileID
-                    if shouldReconnect, failedSessionStopped {
+                    if shouldReconnect {
                         if await performConnect() {
                             if shouldRestoreSystemProxy {
                                 await enableSystemProxyAfterConnect()

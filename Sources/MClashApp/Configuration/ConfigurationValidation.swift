@@ -35,10 +35,24 @@ extension ConfigurationModelError: LocalizedError {
 public enum ConfigurationValidator {
     public static func validate(workspace: Workspace, nodes: [Node], groups: [ProxyGroup], rules: [RoutingRule], ruleSets: [RuleSet] = [], dnsPolicies: [DNSPolicy], entrances: [Entrance]) -> [ConfigurationDiagnostic] {
         var result: [ConfigurationDiagnostic] = []
+        let resourceDiagnostics = workspaceResourceDiagnostics(
+            workspace: workspace,
+            groups: groups,
+            rules: rules,
+            ruleSets: ruleSets,
+            dnsPolicies: dnsPolicies,
+            entrances: entrances
+        )
+        guard resourceDiagnostics.isEmpty else { return sorted(resourceDiagnostics) }
         let nodeIDs = Set(nodes.map(\.id)); let groupIDs = Set(groups.map(\.id)); let ruleIDs = Set(rules.map(\.id)); let setIDs = Set(ruleSets.map(\.id)); let entranceIDs = Set(entrances.map(\.id)); let dnsIDs = Set(dnsPolicies.map(\.id))
-        let workspaceNodes = nodes.filter { workspace.nodeIDs.contains($0.id) && $0.enabled }
-        let workspaceGroups = groups.filter { workspace.proxyGroupIDs.contains($0.id) && $0.enabled }
-        let workspaceRuleSets = ruleSets.filter { workspace.ruleSetIDs.contains($0.id) }
+        let workspaceNodeIDs = Set(workspace.nodeIDs)
+        let workspaceGroupIDs = Set(workspace.proxyGroupIDs)
+        let workspaceRuleIDs = Set(workspace.ruleIDs)
+        let workspaceRuleSetIDs = Set(workspace.ruleSetIDs)
+        let workspaceEntranceIDs = Set(workspace.entranceIDs)
+        let workspaceNodes = nodes.filter { workspaceNodeIDs.contains($0.id) && $0.enabled }
+        let workspaceGroups = groups.filter { workspaceGroupIDs.contains($0.id) && $0.enabled }
+        let workspaceRuleSets = ruleSets.filter { workspaceRuleSetIDs.contains($0.id) }
         let enabledNodeIDs = Set(workspaceNodes.map(\.id))
         let enabledGroupIDs = Set(workspaceGroups.map(\.id))
         result += duplicateDiagnostics(nodes.map(\.id), code: "duplicate_node", message: AppLocalization.string("Node catalog contains duplicate identities."))
@@ -98,20 +112,41 @@ public enum ConfigurationValidator {
             }
         }
         for id in workspace.nodeIDs where !nodeIDs.contains(id) { result.append(.init(severity: .error, code: "missing_node", subject: String(describing: id.rawValue), message: AppLocalization.string("Workspace references a node that is not in the catalog."))) }
-        for node in nodes where workspace.nodeIDs.contains(node.id) && node.proto == .unknown {
+        for node in nodes where workspaceNodeIDs.contains(node.id) && node.proto == .unknown {
             result.append(.init(severity: .error, code: "unsupported_node_protocol", subject: String(describing: node.id.rawValue), message: AppLocalization.string("Workspace references a node with an unsupported protocol.")))
         }
-        for node in nodes where workspace.nodeIDs.contains(node.id) {
+        for node in nodes where workspaceNodeIDs.contains(node.id) {
             for (key, value) in node.parameters where key.isEmpty || key.contains(where: { $0 == "\n" || $0 == "\r" || $0 == ":" }) || value.contains(where: { $0 == "\n" || $0 == "\r" }) {
                 result.append(.init(severity: .error, code: "invalid_node_parameter", subject: String(describing: node.id.rawValue), message: AppLocalization.string("Node parameters contain an unsafe YAML key or value.")))
                 break
+            }
+            if node.parameters.keys.contains(where: {
+                ["name", "type", "server", "port"].contains(
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                )
+            }) {
+                result.append(.init(severity: .error, code: "reserved_node_parameter", subject: String(describing: node.id.rawValue), message: AppLocalization.string("Node parameters cannot override name, type, server, or port.")))
             }
         }
         for id in workspace.proxyGroupIDs where !groupIDs.contains(id) { result.append(.init(severity: .error, code: "missing_group", subject: String(describing: id.rawValue), message: AppLocalization.string("Workspace references a proxy group that does not exist."))) }
         for id in workspace.ruleIDs where !ruleIDs.contains(id) { result.append(.error("missing_rule", id, AppLocalization.string("Workspace references a routing rule that does not exist."))) }
         for id in workspace.ruleSetIDs where !setIDs.contains(id) { result.append(.error("missing_ruleset", id, AppLocalization.string("Workspace references a rule set that does not exist."))) }
         for id in workspace.entranceIDs where !entranceIDs.contains(id) { result.append(.error("missing_entrance", id, AppLocalization.string("Workspace references an entrance that does not exist."))) }
-        let enabledEntrances = entrances.filter { workspace.entranceIDs.contains($0.id) && $0.enabled }
+        let workspaceEntrances = entrances.filter { workspaceEntranceIDs.contains($0.id) }
+        let enabledEntrances = workspaceEntrances.filter(\.enabled)
+        for entrance in workspaceEntrances where entrance.workspaceOverride != nil {
+            result.append(.init(severity: .error, code: "unsupported_entrance_workspace_override", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("Entrance workspace overrides are not supported.")))
+        }
+        for entrance in enabledEntrances where entrance.kind == .tun {
+            result.append(.init(severity: .error, code: "unsupported_tun_entrance", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("TUN entrances are not supported.")))
+        }
+        for kind in EntranceKind.allCases
+            where enabledEntrances.filter({ $0.kind == kind }).count > 1 {
+            result.append(.init(severity: .error, code: "duplicate_entrance_kind", subject: kind.rawValue, message: AppLocalization.string("Only one enabled entrance of each kind is supported per workspace.")))
+        }
+        if Set(enabledEntrances.map(\.defaultAction)).count > 1 {
+            result.append(.init(severity: .error, code: "inconsistent_entrance_default_action", subject: "entrances", message: AppLocalization.string("Enabled entrances must use the same default action.")))
+        }
         for entrance in enabledEntrances {
             validate(
                 action: entrance.defaultAction,
@@ -146,6 +181,9 @@ public enum ConfigurationValidator {
         }
         guard dnsIDs.contains(workspace.dnsPolicyID) else { result.append(.error("missing_dns_policy", workspace.dnsPolicyID, AppLocalization.string("Workspace references a DNS policy that does not exist."))); return sorted(result) }
         for group in groups where enabledGroupIDs.contains(group.id) {
+            if group.type == .relay {
+                result.append(.init(severity: .error, code: "unsupported_relay_group", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Relay proxy groups are not supported by the bundled Mihomo core.")))
+            }
             if group.members.isEmpty && group.type != .direct && group.type != .reject {
                 result.append(.init(severity: .error, code: "empty_group", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Proxy group has no members.")))
             }
@@ -173,12 +211,26 @@ public enum ConfigurationValidator {
             groups.filter { enabledGroupIDs.contains($0.id) }.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        var groupStates: [ProxyGroupID: GroupVisitState] = [:]
+        var groupMemo: [ProxyGroupID: GroupTraversalResult] = [:]
         for group in groups where enabledGroupIDs.contains(group.id) {
-            if hasCycle(from: group.id, map: groupMap, visiting: [], visited: []) {
+            let traversal = traverseGroup(
+                from: group.id,
+                map: groupMap,
+                depth: 1,
+                states: &groupStates,
+                memo: &groupMemo
+            )
+            if traversal.hasCycle {
                 result.append(.init(severity: .error, code: "group_cycle", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Proxy group references itself through nested groups.")))
             }
+            if traversal.depthExceeded {
+                result.append(.init(severity: .error, code: "group_nesting_too_deep", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Proxy group nesting cannot exceed 64 levels.")))
+            }
         }
-        for rule in rules where workspace.ruleIDs.contains(rule.id) && rule.enabled {
+        var workspaceExpansion = 0
+        var workspaceExpansionExceeded = false
+        for rule in rules where workspaceRuleIDs.contains(rule.id) && rule.enabled {
             if let scope = rule.workspaceScope, scope != workspace.id {
                 result.append(.init(severity: .error, code: "rule_outside_workspace", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Workspace references a routing rule that does not exist.")))
             }
@@ -191,12 +243,30 @@ public enum ConfigurationValidator {
                 into: &result
             )
             if rule.matchers.isEmpty { result.append(.init(severity: .warning, code: "rule_matches_everything", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Routing rule has no matchers and may match all traffic."))) }
+            let categoryCounts = matcherCategoryCounts(rule)
+            if [categoryCounts.destinations, categoryCounts.ports, categoryCounts.transports]
+                .filter({ $0 > 0 }).count > 1 {
+                result.append(.init(severity: .error, code: "unsupported_rule_matcher_combination", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("A routing rule cannot combine destination, port, and transport matchers.")))
+            }
+            if let expansion = matcherExpansionCount(rule),
+               expansion <= ConfigurationAutomationLimits.matcherExpansionPerRule {
+                let (updated, overflow) = workspaceExpansion.addingReportingOverflow(expansion)
+                if overflow || updated > ConfigurationAutomationLimits.matcherExpansionPerWorkspace {
+                    workspaceExpansionExceeded = true
+                } else {
+                    workspaceExpansion = updated
+                }
+            } else {
+                result.append(.init(severity: .error, code: "rule_expansion_limit", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Routing rules expand beyond the supported limit.")))
+            }
             for matcher in rule.matchers {
                 switch matcher {
                 case let .port(value) where !(1...65_535).contains(value):
                     result.append(.init(severity: .error, code: "invalid_rule_port", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Rule ports must be between 1 and 65535.")))
                 case let .portRange(value) where !(1...65_535).contains(value.lowerBound) || !(1...65_535).contains(value.upperBound):
                     result.append(.init(severity: .error, code: "invalid_rule_port", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Rule ports must be between 1 and 65535.")))
+                case let .transport(value) where !["tcp", "udp"].contains(value.lowercased()):
+                    result.append(.init(severity: .error, code: "invalid_rule_transport", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Routing rule transport must be TCP or UDP.")))
                 default:
                     break
                 }
@@ -212,6 +282,9 @@ public enum ConfigurationValidator {
                 }
             }
         }
+        if workspaceExpansionExceeded {
+            result.append(.init(severity: .error, code: "workspace_rule_expansion_limit", subject: String(describing: workspace.id.rawValue), message: AppLocalization.string("Routing rules expand beyond the supported limit.")))
+        }
         for ruleSet in workspaceRuleSets {
             validate(
                 action: ruleSet.defaultAction,
@@ -224,16 +297,218 @@ public enum ConfigurationValidator {
             for rawRule in ruleSet.rules {
                 let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
                 let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
-                if trimmed.isEmpty || trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) || (trimmed.contains(",") && parts.count < 2) {
+                let allowedTypes = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "IP-CIDR6"]
+                let validTypedRule = parts.count == 2
+                    && allowedTypes.contains(String(parts[0]))
+                    && !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if trimmed.isEmpty
+                    || trimmed.contains(where: { $0 == "\n" || $0 == "\r" })
+                    || (trimmed.contains(",") && !validTypedRule) {
                     result.append(.init(severity: .error, code: "invalid_ruleset_rule", subject: String(describing: ruleSet.id.rawValue), message: AppLocalization.string("Rule set contains an invalid rule entry.")))
                     break
                 }
             }
         }
+        if let dns = dnsPolicies.first(where: { $0.id == workspace.dnsPolicyID }),
+           dnsExpansionCount(dns).map({
+               $0 > ConfigurationAutomationLimits.dnsExpansionPerWorkspace
+           }) != false {
+            result.append(.init(severity: .error, code: "dns_expansion_limit", subject: String(describing: dns.id.rawValue), message: AppLocalization.string("DNS rules expand beyond the supported limit.")))
+        }
         return sorted(result)
     }
 
     private static func sorted(_ values: [ConfigurationDiagnostic]) -> [ConfigurationDiagnostic] { values.sorted { $0.id < $1.id } }
+
+    static func automationPlanDiagnostics(
+        document: ConfigurationDocument
+    ) -> [ConfigurationDiagnostic] {
+        var result: [ConfigurationDiagnostic] = []
+        func appendLimit(_ exceeded: Bool, _ subject: String) {
+            guard exceeded else { return }
+            result.append(resourceLimitDiagnostic(subject: subject))
+        }
+        appendLimit(document.proxyGroups.count > ConfigurationAutomationLimits.proxyGroups, "proxyGroups")
+        appendLimit(document.rules.count > ConfigurationAutomationLimits.rules, "rules")
+        appendLimit(document.ruleSets.count > ConfigurationAutomationLimits.ruleSets, "ruleSets")
+        appendLimit(document.dnsPolicies.count > ConfigurationAutomationLimits.dnsPolicies, "dnsPolicies")
+        appendLimit(document.entrances.count > ConfigurationAutomationLimits.entrances, "entrances")
+        appendLimit(document.workspaces.count > ConfigurationAutomationLimits.workspaces, "workspaces")
+        for group in document.proxyGroups {
+            appendLimit(
+                group.members.count > ConfigurationAutomationLimits.groupMembers,
+                "proxyGroups.\(group.id.rawValue.uuidString.lowercased()).members"
+            )
+        }
+        for rule in document.rules {
+            appendLimit(
+                rule.matchers.count > ConfigurationAutomationLimits.ruleMatchers,
+                "rules.\(rule.id.rawValue.uuidString.lowercased()).matchers"
+            )
+        }
+        for ruleSet in document.ruleSets {
+            appendLimit(
+                ruleSet.rules.count > ConfigurationAutomationLimits.ruleSetRules,
+                "ruleSets.\(ruleSet.id.rawValue.uuidString.lowercased()).rules"
+            )
+        }
+        for dns in document.dnsPolicies {
+            let subject = "dnsPolicies.\(dns.id.rawValue.uuidString.lowercased())"
+            appendLimit(
+                dns.nameservers.count > ConfigurationAutomationLimits.dnsNameservers,
+                "\(subject).nameservers"
+            )
+            appendLimit(
+                dns.fallbackNameservers.count > ConfigurationAutomationLimits.dnsNameservers,
+                "\(subject).fallbackNameservers"
+            )
+            appendLimit(
+                dns.rules.count > ConfigurationAutomationLimits.dnsRules,
+                "\(subject).rules"
+            )
+        }
+        for workspace in document.workspaces {
+            appendLimit(
+                workspace.nodeIDs.count > ConfigurationAutomationLimits.workspaceNodeIDs,
+                "workspaces.\(workspace.id.rawValue.uuidString.lowercased()).nodeIDs"
+            )
+        }
+        guard result.isEmpty else { return sorted(result) }
+
+        let rulesByID = Dictionary(
+            document.rules.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let dnsByID = Dictionary(
+            document.dnsPolicies.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var matcherTotal = 0
+        var dnsTotal = 0
+        var matcherExceeded = false
+        var dnsExceeded = false
+        for workspace in document.workspaces {
+            for id in Set(workspace.ruleIDs) {
+                guard let rule = rulesByID[id], rule.enabled else { continue }
+                guard let count = matcherExpansionCount(rule) else {
+                    matcherExceeded = true
+                    continue
+                }
+                let (updated, overflow) = matcherTotal.addingReportingOverflow(count)
+                if overflow || updated > ConfigurationAutomationLimits.matcherExpansionPerPlan {
+                    matcherExceeded = true
+                } else {
+                    matcherTotal = updated
+                }
+            }
+            if let dns = dnsByID[workspace.dnsPolicyID] {
+                guard let count = dnsExpansionCount(dns) else {
+                    dnsExceeded = true
+                    continue
+                }
+                let (updated, overflow) = dnsTotal.addingReportingOverflow(count)
+                if overflow || updated > ConfigurationAutomationLimits.dnsExpansionPerPlan {
+                    dnsExceeded = true
+                } else {
+                    dnsTotal = updated
+                }
+            }
+        }
+        if matcherExceeded {
+            result.append(.init(severity: .error, code: "configuration_rule_expansion_limit", subject: "rules", message: AppLocalization.string("Routing rules expand beyond the supported limit.")))
+        }
+        if dnsExceeded {
+            result.append(.init(severity: .error, code: "configuration_dns_expansion_limit", subject: "dnsPolicies", message: AppLocalization.string("DNS rules expand beyond the supported limit.")))
+        }
+        return sorted(result)
+    }
+
+    private static func workspaceResourceDiagnostics(
+        workspace: Workspace,
+        groups: [ProxyGroup],
+        rules: [RoutingRule],
+        ruleSets: [RuleSet],
+        dnsPolicies: [DNSPolicy],
+        entrances: [Entrance]
+    ) -> [ConfigurationDiagnostic] {
+        var result: [ConfigurationDiagnostic] = []
+        func appendLimit(_ exceeded: Bool, _ subject: String) {
+            guard exceeded else { return }
+            result.append(resourceLimitDiagnostic(subject: subject))
+        }
+        appendLimit(groups.count > ConfigurationAutomationLimits.proxyGroups, "proxyGroups")
+        appendLimit(rules.count > ConfigurationAutomationLimits.rules, "rules")
+        appendLimit(ruleSets.count > ConfigurationAutomationLimits.ruleSets, "ruleSets")
+        appendLimit(dnsPolicies.count > ConfigurationAutomationLimits.dnsPolicies, "dnsPolicies")
+        appendLimit(entrances.count > ConfigurationAutomationLimits.entrances, "entrances")
+        appendLimit(workspace.nodeIDs.count > ConfigurationAutomationLimits.workspaceNodeIDs, "workspace.nodeIDs")
+        for group in groups {
+            appendLimit(group.members.count > ConfigurationAutomationLimits.groupMembers, String(describing: group.id.rawValue))
+        }
+        for rule in rules {
+            appendLimit(rule.matchers.count > ConfigurationAutomationLimits.ruleMatchers, String(describing: rule.id.rawValue))
+        }
+        for ruleSet in ruleSets {
+            appendLimit(ruleSet.rules.count > ConfigurationAutomationLimits.ruleSetRules, String(describing: ruleSet.id.rawValue))
+        }
+        for dns in dnsPolicies {
+            appendLimit(
+                dns.nameservers.count > ConfigurationAutomationLimits.dnsNameservers
+                    || dns.fallbackNameservers.count > ConfigurationAutomationLimits.dnsNameservers
+                    || dns.rules.count > ConfigurationAutomationLimits.dnsRules,
+                String(describing: dns.id.rawValue)
+            )
+        }
+        return result
+    }
+
+    private static func resourceLimitDiagnostic(subject: String) -> ConfigurationDiagnostic {
+        .init(
+            severity: .error,
+            code: "configuration_resource_limit",
+            subject: subject,
+            message: AppLocalization.string("Configuration exceeds a supported resource limit.")
+        )
+    }
+
+    private static func matcherCategoryCounts(
+        _ rule: RoutingRule
+    ) -> (destinations: Int, ports: Int, transports: Int) {
+        var result = (destinations: 0, ports: 0, transports: 0)
+        for matcher in rule.matchers {
+            switch matcher {
+            case .domainExact, .domainSuffix, .domainWildcard, .ipCIDR:
+                result.destinations += 1
+            case .port, .portRange:
+                result.ports += 1
+            case .transport:
+                result.transports += 1
+            case .application, .processPath, .userID:
+                break
+            }
+        }
+        return result
+    }
+
+    private static func matcherExpansionCount(_ rule: RoutingRule) -> Int? {
+        let counts = matcherCategoryCounts(rule)
+        let (first, firstOverflow) = max(counts.destinations, 1)
+            .multipliedReportingOverflow(by: max(counts.ports, 1))
+        guard !firstOverflow else { return nil }
+        let (result, secondOverflow) = first.multipliedReportingOverflow(
+            by: max(counts.transports, 1)
+        )
+        return secondOverflow ? nil : result
+    }
+
+    private static func dnsExpansionCount(_ dns: DNSPolicy) -> Int? {
+        guard !dns.rules.isEmpty else { return 0 }
+        let nameserverCount = dns.nameservers.isEmpty ? 2 : dns.nameservers.count
+        let (result, overflow) = dns.rules.count.multipliedReportingOverflow(
+            by: nameserverCount
+        )
+        return overflow ? nil : result
+    }
 
     private static let reservedRuntimeNames: Set<Data> = [
         Data("DIRECT".utf8),
@@ -277,11 +552,67 @@ public enum ConfigurationValidator {
         return counts.filter { $0.value > 1 }.map { .init(severity: .error, code: code, subject: String(describing: $0.key), message: message) }
     }
 
-    private static func hasCycle(from id: ProxyGroupID, map: [ProxyGroupID: ProxyGroup], visiting: [ProxyGroupID], visited: [ProxyGroupID]) -> Bool {
-        if visiting.contains(id) { return true }; if visited.contains(id) { return false }
-        guard let group = map[id] else { return false }
-        let nextVisiting = visiting + [id]
-        return group.members.contains { member in if case let .group(next) = member { return hasCycle(from: next, map: map, visiting: nextVisiting, visited: visited) }; return false }
+    private enum GroupVisitState { case visiting, visited }
+
+    private struct GroupTraversalResult {
+        var hasCycle = false
+        var depthExceeded = false
+        var maxDepth = 1
+    }
+
+    private static func traverseGroup(
+        from id: ProxyGroupID,
+        map: [ProxyGroupID: ProxyGroup],
+        depth: Int,
+        states: inout [ProxyGroupID: GroupVisitState],
+        memo: inout [ProxyGroupID: GroupTraversalResult]
+    ) -> GroupTraversalResult {
+        guard depth <= ConfigurationAutomationLimits.groupDepth else {
+            return GroupTraversalResult(
+                hasCycle: false,
+                depthExceeded: true,
+                maxDepth: 1
+            )
+        }
+        if states[id] == .visiting {
+            return GroupTraversalResult(
+                hasCycle: true,
+                depthExceeded: false,
+                maxDepth: 0
+            )
+        }
+        if states[id] == .visited {
+            var cached = memo[id] ?? GroupTraversalResult()
+            cached.depthExceeded = depth + cached.maxDepth - 1
+                > ConfigurationAutomationLimits.groupDepth
+            return cached
+        }
+        guard let group = map[id] else { return GroupTraversalResult() }
+
+        states[id] = .visiting
+        var result = GroupTraversalResult()
+        for member in group.members {
+            guard case let .group(next) = member else { continue }
+            let nested = traverseGroup(
+                from: next,
+                map: map,
+                depth: depth + 1,
+                states: &states,
+                memo: &memo
+            )
+            result.hasCycle = result.hasCycle || nested.hasCycle
+            result.depthExceeded = result.depthExceeded || nested.depthExceeded
+            result.maxDepth = max(result.maxDepth, nested.maxDepth + 1)
+        }
+        result.depthExceeded = result.depthExceeded
+            || depth + result.maxDepth - 1 > ConfigurationAutomationLimits.groupDepth
+        if result.depthExceeded {
+            states[id] = nil
+        } else {
+            states[id] = .visited
+            memo[id] = result
+        }
+        return result
     }
 }
 

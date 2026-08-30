@@ -1,5 +1,53 @@
 import Foundation
 
+enum ConfigurationAutomationLimits {
+    static let nodeSettings = 2_000
+    static let proxyGroups = 256
+    static let rules = 2_048
+    static let ruleSets = 256
+    static let dnsPolicies = 64
+    static let entrances = 32
+    static let workspaces = 64
+    static let groupMembers = 4_096
+    static let workspaceNodeIDs = 4_096
+    static let ruleMatchers = 256
+    static let ruleSetRules = 8_192
+    static let dnsNameservers = 64
+    static let dnsRules = 512
+    static let tags = 64
+    static let tagBytes = 128
+    static let aliasBytes = 256
+    static let regionBytes = 128
+    static let matcherExpansionPerRule = 4_096
+    static let matcherExpansionPerWorkspace = 16_384
+    static let matcherExpansionPerPlan = 65_536
+    static let dnsExpansionPerWorkspace = 4_096
+    static let dnsExpansionPerPlan = 16_384
+    static let groupDepth = 64
+}
+
+private func requireAutomationCount(_ count: Int, maximum: Int, field: String) throws {
+    guard count <= maximum else {
+        throw ConfigurationAutomationError.invalidInput(
+            "\(field) cannot contain more than \(maximum) items"
+        )
+    }
+}
+
+private func requireAutomationText(
+    _ value: String,
+    maximumBytes: Int,
+    field: String,
+    nonempty: Bool = false
+) throws {
+    guard (!nonempty || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+          value.utf8.count <= maximumBytes else {
+        throw ConfigurationAutomationError.invalidInput(
+            "\(field) must be \(nonempty ? "non-empty and " : "")at most \(maximumBytes) UTF-8 bytes"
+        )
+    }
+}
+
 enum ConfigurationAutomationObjectKind: String, Codable, CaseIterable, Sendable {
     case proxyGroup, rule, ruleSet, dnsPolicy, entrance, workspace
 }
@@ -33,6 +81,35 @@ struct ConfigurationAutomationNodeSettings: Codable, Equatable, Sendable {
         guard !(removeRegion == true && regionUpdate != nil) else {
             throw ConfigurationAutomationError.invalidInput(
                 "regionUpdate and removeRegion cannot be used together"
+            )
+        }
+        if let userAliasUpdate {
+            try requireAutomationText(
+                userAliasUpdate,
+                maximumBytes: ConfigurationAutomationLimits.aliasBytes,
+                field: "nodeSettings.userAliasUpdate"
+            )
+        }
+        if let tagsUpdate {
+            try requireAutomationCount(
+                tagsUpdate.count,
+                maximum: ConfigurationAutomationLimits.tags,
+                field: "nodeSettings.tagsUpdate"
+            )
+            for tag in tagsUpdate {
+                try requireAutomationText(
+                    tag,
+                    maximumBytes: ConfigurationAutomationLimits.tagBytes,
+                    field: "nodeSettings.tagsUpdate",
+                    nonempty: true
+                )
+            }
+        }
+        if let regionUpdate {
+            try requireAutomationText(
+                regionUpdate,
+                maximumBytes: ConfigurationAutomationLimits.regionBytes,
+                field: "nodeSettings.regionUpdate"
             )
         }
         var updated = node
@@ -91,7 +168,12 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: ProxyGroup?) throws -> ProxyGroup {
-        ProxyGroup(
+        try requireAutomationCount(
+            membersUpdate?.count ?? existing?.members.count ?? 0,
+            maximum: ConfigurationAutomationLimits.groupMembers,
+            field: "proxyGroups.membersUpdate"
+        )
+        return ProxyGroup(
             id: ProxyGroupID(rawValue: try automationUUID(id, field: "proxyGroups.id")),
             name: name,
             type: type,
@@ -160,7 +242,13 @@ struct ConfigurationAutomationMatcher: Codable, Equatable, Sendable {
         case .domainSuffix: return .domainSuffix(value)
         case .domainWildcard: return .domainWildcard(value)
         case .ipCIDR: return .ipCIDR(value)
-        case .transport: return .transport(value)
+        case .transport:
+            guard ["tcp", "udp"].contains(value.lowercased()) else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "transport value must be tcp or udp"
+                )
+            }
+            return .transport(value.lowercased())
         case .port:
             guard let parsed = Int(value), (1...65_535).contains(parsed) else {
                 throw ConfigurationAutomationError.invalidInput(
@@ -228,7 +316,12 @@ struct ConfigurationAutomationRule: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: RoutingRule?) throws -> RoutingRule {
-        RoutingRule(
+        try requireAutomationCount(
+            matchersUpdate?.count ?? existing?.matchers.count ?? 0,
+            maximum: ConfigurationAutomationLimits.ruleMatchers,
+            field: "rules.matchersUpdate"
+        )
+        return RoutingRule(
             id: RoutingRuleID(rawValue: try automationUUID(id, field: "rules.id")),
             enabled: enabled,
             priority: priority,
@@ -263,6 +356,12 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: RuleSet?) throws -> RuleSet {
+        let rules = rulesUpdate ?? existing?.rules ?? []
+        try requireAutomationCount(
+            rules.count,
+            maximum: ConfigurationAutomationLimits.ruleSetRules,
+            field: "ruleSets.rulesUpdate"
+        )
         let sourceURL: URL?
         if removeSourceURL == true {
             guard sourceURLUpdate == nil else {
@@ -285,7 +384,7 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
             id: RuleSetID(rawValue: try automationUUID(id, field: "ruleSets.id")),
             name: name,
             sourceURL: sourceURL,
-            rules: rulesUpdate ?? existing?.rules ?? [],
+            rules: rules,
             defaultAction: try defaultAction.value(),
             revision: existing?.revision ?? 0
         )
@@ -327,15 +426,33 @@ struct ConfigurationAutomationDNSPolicy: Codable, Equatable, Sendable {
                 "proxyServerUpdate and removeProxyServer cannot be used together"
             )
         }
+        let nameservers = nameserversUpdate ?? existing?.nameservers ?? []
+        let fallbackNameservers = fallbackNameserversUpdate
+            ?? existing?.fallbackNameservers ?? []
+        let rules = rulesUpdate ?? existing?.rules ?? []
+        try requireAutomationCount(
+            nameservers.count,
+            maximum: ConfigurationAutomationLimits.dnsNameservers,
+            field: "dnsPolicies.nameserversUpdate"
+        )
+        try requireAutomationCount(
+            fallbackNameservers.count,
+            maximum: ConfigurationAutomationLimits.dnsNameservers,
+            field: "dnsPolicies.fallbackNameserversUpdate"
+        )
+        try requireAutomationCount(
+            rules.count,
+            maximum: ConfigurationAutomationLimits.dnsRules,
+            field: "dnsPolicies.rulesUpdate"
+        )
         return DNSPolicy(
             id: DNSPolicyID(rawValue: try automationUUID(id, field: "dnsPolicies.id")),
             name: name,
             mode: mode,
-            nameservers: nameserversUpdate ?? existing?.nameservers ?? [],
-            fallbackNameservers: fallbackNameserversUpdate
-                ?? existing?.fallbackNameservers ?? [],
+            nameservers: nameservers,
+            fallbackNameservers: fallbackNameservers,
             proxyServer: removeProxyServer == true ? nil : (proxyServerUpdate ?? existing?.proxyServer),
-            rules: rulesUpdate ?? existing?.rules ?? [],
+            rules: rules,
             takeoverEnabled: takeoverEnabled
         )
     }
@@ -409,12 +526,18 @@ struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: Workspace?, revision: Int) throws -> Workspace {
-        Workspace(
+        let nodeIDs = nodeIDsUpdate ?? existing?.nodeIDs.map {
+            $0.rawValue.uuidString.lowercased()
+        } ?? []
+        try requireAutomationCount(
+            nodeIDs.count,
+            maximum: ConfigurationAutomationLimits.workspaceNodeIDs,
+            field: "workspaces.nodeIDsUpdate"
+        )
+        return Workspace(
             id: WorkspaceID(rawValue: try automationUUID(id, field: "workspaces.id")),
             name: name,
-            nodeIDs: try (nodeIDsUpdate ?? existing?.nodeIDs.map {
-                $0.rawValue.uuidString.lowercased()
-            } ?? []).map {
+            nodeIDs: try nodeIDs.map {
                 NodeID(rawValue: try automationUUID($0, field: "workspaces.nodeIDs"))
             },
             proxyGroupIDs: try (proxyGroupIDsUpdate ?? existing?.proxyGroupIDs.map {
@@ -473,6 +596,41 @@ struct ConfigurationAutomationDocument: Codable, Equatable, Sendable {
                 "Unsupported configuration schema version: \(schemaVersion)"
             )
         }
+        try requireAutomationCount(
+            nodeSettings.count,
+            maximum: ConfigurationAutomationLimits.nodeSettings,
+            field: "nodeSettings"
+        )
+        try requireAutomationCount(
+            proxyGroups.count,
+            maximum: ConfigurationAutomationLimits.proxyGroups,
+            field: "proxyGroups"
+        )
+        try requireAutomationCount(
+            rules.count,
+            maximum: ConfigurationAutomationLimits.rules,
+            field: "rules"
+        )
+        try requireAutomationCount(
+            ruleSets.count,
+            maximum: ConfigurationAutomationLimits.ruleSets,
+            field: "ruleSets"
+        )
+        try requireAutomationCount(
+            dnsPolicies.count,
+            maximum: ConfigurationAutomationLimits.dnsPolicies,
+            field: "dnsPolicies"
+        )
+        try requireAutomationCount(
+            entrances.count,
+            maximum: ConfigurationAutomationLimits.entrances,
+            field: "entrances"
+        )
+        try requireAutomationCount(
+            workspaces.count,
+            maximum: ConfigurationAutomationLimits.workspaces,
+            field: "workspaces"
+        )
         let existingGroups = Dictionary(
             base.proxyGroups.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -605,6 +763,7 @@ struct ConfigurationAutomationNodeSummary: Codable, Equatable, Sendable {
     let health: NodeHealthSnapshot
     let userAlias: String?
     let tags: [String]
+    let tagCount: Int
     let region: String?
     let lastSeenAt: Date?
     let parameterKeys: [String]
