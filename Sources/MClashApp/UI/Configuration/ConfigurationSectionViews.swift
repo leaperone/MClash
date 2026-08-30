@@ -427,13 +427,15 @@ private enum RuleMatcherFamily: String, CaseIterable, Hashable {
 }
 
 private func ruleConditionPresentation(_ matchers: [RoutingMatcher]) -> String {
+    let andWord = AppLocalization.string("and")
+    let orWord = AppLocalization.string("or")
     let grouped = Dictionary(grouping: matchers, by: ruleMatcherFamily)
     let parts = RuleMatcherFamily.allCases.compactMap { family -> String? in
         let values = grouped[family, default: []].map(ruleMatcherPresentation)
         guard !values.isEmpty else { return nil }
-        return values.count == 1 ? values[0] : values.joined(separator: " or ")
+        return values.count == 1 ? values[0] : values.joined(separator: " \(orWord) ")
     }
-    return parts.joined(separator: " and ")
+    return parts.joined(separator: " \(andWord) ")
 }
 
 private func ruleMatcherFamily(_ matcher: RoutingMatcher) -> RuleMatcherFamily {

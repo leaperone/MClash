@@ -85,8 +85,10 @@
 - 任一未完成 activation journal 都是尚未解决的 rollback baseline；新 activation 必须拒绝而不能覆盖它。
 - 资源级 selector legacy warning 不能提前终止引用校验；仅 resource error 可短路，否则缺失 proxy-group action 会绕过 Validator 并触达 Compiler 的前置条件崩溃。
 - `origin/main@4fa9621` 的统一配置工作台新增文案中仍有大量非英语 locale 使用英文占位；旧 `fix/i18n-complete-*` 分支不含这批键，需基于当前分支按 locale 并行补齐。
+- 五路 locale 收敛实际修改 de 169 / es 172 / fr 169 / ja 173 / ko 173；新增键中剩余同值仅纯格式、技术字面或当地通用同形词（如 `IP / CIDR`、Port、Selector）。
 - 最新 `origin/main@94f1f07` 仅补充 `v1.4.5` 发布验证 planning 记录，不触及运行代码；已在功能分支成为祖先。
 - 最新 API、docs、activation 与不可信输入 trap 交叉审计均为 0 Critical/High；构建与测试证据仍留待 PR 后 preflight。
+- 规则卡片摘要曾硬编码英文 `and`/`or`；catalog 已有对应键，摘要生成器应与编辑器预览一样复用本地化连接词。
 
 ## 参考指针
 

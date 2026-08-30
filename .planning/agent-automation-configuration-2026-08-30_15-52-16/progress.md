@@ -17,10 +17,12 @@
 - Configuration API 已集成 compact receipt、稀疏 write-only patch、严格分页/权限、共享 validator/compiler 安全边界及事务化 workspace activation。
 - Configuration 编译器已移除空代理组时的隐藏 `MClash Select`，避免与同名节点形成 Mihomo adapter 名称冲突。
 - PATH 父目录安全校验已覆盖 macOS 扩展 ACL，拒绝写入型 allow 权限并兼容系统默认 deny ACL。
+- 统一配置工作台的德语、西班牙语、法语、日语和韩语英文占位已完成本地化；中文剩余同值均为技术或纯格式字面。
+- 规则卡片摘要已与规则编辑器一样复用本地化 `and` / `or`，不再向非英语界面拼接英文连接词。
 
 ## 进行中
 
-- 五个非中文 locale 的统一配置工作台翻译与 Git 交付收口。
+- 最终静态检查、planning 收敛、PR 与 preflight。
 
 ## 修改文件
 
@@ -58,7 +60,8 @@
 | Activation recovery durability | capture 恢复成功后才设置 proxy marker；System Proxy 恢复成功前保留 journal；存在 journal 时拒绝新 activation | 通过（静态） |
 | Validator warning continuation | legacy selector warning 保留但不再跳过引用校验；资源级 error 才提前返回 | 通过（静态） |
 | 文档契约 | 六个方法、selector export 拼接/hash、write-only 替换和 per-group 持久化边界已同步；JSON/shell fence 静态解析通过 | 通过（静态） |
-| 8 语言资源 | `plutil -lint`、唯一键、键集、placeholder signature 与 AppLocalization 字面键检查通过；统一工作台英文占位待翻译 | 进行中 |
+| 8 语言资源 | 每语种 2206 个唯一键、键集一致、placeholder signature 一致、AppLocalization 字面键完整；新增自然语言英文占位已清除 | 通过（静态） |
+| 规则摘要 i18n | 卡片摘要的同类 OR / 跨类 AND 连接词改用已有本地化键 | 通过（静态） |
 
 ## 错误与恢复
 
