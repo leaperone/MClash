@@ -20,7 +20,7 @@
 
 ## 进行中
 
-- 合入最新 `origin/main@4fa9621` 后的最终 i18n 翻译、静态复审与 Git 交付收口。
+- 五个非中文 locale 的统一配置工作台翻译与 Git 交付收口。
 
 ## 修改文件
 
@@ -40,23 +40,23 @@
 | PATH 入口静态检查 | 精确 helper link、owner/mode、fd-relative install/remove、8 语言键 | 通过（静态） |
 | 自动化文档示例 | `git diff --check`、JSON/JQ 示例静态解析、DTO 逐字段校对 | 通过（静态） |
 | Configuration 修复分支早期复审 | wire、YAML/name 通过；activation 后续发现补偿缺口并已另行修复 | 已更新 |
-| `git fetch origin main`（最新复核） | `origin/main@4fa9621`，当前分支 behind 2 | 待集成 |
+| `git fetch origin main`（最新复核） | `origin/main@94f1f07`，已成为当前分支祖先 | 通过 |
 | PATH FD/source 审查 | `/Applications` source、ACL、FD-relative destination 与同一 FD 执行位未见 Critical/High | 通过（静态） |
 | Configuration 预算/网关/编译器复审 | source matcher、workspace 引用、1 MiB/4 MiB 预算与 strict shape 已修；等待主分支合入后复核 | 通过（合入前静态） |
 | activation 首次断开补偿 | 主 Core 健康分支、重连与 durable System Proxy 顺序复审无剩余 Critical/High | 通过（静态） |
 | 8 语言资源 | `plutil -lint` 与 locale keyset 一致性通过 | 通过（静态） |
-| 最新主分支 | `origin/main@4fa9621` 已进入当前 merge，冲突已按两侧语义解决 | 进行中 |
-| 最终 Configuration 安全复审 | 发现 snapshot 超帧、selector 工作量、App Routing rollback 与 durable capture 四项 High；正在根因修复 | 未通过 |
-| Selector API | typed condition、完整 selector 投影、strict shape、分层数量/文本/fixed-ID/工作预算已实现 | 待最终静态复核 |
-| Workspace scope | `allEnabled/listed`、`effectiveNodeCount` 与隐式全节点 4,096 上限已实现 | 待最终静态复核 |
-| 规则语义 | source-less Mihomo 规则改用跨类别 AND，保留同类 OR 与既有展开预算 | 待最终静态复核 |
-| 历史 tags | 新导入有界、snapshot 不返回部分集合、旧超限值需先清空 | 待最终静态复核 |
+| 最新主分支 | `origin/main@94f1f07` 已合入，代码 delta 仍以 `4fa9621` 的统一配置工作台为准 | 通过 |
+| 最终 Configuration 安全复审 | API、docs、activation 与不可信输入 trap 交叉审计剩余 0 Critical/High | 通过（静态） |
+| Selector API | typed condition、compact snapshot + 分块导出、strict shape、分层数量/文本/fixed-ID/工作预算已实现 | 通过（静态） |
+| Workspace scope | `allEnabled/listed`、`effectiveNodeCount` 与隐式全节点 4,096 上限已实现 | 通过（静态） |
+| 规则语义 | source-less Mihomo 规则改用跨类别 AND，保留同类 OR 与既有展开预算 | 通过（静态） |
+| 历史 tags | 新导入有界、snapshot 不返回部分集合、旧超限值需先清空 | 通过（静态） |
 | activation cleanup 双失败 | 持久控制面无条件补偿，runtime 恢复仅在确认停净后执行 | 子审计通过（静态） |
 | Selector 可恢复读取 | compact snapshot、byte-chunk export、CAS/SHA-256 与 legacy 省略保留已接线 | 通过（静态） |
 | Snapshot/Selector 预算 | 诊断字节上限、最小分页预留、稳定排序/实际扫描、多遍计权与超限短路已接线 | 通过（静态） |
-| Activation journal | journal 在 disconnect 前写入并记录旧 snapshot ID；启动时只有不同的新成功 snapshot 才视为已提交，否则恢复 capture/unified/System Proxy 意图 | 待最终静态复核 |
-| Activation recovery durability | System Proxy 恢复成功前保留 journal；存在 journal 时拒绝新 activation，避免覆盖旧 rollback baseline | 待最终静态复核 |
-| Validator warning continuation | legacy selector warning 保留但不再跳过引用校验；资源级 error 才提前返回 | 待最终静态复核 |
+| Activation journal | journal 在 disconnect 前写入并记录旧 snapshot ID；启动时只有不同的新成功 snapshot 才视为已提交，否则恢复 capture/unified/System Proxy 意图 | 通过（静态） |
+| Activation recovery durability | capture 恢复成功后才设置 proxy marker；System Proxy 恢复成功前保留 journal；存在 journal 时拒绝新 activation | 通过（静态） |
+| Validator warning continuation | legacy selector warning 保留但不再跳过引用校验；资源级 error 才提前返回 | 通过（静态） |
 | 文档契约 | 六个方法、selector export 拼接/hash、write-only 替换和 per-group 持久化边界已同步；JSON/shell fence 静态解析通过 | 通过（静态） |
 | 8 语言资源 | `plutil -lint`、唯一键、键集、placeholder signature 与 AppLocalization 字面键检查通过；统一工作台英文占位待翻译 | 进行中 |
 
