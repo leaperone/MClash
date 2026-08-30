@@ -250,7 +250,7 @@ private enum CommandLineToolInstallationError: LocalizedError {
             )
         case .unsafeParentDirectory:
             AppLocalization.string(
-                "MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin."
+                "~/.local and ~/.local/bin must be directories owned by you and not writable by other users."
             )
         }
     }

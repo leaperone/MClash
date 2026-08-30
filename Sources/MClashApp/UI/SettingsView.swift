@@ -412,7 +412,7 @@ struct SettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
         } else if commandLineToolStatus == .unsafeParent {
             Label(
-                "MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin.",
+                "~/.local and ~/.local/bin must be directories owned by you and not writable by other users.",
                 systemImage: "exclamationmark.triangle.fill"
             )
             .font(.caption)

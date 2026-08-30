@@ -1938,4 +1938,4 @@
 "~/.local/bin/mclashctl already exists. MClash will not replace it." = "~/.local/bin/mclashctl already exists. MClash will not replace it.";
 "The bundled mclashctl helper is missing or not executable." = "The bundled mclashctl helper is missing or not executable.";
 "MClash only removes a command-line link that points to this copy of the app." = "MClash only removes a command-line link that points to this copy of the app.";
-"MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin." = "MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin.";
+"~/.local and ~/.local/bin must be directories owned by you and not writable by other users." = "~/.local and ~/.local/bin must be directories owned by you and not writable by other users.";

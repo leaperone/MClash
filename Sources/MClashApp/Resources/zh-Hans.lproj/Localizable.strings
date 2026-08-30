@@ -1937,4 +1937,4 @@
 "~/.local/bin/mclashctl already exists. MClash will not replace it." = "~/.local/bin/mclashctl 已存在。MClash 不会替换它。";
 "The bundled mclashctl helper is missing or not executable." = "内置的 mclashctl 辅助工具缺失或不可执行。";
 "MClash only removes a command-line link that points to this copy of the app." = "MClash 只会移除指向当前这份 App 的命令行链接。";
-"MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin." = "如果 ~/.local 或 ~/.local/bin 是文件或符号链接，MClash 不会通过该路径安装。";
+"~/.local and ~/.local/bin must be directories owned by you and not writable by other users." = "~/.local 和 ~/.local/bin 必须是由你所有且其他用户不可写入的目录。";

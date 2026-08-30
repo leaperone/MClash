@@ -1938,4 +1938,4 @@
 "~/.local/bin/mclashctl already exists. MClash will not replace it." = "~/.local/bin/mclashctl이(가) 이미 있습니다. MClash는 이를 대체하지 않습니다.";
 "The bundled mclashctl helper is missing or not executable." = "포함된 mclashctl 도우미가 없거나 실행할 수 없습니다.";
 "MClash only removes a command-line link that points to this copy of the app." = "MClash는 현재 앱을 가리키는 명령줄 링크만 제거합니다.";
-"MClash will not install through a file or symbolic link at ~/.local or ~/.local/bin." = "~/.local 또는 ~/.local/bin이 파일이나 심볼릭 링크이면 MClash는 해당 경로를 통해 설치하지 않습니다.";
+"~/.local and ~/.local/bin must be directories owned by you and not writable by other users." = "~/.local 및 ~/.local/bin은 사용자가 소유하고 다른 사용자가 쓸 수 없는 디렉터리여야 합니다.";
