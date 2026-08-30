@@ -47,3 +47,8 @@
 - `docs/RELEASING.md`
 - `ReleaseNotes/1.4.5.md`
 - `origin/main@00df62e`
+
+## 发布说明收敛
+
+- `ReleaseNotes/1.4.6.md` 只覆盖 PR #37 的 PATH、Unix socket、Configuration API、selector/CAS/recovery、脱敏与八语言本地化变更。
+- 未声称本机安装、设备验收或生产运行时状态。

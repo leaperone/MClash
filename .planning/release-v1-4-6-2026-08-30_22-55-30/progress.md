@@ -10,10 +10,11 @@
 - 已确认最新正式 tag/Release 为 `v1.4.5`，`v1.4.6` 尚不存在。
 - 已核对 release workflow、签名/公证前置条件、完整 ZIP fallback 与最多两个 delta 的生成链。
 - 已确认 PR #37 的用户可见变更范围，准备对应 release notes。
+- 已新增并提交 `ReleaseNotes/1.4.6.md`（commit `2a7168f`），内容边界核对通过。
 
 ## 进行中
 
-- 新增 `ReleaseNotes/1.4.6.md`，随后提交、推送并创建 PR。
+- 提交、推送并创建 PR，随后运行 preflight。
 
 ## 修改文件
 
@@ -29,6 +30,7 @@
 | 发布管道审计 | workflow、release-app、delta/appcast 链已核对 | 通过（静态） |
 | worktree | clean isolated worktree | 通过 |
 | `leaperone-dev-init --check` | 报 `.planning` 未在 `.gitignore` | 预存基线差异，未改无关文件 |
+| release notes | 非空、版本标题与变更范围匹配 | 通过 |
 
 ## 错误与恢复
 
