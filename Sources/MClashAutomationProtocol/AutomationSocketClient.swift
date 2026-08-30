@@ -8,19 +8,22 @@ public struct AutomationSocketClient: Sendable {
     public let expectedSigningIdentifier: String?
     public let expectedTeamIdentifier: String?
     public let expectedExecutablePath: String?
+    public let expectedServerNonce: String?
 
     public init(
         socketPath: String,
         expectedProcessIdentifier: Int32,
         expectedSigningIdentifier: String,
         expectedTeamIdentifier: String?,
-        expectedExecutablePath: String
+        expectedExecutablePath: String,
+        expectedServerNonce: String? = nil
     ) {
         self.socketPath = socketPath
         self.expectedProcessIdentifier = expectedProcessIdentifier
         self.expectedSigningIdentifier = expectedSigningIdentifier
         self.expectedTeamIdentifier = expectedTeamIdentifier
         self.expectedExecutablePath = expectedExecutablePath
+        self.expectedServerNonce = expectedServerNonce
     }
 
     /// Connects without authenticating the server. This is only suitable for
@@ -31,6 +34,7 @@ public struct AutomationSocketClient: Sendable {
         expectedSigningIdentifier = nil
         expectedTeamIdentifier = nil
         expectedExecutablePath = nil
+        expectedServerNonce = nil
     }
 
     public func send(
@@ -170,7 +174,8 @@ public struct AutomationSocketClient: Sendable {
                 method: request.method,
                 phase: .readResponse,
                 outcomeIndeterminate: true,
-                underlyingError: error
+                underlyingError: error,
+                serverInstance: recoveryServerInstance
             )
         } catch {
             throw AutomationSocketRequestError(
@@ -178,10 +183,19 @@ public struct AutomationSocketClient: Sendable {
                 method: request.method,
                 phase: .readResponse,
                 outcomeIndeterminate: true,
-                underlyingError: .protocolFailure(error.localizedDescription)
+                underlyingError: .protocolFailure(error.localizedDescription),
+                serverInstance: recoveryServerInstance
             )
         }
         return response
+    }
+
+    private var recoveryServerInstance: String? {
+        guard let expectedProcessIdentifier,
+              expectedProcessIdentifier > 0,
+              let expectedServerNonce,
+              !expectedServerNonce.isEmpty else { return nil }
+        return "\(expectedProcessIdentifier):\(expectedServerNonce)"
     }
 
     private func verifyServer(descriptor: Int32) throws {
@@ -239,9 +253,26 @@ public struct AutomationSocketRequestError: Error, LocalizedError, Sendable {
     public let phase: AutomationSocketPhase
     public let outcomeIndeterminate: Bool
     public let underlyingError: AutomationSocketError
+    public let serverInstance: String?
+
+    public init(
+        requestID: String,
+        method: String,
+        phase: AutomationSocketPhase,
+        outcomeIndeterminate: Bool,
+        underlyingError: AutomationSocketError,
+        serverInstance: String? = nil
+    ) {
+        self.requestID = requestID
+        self.method = method
+        self.phase = phase
+        self.outcomeIndeterminate = outcomeIndeterminate
+        self.underlyingError = underlyingError
+        self.serverInstance = serverInstance
+    }
 
     public var retryWithSameRequestID: Bool {
-        outcomeIndeterminate && method != "auth.pair"
+        outcomeIndeterminate && method != "auth.pair" && serverInstance != nil
     }
 
     public var errorDescription: String? { underlyingError.localizedDescription }

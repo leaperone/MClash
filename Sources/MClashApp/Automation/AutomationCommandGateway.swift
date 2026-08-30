@@ -36,7 +36,8 @@ final class AutomationCommandGateway {
 
     func execute(
         _ request: AutomationRPCRequest,
-        peer: AutomationPeerIdentity
+        peer: AutomationPeerIdentity,
+        pairingMayCommit: @Sendable () -> Bool = { true }
     ) async -> AutomationRPCResponse {
         var mutationCacheContext: MutationCacheContext?
         do {
@@ -64,7 +65,11 @@ final class AutomationCommandGateway {
                 defer { mutationInProgress = false }
                 return AutomationRPCResponse(
                     id: request.id,
-                    result: try pair(request: request, peer: peer)
+                    result: try pair(
+                        request: request,
+                        peer: peer,
+                        mayCommit: pairingMayCommit
+                    )
                 )
             }
             var authorizedClient: AutomationAuthorizationStore.PublicClient?
@@ -1004,7 +1009,8 @@ final class AutomationCommandGateway {
 
     private func pair(
         request: AutomationRPCRequest,
-        peer: AutomationPeerIdentity
+        peer: AutomationPeerIdentity,
+        mayCommit: @Sendable () -> Bool
     ) throws -> AutomationJSONValue {
         guard peer.teamIdentifier != nil || peer.codeHash != nil else {
             throw GatewayError.untrustedClient
@@ -1071,6 +1077,7 @@ final class AutomationCommandGateway {
         default:
             throw GatewayError.permissionDenied("auth.pair")
         }
+        guard mayCommit() else { throw CancellationError() }
         let issued = try authorizationStore.issue(
             name: name,
             scopes: scopes,
@@ -2547,6 +2554,7 @@ final class AutomationCommandGateway {
     }
 
     private static let inherentlyInteractiveMethods: Set<String> = [
+        "auth.pair",
         "app.update.check",
         "profiles.importInteractive",
         "backup.exportInteractive",

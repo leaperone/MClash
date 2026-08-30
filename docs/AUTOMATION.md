@@ -78,6 +78,8 @@ CLI options:
   Interactive operations automatically receive at least 330 seconds.
 - `--request-id <id>` supplies a stable request ID. Follow the structured
   same-ID/new-ID recovery flags described below.
+- `--server-instance <PID:nonce>` binds same-ID recovery to the server instance
+  reported with an indeterminate response. It requires `--request-id`.
 - `--socket <path>` selects an explicit development socket.
 
 When the CLI launches MClash, it starts it without presenting the main window;
@@ -151,7 +153,8 @@ is rejected. When an error has `retryable: true` and
 new ID to request a new execution. A transport `client_error` prints the
 request ID to stderr. If an error reports `outcomeIndeterminate: true` and
 `retryWithSameRequestID: true`, query again with `--request-id` set to that
-same ID; do not start a duplicate execution. Paged list methods accept `offset` and
+same ID and `--server-instance` set to the reported binding; do not start a
+duplicate execution. Paged list methods accept `offset` and
 `limit` and return `items`, `total`, and `hasMore`. App Routing rule replacement
 also requires the `expectedRevision` returned by the list/status query.
 
@@ -168,19 +171,37 @@ Transport failures use structured JSON on stderr. `phase` is `connect`,
 complete request was written can look like:
 
 ```json
-{"message":"Automation poll failed: Operation timed out","method":"configuration.apply","outcomeIndeterminate":true,"phase":"read_response","requestID":"7f990167-b9aa-44f5-a186-934f143d2be3","retryWithSameRequestID":true,"type":"client_error"}
+{"message":"Automation poll failed: Operation timed out","method":"configuration.apply","outcomeIndeterminate":true,"phase":"read_response","requestID":"7f990167-b9aa-44f5-a186-934f143d2be3","retryWithSameRequestID":true,"serverInstance":"43210:93aa5fc7-b2f2-4ac8-a3f2-c180affc88db","type":"client_error"}
 ```
 
 At `read_response`, MClash may already have executed the request. If
 `retryWithSameRequestID` is true, resend the identical method and parameters
-with that exact request ID to retrieve the cached execution; never generate a
-new ID for that recovery. The outcome and retry flags can also appear in an RPC
-`operation_timeout` error on stdout. If `retryWithNewRequestID` is true instead,
-fix the reported precondition and begin a new execution with a new ID.
+with that exact request ID and the reported server instance to retrieve the
+cached execution:
 
-`auth.pair` is the exception: an indeterminate pairing must not be retried
-automatically or recovered with the same request ID. Start a new pairing request
-only when a user is ready to handle a new local authorization prompt.
+```sh
+mclashctl configuration.apply --params-file proposed.json \
+  --request-id 7f990167-b9aa-44f5-a186-934f143d2be3 \
+  --server-instance 43210:93aa5fc7-b2f2-4ac8-a3f2-c180affc88db \
+  --allow-interaction
+```
+
+The CLI refuses to send if the discovery PID or nonce changed and reports
+`outcomeIndeterminate: true` with `retryWithSameRequestID: false`. Explicit
+`--socket` connections have no trusted discovery binding; both transport errors
+and RPC timeouts omit `serverInstance` and report
+`retryWithSameRequestID: false`. Never generate a new ID for that recovery.
+Reuse the original parameters and interaction flag exactly. An RPC
+`operation_timeout` on stdout also includes `error.data.serverInstance` when
+same-ID recovery is safe; copy that binding into the same option. Without a
+binding it reports `retryWithSameRequestID: false`. If `retryWithNewRequestID`
+is true instead, fix the reported precondition and begin a new execution with a
+new ID.
+
+`auth.pair` is the exception: an indeterminate transport failure must not be
+retried automatically or recovered with the same request ID. If the server
+reports a pairing timeout, no token was issued. Start a new pairing request only
+when a user is ready to handle a new local authorization prompt.
 
 ## Operation families
 

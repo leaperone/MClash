@@ -9,11 +9,22 @@ struct MClashCLI {
 
     static func main() {
         var originalRequestID: String?
+        var expectedServerInstance: String?
         do {
             let invocation = try Invocation(arguments: Array(CommandLine.arguments.dropFirst()))
             let requestID = invocation.requestID ?? UUID().uuidString
             originalRequestID = requestID
+            expectedServerInstance = invocation.serverInstance
             let discovery = try loadDiscovery(invocation: invocation)
+            if let expectedServerInstance {
+                let actualServerInstance = "\(discovery.processIdentifier):\(discovery.nonce)"
+                guard expectedServerInstance == actualServerInstance else {
+                    throw ServerInstanceMismatchError(
+                        expected: expectedServerInstance,
+                        actual: actualServerInstance
+                    )
+                }
+            }
             let client: AutomationSocketClient
             if invocation.socketPath != nil {
                 client = AutomationSocketClient(
@@ -29,7 +40,8 @@ struct MClashCLI {
                     expectedSigningIdentifier: "one.leaper.mclash",
                     expectedTeamIdentifier: AutomationCodeSignature
                         .currentProcessTeamIdentifier(),
-                    expectedExecutablePath: expectedExecutablePath
+                    expectedExecutablePath: expectedExecutablePath,
+                    expectedServerNonce: discovery.nonce
                 )
             }
             var token = invocation.socketPath == nil
@@ -71,7 +83,11 @@ struct MClashCLI {
                       case let .object(pairingResult)? = pairingResponse.result,
                       let pairedToken = pairingResult["token"]?.stringValue else {
                     response = pairingResponse
-                    try printResponse(response, pretty: invocation.pretty)
+                    try printResponse(
+                        response,
+                        pretty: invocation.pretty,
+                        allowSameInstanceRecovery: invocation.socketPath == nil
+                    )
                     Foundation.exit(2)
                 }
                 if invocation.socketPath == nil {
@@ -87,7 +103,11 @@ struct MClashCLI {
                 )
                 response = try client.send(request, timeout: requestTimeout)
             }
-            try printResponse(response, pretty: invocation.pretty)
+            try printResponse(
+                response,
+                pretty: invocation.pretty,
+                allowSameInstanceRecovery: invocation.socketPath == nil
+            )
             if response.error != nil { Foundation.exit(2) }
         } catch InvocationError.help {
             print(Invocation.usage)
@@ -100,19 +120,36 @@ struct MClashCLI {
                 payload["requestID"] = .string(originalRequestID)
             }
             if let requestError = error as? AutomationSocketRequestError {
+                let isRecoveryAttempt = expectedServerInstance != nil
                 payload["requestID"] = .string(requestError.requestID)
                 payload["method"] = .string(requestError.method)
                 payload["phase"] = .string(requestError.phase.rawValue)
                 payload["outcomeIndeterminate"] = .bool(
-                    requestError.outcomeIndeterminate
+                    requestError.outcomeIndeterminate || isRecoveryAttempt
                 )
                 payload["retryWithSameRequestID"] = .bool(
                     requestError.retryWithSameRequestID
                 )
+                if let serverInstance = requestError.serverInstance {
+                    payload["serverInstance"] = .string(serverInstance)
+                } else if let expectedServerInstance {
+                    payload["expectedServerInstance"] = .string(expectedServerInstance)
+                }
                 if let originalRequestID,
                    originalRequestID != requestError.requestID {
                     payload["originalRequestID"] = .string(originalRequestID)
                 }
+            } else if let mismatch = error as? ServerInstanceMismatchError {
+                payload["phase"] = .string(AutomationSocketPhase.verifyServer.rawValue)
+                payload["outcomeIndeterminate"] = .bool(true)
+                payload["retryWithSameRequestID"] = .bool(false)
+                payload["serverInstanceChanged"] = .bool(true)
+                payload["expectedServerInstance"] = .string(mismatch.expected)
+                payload["actualServerInstance"] = .string(mismatch.actual)
+            } else if let expectedServerInstance {
+                payload["outcomeIndeterminate"] = .bool(true)
+                payload["retryWithSameRequestID"] = .bool(false)
+                payload["expectedServerInstance"] = .string(expectedServerInstance)
             }
             if let data = try? JSONEncoder.automation.encode(payload) {
                 FileHandle.standardError.write(data)
@@ -124,14 +161,38 @@ struct MClashCLI {
 
     private static func printResponse(
         _ response: AutomationRPCResponse,
-        pretty: Bool
+        pretty: Bool,
+        allowSameInstanceRecovery: Bool
     ) throws {
-            let encoder = JSONEncoder.automation
-            encoder.outputFormatting = pretty
-                ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-                : [.sortedKeys, .withoutEscapingSlashes]
-            FileHandle.standardOutput.write(try encoder.encode(response))
-            FileHandle.standardOutput.write(Data([0x0A]))
+        let output: AutomationRPCResponse
+        if !allowSameInstanceRecovery,
+           let error = response.error,
+           error.type == "operation_timeout",
+           error.retryable {
+            var data = error.data?.objectValue ?? [:]
+            data["outcomeIndeterminate"] = .bool(true)
+            data["retryWithSameRequestID"] = .bool(false)
+            data.removeValue(forKey: "serverInstance")
+            output = AutomationRPCResponse(
+                id: response.id,
+                error: AutomationRPCError(
+                    code: error.code,
+                    type: error.type,
+                    message: "The MClash operation outcome is indeterminate "
+                        + "and cannot be safely retried through an explicit socket",
+                    retryable: false,
+                    data: .object(data)
+                )
+            )
+        } else {
+            output = response
+        }
+        let encoder = JSONEncoder.automation
+        encoder.outputFormatting = pretty
+            ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            : [.sortedKeys, .withoutEscapingSlashes]
+        FileHandle.standardOutput.write(try encoder.encode(output))
+        FileHandle.standardOutput.write(Data([0x0A]))
     }
 
     private static func requiredScope(
@@ -175,7 +236,7 @@ struct MClashCLI {
         }
         do {
             return try AutomationDiscovery.load()
-        } catch where !invocation.noLaunch {
+        } catch where !invocation.noLaunch && invocation.serverInstance == nil {
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = false
             configuration.arguments = ["--mclash-background"]
@@ -286,6 +347,7 @@ private struct Invocation {
     let socketPath: String?
     let timeout: TimeInterval
     let requestID: String?
+    let serverInstance: String?
 
     static let usage = """
     Usage: mclashctl <method|status|capabilities> [options]
@@ -299,6 +361,7 @@ private struct Invocation {
       --socket <path>         Connect to an explicit Unix socket (development)
       --timeout <seconds>     Request/startup timeout (default: 60)
       --request-id <id>       Stable 1...128-byte ID for safe mutation retries
+      --server-instance <id>  Bind same-ID recovery to the reported PID:nonce
       --help                  Show this help
 
     Examples:
@@ -324,6 +387,7 @@ private struct Invocation {
         var parsedSocketPath: String?
         var parsedTimeout: TimeInterval = 60
         var parsedRequestID: String?
+        var parsedServerInstance: String?
         var parsedParameterSource = false
         var index = 1
         while index < arguments.count {
@@ -393,10 +457,35 @@ private struct Invocation {
                     )
                 }
                 parsedRequestID = value
+            case "--server-instance":
+                index += 1
+                guard index < arguments.count else {
+                    throw CLIError.invalidArguments("--server-instance requires PID:nonce")
+                }
+                let value = arguments[index]
+                let parts = value.split(
+                    separator: ":",
+                    maxSplits: 1,
+                    omittingEmptySubsequences: false
+                )
+                guard parts.count == 2,
+                      let processIdentifier = Int32(parts[0]),
+                      processIdentifier > 0,
+                      !parts[1].isEmpty,
+                      parts[1].utf8.count <= 128 else {
+                    throw CLIError.invalidArguments("--server-instance must be PID:nonce")
+                }
+                parsedServerInstance = value
             default:
                 throw CLIError.invalidArguments("Unknown option: \(arguments[index])")
             }
             index += 1
+        }
+        if parsedServerInstance != nil, parsedRequestID == nil {
+            throw CLIError.invalidArguments("--server-instance requires --request-id")
+        }
+        if parsedServerInstance != nil, parsedSocketPath != nil {
+            throw CLIError.invalidArguments("--server-instance cannot be used with --socket")
         }
         parameters = parsedParameters
         allowInteraction = parsedAllowInteraction
@@ -405,6 +494,7 @@ private struct Invocation {
         socketPath = parsedSocketPath
         timeout = parsedTimeout
         requestID = parsedRequestID
+        serverInstance = parsedServerInstance
     }
 
     private static func readBounded(_ file: FileHandle) throws -> Data {
@@ -439,6 +529,15 @@ private struct Invocation {
             "backup.restoreInteractive",
             "app.update.check",
         ].contains(method)
+    }
+}
+
+private struct ServerInstanceMismatchError: Error, LocalizedError {
+    let expected: String
+    let actual: String
+
+    var errorDescription: String? {
+        "MClash restarted; the reported server instance no longer matches."
     }
 }
 
