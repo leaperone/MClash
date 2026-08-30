@@ -444,9 +444,12 @@ public enum ConfigurationValidator {
             selectorFixedNodeIDTotal > ConfigurationAutomationLimits.selectorFixedNodeIDsPerDocument,
             "proxyGroups.memberSelectors.fixedNodeIDs"
         )
+        let referencedRuleIDs = Set(document.workspaces.flatMap { $0.ruleIDs })
         for rule in document.rules {
             appendLimit(
-                rule.matchers.count > ConfigurationAutomationLimits.ruleMatchers,
+                rule.enabled
+                    && referencedRuleIDs.contains(rule.id)
+                    && rule.matchers.count > ConfigurationAutomationLimits.ruleMatchers,
                 "rules.\(rule.id.rawValue.uuidString.lowercased()).matchers"
             )
         }
@@ -688,7 +691,12 @@ public enum ConfigurationValidator {
             selectorOperations = updated
         }
         for rule in rules {
-            appendLimit(rule.matchers.count > ConfigurationAutomationLimits.ruleMatchers, String(describing: rule.id.rawValue))
+            appendLimit(
+                workspace.ruleIDs.contains(rule.id)
+                    && rule.enabled
+                    && rule.matchers.count > ConfigurationAutomationLimits.ruleMatchers,
+                String(describing: rule.id.rawValue)
+            )
         }
         for ruleSet in ruleSets {
             appendLimit(ruleSet.rules.count > ConfigurationAutomationLimits.ruleSetRules, String(describing: ruleSet.id.rawValue))

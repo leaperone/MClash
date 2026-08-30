@@ -503,11 +503,13 @@ struct ConfigurationAutomationRule: Codable, Equatable, Sendable {
     }
 
     func applying(to existing: RoutingRule?) throws -> RoutingRule {
-        try requireAutomationCount(
-            matchersUpdate?.count ?? existing?.matchers.count ?? 0,
-            maximum: ConfigurationAutomationLimits.ruleMatchers,
-            field: "rules.matchersUpdate"
-        )
+        if let matchersUpdate {
+            try requireAutomationCount(
+                matchersUpdate.count,
+                maximum: ConfigurationAutomationLimits.ruleMatchers,
+                field: "rules.matchersUpdate"
+            )
+        }
         return RoutingRule(
             id: RoutingRuleID(rawValue: try automationUUID(id, field: "rules.id")),
             enabled: enabled,
