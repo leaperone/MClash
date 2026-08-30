@@ -271,19 +271,22 @@ final class AutomationSocketServer: @unchecked Sendable {
         }
         guard semaphore.wait(timeout: .now() + 300) == .success,
               let response = box.response else {
+            let pairingTimedOut = request.method == "auth.pair"
             return AutomationRPCResponse(
                 id: request.id,
-                    error: AutomationRPCError(
-                        code: -32001,
-                        type: "operation_timeout",
-                        message: "The MClash operation is still running or its outcome is indeterminate; query the same execution with the same request id",
-                        retryable: true,
-                        data: .object([
-                            "outcomeIndeterminate": .bool(true),
-                            "retryWithSameRequestID": .bool(true),
-                        ])
-                    )
+                error: AutomationRPCError(
+                    code: -32001,
+                    type: "operation_timeout",
+                    message: pairingTimedOut
+                        ? "The pairing outcome is indeterminate and cannot be recovered with the same request id; start a new pairing request"
+                        : "The MClash operation is still running or its outcome is indeterminate; query the same execution with the same request id",
+                    retryable: !pairingTimedOut,
+                    data: .object([
+                        "outcomeIndeterminate": .bool(true),
+                        "retryWithSameRequestID": .bool(!pairingTimedOut),
+                    ])
                 )
+            )
         }
         return response
     }

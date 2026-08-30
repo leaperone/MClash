@@ -509,7 +509,10 @@ private func waitForSocket(
         )
         var pollDescriptor = pollfd(fd: descriptor, events: events, revents: 0)
         let result = poll(&pollDescriptor, 1, Int32(max(1, milliseconds)))
-        if result > 0 { return }
+        if result > 0 {
+            try ensureAutomationDeadline(deadline)
+            return
+        }
         if result == 0 {
             throw AutomationSocketError.systemCall("poll", ETIMEDOUT)
         }

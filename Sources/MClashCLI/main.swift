@@ -5,11 +5,14 @@ import Security
 
 @main
 struct MClashCLI {
-    private static let interactiveRequestTimeout: TimeInterval = 315
+    private static let interactiveRequestTimeout: TimeInterval = 330
 
     static func main() {
+        var originalRequestID: String?
         do {
             let invocation = try Invocation(arguments: Array(CommandLine.arguments.dropFirst()))
+            let requestID = invocation.requestID ?? UUID().uuidString
+            originalRequestID = requestID
             let discovery = try loadDiscovery(invocation: invocation)
             let client: AutomationSocketClient
             if invocation.socketPath != nil {
@@ -29,7 +32,6 @@ struct MClashCLI {
                     expectedExecutablePath: expectedExecutablePath
                 )
             }
-            let requestID = invocation.requestID ?? UUID().uuidString
             var token = invocation.socketPath == nil
                 ? try? AutomationTokenKeychain.load()
                 : nil
@@ -94,8 +96,12 @@ struct MClashCLI {
                 "type": .string("client_error"),
                 "message": .string(error.localizedDescription),
             ]
+            if let originalRequestID {
+                payload["requestID"] = .string(originalRequestID)
+            }
             if let requestError = error as? AutomationSocketRequestError {
                 payload["requestID"] = .string(requestError.requestID)
+                payload["method"] = .string(requestError.method)
                 payload["phase"] = .string(requestError.phase.rawValue)
                 payload["outcomeIndeterminate"] = .bool(
                     requestError.outcomeIndeterminate
@@ -103,6 +109,10 @@ struct MClashCLI {
                 payload["retryWithSameRequestID"] = .bool(
                     requestError.retryWithSameRequestID
                 )
+                if let originalRequestID,
+                   originalRequestID != requestError.requestID {
+                    payload["originalRequestID"] = .string(originalRequestID)
+                }
             }
             if let data = try? JSONEncoder.automation.encode(payload) {
                 FileHandle.standardError.write(data)
