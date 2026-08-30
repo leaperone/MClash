@@ -17,7 +17,8 @@
 - [x] Protect source refreshes from partial/unsupported parses, preserve nodes on read failure, and de-duplicate synchronization diagnostics.
 - [x] Make the workbench inspector adaptive at compact widths and keep filter/search copy localized.
 - [x] Re-run final typecheck, direct tests and integration smoke for this follow-up.
-- [ ] Perform real-window macOS acceptance before a new release (not available in this CLI session).
+- [ ] Perform real-window macOS acceptance in a manual macOS session (not available in this CLI session).
+- [x] Publish `v1.4.5` from the verified commit and confirm the public assets/checksums.
 
 ## Verification evidence
 
@@ -47,3 +48,10 @@
 - `./scripts/integration-test.sh`: passed; mihomo core supervisor, dual-profile AppModel, HTTP/SOCKS/runtime-listener, crash-recovery, system-proxy read and controller API smoke scenarios passed.
 - `git diff --check` and all eight `Localizable.strings` `plutil -lint` checks passed.
 - No signed app/package or real interactive window acceptance was performed in this CLI session; a new release remains intentionally out of scope until that gate is run.
+
+## Published release evidence
+
+- Tag `v1.4.5` and `origin/main` point to `4fa9621fe849d7c0258801395d38f290d0d0bc1a` (annotated tag object peels to that commit).
+- GitHub Actions Release run `33306910186` / run number `58` completed successfully: verify `22m48s`, sign/notarize/publish `7m50s`.
+- Public release: https://github.com/leaperone/MClash/releases/tag/v1.4.5 (non-draft, non-prerelease, latest).
+- Eight published assets downloaded successfully; every entry in `SHA256SUMS` verified, and the downloaded ZIP app passed deep strict codesign verification with version `1.4.5`, build `58`.
