@@ -339,18 +339,40 @@ public enum ConfigurationValidator {
                 group.members.count > ConfigurationAutomationLimits.groupMembers,
                 "proxyGroups.\(group.id.rawValue.uuidString.lowercased()).members"
             )
+            if group.enabled, group.type == .relay {
+                result.append(.init(severity: .error, code: "unsupported_relay_group", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Relay proxy groups are not supported by the bundled Mihomo core.")))
+            }
         }
         for rule in document.rules {
             appendLimit(
                 rule.matchers.count > ConfigurationAutomationLimits.ruleMatchers,
                 "rules.\(rule.id.rawValue.uuidString.lowercased()).matchers"
             )
+            let counts = matcherCategoryCounts(rule)
+            if [counts.destinations, counts.ports, counts.transports]
+                .filter({ $0 > 0 }).count > 1 {
+                result.append(.init(severity: .error, code: "unsupported_rule_matcher_combination", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("A routing rule cannot combine destination, port, and transport matchers.")))
+            }
         }
         for ruleSet in document.ruleSets {
             appendLimit(
                 ruleSet.rules.count > ConfigurationAutomationLimits.ruleSetRules,
                 "ruleSets.\(ruleSet.id.rawValue.uuidString.lowercased()).rules"
             )
+            for rawRule in ruleSet.rules {
+                let trimmed = rawRule.trimmingCharacters(in: .whitespacesAndNewlines)
+                let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
+                let allowedTypes = ["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "IP-CIDR6"]
+                let validTypedRule = parts.count == 2
+                    && allowedTypes.contains(String(parts[0]))
+                    && !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if trimmed.isEmpty
+                    || trimmed.contains(where: { $0 == "\n" || $0 == "\r" })
+                    || (trimmed.contains(",") && !validTypedRule) {
+                    result.append(.init(severity: .error, code: "invalid_ruleset_rule", subject: String(describing: ruleSet.id.rawValue), message: AppLocalization.string("Rule set contains an invalid rule entry.")))
+                    break
+                }
+            }
         }
         for dns in document.dnsPolicies {
             let subject = "dnsPolicies.\(dns.id.rawValue.uuidString.lowercased())"
@@ -372,6 +394,14 @@ public enum ConfigurationValidator {
                 workspace.nodeIDs.count > ConfigurationAutomationLimits.workspaceNodeIDs,
                 "workspaces.\(workspace.id.rawValue.uuidString.lowercased()).nodeIDs"
             )
+        }
+        for entrance in document.entrances {
+            if entrance.workspaceOverride != nil {
+                result.append(.init(severity: .error, code: "unsupported_entrance_workspace_override", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("Entrance workspace overrides are not supported.")))
+            }
+            if entrance.enabled, entrance.kind == .tun {
+                result.append(.init(severity: .error, code: "unsupported_tun_entrance", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("TUN entrances are not supported.")))
+            }
         }
         guard result.isEmpty else { return sorted(result) }
 
@@ -606,12 +636,18 @@ public enum ConfigurationValidator {
         }
         result.depthExceeded = result.depthExceeded
             || depth + result.maxDepth - 1 > ConfigurationAutomationLimits.groupDepth
-        if result.depthExceeded {
-            states[id] = nil
-        } else {
-            states[id] = .visited
-            memo[id] = result
-        }
+        result.maxDepth = min(
+            result.depthExceeded
+                ? ConfigurationAutomationLimits.groupDepth + 1
+                : result.maxDepth,
+            ConfigurationAutomationLimits.groupDepth + 1
+        )
+        states[id] = .visited
+        memo[id] = GroupTraversalResult(
+            hasCycle: result.hasCycle,
+            depthExceeded: false,
+            maxDepth: result.maxDepth
+        )
         return result
     }
 }
