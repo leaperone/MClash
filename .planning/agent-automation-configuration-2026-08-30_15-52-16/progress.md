@@ -2,7 +2,7 @@
 
 - 任务 ID：`agent-automation-configuration-2026-08-30_15-52-16`
 - 创建时间：`2026-08-30_15-52-16`
-- 当前状态：`in_progress`
+- 当前状态：`ready_for_preflight`
 
 ## 已完成
 
@@ -22,7 +22,7 @@
 
 ## 进行中
 
-- 最终静态检查、planning 收敛、PR 与 preflight。
+- push、创建 PR 并进入 preflight；构建与测试结果尚未产生。
 
 ## 修改文件
 
@@ -62,6 +62,8 @@
 | 文档契约 | 六个方法、selector export 拼接/hash、write-only 替换和 per-group 持久化边界已同步；JSON/shell fence 静态解析通过 | 通过（静态） |
 | 8 语言资源 | 每语种 2206 个唯一键、键集一致、placeholder signature 一致、AppLocalization 字面键完整；新增自然语言英文占位已清除 | 通过（静态） |
 | 规则摘要 i18n | 卡片摘要的同类 OR / 跨类 AND 连接词改用已有本地化键 | 通过（静态） |
+| locale 临时 worktree | 五个单语言分支成为任务分支祖先后，worktree 与本地分支均按安全规则删除 | 通过 |
+| 编译 / 测试 / UI 手测 | preflight 前按项目约束未执行；UI 手测不在本任务授权范围 | 待 preflight / 未执行 |
 
 ## 错误与恢复
 
