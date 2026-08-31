@@ -321,12 +321,20 @@ struct ConfigurationOrchestrationTests {
               path: /ws/path
               headers:
                 Host: ws.example.com
+          - name: Reality node with quoted numeric short ID
+            type: vless
+            server: quoted-reality.example.com
+            port: 443
+            uuid: second-account
+            reality-opts:
+              public-key: another/key
+              short-id: '20'
         """
         let report = NodeOnlyImporter().importNodes(
             sourceID: sourceID,
             yaml: Data(yaml.utf8)
         )
-        #expect(report.nodes.count == 2)
+        #expect(report.nodes.count == 3)
         #expect(report.nodes.allSatisfy { node in
             node.parameters["reality-opts"]?.hasPrefix("{") == true
                 || node.parameters["ws-opts"]?.hasPrefix("{") == true
@@ -340,6 +348,7 @@ struct ConfigurationOrchestrationTests {
         #expect(output.contains("ws-opts: {"))
         #expect(output.contains("\"headers\": {"))
         #expect(output.contains("\"short-id\": 0123"))
+        #expect(output.contains("\"short-id\": \"20\""))
         #expect(!output.contains(#"reality-opts: "{""#))
         #expect(!output.contains(#"ws-opts: "{""#))
         #expect(!output.contains("\\/"))

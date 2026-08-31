@@ -189,29 +189,84 @@ struct ConfigurationNodesView: View {
 struct ConfigurationProxyGroupsView: View {
     @Bindable var model: AppModel
     @State private var editRequest: ConfigurationEditRequest?
+    @State private var showsPresetConfirmation = false
     var body: some View {
-        ConfigurationWorkbench(
-            title: AppLocalization.string("Node Groups"),
-            sections: [.proxyGroups],
-            items: model.configurationWorkbenchItems,
-            onAdd: { _ in
-                editRequest = ConfigurationEditRequest(
-                    section: .proxyGroups,
-                    itemID: UUID(),
-                    isNew: true
-                )
-            },
-            statusMessage: model.configurationStatusMessage,
-            onToggleEnabled: { section, id in
-                Task {
-                    do { try await model.toggleConfigurationEnabled(section: section, id: id) }
-                    catch { model.errorMessage = error.localizedDescription }
-                }
-            },
-            onEdit: { section, id in editRequest = ConfigurationEditRequest(section: section, itemID: id) }
-        )
+        VStack(alignment: .leading, spacing: 0) {
+            commonStrategyGroups
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, MClashLayout.compactPagePadding)
+            Divider()
+            ConfigurationWorkbench(
+                title: AppLocalization.string("Node Groups"),
+                sections: [.proxyGroups],
+                items: model.configurationWorkbenchItems,
+                onAdd: { _ in
+                    editRequest = ConfigurationEditRequest(
+                        section: .proxyGroups,
+                        itemID: UUID(),
+                        isNew: true
+                    )
+                },
+                statusMessage: model.configurationStatusMessage,
+                onToggleEnabled: { section, id in
+                    Task {
+                        do { try await model.toggleConfigurationEnabled(section: section, id: id) }
+                        catch { model.errorMessage = error.localizedDescription }
+                    }
+                },
+                onEdit: { section, id in editRequest = ConfigurationEditRequest(section: section, itemID: id) }
+            )
+        }
         .sheet(item: $editRequest) { request in
             ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)
+        }
+        .alert(
+            AppLocalization.string("Add common strategy groups?"),
+            isPresented: $showsPresetConfirmation
+        ) {
+            Button(AppLocalization.string("Cancel"), role: .cancel) {}
+            Button(AppLocalization.string("Add Groups")) {
+                Task {
+                    do { try await model.installCommonProxyGroupPreset() }
+                    catch { model.errorMessage = error.localizedDescription }
+                }
+            }
+        } message: {
+            Text(AppLocalization.string("This adds regional, automatic, manual, failover and direct groups. Proxy rules in the current configuration will point to Node Selection."))
+        }
+    }
+
+    private var commonPresetInstalled: Bool {
+        model.configurationDocument.proxyGroups.contains {
+            $0.name == ConfigurationProxyGroupPreset.mainGroupName
+        }
+    }
+
+    private var commonStrategyGroups: some View {
+        HStack(spacing: MClashLayout.controlSpacing) {
+            Image(systemName: commonPresetInstalled ? "checkmark.circle.fill" : "point.3.filled.connected.trianglepath.dotted")
+                .font(.title3)
+                .foregroundStyle(commonPresetInstalled ? Color.green : Color.accentColor)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(AppLocalization.string("Common strategy groups"))
+                    .font(.headline)
+                Text(AppLocalization.string("Rules use Node Selection; regional groups follow subscription refreshes automatically."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: MClashLayout.compactSpacing)
+            if commonPresetInstalled {
+                Text(AppLocalization.string("Added"))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                Button(AppLocalization.string("Add Groups")) {
+                    showsPresetConfirmation = true
+                }
+                .buttonStyle(.borderedProminent)
+            }
         }
     }
 }

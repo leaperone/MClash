@@ -10,6 +10,9 @@ struct ConfigurationCompilerMihomoSmoke {
         guard let corePath = ProcessInfo.processInfo.environment["MCLASH_TEST_CORE"] else {
             throw SmokeFailure.corePathMissing
         }
+        guard let geoDataPath = ProcessInfo.processInfo.environment["MCLASH_TEST_GEODATA"] else {
+            throw SmokeFailure.geoDataPathMissing
+        }
 
         let source = Source(kind: .subscription, displayName: "Smoke subscription")
         let reality = try Node(
@@ -48,11 +51,24 @@ struct ConfigurationCompilerMihomoSmoke {
             parameters: ["cipher": "aes-128-gcm", "password": "smoke-password"],
             sourceLinks: [source.id]
         )
+        let regional = ProxyGroup(
+            name: "US Priority",
+            type: .fallback,
+            memberSelectors: [NodeSelector(name: "US", include: [.hostContains("us")])]
+        )
+        let automatic = ProxyGroup(
+            name: "Automatic",
+            type: .urlTest,
+            members: [.node(fallback.id)]
+        )
         let group = ProxyGroup(
             name: "Smoke Select",
             type: .select,
-            members: [.node(fallback.id)],
-            memberSelectors: [NodeSelector(name: "US", include: [.hostContains("us")])]
+            members: [
+                .group(regional.id),
+                .group(automatic.id),
+                .node(fallback.id),
+            ]
         )
         let dns = DNSPolicy(
             name: "Smoke DNS",
@@ -83,7 +99,7 @@ struct ConfigurationCompilerMihomoSmoke {
         )
         let workspace = Workspace(
             name: "Smoke workspace",
-            proxyGroupIDs: [group.id],
+            proxyGroupIDs: [group.id, regional.id, automatic.id],
             ruleIDs: [domainRule.id, appRule.id],
             dnsPolicyID: dns.id,
             entranceIDs: [http.id, socks.id, appRouting.id]
@@ -91,7 +107,7 @@ struct ConfigurationCompilerMihomoSmoke {
         let document = ConfigurationDocument(
             sources: [source],
             nodes: [reality, webSocket, fallback],
-            proxyGroups: [group],
+            proxyGroups: [group, regional, automatic],
             rules: [domainRule, appRule],
             dnsPolicies: [dns],
             entrances: [http, socks, appRouting],
@@ -105,6 +121,7 @@ struct ConfigurationCompilerMihomoSmoke {
             "port: 18080", "socks-port: 18081", "reality-opts",
             "ws-opts", "DOMAIN-WILDCARD,*.example.com", "AND,((DOMAIN-WILDCARD",
             "IP-CIDR,192.0.2.0/24", "nameserver-policy", "MATCH,Smoke Select",
+            "name: \"US Priority\"", "type: fallback", "type: url-test",
         ] where !yaml.contains(required) {
             throw SmokeFailure.missingOutput(required)
         }
@@ -119,6 +136,12 @@ struct ConfigurationCompilerMihomoSmoke {
             .appending(path: "mclash-compiler-smoke-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        for fileName in ["geoip.metadb", "GeoIP.dat", "GeoSite.dat", "ASN.mmdb"] {
+            try FileManager.default.copyItem(
+                at: URL(filePath: geoDataPath).appending(path: fileName),
+                to: root.appending(path: fileName)
+            )
+        }
         let configURL = root.appendingPathComponent("config.yaml")
         try compiled.yaml.write(to: configURL, options: .atomic)
 
@@ -140,6 +163,7 @@ struct ConfigurationCompilerMihomoSmoke {
 
 private enum SmokeFailure: Error, CustomStringConvertible {
     case corePathMissing
+    case geoDataPathMissing
     case missingOutput(String)
     case appRoutingNotBridged
     case invalidYAMLSlashEscape
@@ -148,6 +172,7 @@ private enum SmokeFailure: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .corePathMissing: return "MCLASH_TEST_CORE is required"
+        case .geoDataPathMissing: return "MCLASH_TEST_GEODATA is required"
         case let .missingOutput(value): return "compiled YAML is missing \(value)"
         case .appRoutingNotBridged: return "App Routing was not bridged to capture rules"
         case .invalidYAMLSlashEscape: return "compiled YAML contains an invalid \\/ escape"

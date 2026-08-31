@@ -2181,6 +2181,25 @@ final class AppModel {
         try await persistConfigurationDocument(document)
     }
 
+    @discardableResult
+    func installCommonProxyGroupPreset() async throws -> ConfigurationProxyGroupPreset.Result {
+        guard begin(.changeRuntimeSettings) else { throw CancellationError() }
+        defer { end(.changeRuntimeSettings) }
+        let result = try ConfigurationProxyGroupPreset.apply(
+            to: configurationDocument
+        )
+        // The preset is a convenience authoring operation, not a validation
+        // bypass. Prove the complete active workspace before saving it.
+        for workspace in result.document.workspaces {
+            _ = try ConfigurationCompiler().compile(
+                document: result.document,
+                workspaceID: workspace.id
+            )
+        }
+        try await persistConfigurationDocument(result.document)
+        return result
+    }
+
     func configurationAutomationSnapshot(
         nodeOffset: Int = 0,
         nodeLimit: Int = 100,

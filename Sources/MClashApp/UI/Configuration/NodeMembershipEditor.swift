@@ -58,14 +58,10 @@ struct NodeMembershipEditor: View {
         return candidates.filter { selector.matchesForPreview($0) }.sorted(by: stableNodeOrder)
     }
 
-    private var activeFixedIDs: Set<NodeID> {
-        Set(activeSelector?.fixedNodeIDs ?? [])
-    }
-
     private var fixedNodes: [Node] {
         let query = fixedSearch.trimmed
         return nodes.filter { node in
-            activeFixedIDs.contains(node.id)
+            selectedNodeIDs.contains(node.id)
                 && (query.isEmpty
                     || (node.userAlias ?? node.displayName).localizedCaseInsensitiveContains(query)
                     || node.host.localizedCaseInsensitiveContains(query)
@@ -76,14 +72,17 @@ struct NodeMembershipEditor: View {
     private var availableLibraryNodes: [Node] {
         let query = librarySearch.trimmed
         guard !query.isEmpty else { return [] }
-        let pinned = Set(selectors.flatMap(\.fixedNodeIDs))
         return nodes.filter { node in
-            !pinned.contains(node.id)
+            !selectedNodeIDs.contains(node.id)
                 && ((node.userAlias ?? node.displayName).localizedCaseInsensitiveContains(query)
                     || node.host.localizedCaseInsensitiveContains(query)
                     || node.proto.rawValue.localizedCaseInsensitiveContains(query)
                     || node.tags.contains { $0.localizedCaseInsensitiveContains(query) })
         }.sorted(by: stableNodeOrder)
+    }
+
+    private var remainingFixedNodeCapacity: Int {
+        max(0, ConfigurationAutomationLimits.groupMembers - selectedNodeIDs.count)
     }
 
     var body: some View {
@@ -134,7 +133,6 @@ struct NodeMembershipEditor: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                     Button(AppLocalization.string("Pin a fixed node")) {
-                        addSelector()
                         librarySearchFocused = true
                     }
                     .buttonStyle(.bordered)
@@ -150,7 +148,12 @@ struct NodeMembershipEditor: View {
                                 HStack(spacing: 5) {
                                     Image(systemName: selector.id == activeSelectorID ? "checkmark.circle.fill" : "line.3.horizontal.decrease.circle")
                                     Text(selector.name)
-                                    Text(AppLocalization.number(selector.fixedNodeIDs.count))
+                                    Text(
+                                        AppLocalization.format(
+                                            "%d matches",
+                                            selectorMatchCount(selector)
+                                        )
+                                    )
                                         .font(.caption2.monospacedDigit())
                                         .foregroundStyle(.secondary)
                                 }
@@ -264,33 +267,37 @@ struct NodeMembershipEditor: View {
                 Text(AppLocalization.string("No include condition means all enabled nodes. Add a condition to narrow the match."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if !matchedNodes.isEmpty {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 3) {
-                            ForEach(matchedNodes) { node in
-                                nodeRow(node, selected: activeFixedIDs.contains(node.id))
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 150)
-                    .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                }
             } else if matchedNodes.isEmpty {
                 Label(AppLocalization.string("No nodes match these conditions"), systemImage: "magnifyingglass")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
+                Text(AppLocalization.format("%@ nodes match; automatic membership updates on refresh.", AppLocalization.number(matchedNodes.count)))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) {
-                        ForEach(matchedNodes) { node in
-                            nodeRow(node, selected: activeFixedIDs.contains(node.id))
+                        ForEach(matchedNodes.prefix(100)) { node in
+                            nodeRow(
+                                node,
+                                symbol: selectedNodeIDs.contains(node.id)
+                                    ? "pin.fill"
+                                    : "wand.and.stars",
+                                tint: selectedNodeIDs.contains(node.id)
+                                    ? Color.accentColor
+                                    : Color.secondary
+                            )
                         }
                     }
                 }
                 .frame(maxHeight: 150)
                 .padding(8)
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                if matchedNodes.count > 100 {
+                    Text(AppLocalization.string("Showing the first 100 matches. Refine your search."))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -301,11 +308,11 @@ struct NodeMembershipEditor: View {
                 Label(AppLocalization.string("Fixed nodes"), systemImage: "pin")
                     .font(.headline)
                 Spacer()
-                Text(AppLocalization.format("%d pinned", activeFixedIDs.count))
+                Text(AppLocalization.format("%d pinned", selectedNodeIDs.count))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            let missingFixedCount = activeFixedIDs.subtracting(Set(nodes.map(\.id))).count
+            let missingFixedCount = selectedNodeIDs.subtracting(Set(nodes.map(\.id))).count
             if missingFixedCount > 0 {
                 Label(
                     AppLocalization.format("%d pinned nodes are unavailable after the last source refresh.", missingFixedCount),
@@ -315,54 +322,105 @@ struct NodeMembershipEditor: View {
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
             }
-            if activeSelectorID == nil {
-                Text(AppLocalization.string("Add a selector before pinning a node. Pins are attached to the selected selector and never replaced silently."))
+            Text(AppLocalization.string("Fixed nodes stay in this group until you remove them. They do not depend on automatic conditions."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField(AppLocalization.string("Search pinned nodes"), text: $fixedSearch)
+                .textFieldStyle(.roundedBorder)
+            if fixedNodes.isEmpty {
+                Text(AppLocalization.string("No fixed nodes yet."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                TextField(AppLocalization.string("Search pinned nodes"), text: $fixedSearch)
-                    .textFieldStyle(.roundedBorder)
-                if fixedNodes.isEmpty {
-                    Text(AppLocalization.string("No pinned nodes for this selector."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
+                ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         ForEach(fixedNodes) { node in
-                            nodeRow(node, selected: true)
-                                .contentShape(Rectangle())
-                                .onTapGesture { togglePin(node.id, pinned: false) }
+                            Button {
+                                togglePin(node.id, pinned: false)
+                            } label: {
+                                nodeRow(
+                                    node,
+                                    symbol: "pin.fill",
+                                    tint: Color.accentColor
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint(
+                                AppLocalization.string("Remove this fixed node")
+                            )
                         }
                     }
                 }
-                TextField(AppLocalization.string("Search node library to pin a node"), text: $librarySearch)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($librarySearchFocused)
-                if !availableLibraryNodes.isEmpty {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 3) {
-                            ForEach(availableLibraryNodes.prefix(100)) { node in
-                                nodeRow(node, selected: false)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { togglePin(node.id, pinned: true) }
+                .frame(maxHeight: 160)
+            }
+            TextField(AppLocalization.string("Search node library to pin a node"), text: $librarySearch)
+                .textFieldStyle(.roundedBorder)
+                .focused($librarySearchFocused)
+            if !availableLibraryNodes.isEmpty {
+                HStack {
+                    Text(AppLocalization.format("%@ matching nodes", AppLocalization.number(availableLibraryNodes.count)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    let pinCount = min(
+                        availableLibraryNodes.count,
+                        remainingFixedNodeCapacity
+                    )
+                    Button(AppLocalization.format("Pin all %@", AppLocalization.number(pinCount))) {
+                        pinAvailableNodes()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(pinCount == 0)
+                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 3) {
+                        ForEach(availableLibraryNodes.prefix(100)) { node in
+                            Button {
+                                togglePin(node.id, pinned: true)
+                            } label: {
+                                nodeRow(
+                                    node,
+                                    symbol: "plus.circle",
+                                    tint: Color.secondary
+                                )
                             }
+                            .buttonStyle(.plain)
+                            .disabled(remainingFixedNodeCapacity == 0)
+                            .accessibilityHint(
+                                AppLocalization.string("Add this fixed node")
+                            )
                         }
                     }
-                    .frame(maxHeight: 130)
-                    if availableLibraryNodes.count > 100 {
-                        Text(AppLocalization.string("Showing the first 100 matches. Refine your search."))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                }
+                .frame(maxHeight: 130)
+                if availableLibraryNodes.count > remainingFixedNodeCapacity {
+                    Text(
+                        AppLocalization.format(
+                            "Only %@ more fixed nodes can be added to this group.",
+                            AppLocalization.number(remainingFixedNodeCapacity)
+                        )
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                }
+                if availableLibraryNodes.count > 100 {
+                    Text(AppLocalization.string("Showing the first 100 matches. Refine your search."))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
     }
 
-    private func nodeRow(_ node: Node, selected: Bool) -> some View {
+    private func nodeRow(
+        _ node: Node,
+        symbol: String,
+        tint: Color
+    ) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: selected ? "checkmark.circle.fill" : "plus.circle")
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            Image(systemName: symbol)
+                .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text(node.userAlias ?? node.displayName).lineLimit(1)
                 Text(AppLocalization.format("%@ · %@:%d", node.proto.rawValue.uppercased(), node.host, node.port))
@@ -408,36 +466,18 @@ struct NodeMembershipEditor: View {
                 : selectorName.trimmed,
             include: include,
             exclude: exclude,
-            fixedNodeIDs: activeSelector?.fixedNodeIDs ?? []
+            fixedNodeIDs: []
         )
     }
 
     private func prepare() {
         isLoading = true
-        if selectors.isEmpty {
-            if !selectedNodeIDs.isEmpty {
-                let selector = NodeSelector(name: AppLocalization.string("Pinned nodes"), fixedNodeIDs: selectedNodeIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString })
-                selectors = [selector]
-            }
-        } else {
-            // Older manifests stored fixed node members in `members` rather
-            // than selector.fixedNodeIDs. Fold those durable pins into the
-            // first selector so opening and saving the editor cannot lose them.
-            let selectorPins = Set(selectors.flatMap(\.fixedNodeIDs))
-            let legacyPins = selectedNodeIDs.subtracting(selectorPins)
-            guard !legacyPins.isEmpty else {
-                activeSelectorID = selectors.first?.id
-                loadActiveSelector()
-                isLoading = false
-                return
-            }
-            let firstID = selectors[0].id
-            if let index = selectors.firstIndex(where: { $0.id == firstID }) {
-                let existing = Set(selectors[index].fixedNodeIDs)
-                selectors[index].fixedNodeIDs = existing
-                    .union(legacyPins)
-                    .sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
-            }
+        // v1.4's first editor attached durable pins to a selector. Fold those
+        // pins into explicit group members once so fixed and automatic
+        // membership are independent concepts in both the UI and the model.
+        selectedNodeIDs.formUnion(selectors.flatMap(\.fixedNodeIDs))
+        for index in selectors.indices where !selectors[index].fixedNodeIDs.isEmpty {
+            selectors[index].fixedNodeIDs = []
         }
         activeSelectorID = selectors.first?.id
         loadActiveSelector()
@@ -469,7 +509,6 @@ struct NodeMembershipEditor: View {
             selectorName = ""
             clearFields()
         } else { loadActiveSelector() }
-        refreshSelectedPins()
     }
 
     private func loadActiveSelector() {
@@ -483,7 +522,6 @@ struct NodeMembershipEditor: View {
         for condition in selector.exclude {
             apply(condition, to: true)
         }
-        refreshSelectedPins()
         isLoading = false
     }
 
@@ -521,21 +559,27 @@ struct NodeMembershipEditor: View {
         selector.name = selectorName.trimmed.isEmpty ? selector.name : selectorName.trimmed
         selector.include = draftSelector.include
         selector.exclude = draftSelector.exclude
+        selector.fixedNodeIDs = []
         selectors[index] = selector
-        refreshSelectedPins()
     }
 
     private func togglePin(_ id: NodeID, pinned: Bool) {
-        guard let activeSelectorID,
-              let index = selectors.firstIndex(where: { $0.id == activeSelectorID }) else { return }
-        var ids = Set(selectors[index].fixedNodeIDs)
-        if pinned { ids.insert(id) } else { ids.remove(id) }
-        selectors[index].fixedNodeIDs = ids.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
-        refreshSelectedPins()
+        if pinned { selectedNodeIDs.insert(id) } else { selectedNodeIDs.remove(id) }
     }
 
-    private func refreshSelectedPins() {
-        selectedNodeIDs = Set(selectors.flatMap(\.fixedNodeIDs))
+    private func pinAvailableNodes() {
+        selectedNodeIDs.formUnion(
+            availableLibraryNodes.prefix(remainingFixedNodeCapacity).map(\.id)
+        )
+    }
+
+    private func selectorMatchCount(_ selector: NodeSelector) -> Int {
+        nodes.lazy.filter {
+            $0.enabled
+                && $0.health.availability != .sourceRemoved
+                && $0.health.availability != .unsupported
+                && selector.matchesForPreview($0)
+        }.count
     }
 
     private func stableNodeOrder(_ lhs: Node, _ rhs: Node) -> Bool {

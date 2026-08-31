@@ -37,7 +37,7 @@ public struct NodeOnlyImporter: Sendable {
     }
 
     private indirect enum YAMLFragment {
-        case scalar(String)
+        case scalar(String, quoted: Bool)
         case mapping([(String, YAMLFragment)])
         case sequence([YAMLFragment])
     }
@@ -262,7 +262,7 @@ public struct NodeOnlyImporter: Sendable {
             if case let .mapping(fields) = fragment {
                 let entry = fields.reduce(into: [String: String]()) { result, field in
                     switch field.1 {
-                    case let .scalar(value):
+                    case let .scalar(value, _):
                         result[field.0] = value
                     case .mapping, .sequence:
                         result[field.0] = renderFlow(field.1)
@@ -373,7 +373,7 @@ public struct NodeOnlyImporter: Sendable {
             index += 1
             let value: YAMLFragment
             if !rawValue.isEmpty {
-                value = parseFlowFragment(rawValue) ?? .scalar(scalar(rawValue))
+                value = parseFlowFragment(rawValue) ?? scalarFragment(rawValue)
             } else if index < lines.count,
                       lines[index].indent > indent
                         || (lines[index].indent == indent
@@ -405,7 +405,7 @@ public struct NodeOnlyImporter: Sendable {
                 if index < lines.count, lines[index].indent > indent {
                     values.append(parseYAMLBlock(lines, index: &index, indent: lines[index].indent))
                 } else {
-                    values.append(.scalar(""))
+                    values.append(.scalar("", quoted: false))
                 }
             } else if topLevelColon(in: body) != nil {
                 let provisionalIndent = indent + 2
@@ -430,7 +430,7 @@ public struct NodeOnlyImporter: Sendable {
                 values.append(parseYAMLBlock(itemLines, index: &itemIndex, indent: itemIndent))
                 if index == childStart { continue }
             } else {
-                values.append(.scalar(scalar(body)))
+                values.append(scalarFragment(String(body)))
             }
         }
         return .sequence(values)
@@ -438,15 +438,15 @@ public struct NodeOnlyImporter: Sendable {
 
     private func renderFlow(_ fragment: YAMLFragment) -> String {
         switch fragment {
-        case let .scalar(value):
-            return flowScalar(value)
+        case let .scalar(value, quoted):
+            return flowScalar(value, quoted: quoted)
         case let .mapping(fields):
             guard !fields.isEmpty else { return "{}" }
             let orderedFields = fields.sorted { lhs, rhs in
                 lhs.0 == rhs.0 ? renderFlow(lhs.1) < renderFlow(rhs.1) : lhs.0 < rhs.0
             }
             return "{ " + orderedFields.map { field in
-                "\(flowScalar(field.0)): \(renderFlow(field.1))"
+                "\(flowScalar(field.0, quoted: true)): \(renderFlow(field.1))"
             }.joined(separator: ", ") + " }"
         case let .sequence(values):
             guard !values.isEmpty else { return "[]" }
@@ -470,7 +470,7 @@ public struct NodeOnlyImporter: Sendable {
                 guard !key.isEmpty else { return nil }
                 let rawValue = String(trimmed[trimmed.index(after: colon)...])
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                fields.append((key, parseFlowFragment(rawValue) ?? .scalar(scalar(rawValue))))
+                fields.append((key, parseFlowFragment(rawValue) ?? scalarFragment(rawValue)))
             }
             return .mapping(fields)
         }
@@ -478,9 +478,9 @@ public struct NodeOnlyImporter: Sendable {
             value.removeFirst()
             value.removeLast()
             let values = splitTopLevel(value, separator: ",")
-                .map { parseFlowFragment($0) ?? .scalar(scalar($0)) }
+                .map { parseFlowFragment($0) ?? scalarFragment($0) }
             return .sequence(values.filter { fragment in
-                if case let .scalar(value) = fragment {
+                if case let .scalar(value, _) = fragment {
                     return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 }
                 return true
@@ -489,18 +489,29 @@ public struct NodeOnlyImporter: Sendable {
         return nil
     }
 
-    private func flowScalar(_ value: String) -> String {
+    private func scalarFragment(_ raw: String) -> YAMLFragment {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let quoted = trimmed.count >= 2
+            && ((trimmed.first == "\"" && trimmed.last == "\"")
+                || (trimmed.first == "'" && trimmed.last == "'"))
+        return .scalar(scalar(trimmed), quoted: quoted)
+    }
+
+    private func flowScalar(_ value: String, quoted: Bool) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if ((trimmed.first == "{" && trimmed.last == "}")
+        if !quoted,
+           ((trimmed.first == "{" && trimmed.last == "}")
             || (trimmed.first == "[" && trimmed.last == "]")),
            !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) {
             return trimmed
         }
-        let lowercased = trimmed.lowercased()
-        if ["true", "false", "null"].contains(lowercased) {
-            return lowercased
+        if !quoted {
+            let lowercased = trimmed.lowercased()
+            if ["true", "false", "null"].contains(lowercased) {
+                return lowercased
+            }
+            if Double(trimmed) != nil { return trimmed }
         }
-        if Double(trimmed) != nil { return trimmed }
         // JSON escaping is almost, but not quite, YAML escaping: JSON emits
         // a backslash before slashes, which YAML rejects as an unknown escape
         // inside a double-quoted flow scalar. Escape only characters YAML

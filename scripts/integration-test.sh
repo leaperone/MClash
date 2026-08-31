@@ -32,6 +32,13 @@ if [[ ! -f "${core}" ]]; then
 fi
 mihomo_alpha_verify_selected_artifact
 
+geodata="${MCLASH_TEST_GEODATA:-${repo_root}/.build/geodata}"
+if ! "${repo_root}/scripts/verify-mihomo-geodata.sh" "${geodata}" >/dev/null 2>&1; then
+  "${repo_root}/scripts/fetch-mihomo-geodata.sh" --output "${geodata}"
+fi
+"${repo_root}/scripts/verify-mihomo-geodata.sh" "${geodata}"
+"${repo_root}/scripts/smoke-test-mihomo-geodata.sh" "${core}" "${geodata}"
+
 /usr/bin/python3 -m http.server "${origin_port}" \
   --bind 127.0.0.1 \
   --directory "${repo_root}/Tests/Fixtures" \
@@ -163,7 +170,9 @@ swiftc -parse-as-library -swift-version 6 \
   -o "${build_dir}/configuration-compiler-mihomo-smoke"
 (
   cd "${repo_root}"
-  MCLASH_TEST_CORE="${core}" "${build_dir}/configuration-compiler-mihomo-smoke"
+  MCLASH_TEST_CORE="${core}" \
+    MCLASH_TEST_GEODATA="${geodata}" \
+    "${build_dir}/configuration-compiler-mihomo-smoke"
 )
 
 system_proxy_sources=("${repo_root}"/Sources/MClashApp/SystemProxy/*.swift(N))
