@@ -1679,6 +1679,16 @@ final class AppModel {
         guard let configurationStore, let profileStore else { return }
         var document = configurationDocument
         if document == .empty { document = .mclashDefault() }
+        // Older unified workspaces were materialized with one explicit ID per
+        // enabled catalog node. That representation looks like a narrowed
+        // scope after a subscription refresh (especially when an old node is
+        // already source-removed), and consequently prevents newly imported
+        // nodes from entering the workspace. Capture this before mutating the
+        // catalog: an exact all-enabled catalog is the legacy spelling of the
+        // dynamic, empty scope. Keep genuinely narrowed workspaces listed.
+        let legacyAllNodeScopeWorkspaceIDs = Self.legacyAllNodeScopeWorkspaceIDs(
+            in: document
+        )
         do {
             let storedProfiles = try await profileStore.profiles()
             let now = Date()
@@ -2005,6 +2015,17 @@ final class AppModel {
                 }
             }
 
+            // Convert the legacy materialized-all scope only after the source
+            // refresh has completed. This makes the migration safe for a
+            // partial refresh and lets the next compile include newly added
+            // nodes immediately, while preserving explicit user subsets.
+            for index in document.workspaces.indices
+            where legacyAllNodeScopeWorkspaceIDs.contains(document.workspaces[index].id)
+                && !document.workspaces[index].nodeIDs.isEmpty {
+                document.workspaces[index].nodeIDs = []
+                document.workspaces[index].revision += 1
+            }
+
             // Keep the built-in group dynamic as the catalog grows. Older
             // manifests may contain a static list produced by the first
             // implementation; migrate that exact “all nodes” list to a
@@ -2092,6 +2113,24 @@ final class AppModel {
                 )
             )]
         }
+    }
+
+    /// Returns workspaces whose explicit node list is the old materialized
+    /// spelling of the complete enabled catalog. Health is deliberately not
+    /// considered here: a source-removed node remains part of the catalog and
+    /// must not make an otherwise all-node workspace look user-narrowed.
+    static func legacyAllNodeScopeWorkspaceIDs(
+        in document: ConfigurationDocument
+    ) -> Set<WorkspaceID> {
+        let allEnabledCatalogIDs = Set(document.nodes.filter(\.enabled).map(\.id))
+        guard !allEnabledCatalogIDs.isEmpty else { return [] }
+        return Set(document.workspaces.compactMap { workspace -> WorkspaceID? in
+            guard !workspace.nodeIDs.isEmpty,
+                  workspace.nodeIDs.count == allEnabledCatalogIDs.count,
+                  Set(workspace.nodeIDs) == allEnabledCatalogIDs
+            else { return nil }
+            return workspace.id
+        })
     }
 
     private static func isLegacyNestedValuePlaceholder(_ value: String) -> Bool {

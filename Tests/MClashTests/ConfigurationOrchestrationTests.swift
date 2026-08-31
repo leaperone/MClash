@@ -5,6 +5,41 @@ import Testing
 
 struct ConfigurationOrchestrationTests {
     @MainActor
+    @Test("Legacy materialized all-node scopes become dynamic after refresh")
+    func legacyAllNodeScopeIncludesSourceRemovedCatalogEntries() throws {
+        let first = try Node(
+            displayName: "Live node",
+            protocol: .vless,
+            host: "live.example.com",
+            port: 443
+        )
+        var removed = try Node(
+            displayName: "Removed node",
+            protocol: .vless,
+            host: "removed.example.com",
+            port: 443
+        )
+        removed.health.availability = .sourceRemoved
+        var document = ConfigurationDocument.mclashDefault()
+        document.nodes = [first, removed]
+        let allWorkspaceID = try #require(document.currentWorkspace?.id)
+        document.workspaces[0].nodeIDs = [first.id, removed.id]
+        let narrowed = Workspace(
+            name: "Pinned subset",
+            nodeIDs: [first.id],
+            proxyGroupIDs: document.workspaces[0].proxyGroupIDs,
+            dnsPolicyID: document.workspaces[0].dnsPolicyID,
+            entranceIDs: document.workspaces[0].entranceIDs
+        )
+        document.workspaces.append(narrowed)
+
+        let migrated = AppModel.legacyAllNodeScopeWorkspaceIDs(in: document)
+
+        #expect(migrated == [allWorkspaceID])
+        #expect(!migrated.contains(narrowed.id))
+    }
+
+    @MainActor
     @Test func sourceRefreshKeepsPriorNodesWhenParsingDegradesOrReadFails() async throws {
         let root = FileManager.default.temporaryDirectory.appending(
             path: "MClashSourceRefresh-(UUID().uuidString)",
