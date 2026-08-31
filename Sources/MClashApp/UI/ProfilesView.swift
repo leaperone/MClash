@@ -27,32 +27,48 @@ struct ProfilesView: View {
                 emptyState
             } else {
                 List {
-                    Section("Default Profile") {
-                        HStack(spacing: 12) {
-                            Image(systemName: "arrow.triangle.branch")
-                                .foregroundStyle(Color.accentColor)
-                                .frame(width: 24)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Default Profile")
-                                    .fontWeight(.semibold)
-                                Text(defaultProfileDescription)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                    Section(model.unifiedConfigurationEnabled ? AppLocalization.string("Node source") : AppLocalization.string("Default Profile")) {
+                        if model.unifiedConfigurationEnabled {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(AppLocalization.string("Active node source"))
+                                        .fontWeight(.semibold)
+                                    Text(defaultProfileDescription)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                Button(AppLocalization.string("Entrances")) {
+                                    model.selection = .entrances
+                                }
                             }
-                            Spacer()
-                            Text(
-                                AppLocalization.format(
-                                    "Mixed %d",
-                                    model.profileRuntimePlan.defaultMixedPort
-                                )
-                            )
-                            .font(.callout.monospacedDigit())
-                            Button("Port…") {
-                                showingDefaultPortSettings = true
+                            .padding(.vertical, 5)
+                        } else {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(AppLocalization.string("Default Profile"))
+                                        .fontWeight(.semibold)
+                                    Text(defaultProfileDescription)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(AppLocalization.format("Managed Mixed %d", model.profileRuntimePlan.defaultMixedPort))
+                                    .font(.callout.monospacedDigit())
+                                Button("Port…") {
+                                    showingDefaultPortSettings = true
+                                }
+                                .disabled(!model.canPerform(.changeRuntimeSettings))
                             }
-                            .disabled(!model.canPerform(.changeRuntimeSettings))
+                            .padding(.vertical, 5)
                         }
-                        .padding(.vertical, 5)
                     }
 
                     Section {
@@ -170,13 +186,12 @@ struct ProfilesView: View {
               let profile = model.profiles.first(where: { $0.id == activeProfileID })
         else {
             return AppLocalization.string(
-                "Choose a real Profile to back this stable entry point."
+                "Choose a node source for the active MClash configuration."
             )
         }
-        return AppLocalization.format(
-            "Uses %@ for the stable default entry point.",
-            profile.name
-        )
+        return model.unifiedConfigurationEnabled
+            ? AppLocalization.format("%@ provides nodes only; rules, groups, DNS and entrances come from MClash Configuration.", profile.name)
+            : AppLocalization.format("Uses %@ for the stable default entry point.", profile.name)
     }
 
     private var emptyState: some View {
@@ -357,6 +372,15 @@ private struct ProfileRow: View {
                 .foregroundStyle(.secondary)
             }
 
+            if model.unifiedConfigurationEnabled {
+                Label(
+                    AppLocalization.string("Nodes only · policies are managed in Configuration"),
+                    systemImage: "checkmark.seal"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             if let operationTitle {
                 HStack(spacing: 7) {
                     ProgressView()
@@ -407,25 +431,36 @@ private struct ProfileRow: View {
     @ViewBuilder
     private var primaryProfileAction: some View {
         if isActive {
-            Label("Default Source", systemImage: "checkmark.circle.fill")
+            Label(
+                model.unifiedConfigurationEnabled
+                    ? AppLocalization.string("Active source")
+                    : AppLocalization.string("Default Source"),
+                systemImage: "checkmark.circle.fill"
+            )
                 .font(.callout)
                 .foregroundStyle(Color.accentColor)
                 .frame(minWidth: 104)
                 .accessibilityLabel(
                     AppLocalization.format(
-                        "%@ backs the Default Profile",
+                        model.unifiedConfigurationEnabled
+                            ? "%@ is the active node source"
+                            : "%@ backs the Default Profile",
                         profile.name
                     )
                 )
         } else {
-            Button("Make Default") {
+            Button(model.unifiedConfigurationEnabled
+                ? AppLocalization.string("Use as source")
+                : AppLocalization.string("Make Default")) {
                 activate()
             }
             .buttonStyle(.bordered)
             .disabled(!model.canPerform(.activateProfile(profile.id)))
             .help(
                 AppLocalization.format(
-                    "Use %@ as the default profile",
+                    model.unifiedConfigurationEnabled
+                        ? "Use %@ as the active node source"
+                        : "Use %@ as the default profile",
                     profile.name
                 )
             )
@@ -730,32 +765,39 @@ private struct EditProfileView: View {
                             }
                         }
 
-                        Toggle("Open Mixed port", isOn: $runtimeEnabled)
-                            .disabled(isSubmitting)
+                        if model.unifiedConfigurationEnabled {
+                            Text(AppLocalization.string("Runtime policy is owned by MClash Configuration; imported source settings are not edited here."))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Toggle("Open Mixed port", isOn: $runtimeEnabled)
+                                .disabled(isSubmitting)
 
-                        LabeledContent("Mixed port") {
-                            TextField(
-                                "Port",
-                                value: $mixedPort,
-                                format: .number.grouping(.never)
+                            LabeledContent("Mixed port") {
+                                TextField(
+                                    "Port",
+                                    value: $mixedPort,
+                                    format: .number.grouping(.never)
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                .multilineTextAlignment(.trailing)
+                                .monospacedDigit()
+                                .frame(width: 92)
+                                .disabled(isSubmitting || !runtimeEnabled)
+                                .focused($focusedField, equals: .mixedPort)
+                            }
+
+                            Text(
+                                AppLocalization.string(
+                                    profile.id == model.activeProfileID
+                                        ? "This port is independent from the stable Default Profile port."
+                                        : "Open this port only when App Routing or a local tool needs this Profile directly."
+                                )
                             )
-                            .textFieldStyle(.roundedBorder)
-                            .multilineTextAlignment(.trailing)
-                            .monospacedDigit()
-                            .frame(width: 92)
-                            .disabled(isSubmitting || !runtimeEnabled)
-                            .focused($focusedField, equals: .mixedPort)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         }
-
-                        Text(
-                            AppLocalization.string(
-                                profile.id == model.activeProfileID
-                                    ? "This port is independent from the stable Default Profile port."
-                                    : "Open this port only when App Routing or a local tool needs this Profile directly."
-                            )
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -858,7 +900,8 @@ private struct EditProfileView: View {
                 "Use a complete HTTP or HTTPS subscription address."
             )
         }
-        if (model.profileSessionSpec(for: profile.id) != nil || runtimeEnabled)
+        if !model.unifiedConfigurationEnabled,
+           (model.profileSessionSpec(for: profile.id) != nil || runtimeEnabled)
             && !(1...65_535).contains(mixedPort) {
             return AppLocalization.string("Use a Mixed port from 1 to 65535.")
         }
@@ -880,7 +923,8 @@ private struct EditProfileView: View {
 
         submissionTask = Task {
             do {
-                if model.profileSessionSpec(for: profile.id) != nil || runtimeEnabled {
+                if !model.unifiedConfigurationEnabled,
+                   (model.profileSessionSpec(for: profile.id) != nil || runtimeEnabled) {
                     try await model.updateProfileRuntime(
                         profileID: profile.id,
                         enabled: runtimeEnabled,

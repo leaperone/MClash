@@ -373,8 +373,9 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
 
 struct ConfigurationAutomationMatcher: Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
-        case application, processPath, userID, domainExact, domainSuffix
-        case domainWildcard, ipCIDR, transport, port, portRange
+        case application, processPath, processName, userID, domainExact, domainSuffix
+        case domainWildcard, ipCIDR, geoIP, geoIP6, geoSite
+        case transport, port, portRange
     }
     let kind: Kind
     var value: String?
@@ -387,11 +388,15 @@ struct ConfigurationAutomationMatcher: Codable, Equatable, Sendable {
         switch matcher {
         case let .application(value): kind = .application; self.value = value
         case let .processPath(value): kind = .processPath; self.value = value
+        case let .processName(value): kind = .processName; self.value = value
         case let .userID(value): kind = .userID; self.value = String(value)
         case let .domainExact(value): kind = .domainExact; self.value = value
         case let .domainSuffix(value): kind = .domainSuffix; self.value = value
         case let .domainWildcard(value): kind = .domainWildcard; self.value = value
         case let .ipCIDR(value): kind = .ipCIDR; self.value = value
+        case let .geoIP(value): kind = .geoIP; self.value = value
+        case let .geoIP6(value): kind = .geoIP6; self.value = value
+        case let .geoSite(value): kind = .geoSite; self.value = value
         case let .transport(value): kind = .transport; self.value = value
         case let .port(value): kind = .port; self.value = String(value)
         case let .portRange(range):
@@ -426,6 +431,7 @@ struct ConfigurationAutomationMatcher: Codable, Equatable, Sendable {
         switch kind {
         case .application: return .application(value)
         case .processPath: return .processPath(value)
+        case .processName: return .processName(value)
         case .userID:
             guard let parsed = UInt32(value) else {
                 throw ConfigurationAutomationError.invalidInput("userID value must be UInt32")
@@ -435,6 +441,9 @@ struct ConfigurationAutomationMatcher: Codable, Equatable, Sendable {
         case .domainSuffix: return .domainSuffix(value)
         case .domainWildcard: return .domainWildcard(value)
         case .ipCIDR: return .ipCIDR(value)
+        case .geoIP: return .geoIP(value)
+        case .geoIP6: return .geoIP6(value)
+        case .geoSite: return .geoSite(value)
         case .transport:
             guard ["tcp", "udp"].contains(value.lowercased()) else {
                 throw ConfigurationAutomationError.invalidInput(
@@ -537,6 +546,13 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
     var defaultAction: ConfigurationAutomationAction
     var sourceURLUpdate: String?
     var removeSourceURL: Bool?
+    /// Optional updates keep older automation payloads source-compatible while
+    /// exposing the full Mihomo rule-provider contract to newer clients.
+    var behavior: RuleSetBehavior?
+    var format: RuleSetFormat?
+    var pathUpdate: String?
+    var removePath: Bool?
+    var enabled: Bool?
 
     init(_ ruleSet: RuleSet) {
         id = ruleSet.id.rawValue.uuidString.lowercased()
@@ -544,8 +560,13 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
         rulesUpdate = nil
         ruleCount = ruleSet.rules.count
         defaultAction = ConfigurationAutomationAction(ruleSet.defaultAction)
-        sourceURLUpdate = nil
+        sourceURLUpdate = ruleSet.sourceURL?.absoluteString
         removeSourceURL = nil
+        behavior = ruleSet.behavior
+        format = ruleSet.format
+        pathUpdate = ruleSet.path
+        removePath = nil
+        enabled = ruleSet.enabled
     }
 
     func applying(to existing: RuleSet?) throws -> RuleSet {
@@ -592,12 +613,36 @@ struct ConfigurationAutomationRuleSet: Codable, Equatable, Sendable {
             }
             sourceURL = parsed
         } else { sourceURL = existing?.sourceURL }
+        let resolvedBehavior = behavior ?? existing?.behavior ?? .classical
+        let resolvedFormat = format ?? existing?.format ?? .yaml
+        let resolvedPath: String?
+        if removePath == true {
+            guard pathUpdate == nil else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "pathUpdate and removePath cannot be used together"
+                )
+            }
+            resolvedPath = nil
+        } else if let pathUpdate {
+            try requireAutomationText(
+                pathUpdate,
+                maximumBytes: ConfigurationAutomationLimits.sourceURLBytes,
+                field: "ruleSets.pathUpdate"
+            )
+            resolvedPath = pathUpdate
+        } else {
+            resolvedPath = existing?.path
+        }
         return RuleSet(
             id: RuleSetID(rawValue: try automationUUID(id, field: "ruleSets.id")),
             name: name,
             sourceURL: sourceURL,
             rules: rules,
             defaultAction: try defaultAction.value(),
+            behavior: resolvedBehavior,
+            format: resolvedFormat,
+            path: resolvedPath,
+            enabled: enabled ?? existing?.enabled ?? true,
             revision: existing?.revision ?? 0
         )
     }
@@ -701,6 +746,7 @@ struct ConfigurationAutomationDNSPolicy: Codable, Equatable, Sendable {
 
 struct ConfigurationAutomationEntrance: Codable, Equatable, Sendable {
     let id: String
+    var name: String?
     var kind: EntranceKind
     var enabled: Bool
     var bindAddress: String
@@ -710,6 +756,7 @@ struct ConfigurationAutomationEntrance: Codable, Equatable, Sendable {
 
     init(_ entrance: Entrance) {
         id = entrance.id.rawValue.uuidString.lowercased()
+        name = entrance.name
         kind = entrance.kind
         enabled = entrance.enabled
         bindAddress = entrance.bindAddress
@@ -725,8 +772,17 @@ struct ConfigurationAutomationEntrance: Codable, Equatable, Sendable {
             field: "entrances.bindAddress",
             nonempty: enabled
         )
+        if let name {
+            try requireAutomationText(
+                name,
+                maximumBytes: ConfigurationAutomationLimits.nameBytes,
+                field: "entrances.name",
+                nonempty: true
+            )
+        }
         return Entrance(
             id: EntranceID(rawValue: try automationUUID(id, field: "entrances.id")),
+            name: name,
             kind: kind,
             enabled: enabled,
             bindAddress: bindAddress,
@@ -758,6 +814,10 @@ struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
     let ruleSetCount: Int?
     var dnsPolicyID: String
     var entranceIDsUpdate: [String]?
+    /// Optional for wire compatibility with clients predating routing modes.
+    var routingMode: ConfigurationRoutingMode?
+    var globalProxyGroupID: String?
+    var removeGlobalProxyGroupID: Bool?
     let entranceCount: Int?
     let revision: Int?
 
@@ -778,6 +838,9 @@ struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
         ruleSetCount = workspace.ruleSetIDs.count
         dnsPolicyID = workspace.dnsPolicyID.rawValue.uuidString.lowercased()
         entranceIDsUpdate = nil
+        routingMode = workspace.routingMode
+        globalProxyGroupID = workspace.globalProxyGroupID?.rawValue.uuidString.lowercased()
+        removeGlobalProxyGroupID = nil
         entranceCount = workspace.entranceIDs.count
         revision = workspace.revision
     }
@@ -830,6 +893,23 @@ struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
         let entranceIDs = entranceIDsUpdate ?? existing?.entranceIDs.map {
             $0.rawValue.uuidString.lowercased()
         } ?? []
+        let resolvedRoutingMode = routingMode ?? existing?.routingMode ?? .rule
+        let resolvedGlobalProxyGroupID: ProxyGroupID?
+        if removeGlobalProxyGroupID == true {
+            guard globalProxyGroupID == nil else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "globalProxyGroupID and removeGlobalProxyGroupID cannot be used together"
+                )
+            }
+            resolvedGlobalProxyGroupID = nil
+        } else if let globalProxyGroupID {
+            resolvedGlobalProxyGroupID = ProxyGroupID(rawValue: try automationUUID(
+                globalProxyGroupID,
+                field: "workspaces.globalProxyGroupID"
+            ))
+        } else {
+            resolvedGlobalProxyGroupID = existing?.globalProxyGroupID
+        }
         for (values, maximum, field) in [
             (nodeIDs, ConfigurationAutomationLimits.workspaceNodeIDs, "nodeIDsUpdate"),
             (proxyGroupIDs, ConfigurationAutomationLimits.proxyGroups, "proxyGroupIDsUpdate"),
@@ -865,6 +945,8 @@ struct ConfigurationAutomationWorkspace: Codable, Equatable, Sendable {
             entranceIDs: try entranceIDs.map {
                 EntranceID(rawValue: try automationUUID($0, field: "workspaces.entranceIDs"))
             },
+            routingMode: resolvedRoutingMode,
+            globalProxyGroupID: resolvedGlobalProxyGroupID,
             revision: revision
         )
     }

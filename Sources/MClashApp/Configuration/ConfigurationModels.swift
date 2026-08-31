@@ -165,25 +165,257 @@ public struct ProxyGroup: Codable, Hashable, Identifiable, Sendable {
 /// are ANDed, while multiple values within one kind are ORed. The compiler
 /// preserves that distinction when producing Mihomo and Network Extension
 /// rules.
-public enum RoutingMatcher: Codable, Hashable, Sendable { case application(String), processPath(String), userID(UInt32), domainExact(String), domainSuffix(String), domainWildcard(String), ipCIDR(String), transport(String), port(Int), portRange(ClosedRange<Int>) }
+public enum RoutingMatcher: Codable, Hashable, Sendable {
+    case application(String)
+    case processPath(String)
+    case processName(String)
+    case userID(UInt32)
+    case domainExact(String)
+    case domainSuffix(String)
+    case domainWildcard(String)
+    case ipCIDR(String)
+    case geoIP(String)
+    /// Kept for decoding older drafts, but rejected by the validator because
+    /// the bundled Mihomo Alpha core has no GEOIP6 rule type. Use IP-CIDR6.
+    case geoIP6(String)
+    case geoSite(String)
+    case transport(String)
+    case port(Int)
+    case portRange(ClosedRange<Int>)
+}
 public enum RoutingAction: Codable, Hashable, Sendable { case direct, reject, proxyGroup(ProxyGroupID) }
 public enum UnavailableNodeFallback: String, Codable, Sendable { case direct, reject }
+public enum ConfigurationRoutingMode: String, Codable, CaseIterable, Sendable {
+    case rule
+    case global
+    case direct
+}
+
+/// Mihomo's implicit policy targets. They are stable runtime placeholders, not
+/// imported source groups and therefore do not need a user-created object.
+public enum ConfigurationBuiltInPolicy: String, Codable, CaseIterable, Sendable {
+    case global = "GLOBAL"
+    case direct = "DIRECT"
+    case reject = "REJECT"
+}
+
 public struct RoutingRule: Codable, Hashable, Identifiable, Sendable { public let id: RoutingRuleID; public var enabled: Bool; public var priority: Int; public var matchers: [RoutingMatcher]; public var action: RoutingAction; public var unavailableFallback: UnavailableNodeFallback; public var workspaceScope: WorkspaceID?; public init(id: RoutingRuleID = RoutingRuleID(), enabled: Bool = true, priority: Int, matchers: [RoutingMatcher] = [], action: RoutingAction, unavailableFallback: UnavailableNodeFallback = .direct, workspaceScope: WorkspaceID? = nil) { self.id=id; self.enabled=enabled; self.priority=priority; self.matchers=matchers; self.action=action; self.unavailableFallback=unavailableFallback; self.workspaceScope=workspaceScope } }
-public struct RuleSet: Codable, Hashable, Identifiable, Sendable { public let id: RuleSetID; public var name: String; public var sourceURL: URL?; public var rules: [String]; public var defaultAction: RoutingAction; public var revision: Int; public init(id: RuleSetID = RuleSetID(), name: String, sourceURL: URL? = nil, rules: [String] = [], defaultAction: RoutingAction = .direct, revision: Int = 0) { self.id=id; self.name=name; self.sourceURL=sourceURL; self.rules=rules; self.defaultAction=defaultAction; self.revision=max(0,revision) } }
+public enum RuleSetBehavior: String, Codable, CaseIterable, Sendable {
+    case classical
+    case domain
+    case ipcidr
+}
+
+public enum RuleSetFormat: String, Codable, CaseIterable, Sendable {
+    case yaml
+    case text
+    case mrs
+}
+
+/// A MClash-owned rule set.  A source Profile can mention rule providers, but
+/// those declarations are never copied into this model automatically; users
+/// explicitly add a provider here and choose its behavior/format/path.
+public struct RuleSet: Codable, Hashable, Identifiable, Sendable {
+    public let id: RuleSetID
+    public var name: String
+    public var sourceURL: URL?
+    public var rules: [String]
+    public var defaultAction: RoutingAction
+    public var behavior: RuleSetBehavior
+    public var format: RuleSetFormat
+    public var path: String?
+    public var enabled: Bool
+    public var revision: Int
+
+    public init(
+        id: RuleSetID = RuleSetID(),
+        name: String,
+        sourceURL: URL? = nil,
+        rules: [String] = [],
+        defaultAction: RoutingAction = .direct,
+        behavior: RuleSetBehavior = .classical,
+        format: RuleSetFormat = .yaml,
+        path: String? = nil,
+        enabled: Bool = true,
+        revision: Int = 0
+    ) {
+        self.id = id
+        self.name = name
+        self.sourceURL = sourceURL
+        self.rules = rules
+        self.defaultAction = defaultAction
+        self.behavior = behavior
+        self.format = format
+        self.path = path
+        self.enabled = enabled
+        self.revision = max(0, revision)
+    }
+}
 
 public enum DNSMode: String, Codable, CaseIterable, Sendable { case system, fakeIP, redirHost }
 public struct DNSPolicy: Codable, Hashable, Identifiable, Sendable { public let id: DNSPolicyID; public var name: String; public var mode: DNSMode; public var nameservers: [String]; public var fallbackNameservers: [String]; public var proxyServer: String?; public var rules: [String]; public var takeoverEnabled: Bool; public init(id: DNSPolicyID = DNSPolicyID(), name: String, mode: DNSMode = .system, nameservers: [String] = [], fallbackNameservers: [String] = [], proxyServer: String? = nil, rules: [String] = [], takeoverEnabled: Bool = false) { self.id=id; self.name=name; self.mode=mode; self.nameservers=nameservers; self.fallbackNameservers=fallbackNameservers; self.proxyServer=proxyServer; self.rules=rules; self.takeoverEnabled=takeoverEnabled } }
 
 public enum EntranceKind: String, Codable, CaseIterable, Sendable { case http, socks5, appRouting, tun }
-public struct Entrance: Codable, Hashable, Identifiable, Sendable { public let id: EntranceID; public var kind: EntranceKind; public var enabled: Bool; public var bindAddress: String; public var port: Int?; public var defaultAction: RoutingAction; public var workspaceOverride: WorkspaceID?; public init(id: EntranceID = EntranceID(), kind: EntranceKind, enabled: Bool = false, bindAddress: String = "127.0.0.1", port: Int? = nil, defaultAction: RoutingAction = .direct, workspaceOverride: WorkspaceID? = nil) { self.id=id; self.kind=kind; self.enabled=enabled; self.bindAddress=bindAddress; self.port=port; self.defaultAction=defaultAction; self.workspaceOverride=workspaceOverride } }
+public struct Entrance: Codable, Hashable, Identifiable, Sendable {
+    public let id: EntranceID
+    public var name: String
+    public var kind: EntranceKind
+    public var enabled: Bool
+    public var bindAddress: String
+    public var port: Int?
+    public var defaultAction: RoutingAction
+    public var workspaceOverride: WorkspaceID?
 
-public struct Workspace: Codable, Hashable, Identifiable, Sendable { public let id: WorkspaceID; public var name: String; public var nodeIDs: [NodeID]; public var proxyGroupIDs: [ProxyGroupID]; public var ruleIDs: [RoutingRuleID]; public var ruleSetIDs: [RuleSetID]; public var dnsPolicyID: DNSPolicyID; public var entranceIDs: [EntranceID]; public var revision: Int; public init(id: WorkspaceID = WorkspaceID(), name: String, nodeIDs: [NodeID] = [], proxyGroupIDs: [ProxyGroupID] = [], ruleIDs: [RoutingRuleID] = [], ruleSetIDs: [RuleSetID] = [], dnsPolicyID: DNSPolicyID, entranceIDs: [EntranceID] = [], revision: Int = 0) { self.id=id; self.name=name; self.nodeIDs=nodeIDs; self.proxyGroupIDs=proxyGroupIDs; self.ruleIDs=ruleIDs; self.ruleSetIDs=ruleSetIDs; self.dnsPolicyID=dnsPolicyID; self.entranceIDs=entranceIDs; self.revision=max(0,revision) } }
+    public init(
+        id: EntranceID = EntranceID(),
+        name: String? = nil,
+        kind: EntranceKind,
+        enabled: Bool = false,
+        bindAddress: String = "127.0.0.1",
+        port: Int? = nil,
+        defaultAction: RoutingAction = .direct,
+        workspaceOverride: WorkspaceID? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.name = name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? name!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : Self.defaultName(for: kind)
+        self.enabled = enabled
+        self.bindAddress = bindAddress
+        self.port = port
+        self.defaultAction = defaultAction
+        self.workspaceOverride = workspaceOverride
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, enabled, bindAddress, port, defaultAction, workspaceOverride
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(EntranceID.self, forKey: .id),
+            name: try container.decodeIfPresent(String.self, forKey: .name),
+            kind: try container.decode(EntranceKind.self, forKey: .kind),
+            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
+            bindAddress: try container.decodeIfPresent(String.self, forKey: .bindAddress) ?? "127.0.0.1",
+            port: try container.decodeIfPresent(Int.self, forKey: .port),
+            defaultAction: try container.decodeIfPresent(RoutingAction.self, forKey: .defaultAction) ?? .direct,
+            workspaceOverride: try container.decodeIfPresent(WorkspaceID.self, forKey: .workspaceOverride)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(bindAddress, forKey: .bindAddress)
+        try container.encodeIfPresent(port, forKey: .port)
+        try container.encode(defaultAction, forKey: .defaultAction)
+        try container.encodeIfPresent(workspaceOverride, forKey: .workspaceOverride)
+    }
+
+    private static func defaultName(for kind: EntranceKind) -> String {
+        switch kind {
+        case .http: "HTTP"
+        case .socks5: "SOCKS5"
+        case .appRouting: "App Routing"
+        case .tun: "TUN"
+        }
+    }
+}
+
+public struct Workspace: Codable, Hashable, Identifiable, Sendable {
+    public let id: WorkspaceID
+    public var name: String
+    public var nodeIDs: [NodeID]
+    public var proxyGroupIDs: [ProxyGroupID]
+    public var ruleIDs: [RoutingRuleID]
+    public var ruleSetIDs: [RuleSetID]
+    public var dnsPolicyID: DNSPolicyID
+    public var entranceIDs: [EntranceID]
+    /// The mode applied to traffic entering this workspace. Older manifests
+    /// omitted this field and therefore migrate safely to the historical rule
+    /// behavior.
+    public var routingMode: ConfigurationRoutingMode
+    /// The group selected by Mihomo's implicit GLOBAL selector when the mode is
+    /// global. It is optional for compatibility; activation falls back to the
+    /// first stable MClash strategy group.
+    public var globalProxyGroupID: ProxyGroupID?
+    public var revision: Int
+
+    public init(
+        id: WorkspaceID = WorkspaceID(),
+        name: String,
+        nodeIDs: [NodeID] = [],
+        proxyGroupIDs: [ProxyGroupID] = [],
+        ruleIDs: [RoutingRuleID] = [],
+        ruleSetIDs: [RuleSetID] = [],
+        dnsPolicyID: DNSPolicyID,
+        entranceIDs: [EntranceID] = [],
+        routingMode: ConfigurationRoutingMode = .rule,
+        globalProxyGroupID: ProxyGroupID? = nil,
+        revision: Int = 0
+    ) {
+        self.id = id
+        self.name = name
+        self.nodeIDs = nodeIDs
+        self.proxyGroupIDs = proxyGroupIDs
+        self.ruleIDs = ruleIDs
+        self.ruleSetIDs = ruleSetIDs
+        self.dnsPolicyID = dnsPolicyID
+        self.entranceIDs = entranceIDs
+        self.routingMode = routingMode
+        self.globalProxyGroupID = globalProxyGroupID
+        self.revision = max(0, revision)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, nodeIDs, proxyGroupIDs, ruleIDs, ruleSetIDs
+        case dnsPolicyID, entranceIDs, routingMode, globalProxyGroupID, revision
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(WorkspaceID.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            nodeIDs: try container.decodeIfPresent([NodeID].self, forKey: .nodeIDs) ?? [],
+            proxyGroupIDs: try container.decodeIfPresent([ProxyGroupID].self, forKey: .proxyGroupIDs) ?? [],
+            ruleIDs: try container.decodeIfPresent([RoutingRuleID].self, forKey: .ruleIDs) ?? [],
+            ruleSetIDs: try container.decodeIfPresent([RuleSetID].self, forKey: .ruleSetIDs) ?? [],
+            dnsPolicyID: try container.decode(DNSPolicyID.self, forKey: .dnsPolicyID),
+            entranceIDs: try container.decodeIfPresent([EntranceID].self, forKey: .entranceIDs) ?? [],
+            routingMode: try container.decodeIfPresent(ConfigurationRoutingMode.self, forKey: .routingMode) ?? .rule,
+            globalProxyGroupID: try container.decodeIfPresent(ProxyGroupID.self, forKey: .globalProxyGroupID),
+            revision: try container.decodeIfPresent(Int.self, forKey: .revision) ?? 0
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(nodeIDs, forKey: .nodeIDs)
+        try container.encode(proxyGroupIDs, forKey: .proxyGroupIDs)
+        try container.encode(ruleIDs, forKey: .ruleIDs)
+        try container.encode(ruleSetIDs, forKey: .ruleSetIDs)
+        try container.encode(dnsPolicyID, forKey: .dnsPolicyID)
+        try container.encode(entranceIDs, forKey: .entranceIDs)
+        try container.encode(routingMode, forKey: .routingMode)
+        try container.encodeIfPresent(globalProxyGroupID, forKey: .globalProxyGroupID)
+        try container.encode(revision, forKey: .revision)
+    }
+}
 
 public struct RuntimeSnapshot: Codable, Hashable, Identifiable, Sendable { public let id: RuntimeSnapshotID; public let workspaceID: WorkspaceID; public let workspaceRevision: Int; public let compilerVersion: String; public let mihomoConfigHash: String; public let generatedAt: Date; public let entranceIDs: [EntranceID]; public let previousSnapshotID: RuntimeSnapshotID?; public var applicationSucceeded: Bool; public init(id: RuntimeSnapshotID = RuntimeSnapshotID(), workspaceID: WorkspaceID, workspaceRevision: Int, compilerVersion: String, mihomoConfigHash: String, generatedAt: Date = Date(), entranceIDs: [EntranceID] = [], previousSnapshotID: RuntimeSnapshotID? = nil, applicationSucceeded: Bool = false) { self.id=id; self.workspaceID=workspaceID; self.workspaceRevision=workspaceRevision; self.compilerVersion=compilerVersion; self.mihomoConfigHash=mihomoConfigHash; self.generatedAt=generatedAt; self.entranceIDs=entranceIDs; self.previousSnapshotID=previousSnapshotID; self.applicationSucceeded=applicationSucceeded } }
 
 extension RuleSet {
     private enum CodingKeys: String, CodingKey {
-        case id, name, sourceURL, rules, defaultAction, revision
+        case id, name, sourceURL, rules, defaultAction, behavior, format, path, enabled, revision
     }
 
     public init(from decoder: Decoder) throws {
@@ -194,6 +426,10 @@ extension RuleSet {
             sourceURL: try container.decodeIfPresent(URL.self, forKey: .sourceURL),
             rules: try container.decodeIfPresent([String].self, forKey: .rules) ?? [],
             defaultAction: try container.decodeIfPresent(RoutingAction.self, forKey: .defaultAction) ?? .direct,
+            behavior: try container.decodeIfPresent(RuleSetBehavior.self, forKey: .behavior) ?? .classical,
+            format: try container.decodeIfPresent(RuleSetFormat.self, forKey: .format) ?? .yaml,
+            path: try container.decodeIfPresent(String.self, forKey: .path),
+            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true,
             revision: try container.decodeIfPresent(Int.self, forKey: .revision) ?? 0
         )
     }
@@ -205,6 +441,10 @@ extension RuleSet {
         try container.encodeIfPresent(sourceURL, forKey: .sourceURL)
         try container.encode(rules, forKey: .rules)
         try container.encode(defaultAction, forKey: .defaultAction)
+        try container.encode(behavior, forKey: .behavior)
+        try container.encode(format, forKey: .format)
+        try container.encodeIfPresent(path, forKey: .path)
+        try container.encode(enabled, forKey: .enabled)
         try container.encode(revision, forKey: .revision)
     }
 }

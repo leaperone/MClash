@@ -1,7 +1,9 @@
+import AppKit
+import MClashNetworkShared
 import SwiftUI
 
 struct ConnectionsView: View {
-    private enum Workspace: String, CaseIterable, Identifiable {
+    private enum TrafficWorkspace: String, CaseIterable, Identifiable {
         case live = "Live"
         case apps = "Apps"
         case routes = "Routes"
@@ -87,7 +89,7 @@ struct ConnectionsView: View {
         } else if filteredApplications.isEmpty {
             ContentUnavailableView.search(text: searchText)
         } else {
-            Table(filteredApplications) {
+            Table(filteredApplications, selection: $selectedApplicationID) {
                 TableColumn("Application") { aggregate in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(aggregate.application.displayName)
@@ -121,6 +123,28 @@ struct ConnectionsView: View {
                         .help(trafficCoverageHelp(aggregate.traffic))
                 }
                 .width(min: 100, ideal: 130)
+            }
+            .contextMenu(forSelectionType: FlowLedgerApplicationKey.self) { selection in
+                if let id = selection.first,
+                   let aggregate = filteredApplications.first(where: { $0.id == id }),
+                   let matcher = applicationMatcher(for: aggregate.application) {
+                    Button(AppLocalization.string("Add this app to a rule…")) {
+                        openRuleDraft(matcher: matcher)
+                    }
+                    if let executablePath = nonEmpty(aggregate.application.executablePath) {
+                        Button(AppLocalization.string("Add this process to a rule…")) {
+                            openRuleDraft(matcher: .processPath(executablePath))
+                        }
+                    }
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(aggregate.application.displayName, forType: .string)
+                    } label: {
+                        Label(AppLocalization.format("Copy %@", AppLocalization.string("application")), systemImage: "doc.on.doc")
+                    }
+                } else {
+                    EmptyView()
+                }
             }
         }
     }
@@ -208,7 +232,7 @@ struct ConnectionsView: View {
     }
 
     private var historyTable: some View {
-        Table(filteredHistory) {
+        Table(filteredHistory, selection: $selectedHistoryID) {
             TableColumn("Application") { entry in
                 Text(entry.application.displayName)
                     .lineLimit(1)
@@ -243,6 +267,33 @@ struct ConnectionsView: View {
                     .help(ledgerTrafficHelp(entry))
             }
             .width(min: 92, ideal: 120)
+        }
+        .contextMenu(forSelectionType: FlowLedgerEntryID.self) { selection in
+            if let id = selection.first,
+               let entry = filteredHistory.first(where: { $0.id == id }) {
+                if let hostname = safeHistoryHostname(entry.destination.hostname) {
+                    Button(AppLocalization.string("Add domain and subdomains to a rule…")) {
+                        openRuleDraft(matcher: .domainSuffix(hostname))
+                    }
+                    Button(AppLocalization.string("Add this exact domain to a rule…")) {
+                        openRuleDraft(matcher: .domainExact(hostname))
+                    }
+                    Divider()
+                }
+                if let matcher = applicationMatcher(for: entry.application) {
+                    Button(AppLocalization.string("Add this app to a rule…")) {
+                        openRuleDraft(matcher: matcher)
+                    }
+                }
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(ledgerDestination(entry.destination), forType: .string)
+                } label: {
+                    Label(AppLocalization.format("Copy %@", AppLocalization.string("destination")), systemImage: "doc.on.doc")
+                }
+            } else {
+                EmptyView()
+            }
         }
     }
 
@@ -376,8 +427,12 @@ struct ConnectionsView: View {
     @SceneStorage("mclash.connections.searchText") private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var selectedConnectionID: String?
+    @State private var selectedApplicationID: FlowLedgerApplicationKey?
+    @State private var selectedHistoryID: FlowLedgerEntryID?
     @State private var sortOrder: [KeyPathComparator<ConnectionTableRow>] = []
     @State private var presentation = ConnectionPresentationSnapshot.empty
+    @State private var presentationSourceSnapshot: MihomoConnectionSnapshot?
+    @State private var presentationCapturedAt: Date?
     @State private var presentationTask: Task<Void, Never>?
     @State private var presentationGeneration: UInt64 = 0
     @SceneStorage("mclash.connections.sortField") private var storedSortField = ""
@@ -388,8 +443,11 @@ struct ConnectionsView: View {
     @State private var confirmingCloseAll = false
     @State private var confirmingClearTrafficHistory = false
     @State private var persistentHistoryPeriod: TrafficHistoryPeriod = .today
-    @SceneStorage("mclash.traffic.workspace") private var workspace: Workspace = .live
+    @SceneStorage("mclash.traffic.workspace") private var workspace: TrafficWorkspace = .live
     @State private var selectedProfileScope: ProfileScope = .all
+    @SceneStorage("mclash.connections.liveUpdatesPaused") private var liveUpdatesPaused = false
+    @State private var ruleDraftRequest: TrafficRuleDraftRequest?
+    @State private var applicationCandidates: [ApplicationCaptureCandidate] = []
 
     var body: some View {
         let presentation = presentation
@@ -450,6 +508,10 @@ struct ConnectionsView: View {
             if workspace == .live {
                 schedulePresentationRefresh()
             }
+            Task {
+                applicationCandidates = (await ApplicationCaptureCandidateProvider()
+                    .loadRunningCandidates()).applications
+            }
         }
         .onChange(of: sortOrder) { _, order in
             persistSortOrder(order)
@@ -459,6 +521,7 @@ struct ConnectionsView: View {
             schedulePresentationRefresh()
         }
         .onChange(of: model.connectionPresentationRevision) { _, _ in
+            guard !liveUpdatesPaused else { return }
             schedulePresentationRefresh()
         }
         .onChange(of: selectedConnectionIsVisible) { _, isVisible in
@@ -470,14 +533,19 @@ struct ConnectionsView: View {
             if !isConnected {
                 selectedConnectionID = nil
                 inspectorPresented = false
+            } else if workspace == .live {
+                schedulePresentationRefresh(force: liveUpdatesPaused)
             }
         }
         .onChange(of: workspace) { _, workspace in
             selectedConnectionID = nil
+            selectedApplicationID = nil
             inspectorPresented = false
             if workspace == .live {
                 schedulePresentationRefresh()
             } else {
+                liveUpdatesPaused = false
+                presentationSourceSnapshot = nil
                 presentationTask?.cancel()
                 presentationTask = nil
                 presentationGeneration &+= 1
@@ -513,6 +581,27 @@ struct ConnectionsView: View {
             presentationTask = nil
             presentationGeneration &+= 1
         }
+        .sheet(item: $ruleDraftRequest) { request in
+            UnifiedRoutingRuleEditor(
+                rule: request.rule,
+                proxyGroups: model.configurationDocument.proxyGroups,
+                applicationCandidates: applicationCandidates,
+                onSave: { rule in
+                    Task {
+                        do {
+                            try await model.saveConfigurationRule(
+                                rule,
+                                workspaceID: model.configurationDocument.currentWorkspace?.id
+                            )
+                            ruleDraftRequest = nil
+                        } catch {
+                            model.errorMessage = error.localizedDescription
+                        }
+                    }
+                },
+                onCancel: { ruleDraftRequest = nil }
+            )
+        }
     }
 
     @ViewBuilder
@@ -540,7 +629,7 @@ struct ConnectionsView: View {
     ) -> some View {
         HStack(spacing: 12) {
             Picker("Traffic Workspace", selection: $workspace) {
-                ForEach(Workspace.allCases) { item in
+                ForEach(TrafficWorkspace.allCases) { item in
                     Text(item.title).tag(item)
                 }
             }
@@ -558,6 +647,10 @@ struct ConnectionsView: View {
             .help(trafficDataNotice ?? trafficHeaderSummary(presentation: presentation))
 
             Spacer(minLength: 12)
+
+            if workspace == .live {
+                liveSnapshotControls(presentation: presentation, compact: false)
+            }
 
             if showsProfileScope {
                 Picker("Profile scope", selection: $selectedProfileScope) {
@@ -597,7 +690,7 @@ struct ConnectionsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Picker("Traffic Workspace", selection: $workspace) {
-                    ForEach(Workspace.allCases) { item in
+                    ForEach(TrafficWorkspace.allCases) { item in
                         Text(item.title).tag(item)
                     }
                 }
@@ -624,12 +717,13 @@ struct ConnectionsView: View {
                 .accessibilityLabel(trafficHeaderSummary(presentation: presentation))
 
                 if workspace == .live {
-                    Text(defaultLiveProfileTitle)
+                    liveSnapshotControls(presentation: presentation, compact: true)
+                        Text(defaultLiveWorkspaceTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                        .help("Live controller details currently come from the default profile. Apps, Routes, and History are merged across profiles.")
+                        .help("The live controller runs the active MClash workspace. The source Profile supplies node data only.")
                 } else if showsProfileScope {
                     Picker("Profile scope", selection: $selectedProfileScope) {
                         Text("All Profiles").tag(ProfileScope.all)
@@ -688,6 +782,98 @@ struct ConnectionsView: View {
         workspace != .live
     }
 
+    private func liveSnapshotControls(
+        presentation: ConnectionPresentationSnapshot,
+        compact: Bool
+    ) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                liveUpdatesPaused.toggle()
+                // Cancel any presentation build that was already queued at
+                // the moment of the toggle. A paused workbench must not jump
+                // once more because an older detached sort/filter task
+                // finished after the user froze the table.
+                presentationTask?.cancel()
+                presentationTask = nil
+                presentationGeneration &+= 1
+                if !liveUpdatesPaused {
+                    schedulePresentationRefresh()
+                } else if presentationSourceSnapshot == nil {
+                    presentationSourceSnapshot = model.connections
+                }
+            } label: {
+                snapshotControlLabel(
+                    title: liveUpdatesPaused
+                        ? AppLocalization.string("Paused")
+                        : AppLocalization.string("Live"),
+                    systemImage: liveUpdatesPaused ? "pause.fill" : "play.fill",
+                    compact: compact
+                )
+            }
+            .buttonStyle(.bordered)
+            .help(
+                AppLocalization.string(
+                    liveUpdatesPaused
+                        ? "Resume live connection updates"
+                        : "Freeze the current connection snapshot"
+                )
+            )
+            .accessibilityLabel(
+                AppLocalization.string(
+                    liveUpdatesPaused
+                        ? "Resume live connection updates"
+                        : "Freeze the current connection snapshot"
+                )
+            )
+
+            if liveUpdatesPaused {
+                Button {
+                    schedulePresentationRefresh(force: true)
+                } label: {
+                    snapshotControlLabel(
+                        title: AppLocalization.string("Refresh snapshot"),
+                        systemImage: "arrow.clockwise",
+                        compact: compact
+                    )
+                }
+                .buttonStyle(.bordered)
+                .help(AppLocalization.string("Capture a new snapshot without resuming live updates"))
+                .accessibilityLabel(AppLocalization.string("Refresh frozen connection snapshot"))
+            }
+
+            if let presentationCapturedAt {
+                Text(
+                    liveUpdatesPaused
+                        ? AppLocalization.format(
+                            "Captured %@",
+                            AppLocalization.relativeDate(presentationCapturedAt)
+                        )
+                        : AppLocalization.format(
+                            "Updated %@",
+                            AppLocalization.relativeDate(presentationCapturedAt)
+                        )
+                )
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help(AppLocalization.date(presentationCapturedAt))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func snapshotControlLabel(
+        title: String,
+        systemImage: String,
+        compact: Bool
+    ) -> some View {
+        if compact {
+            Label(title, systemImage: systemImage).labelStyle(.iconOnly)
+        } else {
+            Label(title, systemImage: systemImage).labelStyle(.titleAndIcon)
+        }
+    }
+
     @ViewBuilder
     private func compactTrafficActions(
         presentation: ConnectionPresentationSnapshot,
@@ -731,11 +917,15 @@ struct ConnectionsView: View {
         }
     }
 
-    private var defaultLiveProfileTitle: String {
-        let name = model.profiles.first(where: {
+    private var defaultLiveWorkspaceTitle: String {
+        let workspace = model.configurationDocument.currentWorkspace.map {
+            configurationDisplayName($0.name)
+        } ?? AppLocalization.string("No MClash configuration")
+        let source = model.profiles.first(where: {
             $0.id == model.activeProfileID
-        })?.name ?? AppLocalization.string("Default")
-        return AppLocalization.format("Default Profile · %@", name)
+        })?.name
+        guard let source else { return AppLocalization.format("MClash configuration · %@", workspace) }
+        return AppLocalization.format("MClash configuration · %@ · source %@", workspace, source)
     }
 
     private func profileTitle(_ target: ProfileTrafficTarget) -> String {
@@ -768,6 +958,9 @@ struct ConnectionsView: View {
         }
         if workspace == .live {
             var parts = [presentation.connectionCountLabel]
+            if liveUpdatesPaused {
+                parts.insert(AppLocalization.string("Paused snapshot"), at: 0)
+            }
             if let download = presentation.downloadTotal,
                let upload = presentation.uploadTotal {
                 parts.append(
@@ -1185,6 +1378,14 @@ struct ConnectionsView: View {
 
     private func connectionTable(rows: [ConnectionTableRow]) -> some View {
         Table(rows, selection: $selectedConnectionID, sortOrder: $sortOrder) {
+            TableColumn(AppLocalization.string("Started")) { row in
+                Text(formattedConnectionStart(row.start))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .width(min: 92, ideal: 118, max: 150)
+
             TableColumn("Destination", value: \.destination) { row in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.destination)
@@ -1197,6 +1398,14 @@ struct ConnectionsView: View {
                 .help("\(row.destination)\n\(row.process)")
             }
             .width(min: 210, ideal: 320, max: 480)
+
+            TableColumn(AppLocalization.string("Protocol")) { row in
+                Text(row.protocol)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .width(min: 70, ideal: 88, max: 110)
 
             TableColumn("Route", value: \.chain) { row in
                 VStack(alignment: .leading, spacing: 2) {
@@ -1228,6 +1437,76 @@ struct ConnectionsView: View {
         .contextMenu(forSelectionType: String.self) { selection in
             if let identifier = selection.first,
                let row = rows.first(where: { $0.id == identifier }) {
+                if let domain = observedDomain(for: row.connection) {
+                    Button {
+                        openRuleDraft(for: row.connection, domain: domain, mode: .suffix)
+                    } label: {
+                        Label(
+                            AppLocalization.string("Add domain and subdomains to a rule…"),
+                            systemImage: "globe.badge.plus"
+                        )
+                    }
+                    Button {
+                        openRuleDraft(for: row.connection, domain: domain, mode: .exact)
+                    } label: {
+                        Label(
+                            AppLocalization.string("Add this exact domain to a rule…"),
+                            systemImage: "plus.circle"
+                        )
+                    }
+                    Divider()
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(domain, forType: .string)
+                    } label: {
+                        Label(
+                            AppLocalization.format("Copy %@", domain),
+                            systemImage: "doc.on.doc"
+                        )
+                    }
+                }
+                if let processPath = nonEmpty(row.connection.metadata.processPath) {
+                    Button {
+                        openProcessRuleDraft(
+                            for: row.connection,
+                            processPath: processPath
+                        )
+                    } label: {
+                        Label(
+                            AppLocalization.string("Add this process to a rule…"),
+                            systemImage: "terminal"
+                        )
+                    }
+                } else if let processName = nonEmpty(row.connection.metadata.process) {
+                    Button {
+                        openProcessNameRuleDraft(
+                            for: row.connection,
+                            processName: processName
+                        )
+                    } label: {
+                        Label(
+                            AppLocalization.string("Add this process to a rule…"),
+                            systemImage: "terminal"
+                        )
+                    }
+                }
+                let destination = connectionDestination(row.connection)
+                if !destination.isEmpty {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(destination, forType: .string)
+                    } label: {
+                        Label(
+                            AppLocalization.format("Copy %@", AppLocalization.string("destination")),
+                            systemImage: "doc.on.doc"
+                        )
+                    }
+                }
+                if observedDomain(for: row.connection) != nil
+                    || nonEmpty(row.connection.metadata.processPath) != nil
+                    || nonEmpty(row.connection.metadata.process) != nil {
+                    Divider()
+                }
                 Button("Close Connection", role: .destructive) {
                     Task { await model.closeConnection(row.id) }
                 }
@@ -1261,12 +1540,20 @@ struct ConnectionsView: View {
         storedSortDescending = comparator.order == .reverse
     }
 
-    private func schedulePresentationRefresh() {
+    private func schedulePresentationRefresh(force: Bool = false) {
         guard workspace == .live else { return }
+        guard !liveUpdatesPaused || force || presentationSourceSnapshot != nil else {
+            return
+        }
         presentationTask?.cancel()
         presentationGeneration &+= 1
         let generation = presentationGeneration
-        let snapshot = model.connections
+        let snapshot: MihomoConnectionSnapshot?
+        if liveUpdatesPaused, !force {
+            snapshot = presentationSourceSnapshot
+        } else {
+            snapshot = model.connections
+        }
         let searchText = debouncedSearchText
         let sortOrder = sortOrder
 
@@ -1285,14 +1572,154 @@ struct ConnectionsView: View {
             }
             guard !Task.isCancelled, presentationGeneration == generation else { return }
             presentation = next
+            presentationSourceSnapshot = snapshot
+            presentationCapturedAt = Date()
             presentationTask = nil
         }
+    }
+
+    private enum RuleDraftDomainMode {
+        case exact
+        case suffix
+    }
+
+    private func openRuleDraft(
+        for connection: MihomoConnection,
+        domain: String,
+        mode: RuleDraftDomainMode
+    ) {
+        guard let workspace = model.configurationDocument.currentWorkspace else {
+            model.errorMessage = AppLocalization.string(
+                "Create a MClash configuration before adding a traffic rule."
+            )
+            return
+        }
+        let matcher: RoutingMatcher = switch mode {
+        case .exact: .domainExact(domain)
+        case .suffix: .domainSuffix(domain)
+        }
+        ruleDraftRequest = TrafficRuleDraftRequest(
+            rule: makeTrafficRuleDraft(
+                matcher: matcher,
+                workspace: workspace
+            )
+        )
+    }
+
+    private func openRuleDraft(matcher: RoutingMatcher) {
+        guard let workspace = model.configurationDocument.currentWorkspace else {
+            model.errorMessage = AppLocalization.string(
+                "Create a MClash configuration before adding a traffic rule."
+            )
+            return
+        }
+        ruleDraftRequest = TrafficRuleDraftRequest(
+            rule: makeTrafficRuleDraft(matcher: matcher, workspace: workspace)
+        )
+    }
+
+    private func openProcessRuleDraft(
+        for connection: MihomoConnection,
+        processPath: String
+    ) {
+        guard let workspace = model.configurationDocument.currentWorkspace else {
+            model.errorMessage = AppLocalization.string(
+                "Create a MClash configuration before adding a traffic rule."
+            )
+            return
+        }
+        ruleDraftRequest = TrafficRuleDraftRequest(
+            rule: makeTrafficRuleDraft(
+                matcher: .processPath(processPath),
+                workspace: workspace
+            )
+        )
+    }
+
+    private func openProcessNameRuleDraft(
+        for connection: MihomoConnection,
+        processName: String
+    ) {
+        guard let workspace = model.configurationDocument.currentWorkspace else {
+            model.errorMessage = AppLocalization.string(
+                "Create a MClash configuration before adding a traffic rule."
+            )
+            return
+        }
+        ruleDraftRequest = TrafficRuleDraftRequest(
+            rule: makeTrafficRuleDraft(
+                matcher: .processName(processName),
+                workspace: workspace
+            )
+        )
+    }
+
+    private func makeTrafficRuleDraft(
+        matcher: RoutingMatcher,
+        workspace: Workspace
+    ) -> RoutingRule {
+        let defaultGroupID = workspace.globalProxyGroupID.flatMap { id in
+            model.configurationDocument.proxyGroups.contains {
+                $0.id == id && $0.enabled
+            } ? id : nil
+        } ?? workspace.proxyGroupIDs.first(where: { groupID in
+            model.configurationDocument.proxyGroups.contains {
+                $0.id == groupID && $0.enabled
+            }
+        })
+        let action: RoutingAction = workspace.routingMode == .direct
+            ? .direct
+            : defaultGroupID.map(RoutingAction.proxyGroup) ?? .direct
+        let nextPriority = min(
+            65_535,
+            max(10, (model.configurationDocument.rules.map(\.priority).max() ?? 0) + 10)
+        )
+        return RoutingRule(
+            enabled: true,
+            priority: nextPriority,
+            matchers: [matcher],
+            action: action,
+            workspaceScope: workspace.id
+        )
+    }
+
+    private func applicationMatcher(
+        for application: FlowLedgerApplication
+    ) -> RoutingMatcher? {
+        if let bundleIdentifier = nonEmpty(application.bundleIdentifier) {
+            return .application(bundleIdentifier)
+        }
+        if let executablePath = nonEmpty(application.executablePath) {
+            return .processPath(executablePath)
+        }
+        if case let .processName(name) = application.key,
+           !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .processName(name)
+        }
+        return nil
     }
 
     @ViewBuilder
     private func connectionInspector(_ connection: MihomoConnection?) -> some View {
         if let connection {
-            ConnectionDetailView(model: model, connection: connection)
+            ConnectionDetailView(
+                model: model,
+                connection: connection,
+                onCreateRule: { matcher in
+                    guard let workspace = model.configurationDocument.currentWorkspace else {
+                        model.errorMessage = AppLocalization.string(
+                            "Create a MClash configuration before adding a traffic rule."
+                        )
+                        return
+                    }
+                    ruleDraftRequest = TrafficRuleDraftRequest(
+                        rule: makeTrafficRuleDraft(
+                            matcher: matcher,
+                            workspace: workspace
+                        )
+                    )
+                }
+            )
         } else {
             ContentUnavailableView(
                 "Select a connection",
@@ -1429,6 +1856,11 @@ private struct ConnectionPresentationSnapshot: Sendable {
     }
 }
 
+private struct TrafficRuleDraftRequest: Identifiable {
+    let id = UUID()
+    let rule: RoutingRule
+}
+
 private struct ConnectionTableRow: Identifiable, Sendable {
     let connection: MihomoConnection
     let destination: String
@@ -1438,6 +1870,7 @@ private struct ConnectionTableRow: Identifiable, Sendable {
     let download: Int64
     let upload: Int64
     let start: String
+    let `protocol`: String
 
     var id: String { connection.id }
 
@@ -1453,6 +1886,11 @@ private struct ConnectionTableRow: Identifiable, Sendable {
         download = connection.download
         upload = connection.upload
         start = connection.start
+        let protocolValue = [
+            nonEmpty(connection.metadata.network),
+            nonEmpty(connection.metadata.type)
+        ].compactMap { $0?.uppercased() }.joined(separator: " / ")
+        `protocol` = protocolValue.isEmpty ? "—" : protocolValue
     }
 
     var fullChain: String {
@@ -1469,6 +1907,7 @@ private struct ConnectionTableRow: Identifiable, Sendable {
 private struct ConnectionDetailView: View {
     @Bindable var model: AppModel
     let connection: MihomoConnection
+    let onCreateRule: (RoutingMatcher) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1541,6 +1980,40 @@ private struct ConnectionDetailView: View {
                         detailRow("Special Rules", value: nonEmpty(connection.metadata.specialRules))
                     }
 
+                    if let domain = observedDomain(for: connection) {
+                        ConnectionDetailSection("Quick rule") {
+                            Text(
+                                AppLocalization.format(
+                                    "Use %@ as a reviewed MClash rule condition.",
+                                    domain
+                                )
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                Button(AppLocalization.string("Domain and subdomains")) {
+                                    onCreateRule(.domainSuffix(domain))
+                                }
+                                .buttonStyle(.bordered)
+                                Button(AppLocalization.string("Exact domain")) {
+                                    onCreateRule(.domainExact(domain))
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                    if let processPath = nonEmpty(connection.metadata.processPath) {
+                        Button(AppLocalization.string("Add process to a rule…")) {
+                            onCreateRule(.processPath(processPath))
+                        }
+                        .buttonStyle(.bordered)
+                    } else if let processName = nonEmpty(connection.metadata.process) {
+                        Button(AppLocalization.string("Add process to a rule…")) {
+                            onCreateRule(.processName(processName))
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
                     ConnectionDetailSection("Destination") {
                         ConnectionDetailRow(
                             "Address",
@@ -1573,6 +2046,53 @@ private struct ConnectionDetailView: View {
                                 ?? AppLocalization.string("Unavailable")
                         )
                         detailRow("Path", value: nonEmpty(connection.metadata.processPath), monospaced: true)
+                        if nonEmpty(connection.metadata.process) == nil,
+                           nonEmpty(connection.metadata.processPath) == nil {
+                            Text(AppLocalization.string("Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity."))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    ConnectionDetailSection("MClash context") {
+                        ConnectionDetailRow(
+                            "Runtime",
+                            value: model.unifiedConfigurationEnabled
+                                ? AppLocalization.string("MClash unified runtime")
+                                : AppLocalization.string("Imported source runtime")
+                        )
+                        detailRow(
+                            "Configuration",
+                            value: model.configurationDocument.currentWorkspace.map {
+                                configurationDisplayName($0.name)
+                            }
+                        )
+                        detailRow("Node source", value: model.activeProfile?.name)
+                        detailRow(
+                            "Entrance",
+                            value: entranceTitle
+                        )
+                        detailRow(
+                            "Routing mode",
+                            value: model.configurationDocument.currentWorkspace.map {
+                                configurationRoutingModeTitle($0.routingMode)
+                            } ?? runtimeModeTitle
+                        )
+                        detailRow(
+                            "Runtime revision",
+                            value: model.configurationDocument.lastRuntimeSnapshot.map {
+                                AppLocalization.number($0.workspaceRevision)
+                            },
+                            monospaced: true
+                        )
+                        detailRow(
+                            "Runtime hash",
+                            value: model.compiledConfiguration.map {
+                                String($0.configHash.prefix(12))
+                            },
+                            monospaced: true
+                        )
                     }
                 }
                 .padding(16)
@@ -1600,6 +2120,36 @@ private struct ConnectionDetailView: View {
     private var totalTraffic: Int64 {
         let (total, overflow) = connection.download.addingReportingOverflow(connection.upload)
         return overflow ? Int64.max : total
+    }
+
+    private var runtimeModeTitle: String {
+        guard let mode = model.runtimeConfig?.mode else {
+            return AppLocalization.string("Unavailable")
+        }
+        return AppLocalization.string(mode.capitalized)
+    }
+
+    private var entranceTitle: String {
+        if let inboundName = nonEmpty(connection.metadata.inboundName),
+           let entrance = model.activeConfiguredEntrances.first(where: {
+               $0.name == inboundName
+           }) {
+            return entrance.address.map { "\(entrance.name) · \($0)" }
+                ?? entrance.name
+        }
+        if let portText = nonEmpty(connection.metadata.inboundPort),
+           let port = Int(portText),
+           let entrance = model.activeConfiguredEntrances.first(where: {
+               $0.port == port
+           }) {
+            return entrance.address.map { "\(entrance.name) · \($0)" }
+                ?? entrance.name
+        }
+        if let inboundName = nonEmpty(connection.metadata.inboundName),
+           !inboundName.uppercased().hasPrefix("DEFAULT-") {
+            return inboundName
+        }
+        return AppLocalization.string("MClash local fallback")
     }
 
     private var destinationEndpoint: String? {
@@ -1728,6 +2278,51 @@ private func connectionDestination(_ connection: MihomoConnection) -> String {
     }
     return nonEmpty(metadata.remoteDestination)
         ?? AppLocalization.string("Unknown destination")
+}
+
+/// Returns a conservative hostname suitable for a reviewed rule draft. IP
+/// addresses, loopback names, ports and opaque endpoint strings are excluded;
+/// the user can still add those through the normal IP/port rule editor.
+private func observedDomain(for connection: MihomoConnection) -> String? {
+    let candidates = [
+        connection.metadata.sniffHost,
+        connection.metadata.host,
+    ]
+    for raw in candidates.compactMap(nonEmpty) {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if value.first == "[", let closing = value.firstIndex(of: "]") {
+            value = String(value[value.index(after: closing)...])
+        }
+        if value.filter({ $0 == ":" }).count == 1,
+           let separator = value.lastIndex(of: ":"),
+           UInt16(value[value.index(after: separator)...]) != nil {
+            value = String(value[..<separator])
+        }
+        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard value.contains("."),
+              !value.contains(where: { $0.isWhitespace || $0 == "/" || $0 == "\\" }),
+              !value.hasSuffix(".local"),
+              (try? IPAddress(value)) == nil,
+              (try? HostMatcher(kind: .suffix, value: value)) != nil else {
+            continue
+        }
+        return value
+    }
+    return nil
+}
+
+private func safeHistoryHostname(_ raw: String?) -> String? {
+    guard var value = nonEmpty(raw)?.lowercased() else { return nil }
+    value = value.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    guard value.contains("."),
+          !value.contains(where: { $0.isWhitespace || $0 == "/" || $0 == "\\" }),
+          !value.hasSuffix(".local"),
+          (try? IPAddress(value)) == nil,
+          (try? HostMatcher(kind: .suffix, value: value)) != nil else {
+        return nil
+    }
+    return value
 }
 
 private func endpoint(address: String?, port: String?) -> String? {

@@ -71,6 +71,17 @@ struct MihomoModelsTests {
         #expect(config.geoXURL?.geoSite == "https://example.com/geosite.dat")
     }
 
+    @Test("Optional listener records decode without changing legacy config responses")
+    func decodesOptionalListenerRecords() throws {
+        let data = Data(
+            #"{"port":0,"socks-port":0,"redir-port":0,"tproxy-port":0,"mixed-port":0,"tun":{"enable":false,"device":"","stack":"system","auto-route":true,"auto-detect-interface":true},"allow-lan":false,"bind-address":"127.0.0.1","mode":"rule","unified-delay":false,"log-level":"info","ipv6":true,"interface-name":"","routing-mark":0,"tcp-concurrent":false,"find-process-mode":"off","sniffing":false,"listeners":[{"name":"HTTP tools","type":"http","listen":"127.0.0.1","port":18080,"proxy":"Node Selection","future-field":true}]}"#.utf8
+        )
+        let config = try JSONDecoder().decode(MihomoConfig.self, from: data)
+        #expect(config.listeners?.first?.name == "HTTP tools")
+        #expect(config.listeners?.first?.port == 18080)
+        #expect(config.listeners?.first?.proxy == "Node Selection")
+    }
+
     @Test
     func decodesProxyGroupsIncludingAlphaExtraHistory() throws {
         let data = Data(

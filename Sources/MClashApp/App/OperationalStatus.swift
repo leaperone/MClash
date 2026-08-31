@@ -215,6 +215,26 @@ extension AppModel {
             )
         }
 
+        if systemProxyObservedEnabled,
+           !systemProxyEnabled,
+           systemProxyGuardFailure == nil,
+           !systemProxyRecoveryRequired {
+            issues.append(
+                OperationalIssue(
+                    id: "system-proxy.external",
+                    severity: .warning,
+                    subsystem: .systemProxy,
+                    title: "macOS System Proxy is enabled outside MClash",
+                    consequence: "Some traffic may still be routed through a local proxy even though MClash reports its own switch as off.",
+                    technicalDetail: systemProxyOwnershipWarning,
+                    primaryActionTitle: "Review Network Settings",
+                    primaryAction: .openLogs,
+                    secondaryActionTitle: nil,
+                    secondaryAction: nil
+                )
+            )
+        }
+
         switch networkCaptureState {
         case .awaitingUserApproval:
             issues.append(

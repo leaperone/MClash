@@ -19,9 +19,9 @@ struct ContentView: View {
                 Section(AppLocalization.string("Configure")) {
                     destinationRow(.workspaces, title: "Configuration")
                     destinationRow(.rules, title: "Rules")
+                    destinationRow(.entrances)
                     destinationRow(.nodes)
                     destinationRow(.sources)
-                    destinationRow(.entrances)
                     destinationRow(.dns)
                     destinationRow(.proxyGroups, title: "Node Groups")
                 }

@@ -10,9 +10,15 @@ struct OverviewView: View {
             VStack(alignment: .leading, spacing: MClashLayout.sectionSpacing) {
                 OverviewStatusCard(model: model, compact: compact)
 
+                if model.configurationDocument.currentWorkspace != nil {
+                    OverviewRoutingModeCard(model: model)
+                }
+
                 if model.isConnected {
                     OverviewMetricsCard(model: model, compact: compact)
                 }
+
+                OverviewEntrancesCard(model: model)
 
                 DisclosureGroup("Connection Details", isExpanded: $detailsExpanded) {
                     OverviewConnectionDetails(model: model)
@@ -48,6 +54,147 @@ struct OverviewView: View {
     private func updateCompactState(_ width: CGFloat) {
         let next = width < 620
         if compact != next { compact = next }
+    }
+}
+
+private struct OverviewRoutingModeCard: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(AppLocalization.string("Routing mode"))
+                            .font(.headline)
+                        Text(AppLocalization.string("Choose how every entrance starts routing traffic."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 10)
+                    Picker(
+                        AppLocalization.string("Routing mode"),
+                        selection: routingModeBinding
+                    ) {
+                        Text(AppLocalization.string("Rule")).tag(ConfigurationRoutingMode.rule)
+                        Text(AppLocalization.string("Global")).tag(ConfigurationRoutingMode.global)
+                        Text(AppLocalization.string("Direct")).tag(ConfigurationRoutingMode.direct)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 270)
+                    .disabled(model.pendingMode != nil || !model.canPerform(.changeRuntimeSettings))
+                }
+
+                Text(configurationRoutingModeExplanation(currentMode))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if currentMode == .global, !availableGroups.isEmpty {
+                    Picker(
+                        AppLocalization.string("Global exit"),
+                        selection: globalExitBinding
+                    ) {
+                        ForEach(availableGroups) { group in
+                            Text(configurationDisplayName(group.name)).tag(group.id)
+                        }
+                    }
+                    .frame(maxWidth: 360, alignment: .leading)
+                    .disabled(model.pendingMode != nil || !model.canPerform(.changeRuntimeSettings))
+                }
+            }
+        }
+    }
+
+    private var currentMode: ConfigurationRoutingMode {
+        model.configurationDocument.currentWorkspace?.routingMode ?? .rule
+    }
+
+    private var availableGroups: [ProxyGroup] {
+        guard let workspace = model.configurationDocument.currentWorkspace else { return [] }
+        return workspace.proxyGroupIDs.compactMap { id in
+            model.configurationDocument.proxyGroups.first {
+                $0.id == id && $0.enabled
+            }
+        }
+    }
+
+    private var routingModeBinding: Binding<ConfigurationRoutingMode> {
+        Binding(
+            get: { currentMode },
+            set: { mode in
+                Task {
+                    do { _ = try await model.setConfigurationRoutingMode(mode) }
+                    catch { model.errorMessage = error.localizedDescription }
+                }
+            }
+        )
+    }
+
+    private var globalExitBinding: Binding<ProxyGroupID> {
+        Binding(
+            get: {
+                model.configurationDocument.currentWorkspace?.globalProxyGroupID
+                    ?? availableGroups[0].id
+            },
+            set: { groupID in
+                Task {
+                    do { try await model.setConfigurationGlobalProxyGroup(groupID) }
+                    catch { model.errorMessage = error.localizedDescription }
+                }
+            }
+        )
+    }
+}
+
+private struct OverviewEntrancesCard: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Label(AppLocalization.string("Entrances"), systemImage: "arrow.triangle.branch")
+                        .font(.headline)
+                    Spacer()
+                    Button(AppLocalization.string("Manage")) {
+                        model.selection = .entrances
+                    }
+                    .controlSize(.small)
+                }
+                if model.activeConfiguredEntrances.isEmpty {
+                    Text(AppLocalization.string("No MClash entrances are enabled."))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.activeConfiguredEntrances) { entrance in
+                        HStack(spacing: 10) {
+                            Image(systemName: entrance.kind.presentationSystemImage)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entrance.name)
+                                    .font(.callout.weight(.medium))
+                                Text(
+                                    entrance.address
+                                        ?? entrance.kind.presentationTitle
+                                )
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Text(entrance.enabled
+                                ? entrance.kind.presentationTitle
+                                : AppLocalization.string("Off"))
+                                .font(.caption)
+                                .foregroundStyle(entrance.enabled ? .secondary : .tertiary)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -114,7 +261,7 @@ private struct OverviewStatusCard: View {
         statusPill(
             model.configurationDocument.currentWorkspace?.name
                 ?? model.activeProfile?.name
-                ?? AppLocalization.string("No Workspace"),
+                ?? AppLocalization.string("No Configuration"),
             symbol: "rectangle.3.group"
         )
         statusPill(captureTitle, symbol: captureSymbol)
@@ -149,9 +296,9 @@ private struct OverviewStatusCard: View {
             .buttonStyle(.borderedProminent)
         } else if model.activeProfile == nil {
             Button {
-                model.selection = .profiles
+                model.selection = .sources
             } label: {
-                Label("Choose a Profile", systemImage: "doc.badge.plus")
+                Label(AppLocalization.string("Sources"), systemImage: "doc.badge.plus")
             }
             .buttonStyle(.borderedProminent)
         } else if !model.isConnected {
@@ -216,12 +363,14 @@ private struct OverviewStatusCard: View {
     private var captureTitle: String {
         if appRoutingIsActive { return AppLocalization.string("App Routing") }
         if model.systemProxyEnabled { return AppLocalization.string("macOS System Proxy") }
+        if model.systemProxyObservedEnabled { return AppLocalization.string("External System Proxy") }
         return AppLocalization.string(model.isConnected ? "Local Proxy" : "Not Connected")
     }
 
     private var captureSymbol: String {
         if appRoutingIsActive { return "app.badge" }
         if model.systemProxyEnabled { return "desktopcomputer" }
+        if model.systemProxyObservedEnabled { return "exclamationmark.triangle" }
         return model.isConnected ? "point.3.connected.trianglepath.dotted" : "power"
     }
 
@@ -351,18 +500,55 @@ private struct OverviewConnectionDetails: View {
                 symbol: routingSymbol,
                 color: routingColor
             )
+            if let warning = model.systemProxyOwnershipWarning {
+                Divider().padding(.leading, 36)
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .frame(width: 24)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(AppLocalization.string("External network setting detected"))
+                            .fontWeight(.medium)
+                        Text(warning)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 10)
+                .accessibilityElement(children: .combine)
+            }
             Divider().padding(.leading, 36)
             valueRow(
-                "Profile",
+                "Runtime",
+                value: model.unifiedConfigurationEnabled
+                    ? AppLocalization.string("MClash unified runtime")
+                    : AppLocalization.string("Imported source runtime")
+            )
+            Divider().padding(.leading, 36)
+            valueRow(
+                "Configuration",
+                value: model.configurationDocument.currentWorkspace.map {
+                    configurationDisplayName($0.name)
+                } ?? AppLocalization.string("Not selected")
+            )
+            Divider().padding(.leading, 36)
+            valueRow(
+                "Node source",
                 value: model.activeProfile?.name ?? AppLocalization.string("Not selected")
             )
             Divider().padding(.leading, 36)
             valueRow("Routing Mode", value: routingMode)
 
-            if let address = model.localMixedListenerAddress {
+            if let address = model.localMixedListenerAddress,
+               !model.unifiedConfigurationEnabled || model.managedMixedFallbackIsActive {
                 Divider().padding(.leading, 36)
                 HStack(spacing: 12) {
-                    Text("Mixed Proxy")
+                    Text(model.managedMixedFallbackIsActive
+                        ? AppLocalization.string("Recovery listener")
+                        : AppLocalization.string("Effective Mixed listener"))
                         .foregroundStyle(.secondary)
                     Spacer()
                     CopyableValueButton(
@@ -371,6 +557,13 @@ private struct OverviewConnectionDetails: View {
                     )
                 }
                 .padding(.vertical, 10)
+                Text(model.managedMixedFallbackIsActive
+                    ? AppLocalization.string("MClash is temporarily using this internal endpoint because the configured entrances were unavailable.")
+                    : AppLocalization.string("This is MClash's managed local fallback listener; it is not an imported Profile setting."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 36)
             }
 
             if let session = model.runningSession {
@@ -479,6 +672,10 @@ private struct OverviewConnectionDetails: View {
     }
 
     private var routingMode: String {
+        if model.unifiedConfigurationEnabled,
+           let mode = model.configurationDocument.currentWorkspace?.routingMode {
+            return configurationRoutingModeTitle(mode)
+        }
         guard let mode = model.runtimeConfig?.mode, !mode.isEmpty else {
             return AppLocalization.string("Unavailable")
         }

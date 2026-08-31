@@ -12,10 +12,15 @@ struct ConfigurationEditorSheet: View {
     @State private var enabled = true
     @State private var groupType: ProxyGroupType = .select
     @State private var selectedNodeIDs: Set<NodeID> = []
+    @State private var orderedNodeIDs: [NodeID] = []
     @State private var nodeSelectors: [NodeSelector] = []
     @State private var selectedGroupIDs: Set<ProxyGroupID> = []
+    @State private var orderedGroupIDs: [ProxyGroupID] = []
     @State private var selectedRuleIDs: Set<RoutingRuleID> = []
+    @State private var selectedRuleSetIDs: Set<RuleSetID> = []
     @State private var selectedEntranceIDs: Set<EntranceID> = []
+    @State private var workspaceRoutingMode: ConfigurationRoutingMode = .rule
+    @State private var workspaceGlobalProxyGroupID: ProxyGroupID?
     @State private var workspaceNodeSearch = ""
     @State private var entranceKind: EntranceKind = .http
     @State private var entranceAction = RuleActionChoice.direct
@@ -27,6 +32,11 @@ struct ConfigurationEditorSheet: View {
     @State private var dnsProxyServerText = ""
     @State private var dnsRulesText = ""
     @State private var dnsTakeoverEnabled = false
+    @State private var ruleSetBehavior: RuleSetBehavior = .classical
+    @State private var ruleSetFormat: RuleSetFormat = .yaml
+    @State private var ruleSetSourceURLText = ""
+    @State private var ruleSetPathText = ""
+    @State private var ruleSetRulesText = ""
     @State private var errorMessage: String?
 
     init(
@@ -67,8 +77,8 @@ struct ConfigurationEditorSheet: View {
             .task { load() }
         }
         .frame(
-            minWidth: section == .proxyGroups ? 760 : 460,
-            minHeight: section == .proxyGroups ? 680 : 420
+            minWidth: section == .proxyGroups ? 760 : section == .ruleSets ? 620 : 460,
+            minHeight: section == .proxyGroups ? 680 : section == .ruleSets ? 560 : 420
         )
         .alert(
             AppLocalization.string("Could Not Save Configuration"),
@@ -94,7 +104,7 @@ struct ConfigurationEditorSheet: View {
             Section(AppLocalization.string("Group")) {
                 TextField(AppLocalization.string("Name"), text: $name)
                 Picker(AppLocalization.string("Type"), selection: $groupType) {
-                    ForEach(ProxyGroupType.allCases, id: \.self) { type in
+                    ForEach(ProxyGroupType.allCases.filter { $0 != .relay }, id: \.self) { type in
                         Text(type.localizedTitle).tag(type)
                     }
                 }
@@ -106,7 +116,8 @@ struct ConfigurationEditorSheet: View {
                         uniquingKeysWith: { first, _ in first }
                     ),
                     selectedNodeIDs: $selectedNodeIDs,
-                    selectors: $nodeSelectors
+                    selectors: $nodeSelectors,
+                    orderedNodeIDs: $orderedNodeIDs
                 )
                 groupSelection
             }
@@ -118,16 +129,77 @@ struct ConfigurationEditorSheet: View {
                 )
                 .foregroundStyle(.secondary)
             }
+        case .ruleSets:
+            Section(AppLocalization.string("Rule Set")) {
+                TextField(AppLocalization.string("Name"), text: $name)
+                Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
+                Picker(AppLocalization.string("Behavior"), selection: $ruleSetBehavior) {
+                    ForEach(RuleSetBehavior.allCases, id: \.self) { behavior in
+                        Text(behavior.localizedTitle).tag(behavior)
+                    }
+                }
+                Picker(AppLocalization.string("Format"), selection: $ruleSetFormat) {
+                    ForEach(RuleSetFormat.allCases, id: \.self) { format in
+                        Text(format.localizedTitle).tag(format)
+                    }
+                }
+                TextField(AppLocalization.string("Source URL (optional)"), text: $ruleSetSourceURLText)
+                    .textFieldStyle(.roundedBorder)
+                TextField(AppLocalization.string("Local cache path (optional)"), text: $ruleSetPathText)
+                    .textFieldStyle(.roundedBorder)
+                Picker(AppLocalization.string("Default action"), selection: $entranceAction) {
+                    Text(AppLocalization.string("Direct")).tag(RuleActionChoice.direct)
+                    Text(AppLocalization.string("Reject")).tag(RuleActionChoice.reject)
+                    ForEach(model.configurationDocument.proxyGroups.filter(\.enabled)) { group in
+                        Text(configurationDisplayName(group.name))
+                            .tag(RuleActionChoice.group(group.id))
+                    }
+                }
+                TextEditor(text: $ruleSetRulesText)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 150)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
+                Text(AppLocalization.string("Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         case .workspaces:
             Section(AppLocalization.string("Configuration")) {
                 TextField(AppLocalization.string("Name"), text: $name)
+                Picker(AppLocalization.string("Traffic mode"), selection: $workspaceRoutingMode) {
+                    Text(AppLocalization.string("Rule — use the rule list")).tag(ConfigurationRoutingMode.rule)
+                    Text(AppLocalization.string("Global — use one Global exit")).tag(ConfigurationRoutingMode.global)
+                    Text(AppLocalization.string("Direct — bypass proxy groups")).tag(ConfigurationRoutingMode.direct)
+                }
+                if workspaceRoutingMode == .global {
+                    let groups = model.configurationDocument.proxyGroups.filter { group in
+                        group.enabled && selectedGroupIDs.contains(group.id)
+                    }
+                    if !groups.isEmpty {
+                        Picker(AppLocalization.string("Global exit"), selection: Binding(
+                            get: { workspaceGlobalProxyGroupID ?? groups[0].id },
+                            set: { workspaceGlobalProxyGroupID = $0 }
+                        )) {
+                            ForEach(groups) { group in
+                                Text(configurationDisplayName(group.name)).tag(group.id)
+                            }
+                        }
+                    }
+                }
+                Text(configurationRoutingModeExplanation(workspaceRoutingMode))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 nodeSelection
                 groupSelection
                 ruleSelection
+                ruleSetSelection
                 entranceSelection
             }
         case .entrances:
             Section(AppLocalization.string("Entrance")) {
+                TextField(AppLocalization.string("Name"), text: $name)
                 Picker(AppLocalization.string("Type"), selection: $entranceKind) {
                     ForEach(entranceKindOptions, id: \.self) { kind in
                         Text(kind.localizedTitle).tag(kind)
@@ -138,6 +210,11 @@ struct ConfigurationEditorSheet: View {
                     Text(AppLocalization.string("Application traffic is a capability switch. Manage its matching rules on the Rules page."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if entranceKind == .tun {
+                    Text(AppLocalization.string("TUN is not supported by this macOS runtime. Use HTTP, SOCKS5, or App Routing instead."))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 TextField(AppLocalization.string("Bind Address"), text: $bindAddress)
@@ -153,6 +230,13 @@ struct ConfigurationEditorSheet: View {
                     }
                 }
                 Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
+                    .disabled(entranceKind == .appRouting)
+                if entranceKind == .appRouting {
+                    Text(AppLocalization.string("Use the App Routing switch on the Entrances page to start or stop capture."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         case .dns:
             Section(AppLocalization.string("DNS")) {
@@ -239,15 +323,90 @@ struct ConfigurationEditorSheet: View {
 
     private var groupSelection: some View {
         Section(AppLocalization.string("Node Groups")) {
-            ForEach(model.configurationDocument.proxyGroups.filter {
-                section != .proxyGroups || $0.id.rawValue != id
-            }) { group in
-                Toggle(isOn: Binding(
-                    get: { selectedGroupIDs.contains(group.id) },
-                    set: { value in
-                        if value { selectedGroupIDs.insert(group.id) } else { selectedGroupIDs.remove(group.id) }
+            if section == .proxyGroups {
+                Text(
+                    groupTypeExplanation
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                List {
+                    ForEach(orderedGroupIDs, id: \.self) { groupID in
+                        if let group = model.configurationDocument.proxyGroups.first(where: {
+                            $0.id == groupID
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "line.3.horizontal")
+                                    .foregroundStyle(.secondary)
+                                Text(configurationDisplayName(group.name))
+                                    .lineLimit(1)
+                                Spacer()
+                                let position = orderedGroupIDs.firstIndex(of: groupID) ?? 0
+                                Button {
+                                    moveNestedGroup(from: position, by: -1)
+                                } label: {
+                                    Image(systemName: "chevron.up")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(position == 0)
+                                .accessibilityLabel(AppLocalization.string("Move nested group up"))
+                                Button {
+                                    moveNestedGroup(from: position, by: 1)
+                                } label: {
+                                    Image(systemName: "chevron.down")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(position >= orderedGroupIDs.count - 1)
+                                .accessibilityLabel(AppLocalization.string("Move nested group down"))
+                                Button {
+                                    selectedGroupIDs.remove(groupID)
+                                    orderedGroupIDs.removeAll { $0 == groupID }
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel(AppLocalization.string("Remove nested group"))
+                            }
+                        }
                     }
-                )) { Text(configurationDisplayName(group.name)) }
+                    .onMove { offsets, destination in
+                        orderedGroupIDs.move(fromOffsets: offsets, toOffset: destination)
+                    }
+                    ForEach(model.configurationDocument.proxyGroups.filter {
+                        $0.id.rawValue != id && !selectedGroupIDs.contains($0.id)
+                    }) { group in
+                        Button {
+                            selectedGroupIDs.insert(group.id)
+                            orderedGroupIDs.append(group.id)
+                        } label: {
+                            Label(
+                                configurationDisplayName(group.name),
+                                systemImage: "plus.circle"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(minHeight: 100, maxHeight: 260)
+            } else {
+                ForEach(model.configurationDocument.proxyGroups.filter {
+                    $0.id.rawValue != id
+                }) { group in
+                    Toggle(isOn: Binding(
+                        get: { selectedGroupIDs.contains(group.id) },
+                        set: { value in
+                            if value {
+                                selectedGroupIDs.insert(group.id)
+                                if !orderedGroupIDs.contains(group.id) {
+                                    orderedGroupIDs.append(group.id)
+                                }
+                            } else {
+                                selectedGroupIDs.remove(group.id)
+                                orderedGroupIDs.removeAll { $0 == group.id }
+                            }
+                        }
+                    )) { Text(configurationDisplayName(group.name)) }
+                }
             }
         }
     }
@@ -262,6 +421,22 @@ struct ConfigurationEditorSheet: View {
                     }
                 )) {
                     Text(AppLocalization.format("Rule %d", rule.priority))
+                }
+            }
+        }
+    }
+
+    private var ruleSetSelection: some View {
+        Section(AppLocalization.string("Rule Sets")) {
+            ForEach(model.configurationDocument.ruleSets) { ruleSet in
+                Toggle(isOn: Binding(
+                    get: { selectedRuleSetIDs.contains(ruleSet.id) },
+                    set: { value in
+                        if value { selectedRuleSetIDs.insert(ruleSet.id) }
+                        else { selectedRuleSetIDs.remove(ruleSet.id) }
+                    }
+                )) {
+                    Text(ruleSet.name)
                 }
             }
         }
@@ -299,21 +474,63 @@ struct ConfigurationEditorSheet: View {
                 enabled = true
                 nodeSelectors = []
                 selectedNodeIDs = []
+                orderedNodeIDs = []
                 selectedGroupIDs = []
+                orderedGroupIDs = []
                 return
             }
             name = configurationDisplayName(group.name)
             groupType = group.type
             enabled = group.enabled
             selectedNodeIDs = Set(group.members.compactMap { if case let .node(nodeID) = $0 { return nodeID }; return nil })
+            orderedNodeIDs = group.members.compactMap {
+                if case let .node(nodeID) = $0 { return nodeID }
+                return nil
+            }
             nodeSelectors = group.memberSelectors
             for selector in group.memberSelectors {
                 selectedNodeIDs.formUnion(selector.fixedNodeIDs)
+                orderedNodeIDs.append(contentsOf: selector.fixedNodeIDs)
             }
+            orderedNodeIDs = orderedNodeIDs.filter { selectedNodeIDs.contains($0) }
+                + selectedNodeIDs.subtracting(Set(orderedNodeIDs)).sorted {
+                    $0.rawValue.uuidString < $1.rawValue.uuidString
+                }
             selectedGroupIDs = Set(group.members.compactMap { if case let .group(groupID) = $0 { return groupID }; return nil })
+            orderedGroupIDs = group.members.compactMap {
+                if case let .group(groupID) = $0 { return groupID }
+                return nil
+            }
             selectedGroupIDs.remove(group.id)
         case .rules:
             return
+        case .ruleSets:
+            guard let ruleSet = model.configurationDocument.ruleSets.first(where: { $0.id.rawValue == id }) else {
+                guard isNew else { return }
+                name = ""
+                enabled = true
+                ruleSetBehavior = .classical
+                ruleSetFormat = .yaml
+                ruleSetSourceURLText = ""
+                ruleSetPathText = ""
+                ruleSetRulesText = ""
+                entranceAction = model.configurationDocument.proxyGroups
+                    .first(where: \.enabled)
+                    .map { .group($0.id) } ?? .direct
+                return
+            }
+            name = ruleSet.name
+            enabled = ruleSet.enabled
+            ruleSetBehavior = ruleSet.behavior
+            ruleSetFormat = ruleSet.format
+            ruleSetSourceURLText = ruleSet.sourceURL?.absoluteString ?? ""
+            ruleSetPathText = ruleSet.path ?? ""
+            ruleSetRulesText = ruleSet.rules.joined(separator: "\n")
+            entranceAction = switch ruleSet.defaultAction {
+            case .direct: .direct
+            case .reject: .reject
+            case let .proxyGroup(groupID): .group(groupID)
+            }
         case .workspaces:
             guard let workspace = model.configurationDocument.workspaces.first(where: { $0.id.rawValue == id }) else { return }
             name = configurationDisplayName(workspace.name)
@@ -323,7 +540,11 @@ struct ConfigurationEditorSheet: View {
                 selectedNodeIDs.removeAll()
             }
             selectedGroupIDs = Set(workspace.proxyGroupIDs)
+            orderedGroupIDs = workspace.proxyGroupIDs
+            workspaceRoutingMode = workspace.routingMode
+            workspaceGlobalProxyGroupID = workspace.globalProxyGroupID
             selectedRuleIDs = Set(workspace.ruleIDs)
+            selectedRuleSetIDs = Set(workspace.ruleSetIDs)
             selectedEntranceIDs = Set(workspace.entranceIDs)
             selectedEntranceIDs.formUnion(
                 model.configurationDocument.entrances
@@ -334,6 +555,7 @@ struct ConfigurationEditorSheet: View {
             guard let entrance = model.configurationDocument.entrances.first(where: { $0.id.rawValue == id }) else {
                 guard isNew else { return }
                 entranceKind = .http
+                name = uniqueEntranceName(for: entranceKind)
                 entranceAction = model.configurationDocument.proxyGroups
                     .first(where: \.enabled)
                     .map { .group($0.id) }
@@ -344,6 +566,7 @@ struct ConfigurationEditorSheet: View {
                 return
             }
             entranceKind = entrance.kind
+            name = entrance.name
             switch entrance.defaultAction {
             case .direct: entranceAction = .direct
             case .reject: entranceAction = .reject
@@ -398,8 +621,16 @@ struct ConfigurationEditorSheet: View {
             let explicitNodeIDs = nodeSelectors.isEmpty
                 ? selectedNodeIDs
                 : selectedNodeIDs.subtracting(selectorPinnedIDs)
-            let memberNodes = explicitNodeIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }.map { ProxyGroupMember.node($0) }
-            let memberGroups = selectedGroupIDs.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }.map { ProxyGroupMember.group($0) }
+            let orderedNodes = orderedNodeIDs.filter(explicitNodeIDs.contains)
+                + explicitNodeIDs.subtracting(Set(orderedNodeIDs)).sorted {
+                    $0.rawValue.uuidString < $1.rawValue.uuidString
+                }
+            let memberNodes = orderedNodes.map { ProxyGroupMember.node($0) }
+            let orderedGroups = orderedGroupIDs.filter(selectedGroupIDs.contains)
+            let remainingGroups = selectedGroupIDs.subtracting(orderedGroups)
+                .sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
+            let memberGroups = (orderedGroups + remainingGroups)
+                .map { ProxyGroupMember.group($0) }
             let group: ProxyGroup
             if let index = document.proxyGroups.firstIndex(where: { $0.id.rawValue == id }) {
                 document.proxyGroups[index].name = normalized
@@ -444,6 +675,69 @@ struct ConfigurationEditorSheet: View {
             // UnifiedRoutingRuleEditor. Keep the generic sheet from silently
             // writing a reduced, domain-only representation.
             return
+        case .ruleSets:
+            let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                errorMessage = AppLocalization.string("Name is required.")
+                return
+            }
+            let sourceText = ruleSetSourceURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sourceURL: URL?
+            if sourceText.isEmpty {
+                sourceURL = nil
+            } else {
+                guard let parsed = URL(string: sourceText),
+                      ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""),
+                      parsed.host?.isEmpty == false else {
+                    errorMessage = AppLocalization.string("Rule set source must be an HTTP or HTTPS URL.")
+                    return
+                }
+                sourceURL = parsed
+            }
+            let pathText = ruleSetPathText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !pathText.isEmpty,
+               (pathText.hasPrefix("/") || pathText.contains("..") || pathText.contains(where: { $0 == "\n" || $0 == "\r" || $0 == "\\" || $0 == ":" })) {
+                errorMessage = AppLocalization.string("Rule set path must be a relative safe path without line breaks or parent-directory segments.")
+                return
+            }
+            let action: RoutingAction = entranceAction.routingAction
+            let rules = parseRuleLines(ruleSetRulesText)
+            let ruleSet: RuleSet
+            if let index = document.ruleSets.firstIndex(where: { $0.id.rawValue == id }) {
+                document.ruleSets[index].name = normalized
+                document.ruleSets[index].sourceURL = sourceURL
+                document.ruleSets[index].path = pathText.isEmpty ? nil : pathText
+                document.ruleSets[index].rules = rules
+                document.ruleSets[index].defaultAction = action
+                document.ruleSets[index].behavior = ruleSetBehavior
+                document.ruleSets[index].format = ruleSetFormat
+                document.ruleSets[index].enabled = enabled
+                document.ruleSets[index].revision += 1
+                ruleSet = document.ruleSets[index]
+            } else if isNew {
+                ruleSet = RuleSet(
+                    id: RuleSetID(rawValue: id),
+                    name: normalized,
+                    sourceURL: sourceURL,
+                    rules: rules,
+                    defaultAction: action,
+                    behavior: ruleSetBehavior,
+                    format: ruleSetFormat,
+                    path: pathText.isEmpty ? nil : pathText,
+                    enabled: enabled
+                )
+                document.ruleSets.append(ruleSet)
+                if let workspaceIndex = currentWorkspaceIndex(in: document),
+                   !document.workspaces[workspaceIndex].ruleSetIDs.contains(ruleSet.id) {
+                    document.workspaces[workspaceIndex].ruleSetIDs.append(ruleSet.id)
+                }
+            } else {
+                return
+            }
+            for workspaceIndex in document.workspaces.indices
+            where document.workspaces[workspaceIndex].ruleSetIDs.contains(ruleSet.id) {
+                document.workspaces[workspaceIndex].revision += 1
+            }
         case .workspaces:
             guard let index = document.workspaces.firstIndex(where: { $0.id.rawValue == id }) else { return }
             let normalized = canonicalConfigurationDefaultName(
@@ -451,9 +745,22 @@ struct ConfigurationEditorSheet: View {
             )
             guard !normalized.isEmpty else { errorMessage = AppLocalization.string("Name is required."); return }
             document.workspaces[index].name = normalized
+            document.workspaces[index].routingMode = workspaceRoutingMode
+            document.workspaces[index].globalProxyGroupID = workspaceGlobalProxyGroupID
             document.workspaces[index].nodeIDs = Array(selectedNodeIDs).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
-            document.workspaces[index].proxyGroupIDs = Array(selectedGroupIDs).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
+            let orderedWorkspaceGroups = orderedGroupIDs.filter(selectedGroupIDs.contains)
+            let remainingWorkspaceGroups = selectedGroupIDs.subtracting(orderedWorkspaceGroups)
+                .sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
+            document.workspaces[index].proxyGroupIDs = orderedWorkspaceGroups + remainingWorkspaceGroups
+            if workspaceRoutingMode == .global,
+               workspaceGlobalProxyGroupID.map({ !selectedGroupIDs.contains($0) }) ?? true {
+                document.workspaces[index].globalProxyGroupID = (orderedWorkspaceGroups + remainingWorkspaceGroups)
+                    .first(where: { groupID in
+                        document.proxyGroups.contains { $0.id == groupID && $0.enabled }
+                    })
+            }
             document.workspaces[index].ruleIDs = Array(selectedRuleIDs).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
+            document.workspaces[index].ruleSetIDs = Array(selectedRuleSetIDs).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
             let appRoutingEntranceIDs = document.entrances
                 .filter { $0.kind == .appRouting }
                 .map(\.id)
@@ -479,7 +786,13 @@ struct ConfigurationEditorSheet: View {
                 errorMessage = AppLocalization.string("Enabled HTTP and SOCKS5 entrances require a port.")
                 return
             }
+            let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedName.isEmpty else {
+                errorMessage = AppLocalization.string("Entrance name is required.")
+                return
+            }
             if enabled,
+               (entranceKind == .appRouting || entranceKind == .tun),
                document.entrances.enumerated().contains(where: { offset, entrance in
                    (existingIndex.map { offset != $0 } ?? true)
                        && entrance.enabled
@@ -502,6 +815,7 @@ struct ConfigurationEditorSheet: View {
             }
             let savedID = EntranceID(rawValue: id)
             if let index = existingIndex {
+                document.entrances[index].name = normalizedName
                 document.entrances[index].kind = entranceKind
                 document.entrances[index].defaultAction = entranceAction.routingAction
                 document.entrances[index].bindAddress = normalizedAddress
@@ -510,6 +824,7 @@ struct ConfigurationEditorSheet: View {
             } else if isNew {
                 let entrance = Entrance(
                     id: savedID,
+                    name: normalizedName,
                     kind: entranceKind,
                     enabled: enabled,
                     bindAddress: normalizedAddress,
@@ -597,13 +912,24 @@ struct ConfigurationEditorSheet: View {
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
     }
 
+    private func parseRuleLines(_ value: String) -> [String] {
+        var seen = Set<String>()
+        return value
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+    }
+
     private var entranceKindOptions: [EntranceKind] {
         // App Routing is a singleton capability supplied by the default
-        // configuration. It is shown when editing that capability, but a new
-        // listener must be an explicit HTTP, SOCKS5, or TUN entrance.
-        var options = EntranceKind.allCases.filter { $0 != .appRouting }
+        // configuration. TUN is intentionally omitted because the bundled
+        // macOS runtime does not support it; it remains visible when editing a
+        // legacy record so the user can disable/remove it.
+        var options: [EntranceKind] = [.http, .socks5]
         if entranceKind == .appRouting {
             options.insert(.appRouting, at: 0)
+        } else if entranceKind == .tun {
+            options.append(.tun)
         }
         return options
     }
@@ -613,9 +939,45 @@ struct ConfigurationEditorSheet: View {
         return document.workspaces.firstIndex { $0.id == workspaceID }
     }
 
+    private func moveNestedGroup(from index: Int, by offset: Int) {
+        let destination = index + offset
+        guard orderedGroupIDs.indices.contains(index), orderedGroupIDs.indices.contains(destination) else { return }
+        orderedGroupIDs.swapAt(index, destination)
+    }
+
+    private var groupTypeExplanation: String {
+        switch groupType {
+        case .fallback:
+            AppLocalization.string("Fallback checks members from top to bottom and uses the first healthy option. Move members to set priority.")
+        case .select:
+            AppLocalization.string("Select one member manually. Nested groups keep the order shown.")
+        case .urlTest:
+            AppLocalization.string("URL Test chooses the member with the best recent health check.")
+        case .loadBalance:
+            AppLocalization.string("Load Balance distributes new connections across the available members.")
+        case .direct:
+            AppLocalization.string("Direct always connects without a proxy.")
+        case .reject:
+            AppLocalization.string("Reject blocks matching traffic.")
+        case .relay:
+            AppLocalization.string("Relay is not supported by this MClash runtime.")
+        }
+    }
+
     private func defaultEntrancePort() -> Int? {
         let usedPorts = Set(model.configurationDocument.entrances.compactMap(\.port))
         return (7890...65535).first { !usedPorts.contains($0) }
+    }
+
+    private func uniqueEntranceName(for kind: EntranceKind) -> String {
+        let base = kind.localizedTitle
+        let existing = Set(model.configurationDocument.entrances.map { $0.name.lowercased() })
+        if !existing.contains(base.lowercased()) { return base }
+        var index = 2
+        while existing.contains("\(base) \(index)".lowercased()) {
+            index += 1
+        }
+        return "\(base) \(index)"
     }
 }
 

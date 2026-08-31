@@ -138,6 +138,7 @@ public actor RuntimeOverrideActivationCoordinator {
         networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil,
         routeListeners: [ProfileRouteListenerSpec] = [],
+        allowedOutboundProxyNames: Set<String>? = nil,
         in profileStore: ProfileStore,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
@@ -147,7 +148,8 @@ public actor RuntimeOverrideActivationCoordinator {
             to: baseConfiguration,
             networkExtensionListener: networkExtensionListener,
             profileMixedListener: profileMixedListener,
-            routeListeners: routeListeners
+            routeListeners: routeListeners,
+            allowedOutboundProxyNames: allowedOutboundProxyNames
         )
         let stagedURL = try await profileStore.stageRuntimeConfiguration(
             data: runtimeData,

@@ -32,13 +32,20 @@ struct UnifiedRoutingRuleEditor: View {
         onSave: @escaping (RoutingRule) -> Void,
         onCancel: @escaping () -> Void = {}
     ) {
-        self.proxyGroups = proxyGroups.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let availableProxyGroups = proxyGroups.filter(\.enabled)
+        self.proxyGroups = availableProxyGroups.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         self.applicationCandidates = applicationCandidates.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         self.initialRule = rule
         self.onSave = onSave
         self.onCancel = onCancel
         _criteria = State(initialValue: Self.criteria(from: rule))
-        _action = State(initialValue: RuleAction(from: rule?.action))
+        let defaultGroup = availableProxyGroups.first(where: {
+            $0.name == ConfigurationProxyGroupPreset.mainGroupName
+                || $0.name == "MClash Select"
+        }) ?? availableProxyGroups.first
+        _action = State(initialValue: rule.map { RuleAction(from: $0.action) }
+            ?? defaultGroup.map { .proxyGroup($0.id) }
+            ?? .direct)
         _priority = State(initialValue: rule?.priority ?? 100)
         _enabled = State(initialValue: rule?.enabled ?? true)
     }
@@ -95,6 +102,13 @@ struct UnifiedRoutingRuleEditor: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if initialRule == nil {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { ruleTemplates }
+                    VStack(alignment: .leading, spacing: 8) { ruleTemplates }
+                }
+            }
+
             ForEach($criteria) { $criterion in
                 RuleCriterionRow(
                     criterion: $criterion,
@@ -104,7 +118,7 @@ struct UnifiedRoutingRuleEditor: View {
             }
 
             Menu {
-                ForEach(RuleCriterion.Kind.allCases) { kind in
+                ForEach(RuleCriterion.Kind.editableCases) { kind in
                     Button {
                         criteria.append(RuleCriterion(kind: kind))
                     } label: {
@@ -131,12 +145,23 @@ struct UnifiedRoutingRuleEditor: View {
                     Text(AppLocalization.string("Node group — create a group first")).tag(RuleAction.proxyGroup(nil))
                 } else {
                     ForEach(proxyGroups) { group in
-                        Text(AppLocalization.format("Group — %@", group.name)).tag(RuleAction.proxyGroup(group.id))
+                        Text(configurationDisplayName(group.name)).tag(RuleAction.proxyGroup(group.id))
+                    }
+                    if case let .proxyGroup(existingID) = action,
+                       let existingID,
+                       !proxyGroups.contains(where: { $0.id == existingID }) {
+                        Text(AppLocalization.string("Unavailable group (choose another)"))
+                            .tag(RuleAction.proxyGroup(existingID))
                     }
                 }
             }
             .pickerStyle(.menu)
             .frame(maxWidth: 420, alignment: .leading)
+
+            Text(AppLocalization.string("Use Node Selection as the stable parent when rules should follow regional or automatic groups."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack {
                 Text(AppLocalization.string("Priority"))
@@ -185,6 +210,22 @@ struct UnifiedRoutingRuleEditor: View {
     private func removeCriterion(id: UUID) {
         criteria.removeAll { $0.id == id }
         if criteria.isEmpty { criteria = [RuleCriterion(kind: .application)] }
+    }
+
+    @ViewBuilder
+    private var ruleTemplates: some View {
+        Button(AppLocalization.string("Domain")) {
+            criteria = [RuleCriterion(kind: .domain)]
+        }
+        Button(AppLocalization.string("Application")) {
+            criteria = [RuleCriterion(kind: .application)]
+        }
+        Button(AppLocalization.string("GFW List")) {
+            criteria = [RuleCriterion(kind: .geoSite, value: "gfw")]
+        }
+        Button(AppLocalization.string("China IP")) {
+            criteria = [RuleCriterion(kind: .geoIP, value: "CN")]
+        }
     }
 
     private var preview: String {
@@ -256,7 +297,7 @@ struct UnifiedRoutingRuleEditor: View {
     }
 
     private static func criteria(from rule: RoutingRule?) -> [RuleCriterion] {
-        guard let rule, !rule.matchers.isEmpty else { return [RuleCriterion(kind: .application)] }
+        guard let rule, !rule.matchers.isEmpty else { return [RuleCriterion(kind: .domain)] }
         return rule.matchers.map(RuleCriterion.init(matcher:))
     }
 }
@@ -276,15 +317,23 @@ private struct RuleCriterion: Identifiable, Equatable {
     }
 
     enum Kind: String, CaseIterable, Identifiable, Hashable {
-        case application, process, userID, domain, ipCIDR, port, transport
+        case application, process, processName, userID, domain, ipCIDR
+        case geoIP, geoIP6, geoSite, port, transport
         var id: String { rawValue }
+        static var editableCases: [Self] {
+            allCases.filter { $0 != .geoIP6 }
+        }
         var title: String {
             switch self {
             case .application: AppLocalization.string("Application")
             case .process: AppLocalization.string("Process path")
+            case .processName: AppLocalization.string("Process name")
             case .userID: AppLocalization.string("User ID")
             case .domain: AppLocalization.string("Domain")
             case .ipCIDR: AppLocalization.string("IP / CIDR")
+            case .geoIP: AppLocalization.string("GEOIP country")
+            case .geoIP6: AppLocalization.string("GEOIP6 (unsupported)")
+            case .geoSite: AppLocalization.string("GEOSITE database")
             case .port: AppLocalization.string("Port")
             case .transport: AppLocalization.string("Protocol")
             }
@@ -293,9 +342,11 @@ private struct RuleCriterion: Identifiable, Equatable {
             switch self {
             case .application: "app.badge"
             case .process: "terminal"
+            case .processName: "text.magnifyingglass"
             case .userID: "person.crop.circle"
             case .domain: "globe"
             case .ipCIDR: "network"
+            case .geoIP, .geoIP6, .geoSite: "globe.americas"
             case .port: "number"
             case .transport: "arrow.left.arrow.right"
             }
@@ -322,8 +373,8 @@ private struct RuleCriterion: Identifiable, Equatable {
 
     var family: Family {
         switch kind {
-        case .application, .process, .userID: .source
-        case .domain, .ipCIDR: .destination
+        case .application, .process, .processName, .userID: .source
+        case .domain, .ipCIDR, .geoIP, .geoIP6, .geoSite: .destination
         case .transport: .protocolValue
         case .port: .port
         }
@@ -340,10 +391,14 @@ private struct RuleCriterion: Identifiable, Equatable {
     init(matcher: RoutingMatcher) {
         switch matcher {
         case let .application(value): self.init(kind: .application, value: value)
+        case let .processName(value): self.init(kind: .processName, value: value)
         case let .domainExact(value): self.init(kind: .domain, value: value, domainMode: .exact)
         case let .domainSuffix(value): self.init(kind: .domain, value: value, domainMode: .suffix)
         case let .domainWildcard(value): self.init(kind: .domain, value: value, domainMode: .wildcard)
         case let .ipCIDR(value): self.init(kind: .ipCIDR, value: value)
+        case let .geoIP(value): self.init(kind: .geoIP, value: value)
+        case let .geoIP6(value): self.init(kind: .geoIP6, value: value)
+        case let .geoSite(value): self.init(kind: .geoSite, value: value)
         case let .port(value): self.init(kind: .port, value: String(value))
         case let .portRange(value): self.init(kind: .port, value: "\(value.lowerBound)-\(value.upperBound)")
         case let .transport(value): self.init(kind: .transport, protocolValue: value.uppercased())
@@ -361,6 +416,9 @@ private struct RuleCriterion: Identifiable, Equatable {
         case .process:
             guard !trimmed.isEmpty, !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else { return nil }
             return .processPath(trimmed)
+        case .processName:
+            guard !trimmed.isEmpty, !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else { return nil }
+            return .processName(trimmed)
         case .userID:
             guard let value = UInt32(trimmed) else { return nil }
             return .userID(value)
@@ -373,6 +431,12 @@ private struct RuleCriterion: Identifiable, Equatable {
             }
         case .ipCIDR:
             return trimmed.isEmpty ? nil : .ipCIDR(trimmed)
+        case .geoIP:
+            return trimmed.isEmpty ? nil : .geoIP(trimmed.uppercased())
+        case .geoIP6:
+            return trimmed.isEmpty ? nil : .geoIP6(trimmed.uppercased())
+        case .geoSite:
+            return trimmed.isEmpty ? nil : .geoSite(trimmed.lowercased())
         case .port:
             let parts = trimmed.split(separator: "-", omittingEmptySubsequences: true)
             let values = parts.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -392,6 +456,8 @@ private struct RuleCriterion: Identifiable, Equatable {
             return trimmed.isEmpty ? AppLocalization.string("an application") : AppLocalization.format("App %@", trimmed)
         case .process:
             return trimmed.isEmpty ? AppLocalization.string("a process path") : AppLocalization.format("Process %@", trimmed)
+        case .processName:
+            return trimmed.isEmpty ? AppLocalization.string("a process name") : AppLocalization.format("Process %@", trimmed)
         case .userID:
             return trimmed.isEmpty ? AppLocalization.string("a user ID") : AppLocalization.format("User %@", trimmed)
         case .domain:
@@ -402,6 +468,9 @@ private struct RuleCriterion: Identifiable, Equatable {
                     : AppLocalization.string("domain or subdomain")
             return trimmed.isEmpty ? AppLocalization.string("a domain") : "\(label) \(trimmed)"
         case .ipCIDR: return trimmed.isEmpty ? AppLocalization.string("an IP/CIDR") : trimmed
+        case .geoIP: return trimmed.isEmpty ? AppLocalization.string("a GEOIP country") : AppLocalization.format("GEOIP %@", trimmed.uppercased())
+        case .geoIP6: return trimmed.isEmpty ? AppLocalization.string("a GEOIP6 country") : AppLocalization.format("GEOIP6 %@", trimmed.uppercased())
+        case .geoSite: return trimmed.isEmpty ? AppLocalization.string("a GEOSITE name") : AppLocalization.format("GEOSITE %@", trimmed.lowercased())
         case .port: return trimmed.isEmpty ? AppLocalization.string("a port") : AppLocalization.format("Port %@", trimmed)
         case .transport: return AppLocalization.format("%@ traffic", protocolValue)
         }
@@ -415,8 +484,13 @@ private struct RuleCriterion: Identifiable, Equatable {
             case .application:
                 _ = try ApplicationIdentifierPatternMatcher(pattern: trimmed)
             case .process:
-                guard !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else {
-                    return AppLocalization.string("Process path contains a line break.")
+                guard trimmed.hasPrefix("/"),
+                      !trimmed.contains(where: { $0 == "\n" || $0 == "\r" }) else {
+                    return AppLocalization.string("Process path must be an absolute path without line breaks.")
+                }
+            case .processName:
+                guard !trimmed.contains(where: { $0 == "\n" || $0 == "\r" || $0 == "," }) else {
+                    return AppLocalization.string("Process name contains an unsafe character.")
                 }
             case .userID:
                 guard UInt32(trimmed) != nil else { return AppLocalization.string("User ID must be a number.") }
@@ -428,6 +502,16 @@ private struct RuleCriterion: Identifiable, Equatable {
                 }
             case .ipCIDR:
                 _ = try IPNetwork(trimmed)
+            case .geoIP:
+                guard !trimmed.contains(",") else {
+                    return AppLocalization.string("GEO values must not contain commas.")
+                }
+            case .geoIP6:
+                return AppLocalization.string("Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.")
+            case .geoSite:
+                guard !trimmed.contains(",") else {
+                    return AppLocalization.string("GEO values must not contain commas.")
+                }
             case .port, .transport:
                 guard matcher != nil else {
                     return kind == .port
@@ -463,9 +547,9 @@ private enum RuleAction: Hashable {
         case .direct: return AppLocalization.string("Direct")
         case .reject: return AppLocalization.string("Reject")
         case let .proxyGroup(id):
-            return AppLocalization.format(
-                "Group — %@",
-                proxyGroups.first(where: { $0.id == id })?.name ?? AppLocalization.string("(not selected)")
+            return configurationDisplayName(
+                proxyGroups.first(where: { $0.id == id })?.name
+                    ?? AppLocalization.string("(not selected)")
             )
         }
     }
@@ -553,6 +637,9 @@ private struct RuleCriterionRow: View {
         case .process:
             TextField(AppLocalization.string("Executable path"), text: $criterion.value)
                 .textFieldStyle(.roundedBorder)
+        case .processName:
+            TextField(AppLocalization.string("Process name (for example curl)"), text: $criterion.value)
+                .textFieldStyle(.roundedBorder)
         case .userID:
             TextField(AppLocalization.string("Numeric user ID"), text: $criterion.value)
                 .textFieldStyle(.roundedBorder)
@@ -568,6 +655,34 @@ private struct RuleCriterionRow: View {
         case .ipCIDR:
             TextField(AppLocalization.string("192.168.0.0/16 or 2001:db8::/32"), text: $criterion.value)
                 .textFieldStyle(.roundedBorder)
+        case .geoIP, .geoIP6:
+            HStack {
+                TextField(
+                    AppLocalization.string("Country code, for example CN or US"),
+                    text: $criterion.value
+                )
+                .textFieldStyle(.roundedBorder)
+                Button(AppLocalization.string("CN")) { criterion.value = "CN" }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button(AppLocalization.string("US")) { criterion.value = "US" }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        case .geoSite:
+            HStack {
+                Menu {
+                    Button("gfw") { criterion.value = "gfw" }
+                    Button("google") { criterion.value = "google" }
+                    Button("cn") { criterion.value = "cn" }
+                    Button("private") { criterion.value = "private" }
+                } label: {
+                    Label(AppLocalization.string("Database set"), systemImage: "list.bullet")
+                }
+                .menuStyle(.borderlessButton)
+                TextField(AppLocalization.string("GEOSITE name"), text: $criterion.value)
+                    .textFieldStyle(.roundedBorder)
+            }
         case .port:
             TextField(AppLocalization.string("443 or 8000-9000"), text: $criterion.value)
                 .textFieldStyle(.roundedBorder)

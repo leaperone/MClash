@@ -29,14 +29,23 @@ struct ConfigurationView: View {
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             } else {
-                                Text(AppLocalization.string("Create a configuration after importing your first source."))
+                                Text(AppLocalization.string(
+                                    model.activeProfileID == nil
+                                        ? "Choose a node source for the active MClash configuration."
+                                        : "Create a configuration after importing your first source."
+                                ))
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             }
                         }
                         Spacer(minLength: MClashLayout.compactSpacing)
                         if let workspace = model.configurationDocument.currentWorkspace {
-                            if model.unifiedConfigurationEnabled {
+                            if model.activeProfileID == nil {
+                                Button(AppLocalization.string("Sources")) {
+                                    model.selection = .sources
+                                }
+                                .buttonStyle(.borderedProminent)
+                            } else if model.unifiedConfigurationEnabled {
                                 if configurationIsApplied(workspace) {
                                     Label(AppLocalization.string("Active"), systemImage: "bolt.fill")
                                         .font(.caption.weight(.semibold))
@@ -79,6 +88,10 @@ struct ConfigurationView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 8)
                     }
+                }
+
+                if model.configurationDocument.currentWorkspace != nil {
+                    configurationRoutingModeCard
                 }
 
                 let document = model.configurationDocument
@@ -145,6 +158,84 @@ struct ConfigurationView: View {
             && model.compiledConfiguration?.workspaceID == workspace.id
             && model.compiledConfiguration?.workspaceRevision == workspace.revision
     }
+
+    private var configurationRoutingModeCard: some View {
+        let workspace = model.configurationDocument.currentWorkspace
+        let mode = workspace?.routingMode ?? .rule
+        let groups = model.configurationDocument.proxyGroups.filter { group in
+            group.enabled && workspace?.proxyGroupIDs.contains(group.id) == true
+        }
+        return GroupBox {
+            VStack(alignment: .leading, spacing: MClashLayout.controlSpacing) {
+                HStack(alignment: .firstTextBaseline) {
+                    Label(
+                        AppLocalization.string("How traffic is routed"),
+                        systemImage: "arrow.triangle.branch"
+                    )
+                    .font(.headline)
+                    Spacer()
+                    if model.pendingMode != nil {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                Picker(
+                    AppLocalization.string("Routing mode"),
+                    selection: Binding(
+                        get: { mode },
+                        set: { nextMode in
+                            Task {
+                                do {
+                                    _ = try await model.setConfigurationRoutingMode(nextMode)
+                                } catch {
+                                    model.errorMessage = error.localizedDescription
+                                }
+                            }
+                        }
+                    )
+                ) {
+                    Text(AppLocalization.string("Rule")).tag(ConfigurationRoutingMode.rule)
+                    Text(AppLocalization.string("Global")).tag(ConfigurationRoutingMode.global)
+                    Text(AppLocalization.string("Direct")).tag(ConfigurationRoutingMode.direct)
+                }
+                .pickerStyle(.segmented)
+                .disabled(model.pendingMode != nil || !model.canPerform(.changeRuntimeSettings))
+
+                Text(configurationRoutingModeExplanation(mode))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if mode == .global, !groups.isEmpty {
+                    Picker(
+                        AppLocalization.string("Global exit"),
+                        selection: Binding(
+                            get: {
+                                workspace?.globalProxyGroupID ?? groups[0].id
+                            },
+                            set: { groupID in
+                                Task {
+                                    do {
+                                        try await model.setConfigurationGlobalProxyGroup(
+                                            groupID
+                                        )
+                                    } catch {
+                                        model.errorMessage = error.localizedDescription
+                                    }
+                                }
+                            }
+                        )
+                    ) {
+                        ForEach(groups) { group in
+                            Text(configurationDisplayName(group.name)).tag(group.id)
+                        }
+                    }
+                    .frame(maxWidth: 360, alignment: .leading)
+                    .help(AppLocalization.string("The selected group is used by Mihomo GLOBAL mode."))
+                }
+            }
+        }
+    }
+
 }
 
 /// Ready-to-wire section views. They intentionally expose one consistent
@@ -167,19 +258,31 @@ struct ConfigurationNodesView: View {
     @Bindable var model: AppModel
     @State private var editRequest: ConfigurationEditRequest?
     var body: some View {
-        ConfigurationWorkbench(
-            title: AppLocalization.string("Nodes"),
-            sections: [.nodes],
-            items: model.configurationWorkbenchItems,
-            statusMessage: model.configurationStatusMessage,
-            onToggleEnabled: { section, id in
-                Task {
-                    do { try await model.toggleConfigurationEnabled(section: section, id: id) }
-                    catch { model.errorMessage = error.localizedDescription }
-                }
-            },
-            onEdit: { section, id in editRequest = ConfigurationEditRequest(section: section, itemID: id) }
-        )
+        VStack(spacing: 0) {
+            Label(
+                AppLocalization.string("A node keeps the same identity when its name, tags or credentials change. Protocol, normalized host, port and transport settings define the stable fingerprint; an endpoint change creates a new node."),
+                systemImage: "fingerprint"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, MClashLayout.pagePadding)
+            .padding(.vertical, MClashLayout.compactSpacing)
+            Divider()
+            ConfigurationWorkbench(
+                title: AppLocalization.string("Nodes"),
+                sections: [.nodes],
+                items: model.configurationWorkbenchItems,
+                statusMessage: model.configurationStatusMessage,
+                onToggleEnabled: { section, id in
+                    Task {
+                        do { try await model.toggleConfigurationEnabled(section: section, id: id) }
+                        catch { model.errorMessage = error.localizedDescription }
+                    }
+                },
+                onEdit: { section, id in editRequest = ConfigurationEditRequest(section: section, itemID: id) }
+            )
+        }
         .sheet(item: $editRequest) { request in
             ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID)
         }
@@ -221,18 +324,18 @@ struct ConfigurationProxyGroupsView: View {
             ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)
         }
         .alert(
-            AppLocalization.string("Add common strategy groups?"),
+            AppLocalization.string("Install Node Selection setup?"),
             isPresented: $showsPresetConfirmation
         ) {
             Button(AppLocalization.string("Cancel"), role: .cancel) {}
-            Button(AppLocalization.string("Add Groups")) {
+            Button(AppLocalization.string("Install setup")) {
                 Task {
                     do { try await model.installCommonProxyGroupPreset() }
                     catch { model.errorMessage = error.localizedDescription }
                 }
             }
         } message: {
-            Text(AppLocalization.string("This adds regional, automatic, manual, failover and direct groups. Proxy rules in the current configuration will point to Node Selection."))
+            Text(AppLocalization.string("Adds Node Selection, US/JP/HK priority, Auto, Manual, Failover, Residential and Direct groups. Existing rules are redirected to Node Selection; source rules are not imported."))
         }
     }
 
@@ -249,12 +352,22 @@ struct ConfigurationProxyGroupsView: View {
                 .foregroundStyle(commonPresetInstalled ? Color.green : Color.accentColor)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(AppLocalization.string("Common strategy groups"))
+                Text(AppLocalization.string("Node Selection setup"))
                     .font(.headline)
-                Text(AppLocalization.string("Rules use Node Selection; regional groups follow subscription refreshes automatically."))
+                Text(AppLocalization.string("One stable parent for rules, with regional and automatic child groups that refresh with your sources."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    [
+                        AppLocalization.string("Rules"),
+                        configurationDisplayName(ConfigurationProxyGroupPreset.mainGroupName),
+                        AppLocalization.string("US / United States"),
+                        AppLocalization.string("Nodes"),
+                    ].joined(separator: " → ")
+                )
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tertiary)
             }
             Spacer(minLength: MClashLayout.compactSpacing)
             if commonPresetInstalled {
@@ -262,7 +375,7 @@ struct ConfigurationProxyGroupsView: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
             } else {
-                Button(AppLocalization.string("Add Groups")) {
+                Button(AppLocalization.string("Install setup")) {
                     showsPresetConfirmation = true
                 }
                 .buttonStyle(.borderedProminent)
@@ -274,27 +387,66 @@ struct ConfigurationProxyGroupsView: View {
 struct ConfigurationRulesView: View {
     @Bindable var model: AppModel
     @State private var editRequest: ConfigurationRuleEditRequest?
+    @State private var ruleSetEditRequest: ConfigurationEditRequest?
+    @State private var tab: RulesSurface = .rules
     @State private var applicationCandidates: [ApplicationCaptureCandidate] = []
     var body: some View {
-        ConfigurationWorkbench(
-            title: AppLocalization.string("Rules"),
-            sections: [.rules],
-            items: model.configurationWorkbenchItems,
-            onAdd: { _ in
-                editRequest = ConfigurationRuleEditRequest(rule: nil)
-            },
-            statusMessage: model.configurationStatusMessage,
-            onToggleEnabled: { section, id in
-                Task {
-                    do { try await model.toggleConfigurationEnabled(section: section, id: id) }
-                    catch { model.errorMessage = error.localizedDescription }
-                }
-            },
-            onEdit: { _, id in
-                let rule = model.configurationDocument.rules.first { $0.id.rawValue == id }
-                editRequest = ConfigurationRuleEditRequest(rule: rule)
+        VStack(spacing: 0) {
+            Picker(AppLocalization.string("Rules surface"), selection: $tab) {
+                Text(AppLocalization.string("Rules")).tag(RulesSurface.rules)
+                Text(AppLocalization.string("Rule Sets")).tag(RulesSurface.ruleSets)
             }
-        )
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 320)
+            .padding(.horizontal, MClashLayout.pagePadding)
+            .padding(.vertical, MClashLayout.compactSpacing)
+            .accessibilityLabel(AppLocalization.string("Rules surface"))
+            Divider()
+            if tab == .rules {
+                ConfigurationWorkbench(
+                    title: AppLocalization.string("Rules"),
+                    sections: [.rules],
+                    items: model.configurationWorkbenchItems,
+                    onAdd: { _ in
+                        editRequest = ConfigurationRuleEditRequest(rule: nil)
+                    },
+                    statusMessage: model.configurationStatusMessage,
+                    onToggleEnabled: { section, id in
+                        Task {
+                            do { try await model.toggleConfigurationEnabled(section: section, id: id) }
+                            catch { model.errorMessage = error.localizedDescription }
+                        }
+                    },
+                    onEdit: { _, id in
+                        let rule = model.configurationDocument.rules.first { $0.id.rawValue == id }
+                        editRequest = ConfigurationRuleEditRequest(rule: rule)
+                    }
+                )
+            } else {
+                ConfigurationWorkbench(
+                    title: AppLocalization.string("Rule Sets"),
+                    sections: [.ruleSets],
+                    items: model.configurationWorkbenchItems,
+                    onAdd: { _ in
+                        ruleSetEditRequest = ConfigurationEditRequest(
+                            section: .ruleSets,
+                            itemID: UUID(),
+                            isNew: true
+                        )
+                    },
+                    statusMessage: model.configurationStatusMessage,
+                    onToggleEnabled: { section, id in
+                        Task {
+                            do { try await model.toggleConfigurationEnabled(section: section, id: id) }
+                            catch { model.errorMessage = error.localizedDescription }
+                        }
+                    },
+                    onEdit: { section, id in
+                        ruleSetEditRequest = ConfigurationEditRequest(section: section, itemID: id)
+                    }
+                )
+            }
+        }
         .sheet(item: $editRequest) { request in
             UnifiedRoutingRuleEditor(
                 rule: request.rule,
@@ -313,10 +465,23 @@ struct ConfigurationRulesView: View {
                 onCancel: { editRequest = nil }
             )
         }
+        .sheet(item: $ruleSetEditRequest) { request in
+            ConfigurationEditorSheet(
+                model: model,
+                section: request.section,
+                id: request.itemID,
+                isNew: request.isNew
+            )
+        }
         .task {
             applicationCandidates = (await ApplicationCaptureCandidateProvider().loadRunningCandidates()).applications
         }
     }
+}
+
+private enum RulesSurface: String, CaseIterable, Identifiable {
+    case rules, ruleSets
+    var id: Self { self }
 }
 
 struct ConfigurationEntrancesView: View {
@@ -324,11 +489,10 @@ struct ConfigurationEntrancesView: View {
     @State private var editRequest: ConfigurationEditRequest?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            appRoutingCapability
+        VStack(spacing: 0) {
+            appRoutingEntranceControl
                 .padding(.horizontal, MClashLayout.pagePadding)
-                .padding(.top, MClashLayout.compactPagePadding)
-                .padding(.bottom, MClashLayout.compactPagePadding)
+                .padding(.vertical, MClashLayout.compactPagePadding)
             Divider()
             ConfigurationWorkbench(
                 title: AppLocalization.string("Entrances"),
@@ -344,11 +508,28 @@ struct ConfigurationEntrancesView: View {
                 statusMessage: model.configurationStatusMessage,
                 onToggleEnabled: { section, id in
                     Task {
-                        do { try await model.toggleConfigurationEnabled(section: section, id: id) }
-                        catch { model.errorMessage = error.localizedDescription }
+                        do {
+                            if section == .entrances,
+                               model.configurationDocument.entrances.first(where: {
+                                   $0.id.rawValue == id
+                               })?.kind == .appRouting {
+                                await model.setNetworkCaptureEnabled(
+                                    !model.appRoutingCapabilityEnabled
+                                )
+                            } else {
+                                try await model.toggleConfigurationEnabled(
+                                    section: section,
+                                    id: id
+                                )
+                            }
+                        } catch {
+                            model.errorMessage = error.localizedDescription
+                        }
                     }
                 },
-                onEdit: { section, id in editRequest = ConfigurationEditRequest(section: section, itemID: id) }
+                onEdit: { section, id in
+                    editRequest = ConfigurationEditRequest(section: section, itemID: id)
+                }
             )
         }
         .sheet(item: $editRequest) { request in
@@ -356,48 +537,50 @@ struct ConfigurationEntrancesView: View {
         }
     }
 
+    /// App Routing is intentionally the single capability switch above. Do not
+    /// repeat it as an editable listener row beside HTTP and SOCKS entrances.
     private var entranceWorkbenchItems: [ConfigurationWorkbenchSection: [ConfigurationWorkbenchItem]] {
         var items = model.configurationWorkbenchItems
-        // App Routing is a capability switch, not a second editable entrance.
-        // Keep its state in the card above and remove the duplicate row from
-        // the resource list so there is one obvious control surface.
+        let appRoutingIDs = Set(
+            model.configurationDocument.entrances
+                .filter { $0.kind == .appRouting }
+                .map { $0.id.rawValue }
+        )
         items[.entrances] = items[.entrances, default: []].filter {
-            $0.title != AppLocalization.string("Application traffic")
-                && $0.title != AppLocalization.string("App Routing")
+            !appRoutingIDs.contains($0.id)
         }
         return items
     }
 
-    private var appRoutingCapability: some View {
-        HStack(spacing: MClashLayout.controlSpacing) {
+    private var appRoutingEntranceControl: some View {
+        let hasEntrance = model.configurationDocument.entrances.contains { $0.kind == .appRouting }
+        return HStack(spacing: 12) {
             Image(systemName: "app.badge")
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(AppLocalization.string("Application traffic"))
+                Text(AppLocalization.string("App Routing"))
                     .font(.headline)
-                Text(AppLocalization.string("Use the unified Rules page to match applications, domains, IPs and ports."))
+                Text(AppLocalization.string("Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: MClashLayout.compactSpacing)
-            Toggle("", isOn: Binding(
-                get: { model.appRoutingCapabilityEnabled },
-                set: { value in Task { await model.setNetworkCaptureEnabled(value) } }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .disabled(
-                model.pendingNetworkCaptureEnabled != nil
-                    || !model.canPerform(.changeNetworkCapture)
+            Spacer(minLength: 8)
+            Toggle(
+                AppLocalization.string("App Routing"),
+                isOn: Binding(
+                    get: { hasEntrance && model.appRoutingCapabilityEnabled },
+                    set: { enabled in
+                        Task { await model.setNetworkCaptureEnabled(enabled) }
+                    }
+                )
             )
-            .accessibilityLabel(AppLocalization.string("Application traffic capture"))
-            .accessibilityValue(AppLocalization.string(model.appRoutingCapabilityEnabled ? "Enabled" : "Disabled"))
+            .labelsHidden()
+            .disabled(!hasEntrance || !model.canPerform(.changeNetworkCapture))
+            .accessibilityLabel(AppLocalization.string("App Routing"))
         }
-        .padding(MClashLayout.controlSpacing)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -495,8 +678,9 @@ private func ruleConditionPresentation(_ matchers: [RoutingMatcher]) -> String {
 
 private func ruleMatcherFamily(_ matcher: RoutingMatcher) -> RuleMatcherFamily {
     switch matcher {
-    case .application, .processPath, .userID: .application
-    case .domainExact, .domainSuffix, .domainWildcard, .ipCIDR: .destination
+    case .application, .processPath, .processName, .userID: .application
+    case .domainExact, .domainSuffix, .domainWildcard, .ipCIDR,
+         .geoIP, .geoIP6, .geoSite: .destination
     case .transport: .protocolValue
     case .port, .portRange: .port
     }
@@ -506,11 +690,15 @@ private func ruleMatcherPresentation(_ matcher: RoutingMatcher) -> String {
     switch matcher {
     case let .application(value): return AppLocalization.format("App %@", value)
     case let .processPath(value): return AppLocalization.format("Process %@", URL(fileURLWithPath: value).lastPathComponent)
+    case let .processName(value): return AppLocalization.format("Process %@", value)
     case let .userID(value): return AppLocalization.format("User %@", String(value))
     case let .domainExact(value): return value
     case let .domainSuffix(value): return "*.\(value)"
     case let .domainWildcard(value): return value
     case let .ipCIDR(value): return value
+    case let .geoIP(value): return AppLocalization.format("GEOIP %@", value)
+    case let .geoIP6(value): return AppLocalization.format("GEOIP6 %@", value)
+    case let .geoSite(value): return AppLocalization.format("GEOSITE %@", value)
     case let .transport(value): return value.uppercased()
     case let .port(value): return AppLocalization.format("Port %d", value)
     case let .portRange(value): return AppLocalization.format("Port %d-%d", value.lowerBound, value.upperBound)
@@ -535,8 +723,9 @@ private extension ConfigurationWorkbenchItem {
                 id: workspace.id.rawValue,
                 title: configurationDisplayName(workspace.name),
                 subtitle: AppLocalization.format(
-                    "%@ · %@ rules",
+                    "%@ · %@ · %@ rules",
                     nodeScope,
+                    configurationRoutingModeTitle(workspace.routingMode),
                     AppLocalization.number(workspace.ruleIDs.count)
                 ),
                 symbol: "rectangle.3.group",
@@ -559,6 +748,10 @@ private extension ConfigurationWorkbenchItem {
                     (
                         AppLocalization.string("Entrances"),
                         AppLocalization.number(workspace.entranceIDs.count)
+                    ),
+                    (
+                        AppLocalization.string("Routing mode"),
+                        configurationRoutingModeTitle(workspace.routingMode)
                     ),
                     (
                         AppLocalization.string("Revision"),
@@ -640,13 +833,21 @@ private extension ConfigurationWorkbenchItem {
             let selectorPinnedIDs = Set(group.memberSelectors.flatMap(\.fixedNodeIDs))
             let fixedCount = explicitNodeIDs.union(selectorPinnedIDs).count
             let effectiveCount = explicitNodeIDs.union(selectorPinnedIDs).union(resolution.nodeIDs).count
+            let nestedOrder = group.members.compactMap { member in
+                if case let .group(id) = member {
+                    return document.proxyGroups.first(where: { $0.id == id })?.name
+                }
+                return nil
+            }.map { configurationDisplayName($0) }.joined(separator: " → ")
             return Self(
                 id: group.id.rawValue,
                 title: configurationDisplayName(group.name),
                 subtitle: AppLocalization.format(
-                    "%@ · %@ nodes",
+                    "%@ · %@ nodes · %@ automatic · %@ fixed",
                     group.type.localizedTitle,
-                    AppLocalization.number(effectiveCount)
+                    AppLocalization.number(effectiveCount),
+                    AppLocalization.number(resolution.nodeIDs.count),
+                    AppLocalization.number(fixedCount)
                 ),
                 symbol: "square.3.layers.3d",
                 detail: AppLocalization.string(
@@ -668,6 +869,10 @@ private extension ConfigurationWorkbenchItem {
                     (
                         AppLocalization.string("Automatic matches"),
                         AppLocalization.number(resolution.nodeIDs.count)
+                    ),
+                    (
+                        AppLocalization.string("Nested group order"),
+                        nestedOrder.isEmpty ? AppLocalization.string("None") : nestedOrder
                     ),
                     (
                         AppLocalization.string("Used by"),
@@ -699,8 +904,10 @@ private extension ConfigurationWorkbenchItem {
                 title: rule.matchers.first.map(ruleMatcherPresentation)
                     ?? AppLocalization.format("Rule %d", rule.priority),
                 subtitle: AppLocalization.format(
-                    "%@ conditions · %@",
-                    AppLocalization.number(rule.matchers.count),
+                    "%@ → %@",
+                    ruleConditionPresentation(rule.matchers).isEmpty
+                        ? AppLocalization.string("All traffic")
+                        : ruleConditionPresentation(rule.matchers),
                     action
                 ),
                 symbol: "list.bullet.indent",
@@ -721,6 +928,45 @@ private extension ConfigurationWorkbenchItem {
                     ),
                 ],
                 isEnabled: rule.enabled
+            )
+        }
+        let ruleSetItems = document.ruleSets.map { ruleSet in
+            let action: String
+            switch ruleSet.defaultAction {
+            case .direct: action = AppLocalization.string("Direct")
+            case .reject: action = AppLocalization.string("Reject")
+            case let .proxyGroup(id):
+                action = groupByID[id].map { configurationDisplayName($0.name) }
+                    ?? AppLocalization.string("Missing Group")
+            }
+            let source = ruleSet.sourceURL?.host
+                ?? AppLocalization.string("Local entries")
+            return Self(
+                id: ruleSet.id.rawValue,
+                title: ruleSet.name,
+                subtitle: AppLocalization.format(
+                    "%@ · %@ rules · %@",
+                    ruleSet.behavior.localizedTitle,
+                    AppLocalization.number(ruleSet.rules.count),
+                    source
+                ),
+                symbol: "list.bullet.rectangle",
+                detail: AppLocalization.string(
+                    "A MClash-owned reusable rule collection. Imported source providers are never enabled automatically."
+                ),
+                metadata: [
+                    (AppLocalization.string("Status"), AppLocalization.string(ruleSet.enabled ? "Enabled" : "Disabled")),
+                    (AppLocalization.string("Behavior"), ruleSet.behavior.localizedTitle),
+                    (AppLocalization.string("Format"), ruleSet.format.localizedTitle),
+                    (AppLocalization.string("Entries"), AppLocalization.number(ruleSet.rules.count)),
+                    (AppLocalization.string("Default action"), action),
+                    (AppLocalization.string("Source"), source),
+                    (AppLocalization.string("Used by"), AppLocalization.format(
+                        "%@ configurations",
+                        AppLocalization.number(document.workspaces.count(where: { $0.ruleSetIDs.contains(ruleSet.id) }))
+                    )),
+                ],
+                isEnabled: ruleSet.enabled
             )
         }
         let dnsItems = document.dnsPolicies.map { policy in
@@ -747,18 +993,19 @@ private extension ConfigurationWorkbenchItem {
             )
         }
         let entranceItems = document.entrances.map { entrance in
-            let title = entrance.kind == .appRouting
-                ? AppLocalization.string("Application traffic")
-                : entrance.kind.localizedTitle
+            let title = entrance.name
             return Self(
                 id: entrance.id.rawValue,
                 title: title,
-                subtitle: entrance.port.map { "127.0.0.1:\($0)" }
-                    ?? AppLocalization.string("System Capability"),
+                subtitle: [
+                    entrance.kind.localizedTitle,
+                    entrance.port.map { "\(entrance.bindAddress):\($0)" }
+                        ?? AppLocalization.string("Switch")
+                ].joined(separator: " · "),
                 symbol: entrance.kind == .appRouting ? "app.badge" : "arrow.triangle.branch",
                 detail: entrance.kind == .appRouting
                     ? AppLocalization.string(
-                    "Application capture is a capability switch. Its rules are managed on the unified Rules page."
+                    "Application Routing is a system entrance. Its matching rules are managed on the Rules page."
                     )
                     : AppLocalization.string(
                         "A MClash traffic entrance that follows the active configuration."
@@ -770,13 +1017,14 @@ private extension ConfigurationWorkbenchItem {
                     ),
                     (AppLocalization.string("Bind Address"), entrance.bindAddress),
                     (
-                            AppLocalization.string("Configuration"),
+                        AppLocalization.string("Configuration"),
                         AppLocalization.string(
                             entrance.workspaceOverride == nil
                                 ? "Current configuration"
                                 : "Override"
                         )
                     ),
+                    (AppLocalization.string("Type"), entrance.kind.localizedTitle),
                 ],
                 isEnabled: entrance.enabled
             )
@@ -787,6 +1035,7 @@ private extension ConfigurationWorkbenchItem {
             .nodes: nodeItems,
             .proxyGroups: groupItems,
             .rules: ruleItems,
+            .ruleSets: ruleSetItems,
             .entrances: entranceItems,
             .dns: dnsItems,
         ]

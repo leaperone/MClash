@@ -218,6 +218,10 @@ enum ConfigurationProxyGroupPreset {
                 document.workspaces[index].proxyGroupIDs = updated
                 document.workspaces[index].revision += 1
             }
+            if document.workspaces[index].globalProxyGroupID == nil {
+                document.workspaces[index].globalProxyGroupID = mainID
+                document.workspaces[index].revision += 1
+            }
         }
 
         var redirectedRuleCount = 0

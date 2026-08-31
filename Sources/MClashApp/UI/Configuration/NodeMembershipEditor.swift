@@ -8,6 +8,7 @@ struct NodeMembershipEditor: View {
     let sourceNames: [SourceID: String]
     @Binding var selectedNodeIDs: Set<NodeID>
     @Binding var selectors: [NodeSelector]
+    @Binding var orderedNodeIDs: [NodeID]
 
     @State private var activeSelectorID: UUID?
     @State private var selectorName = ""
@@ -23,6 +24,7 @@ struct NodeMembershipEditor: View {
     @State private var fixedSearch = ""
     @State private var librarySearch = ""
     @State private var isLoading = false
+    @State private var advancedConditionsExpanded = false
     @FocusState private var librarySearchFocused: Bool
 
     private var activeSelector: NodeSelector? {
@@ -66,7 +68,12 @@ struct NodeMembershipEditor: View {
                     || (node.userAlias ?? node.displayName).localizedCaseInsensitiveContains(query)
                     || node.host.localizedCaseInsensitiveContains(query)
                     || node.proto.rawValue.localizedCaseInsensitiveContains(query))
-        }.sorted(by: stableNodeOrder)
+        }.sorted { lhs, rhs in
+            let leftIndex = orderedNodeIDs.firstIndex(of: lhs.id) ?? .max
+            let rightIndex = orderedNodeIDs.firstIndex(of: rhs.id) ?? .max
+            if leftIndex != rightIndex { return leftIndex < rightIndex }
+            return stableNodeOrder(lhs, rhs)
+        }
     }
 
     private var availableLibraryNodes: [Node] {
@@ -115,6 +122,23 @@ struct NodeMembershipEditor: View {
                 Text(AppLocalization.string("Automatic selectors"))
                     .font(.headline)
                 Spacer()
+                Menu {
+                    Button(AppLocalization.string("All enabled nodes")) {
+                        addPresetSelector(name: AppLocalization.string("All enabled nodes"), pattern: nil)
+                    }
+                    Button(AppLocalization.string("US / United States")) {
+                        addPresetSelector(name: AppLocalization.string("US / United States"), pattern: "US")
+                    }
+                    Button(AppLocalization.string("JP / Japan")) {
+                        addPresetSelector(name: AppLocalization.string("JP / Japan"), pattern: "JP")
+                    }
+                    Button(AppLocalization.string("HK / Hong Kong")) {
+                        addPresetSelector(name: AppLocalization.string("HK / Hong Kong"), pattern: "HK")
+                    }
+                } label: {
+                    Label(AppLocalization.string("Quick match"), systemImage: "wand.and.stars")
+                }
+                .menuStyle(.borderlessButton)
                 Button {
                     addSelector()
                 } label: {
@@ -139,29 +163,54 @@ struct NodeMembershipEditor: View {
                     .controlSize(.small)
                 }
             } else {
+                Text(AppLocalization.string("Fallback checks members from top to bottom and uses the first healthy option. Move members to set priority."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(selectors) { selector in
-                            Button {
-                                selectSelector(selector.id)
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: selector.id == activeSelectorID ? "checkmark.circle.fill" : "line.3.horizontal.decrease.circle")
-                                    Text(selector.name)
-                                    Text(
-                                        AppLocalization.format(
-                                            "%d matches",
-                                            selectorMatchCount(selector)
+                        ForEach(Array(selectors.enumerated()), id: \.element.id) { index, selector in
+                            HStack(spacing: 4) {
+                                Button {
+                                    selectSelector(selector.id)
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: selector.id == activeSelectorID ? "checkmark.circle.fill" : "line.3.horizontal.decrease.circle")
+                                        Text(selector.name)
+                                        Text(
+                                            AppLocalization.format(
+                                                "%d matches",
+                                                selectorMatchCount(selector)
+                                            )
                                         )
-                                    )
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.secondary)
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                        Spacer(minLength: 0)
+                                    }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityLabel(AppLocalization.format("Selector %@", selector.name))
+
+                                Button {
+                                    moveSelector(selector.id, by: -1)
+                                } label: {
+                                    Image(systemName: "chevron.up")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(index == 0)
+                                .accessibilityLabel(AppLocalization.string("Move selector up"))
+
+                                Button {
+                                    moveSelector(selector.id, by: 1)
+                                } label: {
+                                    Image(systemName: "chevron.down")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(index >= selectors.count - 1)
+                                .accessibilityLabel(AppLocalization.string("Move selector down"))
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .accessibilityLabel(AppLocalization.format("Selector %@", selector.name))
                         }
                     }
                 }
@@ -201,36 +250,44 @@ struct NodeMembershipEditor: View {
                         .foregroundStyle(.secondary)
                     TextField(AppLocalization.string("Host/IP contains or matches (for example us.*)"), text: $hostContains)
                 }
-                HStack(spacing: 8) {
-                    Image(systemName: "equal.circle")
-                        .foregroundStyle(.secondary)
-                    TextField(AppLocalization.string("Exact name (optional)"), text: $nameEquals)
-                    TextField(AppLocalization.string("Exact Host/IP (optional)"), text: $hostEquals)
-                }
-                HStack(spacing: 8) {
-                    Image(systemName: "tag")
-                        .foregroundStyle(.secondary)
-                    TextField(AppLocalization.string("Tag contains (for example premium)"), text: $tagContains)
-                }
-                HStack {
-                    Picker(AppLocalization.string("Source"), selection: $sourceChoice) {
-                        Text(AppLocalization.string("Any source")).tag(Optional<SourceID>.none)
-                        ForEach(sortedSourceIDs, id: \.self) { sourceID in
-                            Text(sourceNames[sourceID] ?? "Source").tag(Optional(sourceID))
+                DisclosureGroup(
+                    AppLocalization.string("More conditions"),
+                    isExpanded: $advancedConditionsExpanded
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "equal.circle")
+                                .foregroundStyle(.secondary)
+                            TextField(AppLocalization.string("Exact name (optional)"), text: $nameEquals)
+                            TextField(AppLocalization.string("Exact Host/IP (optional)"), text: $hostEquals)
+                        }
+                        HStack(spacing: 8) {
+                            Image(systemName: "tag")
+                                .foregroundStyle(.secondary)
+                            TextField(AppLocalization.string("Tag contains (for example premium)"), text: $tagContains)
+                        }
+                        HStack {
+                            Picker(AppLocalization.string("Source"), selection: $sourceChoice) {
+                                Text(AppLocalization.string("Any source")).tag(Optional<SourceID>.none)
+                                ForEach(sortedSourceIDs, id: \.self) { sourceID in
+                                    Text(sourceNames[sourceID] ?? "Source").tag(Optional(sourceID))
+                                }
+                            }
+                            Picker(AppLocalization.string("Protocol"), selection: $protocolChoice) {
+                                Text(AppLocalization.string("Any protocol")).tag(Optional<NodeProtocol>.none)
+                                ForEach(NodeProtocol.allCases, id: \.self) { proto in
+                                    Text(proto.rawValue.uppercased()).tag(Optional(proto))
+                                }
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            Image(systemName: "minus.circle")
+                                .foregroundStyle(.secondary)
+                            TextField(AppLocalization.string("Exclude name contains (optional)"), text: $excludeNameContains)
+                            TextField(AppLocalization.string("Exclude host/IP contains (optional)"), text: $excludeHostContains)
                         }
                     }
-                    Picker(AppLocalization.string("Protocol"), selection: $protocolChoice) {
-                        Text(AppLocalization.string("Any protocol")).tag(Optional<NodeProtocol>.none)
-                        ForEach(NodeProtocol.allCases, id: \.self) { proto in
-                            Text(proto.rawValue.uppercased()).tag(Optional(proto))
-                        }
-                    }
-                }
-                HStack(spacing: 8) {
-                    Image(systemName: "minus.circle")
-                        .foregroundStyle(.secondary)
-                    TextField(AppLocalization.string("Exclude name contains (optional)"), text: $excludeNameContains)
-                    TextField(AppLocalization.string("Exclude host/IP contains (optional)"), text: $excludeHostContains)
+                    .padding(.top, 6)
                 }
 
                 if !activeCriteria.isEmpty {
@@ -335,19 +392,38 @@ struct NodeMembershipEditor: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         ForEach(fixedNodes) { node in
-                            Button {
-                                togglePin(node.id, pinned: false)
-                            } label: {
-                                nodeRow(
-                                    node,
-                                    symbol: "pin.fill",
-                                    tint: Color.accentColor
+                            HStack(spacing: 6) {
+                                Button {
+                                    togglePin(node.id, pinned: false)
+                                } label: {
+                                    nodeRow(
+                                        node,
+                                        symbol: "pin.fill",
+                                        tint: Color.accentColor
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityHint(
+                                    AppLocalization.string("Remove this fixed node")
                                 )
+                                let position = orderedNodeIDs.firstIndex(of: node.id) ?? 0
+                                Button {
+                                    movePinnedNode(node.id, by: -1)
+                                } label: {
+                                    Image(systemName: "chevron.up")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(position == 0)
+                                .accessibilityLabel(AppLocalization.string("Move fixed node up"))
+                                Button {
+                                    movePinnedNode(node.id, by: 1)
+                                } label: {
+                                    Image(systemName: "chevron.down")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(position >= orderedNodeIDs.count - 1)
+                                .accessibilityLabel(AppLocalization.string("Move fixed node down"))
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityHint(
-                                AppLocalization.string("Remove this fixed node")
-                            )
                         }
                     }
                 }
@@ -479,6 +555,10 @@ struct NodeMembershipEditor: View {
         for index in selectors.indices where !selectors[index].fixedNodeIDs.isEmpty {
             selectors[index].fixedNodeIDs = []
         }
+        orderedNodeIDs = orderedNodeIDs.filter { selectedNodeIDs.contains($0) }
+            + selectedNodeIDs.subtracting(Set(orderedNodeIDs)).sorted {
+                $0.rawValue.uuidString < $1.rawValue.uuidString
+            }
         activeSelectorID = selectors.first?.id
         loadActiveSelector()
         isLoading = false
@@ -492,6 +572,19 @@ struct NodeMembershipEditor: View {
         activeSelectorID = selector.id
         selectorName = selector.name
         clearFields()
+        advancedConditionsExpanded = false
+    }
+
+    private func addPresetSelector(name: String, pattern: String?) {
+        let include = pattern.map { [NodeSelectorCondition.nameContains($0)] } ?? []
+        let selector = NodeSelector(name: name, include: include)
+        selectors.append(selector)
+        activeSelectorID = selector.id
+        selectorName = selector.name
+        clearFields()
+        nameContains = pattern ?? ""
+        advancedConditionsExpanded = false
+        syncSelector()
     }
 
     private func selectSelector(_ id: UUID) {
@@ -499,6 +592,13 @@ struct NodeMembershipEditor: View {
         syncSelector()
         activeSelectorID = id
         loadActiveSelector()
+    }
+
+    private func moveSelector(_ id: UUID, by offset: Int) {
+        guard let index = selectors.firstIndex(where: { $0.id == id }) else { return }
+        let destination = index + offset
+        guard selectors.indices.contains(destination) else { return }
+        selectors.swapAt(index, destination)
     }
 
     private func removeActiveSelector() {
@@ -522,6 +622,13 @@ struct NodeMembershipEditor: View {
         for condition in selector.exclude {
             apply(condition, to: true)
         }
+        advancedConditionsExpanded = !nameEquals.trimmed.isEmpty
+            || !hostEquals.trimmed.isEmpty
+            || sourceChoice != nil
+            || protocolChoice != nil
+            || !tagContains.trimmed.isEmpty
+            || !excludeNameContains.trimmed.isEmpty
+            || !excludeHostContains.trimmed.isEmpty
         isLoading = false
     }
 
@@ -564,13 +671,27 @@ struct NodeMembershipEditor: View {
     }
 
     private func togglePin(_ id: NodeID, pinned: Bool) {
-        if pinned { selectedNodeIDs.insert(id) } else { selectedNodeIDs.remove(id) }
+        if pinned {
+            selectedNodeIDs.insert(id)
+            if !orderedNodeIDs.contains(id) { orderedNodeIDs.append(id) }
+        } else {
+            selectedNodeIDs.remove(id)
+            orderedNodeIDs.removeAll { $0 == id }
+        }
+    }
+
+    private func movePinnedNode(_ id: NodeID, by offset: Int) {
+        guard let index = orderedNodeIDs.firstIndex(of: id) else { return }
+        let destination = index + offset
+        guard orderedNodeIDs.indices.contains(destination) else { return }
+        orderedNodeIDs.swapAt(index, destination)
     }
 
     private func pinAvailableNodes() {
-        selectedNodeIDs.formUnion(
-            availableLibraryNodes.prefix(remainingFixedNodeCapacity).map(\.id)
-        )
+        for id in availableLibraryNodes.prefix(remainingFixedNodeCapacity).map(\.id) {
+            selectedNodeIDs.insert(id)
+            if !orderedNodeIDs.contains(id) { orderedNodeIDs.append(id) }
+        }
     }
 
     private func selectorMatchCount(_ selector: NodeSelector) -> Int {

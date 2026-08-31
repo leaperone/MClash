@@ -22,7 +22,9 @@ public extension ConfigurationDocument {
             name: "Everyday",
             proxyGroupIDs: [select.id],
             dnsPolicyID: dns.id,
-            entranceIDs: [http.id, socks.id, appRouting.id, tun.id]
+            entranceIDs: [http.id, socks.id, appRouting.id, tun.id],
+            routingMode: .rule,
+            globalProxyGroupID: select.id
         )
         return Self(
             sources: [],

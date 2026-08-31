@@ -46,6 +46,12 @@ public enum ConfigurationCaptureAdapter {
                         sources.append(.applicationIdentifierPattern(try ApplicationIdentifierPatternMatcher(pattern: pattern)))
                     case let .processPath(path):
                         sources.append(.executable(ExecutableSourceMatcher(canonicalPath: path)))
+                    case .processName:
+                        // PROCESS-NAME is a Mihomo-native matcher. The Network
+                        // Extension model has no equivalent, so keep it out of
+                        // the capture rule and let the compiler emit it to
+                        // Mihomo's native rules path.
+                        continue
                     case let .userID(value):
                         sources.append(.userID(value))
                     case let .domainExact(value):
@@ -56,6 +62,8 @@ public enum ConfigurationCaptureAdapter {
                         destinations.append(.hostPattern(try HostPatternMatcher(pattern: value)))
                     case let .ipCIDR(value):
                         destinations.append(.network(try IPNetwork(value)))
+                    case let .geoIP(value), let .geoIP6(value), let .geoSite(value):
+                        throw NetworkRuleValidationError.invalidSourceMatcher(value)
                     case let .transport(value):
                         switch value.lowercased() {
                         case "tcp": protocols.insert(.tcp)

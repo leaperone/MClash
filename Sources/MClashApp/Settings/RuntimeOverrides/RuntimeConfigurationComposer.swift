@@ -14,7 +14,8 @@ public struct RuntimeConfigurationComposer: Sendable {
         to profileData: Data,
         networkExtensionListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         profileMixedListener: ManagedProfileMixedListenerConfiguration? = nil,
-        routeListeners: [ProfileRouteListenerSpec] = []
+        routeListeners: [ProfileRouteListenerSpec] = [],
+        allowedOutboundProxyNames: Set<String>? = nil
     ) throws -> Data {
         try validator.validate(overrides)
         guard !overrides.isEmpty
@@ -43,6 +44,14 @@ public struct RuntimeConfigurationComposer: Sendable {
             profileMixedListener: profileMixedListener,
             routeListeners: routeListeners
         )
+        if let allowedOutboundProxyNames {
+            let builtIns = Set(["DIRECT", "REJECT", "GLOBAL", "COMPATIBLE", "PASS"])
+            if let stale = managedListeners.compactMap(\.outboundProxy).first(where: {
+                !builtIns.contains($0) && !allowedOutboundProxyNames.contains($0)
+            }) {
+                throw RuntimeConfigurationComposerError.unknownListenerProxyReference(stale)
+            }
+        }
         if !managedListeners.isEmpty {
             lines = try applyingManagedListeners(
                 managedListeners,
@@ -1389,6 +1398,7 @@ public enum RuntimeConfigurationComposerError: Error, Equatable, Sendable {
     case rulesSectionMustBeSequence
     case listenersSectionMustBeSequence
     case reservedListenerNameConflict(String)
+    case unknownListenerProxyReference(String)
     case unsupportedBoundListenerSyntax(String)
     case scalarEncodingFailed
 }
@@ -1421,6 +1431,11 @@ extension RuntimeConfigurationComposerError: LocalizedError {
         case let .reservedListenerNameConflict(name):
             AppLocalization.format(
                 "The profile already uses the reserved Network Extension listener name %@.",
+                name
+            )
+        case let .unknownListenerProxyReference(name):
+            AppLocalization.format(
+                "A managed listener references the unavailable Mihomo proxy group %@.",
                 name
             )
         case let .unsupportedBoundListenerSyntax(binding):

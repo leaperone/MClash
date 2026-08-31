@@ -43,6 +43,10 @@ public struct MihomoConfig: Codable, Equatable, Sendable {
     public let keepAliveIdle: Int?
     public let keepAliveInterval: Int?
     public let disableKeepAlive: Bool?
+    /// Alpha exposes custom inbound listeners separately from the legacy
+    /// `port`/`socks-port` fields. Keep the payload optional because older
+    /// cores omit it entirely.
+    public let listeners: [MihomoListener]?
 
     enum CodingKeys: String, CodingKey {
         case port
@@ -77,6 +81,40 @@ public struct MihomoConfig: Codable, Equatable, Sendable {
         case keepAliveIdle = "keep-alive-idle"
         case keepAliveInterval = "keep-alive-interval"
         case disableKeepAlive = "disable-keep-alive"
+        case listeners
+    }
+}
+
+/// The subset of a Mihomo `listeners` record needed for status and endpoint
+/// presentation. Unknown listener properties are intentionally ignored so a
+/// newer Alpha core can add fields without breaking `/configs` decoding.
+public struct MihomoListener: Codable, Equatable, Sendable, Identifiable {
+    public let name: String?
+    public let type: String?
+    public let port: Int?
+    public let listen: String?
+    public let proxy: String?
+
+    public var id: String {
+        [name, type, listen, port.map(String.init)].compactMap { $0 }.joined(separator: "|")
+    }
+
+    public init(
+        name: String? = nil,
+        type: String? = nil,
+        port: Int? = nil,
+        listen: String? = nil,
+        proxy: String? = nil
+    ) {
+        self.name = name
+        self.type = type
+        self.port = port
+        self.listen = listen
+        self.proxy = proxy
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, type, port, listen, proxy
     }
 }
 

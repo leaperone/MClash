@@ -269,6 +269,31 @@ final class AppModel {
         var address: String { "\(host):\(port)" }
     }
 
+    /// A user-facing entrance that is currently part of the active MClash
+    /// configuration.  This is deliberately separate from the legacy
+    /// `LocalListenerEndpoint` (which represents the single managed Mixed
+    /// compatibility socket) so existing automation clients remain stable
+    /// while the UI can present any number of HTTP/SOCKS/App Routing entries.
+    enum ActiveEntranceKind: String, CaseIterable, Identifiable, Sendable {
+        case http, socks5, appRouting, tun, mixed
+
+        var id: Self { self }
+    }
+
+    struct ActiveEntranceEndpoint: Identifiable, Equatable, Sendable {
+        let id: EntranceID
+        let name: String
+        let kind: ActiveEntranceKind
+        let host: String?
+        let port: Int?
+        let enabled: Bool
+
+        var address: String? {
+            guard let host, let port else { return nil }
+            return "\(host):\(port)"
+        }
+    }
+
     enum RuntimeSettingsApplyOutcome: Equatable, Sendable {
         case unchanged
         case saved
@@ -566,6 +591,13 @@ final class AppModel {
     private(set) var proxyInspectorTrafficRevision: UInt64 = 0
     private(set) var globalProxyGroupIsRelevant = false
     var systemProxyState: SystemProxyState = .off
+    /// Read-only observation of macOS proxy state. This is intentionally
+    /// separate from `systemProxyState`: a previous MClash process (or another
+    /// app) may have left proxy settings enabled without a recoverable MClash
+    /// snapshot. We must report that fact without claiming ownership.
+    private(set) var systemProxyObservedEnabled = false
+    private(set) var systemProxyObservedMatchesMClash = false
+    private(set) var systemProxyObservedAt: Date?
     private(set) var systemProxyPreferences: SystemProxyPreferences = .defaults
     private(set) var networkCaptureState: NetworkCaptureState = .off
     private(set) var networkCapturePreferences = NetworkCapturePreferences.defaults()
@@ -1163,6 +1195,11 @@ final class AppModel {
                     }
                 }
                 try await recoverInterruptedConfigurationActivationIfNeeded()
+                // Observe (never modify) the host proxy before any profile or
+                // runtime migration. This catches settings left by an older
+                // MClash build or another utility even when no core is ready
+                // yet, so the overview can explain the real network path.
+                await refreshSystemProxyObservation()
                 await synchronizeConfigurationSources()
                 startupUnifiedMigrationPending =
                     shouldAutomaticallyMigrateToUnifiedConfiguration()
@@ -1439,6 +1476,23 @@ final class AppModel {
         }
     }
 
+    /// Whether macOS currently reports any enabled proxy protocol, including
+    /// settings left by an older MClash process or another proxy utility.
+    var systemProxyEffectivelyEnabled: Bool {
+        systemProxyEnabled || systemProxyObservedEnabled
+    }
+
+    var systemProxyOwnershipWarning: String? {
+        guard systemProxyObservedEnabled, !systemProxyEnabled else { return nil }
+        return systemProxyObservedMatchesMClash
+            ? AppLocalization.string(
+                "macOS System Proxy is on, but MClash does not own its recovery snapshot."
+            )
+            : AppLocalization.string(
+                "macOS System Proxy is on outside MClash and does not match the active MClash listener."
+            )
+    }
+
     var systemProxyRecoveryRequired: Bool {
         guard hasSystemProxySnapshot else { return false }
         // A guard failure means the currently intended proxy could not be
@@ -1450,18 +1504,49 @@ final class AppModel {
     }
 
     var localHTTPListenerPort: Int? {
-        guard let runtimeConfig else { return nil }
-        return positivePort(runtimeConfig.port)
+        if unifiedConfigurationEnabled,
+           let port = activeConfiguredEntrances.first(where: {
+               $0.kind == .http && $0.enabled
+           })?.port {
+            return port
+        }
+        if let port = positivePort(runtimeConfig?.port ?? 0) {
+            return port
+        }
+        if let port = runtimeConfig?.listeners?.first(where: {
+            $0.type?.lowercased() == "http"
+        }).flatMap({ positivePort($0.port ?? 0) }) {
+            return port
+        }
+        return activeConfiguredEntrances.first(where: { $0.kind == .http && $0.enabled })?.port
     }
 
     var localSOCKSListenerPort: Int? {
-        guard let runtimeConfig else { return nil }
-        return positivePort(runtimeConfig.socksPort)
+        if unifiedConfigurationEnabled,
+           let port = activeConfiguredEntrances.first(where: {
+               $0.kind == .socks5 && $0.enabled
+           })?.port {
+            return port
+        }
+        if let port = positivePort(runtimeConfig?.socksPort ?? 0) {
+            return port
+        }
+        if let port = runtimeConfig?.listeners?.first(where: {
+            $0.type?.lowercased() == "socks"
+                || $0.type?.lowercased() == "socks5"
+        }).flatMap({ positivePort($0.port ?? 0) }) {
+            return port
+        }
+        return activeConfiguredEntrances.first(where: { $0.kind == .socks5 && $0.enabled })?.port
     }
 
     var localMixedListenerPort: Int? {
         guard let runtimeConfig else { return nil }
-        return managedMixedPort ?? positivePort(runtimeConfig.mixedPort)
+        if let managedMixedPort { return managedMixedPort }
+        if let configured = positivePort(runtimeConfig.mixedPort) { return configured }
+        return runtimeConfig.listeners?.first(where: {
+            $0.type?.lowercased() == "mixed"
+        }).flatMap { positivePort($0.port ?? 0) }
     }
 
     var localHTTPListenerAddress: String? {
@@ -1488,17 +1573,53 @@ final class AppModel {
         ]
     }
 
-    /// Effective HTTP endpoint used when configuring macOS. A mixed listener
-    /// is a protocol-compatible fallback, while a managed mixed listener takes
-    /// precedence because it was created after configured listeners failed.
+    /// All user-configured entrances in the active unified runtime. HTTP and
+    /// SOCKS5 records retain their names; App Routing is represented as a
+    /// capability switch with no TCP port. The internal Mixed recovery socket
+    /// is deliberately excluded: it is an implementation fallback, not a
+    /// fourth user policy or entrance.
+    var activeConfiguredEntrances: [ActiveEntranceEndpoint] {
+        guard unifiedConfigurationEnabled,
+              let workspace = configurationDocument.currentWorkspace else {
+            return []
+        }
+        let entries = workspace.entranceIDs.compactMap { id in
+            configurationDocument.entrances.first(where: { $0.id == id })
+        }
+        return entries.map { entrance in
+            ActiveEntranceEndpoint(
+                id: entrance.id,
+                name: entrance.name,
+                kind: ActiveEntranceKind(rawValue: entrance.kind.rawValue) ?? .http,
+                host: entrance.kind == .appRouting || entrance.kind == .tun
+                    ? nil : entrance.bindAddress,
+                port: entrance.kind == .appRouting || entrance.kind == .tun
+                    ? nil : entrance.port,
+                enabled: entrance.enabled
+            )
+        }
+    }
+
+    /// Whether startup had to create the internal Mixed recovery endpoint
+    /// because the configured public listeners were unavailable.
+    var managedMixedFallbackIsActive: Bool {
+        managedMixedPort != nil
+    }
+
+    /// Effective HTTP endpoint used when configuring macOS. Prefer the named
+    /// user entrance. A managed Mixed socket takes precedence only after a
+    /// failed listener startup; an ordinary legacy Mixed port is the last
+    /// compatibility fallback.
     var localHTTPProxyPort: Int? {
-        localMixedListenerPort ?? positivePort(runtimeConfig?.port ?? 0)
+        if let managedMixedPort { return managedMixedPort }
+        return localHTTPListenerPort ?? localMixedListenerPort
     }
 
     /// Effective SOCKS endpoint used when configuring macOS. See
     /// `localHTTPProxyPort` for the fallback semantics.
     var localSOCKSProxyPort: Int? {
-        localMixedListenerPort ?? positivePort(runtimeConfig?.socksPort ?? 0)
+        if let managedMixedPort { return managedMixedPort }
+        return localSOCKSListenerPort ?? localMixedListenerPort
     }
 
     var localHTTPProxyAddress: String? {
@@ -2908,6 +3029,17 @@ final class AppModel {
     /// existing configuration so a user-created rule cannot appear saved but
     /// silently remain inactive in the current configuration.
     func saveConfigurationRule(_ rule: RoutingRule) async throws {
+        try await saveConfigurationRule(rule, workspaceID: nil)
+    }
+
+    /// Saves a rule and links a new rule only to the requested workspace. The
+    /// legacy overload above intentionally retains its all-workspace behavior;
+    /// quick actions from the traffic monitor use this scoped form so a rule
+    /// observed in one configuration cannot silently affect another.
+    func saveConfigurationRule(
+        _ rule: RoutingRule,
+        workspaceID: WorkspaceID?
+    ) async throws {
         var document = configurationDocument
         let existed = document.rules.contains { $0.id == rule.id }
         if let index = document.rules.firstIndex(where: { $0.id == rule.id }) {
@@ -2915,12 +3047,26 @@ final class AppModel {
         } else {
             document.rules.append(rule)
         }
-        for index in document.workspaces.indices {
+        if let workspaceID {
+            guard let index = document.workspaces.firstIndex(where: {
+                $0.id == workspaceID
+            }) else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "The selected MClash configuration does not exist"
+                )
+            }
             if !document.workspaces[index].ruleIDs.contains(rule.id) {
                 document.workspaces[index].ruleIDs.append(rule.id)
-                document.workspaces[index].revision += 1
-            } else if existed {
-                document.workspaces[index].revision += 1
+            }
+            document.workspaces[index].revision += 1
+        } else {
+            for index in document.workspaces.indices {
+                if !document.workspaces[index].ruleIDs.contains(rule.id) {
+                    document.workspaces[index].ruleIDs.append(rule.id)
+                    document.workspaces[index].revision += 1
+                } else if existed {
+                    document.workspaces[index].revision += 1
+                }
             }
         }
         try await saveConfigurationDocument(document)
@@ -2943,6 +3089,9 @@ final class AppModel {
         case .rules:
             guard let index = document.rules.firstIndex(where: { $0.id.rawValue == id }) else { return }
             document.rules[index].enabled.toggle()
+        case .ruleSets:
+            guard let index = document.ruleSets.firstIndex(where: { $0.id.rawValue == id }) else { return }
+            document.ruleSets[index].enabled.toggle()
         case .entrances:
             guard let index = document.entrances.firstIndex(where: { $0.id.rawValue == id }) else { return }
             document.entrances[index].enabled.toggle()
@@ -2959,6 +3108,8 @@ final class AppModel {
                 affectsWorkspace = workspace.proxyGroupIDs.contains { $0.rawValue == id }
             case .rules:
                 affectsWorkspace = workspace.ruleIDs.contains { $0.rawValue == id }
+            case .ruleSets:
+                affectsWorkspace = workspace.ruleSetIDs.contains { $0.rawValue == id }
             case .entrances:
                 affectsWorkspace = workspace.entranceIDs.contains { $0.rawValue == id }
             case .dns, .workspaces, .sources:
@@ -3046,6 +3197,19 @@ final class AppModel {
                 throw ConfigurationAutomationError.invalidInput(message)
             }
         }
+        // The core fleet keeps one managed Mixed socket (the stable local
+        // compatibility endpoint) in addition to user-defined listeners. A
+        // configured HTTP/SOCKS listener cannot silently claim that same port;
+        // reject it before disconnecting the healthy current session.
+        if let managedPort = positivePort(profileRuntimePlan.defaultMixedPort),
+           (try? RuntimeConfigurationComposer().boundListenerPorts(in: compiled.yaml))?.contains(managedPort) == true {
+            throw ConfigurationAutomationError.invalidInput(
+                AppLocalization.format(
+                    "Entrance port %d is reserved for MClash's managed local fallback listener. Choose another port.",
+                    managedPort
+                )
+            )
+        }
         let shouldReconnect = isConnected || isBusy
         let previousProfileID = activeProfileID
         guard let profileStore, let runtimeOverrideCoordinator else {
@@ -3116,6 +3280,7 @@ final class AppModel {
                 networkExtensionListener: activeNetworkExtensionMihomoListener,
                 profileMixedListener: nil,
                 routeListeners: [],
+                allowedOutboundProxyNames: unifiedRuntimeProxyNames(),
                 in: profileStore,
                 validator: try makeProfileValidator()
             )
@@ -3292,6 +3457,11 @@ final class AppModel {
                             networkExtensionListener: activeNetworkExtensionMihomoListener,
                             profileMixedListener: nil,
                             routeListeners: [],
+                            // Rollback may legitimately target the previous
+                            // compiled document while the current workspace
+                            // has already renamed a group; let its own
+                            // validated YAML remain authoritative here.
+                            allowedOutboundProxyNames: nil,
                             in: profileStore,
                             validator: try makeProfileValidator()
                         )
@@ -3440,6 +3610,9 @@ final class AppModel {
             do {
                 try await systemProxyManager.restoreSnapshotAndRemove(from: snapshotURL)
                 systemProxyState = .off
+                systemProxyObservedEnabled = false
+                systemProxyObservedMatchesMClash = false
+                systemProxyObservedAt = Date()
             } catch {
                 systemProxyState = .failed(error.localizedDescription)
                 throw NetworkCaptureTransactionFailure(
@@ -3452,6 +3625,9 @@ final class AppModel {
         systemProxyGuardFailure = nil
         systemProxyGuardLastVerifiedAt = Date()
         systemProxyState = .on
+        systemProxyObservedEnabled = true
+        systemProxyObservedMatchesMClash = true
+        systemProxyObservedAt = Date()
         startSystemProxyGuard(endpoints: endpoints)
     }
 
@@ -4275,6 +4451,7 @@ final class AppModel {
                     networkExtensionListener: activeNetworkExtensionMihomoListener,
                     profileMixedListener: nil,
                     routeListeners: [],
+                    allowedOutboundProxyNames: unifiedRuntimeProxyNames(),
                     in: profileStore,
                     validator: validator
                 )
@@ -4324,6 +4501,7 @@ final class AppModel {
                     networkExtensionListener: activeNetworkExtensionMihomoListener,
                     profileMixedListener: nil,
                     routeListeners: [],
+                    allowedOutboundProxyNames: unifiedRuntimeProxyNames(),
                     in: profileStore,
                     validator: validator
                 )
@@ -5316,6 +5494,17 @@ final class AppModel {
     }
 
     func setMode(_ mode: String) async {
+        if unifiedConfigurationEnabled,
+           let configurationMode = ConfigurationRoutingMode(
+               rawValue: mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+           ) {
+            do {
+                _ = try await setConfigurationRoutingMode(configurationMode)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            return
+        }
         guard begin(.changeMode) else { return }
         pendingMode = mode
         defer {
@@ -5336,6 +5525,238 @@ final class AppModel {
             guard generation == controllerGeneration else { return }
             recordOperationFailure(error, context: "Routing mode change")
         }
+    }
+
+    /// Persists and applies the routing mode of a MClash workspace. The live
+    /// controller is patched in place so switching Rule/Global/Direct does not
+    /// require replacing the imported source or rebuilding the node catalog.
+    /// A candidate is compiled before any durable mutation; if the controller
+    /// rejects the mode, the workspace document remains untouched.
+    @discardableResult
+    func setConfigurationRoutingMode(
+        _ mode: ConfigurationRoutingMode,
+        workspaceID requestedWorkspaceID: WorkspaceID? = nil
+    ) async throws -> Bool {
+        guard begin(.changeRuntimeSettings) else {
+            throw ConfigurationAutomationError.operationInProgress
+        }
+        defer { end(.changeRuntimeSettings) }
+
+        var candidate = configurationDocument
+        guard let targetID = requestedWorkspaceID
+                ?? candidate.currentWorkspace?.id,
+              let workspaceIndex = candidate.workspaces.firstIndex(where: {
+                  $0.id == targetID
+              }) else {
+            throw ConfigurationAutomationError.invalidInput(
+                "The selected MClash configuration does not exist"
+            )
+        }
+        let previousMode = candidate.workspaces[workspaceIndex].routingMode
+        let previousGlobalTarget = candidate.workspaces[workspaceIndex]
+            .globalProxyGroupID
+        let enabledGroup = candidate.proxyGroups.first(where: { group in
+            group.enabled
+                && candidate.workspaces[workspaceIndex].proxyGroupIDs.contains(group.id)
+        })
+        if mode == .global,
+           candidate.workspaces[workspaceIndex].globalProxyGroupID == nil {
+            candidate.workspaces[workspaceIndex].globalProxyGroupID = enabledGroup?.id
+        }
+        candidate.workspaces[workspaceIndex].routingMode = mode
+        if candidate.workspaces[workspaceIndex].routingMode != previousMode
+            || candidate.workspaces[workspaceIndex].globalProxyGroupID
+                != previousGlobalTarget {
+            candidate.workspaces[workspaceIndex].revision += 1
+        }
+
+        // Validate every workspace because the shared document is durable and
+        // a mode change must not make a secondary configuration unreadable.
+        let compiledTarget = try ConfigurationCompiler().compile(
+            document: candidate,
+            workspaceID: targetID
+        )
+        for workspace in candidate.workspaces where workspace.id != targetID {
+            _ = try ConfigurationCompiler().compile(
+                document: candidate,
+                workspaceID: workspace.id
+            )
+        }
+
+        let isCurrentWorkspace = unifiedConfigurationEnabled
+            && candidate.currentWorkspaceID == targetID
+            && isConnected
+            && controllerIsReady
+        let generation = controllerGeneration
+        let previousLiveMode = runtimeConfig?.mode.lowercased()
+        if isCurrentWorkspace, let apiClient {
+            pendingMode = mode.rawValue
+            defer { pendingMode = nil }
+            invalidateProxyRefreshes()
+            do {
+                try await apiClient.patchConfig(
+                    MihomoConfigPatch(mode: mode.rawValue)
+                )
+                if mode == .global,
+                   let targetGroupID = candidate.workspaces[workspaceIndex]
+                        .globalProxyGroupID,
+                   let targetName = candidate.proxyGroups.first(where: {
+                       $0.id == targetGroupID && $0.enabled
+                   })?.name {
+                    // Mihomo exposes GLOBAL as an implicit selector. The
+                    // explicit generated GLOBAL group mirrors this target but
+                    // the controller selection is the authoritative live state.
+                    try await apiClient.selectProxy(
+                        group: "GLOBAL",
+                        proxy: targetName
+                    )
+                }
+                let liveConfig = try await apiClient.fetchConfig()
+                guard generation == controllerGeneration, isConnected else {
+                    throw AppModelError.streamEnded("Routing mode")
+                }
+                runtimeConfig = liveConfig
+                await closeConnectionsAfterRoutingChange(
+                    using: apiClient,
+                    generation: generation
+                )
+            } catch {
+                // Best-effort restoration keeps the in-memory and live mode
+                // aligned if persistence or a later request fails.
+                if let previousLiveMode,
+                   previousLiveMode != mode.rawValue,
+                   generation == controllerGeneration {
+                    try? await apiClient.patchConfig(
+                        MihomoConfigPatch(mode: previousLiveMode)
+                    )
+                }
+                throw error
+            }
+        }
+
+        do {
+            try await persistConfigurationDocument(candidate)
+        } catch {
+            // Storage failure must not leave the live controller on a mode the
+            // durable document could not record. Restore both mode and the
+            // previous GLOBAL selection when the live patch already landed.
+            if isCurrentWorkspace, let apiClient,
+               generation == controllerGeneration {
+                if let previousLiveMode,
+                   previousLiveMode != mode.rawValue {
+                    try? await apiClient.patchConfig(
+                        MihomoConfigPatch(mode: previousLiveMode)
+                    )
+                }
+                if previousMode == .global,
+                   let previousID = previousGlobalTarget,
+                   let previousName = configurationDocument.proxyGroups.first(where: {
+                       $0.id == previousID && $0.enabled
+                   })?.name {
+                    try? await apiClient.selectProxy(
+                        group: "GLOBAL",
+                        proxy: previousName
+                    )
+                }
+                if let restored = try? await apiClient.fetchConfig() {
+                    runtimeConfig = restored
+                }
+            }
+            throw error
+        }
+        if candidate.currentWorkspaceID == targetID {
+            compiledConfiguration = compiledTarget
+        }
+        return true
+    }
+
+    @discardableResult
+    func setConfigurationGlobalProxyGroup(
+        _ groupID: ProxyGroupID,
+        workspaceID requestedWorkspaceID: WorkspaceID? = nil
+    ) async throws -> Bool {
+        guard begin(.changeRuntimeSettings) else {
+            throw ConfigurationAutomationError.operationInProgress
+        }
+        defer { end(.changeRuntimeSettings) }
+        var candidate = configurationDocument
+        guard let targetID = requestedWorkspaceID ?? candidate.currentWorkspace?.id,
+              let workspaceIndex = candidate.workspaces.firstIndex(where: {
+                  $0.id == targetID
+              }),
+              candidate.workspaces[workspaceIndex].proxyGroupIDs.contains(groupID),
+              candidate.proxyGroups.contains(where: { $0.id == groupID && $0.enabled }) else {
+            throw ConfigurationAutomationError.invalidInput(
+                "Choose an enabled strategy group in the selected MClash configuration"
+            )
+        }
+        let previousID = candidate.workspaces[workspaceIndex].globalProxyGroupID
+        guard previousID != groupID else { return true }
+        candidate.workspaces[workspaceIndex].globalProxyGroupID = groupID
+        candidate.workspaces[workspaceIndex].revision += 1
+        _ = try ConfigurationCompiler().compile(
+            document: candidate,
+            workspaceID: targetID
+        )
+        let isCurrentWorkspace = unifiedConfigurationEnabled
+            && candidate.currentWorkspaceID == targetID
+            && isConnected
+            && controllerIsReady
+        let generation = controllerGeneration
+        if isCurrentWorkspace, let apiClient {
+            guard candidate.workspaces[workspaceIndex].routingMode == .global else {
+                try await persistConfigurationDocument(candidate)
+                return true
+            }
+            guard let targetName = candidate.proxyGroups.first(where: {
+                $0.id == groupID && $0.enabled
+            })?.name else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "The selected Global exit group is unavailable"
+                )
+            }
+            do {
+                try await apiClient.selectProxy(
+                    group: "GLOBAL",
+                    proxy: targetName
+                )
+                guard generation == controllerGeneration, isConnected else {
+                    throw AppModelError.streamEnded("Global exit")
+                }
+                await closeConnectionsAfterRoutingChange(
+                    using: apiClient,
+                    generation: generation
+                )
+            } catch {
+                // The controller selection is ephemeral; the durable document
+                // is intentionally not changed when it cannot be applied.
+                _ = previousID
+                throw error
+            }
+        }
+        do {
+            try await persistConfigurationDocument(candidate)
+        } catch {
+            if isCurrentWorkspace, let apiClient,
+               generation == controllerGeneration,
+               let previousID,
+               let previousName = configurationDocument.proxyGroups.first(where: {
+                   $0.id == previousID && $0.enabled
+               })?.name {
+                try? await apiClient.selectProxy(
+                    group: "GLOBAL",
+                    proxy: previousName
+                )
+            }
+            throw error
+        }
+        if candidate.currentWorkspaceID == targetID {
+            compiledConfiguration = try? ConfigurationCompiler().compile(
+                document: candidate,
+                workspaceID: targetID
+            )
+        }
+        return true
     }
 
     func selectProxy(group: String, proxy: String) async -> Bool {
@@ -7034,6 +7455,9 @@ final class AppModel {
             }
             systemProxyGuardLastVerifiedAt = Date()
             systemProxyState = .on
+            systemProxyObservedEnabled = true
+            systemProxyObservedMatchesMClash = true
+            systemProxyObservedAt = Date()
             startSystemProxyGuard(endpoints: endpoints)
             appendSupervisorLog(
                 "System proxy enabled: HTTP 127.0.0.1:\(httpPort), SOCKS5 127.0.0.1:\(socksPort)."
@@ -7049,6 +7473,9 @@ final class AppModel {
                 _ = await performDisableSystemProxy()
             } else {
                 systemProxyState = .off
+                systemProxyObservedEnabled = false
+                systemProxyObservedMatchesMClash = false
+                systemProxyObservedAt = Date()
             }
             errorMessage = message
             appendSupervisorLog("System proxy could not be enabled: \(message)")
@@ -7138,6 +7565,9 @@ final class AppModel {
             systemProxyGuardFailure = nil
             systemProxyGuardLastVerifiedAt = Date()
             systemProxyState = .on
+            systemProxyObservedEnabled = true
+            systemProxyObservedMatchesMClash = true
+            systemProxyObservedAt = Date()
             systemProxySettingsReceipt = SystemProxySettingsReceipt(
                 completedAt: Date(),
                 outcome: .appliedAndVerified
@@ -7172,6 +7602,9 @@ final class AppModel {
                 systemProxyGuardFailure = nil
                 systemProxyGuardLastVerifiedAt = Date()
                 systemProxyState = .on
+                systemProxyObservedEnabled = true
+                systemProxyObservedMatchesMClash = true
+                systemProxyObservedAt = Date()
                 systemProxySettingsReceipt = SystemProxySettingsReceipt(
                     completedAt: Date(),
                     outcome: .rejectedAndRolledBack(updateError.localizedDescription)
@@ -7261,6 +7694,9 @@ final class AppModel {
             if systemProxyGuardFailure != nil {
                 systemProxyGuardFailure = nil
                 systemProxyState = .on
+                systemProxyObservedEnabled = true
+                systemProxyObservedMatchesMClash = true
+                systemProxyObservedAt = Date()
             }
             return
         }
@@ -7349,6 +7785,9 @@ final class AppModel {
                 appendSupervisorLog("System proxy guard verification recovered.")
                 systemProxyGuardFailure = nil
                 systemProxyState = .on
+                systemProxyObservedEnabled = true
+                systemProxyObservedMatchesMClash = true
+                systemProxyObservedAt = Date()
             }
         } catch {
             guard canContinue() else { return }
@@ -7407,6 +7846,9 @@ final class AppModel {
                 try await systemProxyManager.restoreSnapshotAndRemove(from: snapshotURL)
             }
             systemProxyState = .off
+            systemProxyObservedEnabled = false
+            systemProxyObservedMatchesMClash = false
+            systemProxyObservedAt = Date()
             if wasRecovering {
                 errorMessage = nil
             }
@@ -8409,8 +8851,10 @@ final class AppModel {
                   isConnected else { return }
             apiClient = client
             runtimeConfig = config
+            await refreshSystemProxyObservation()
             proxyProfileStructure = loadProxyProfileStructure()
             applyProxyCollection(proxies, profileStructure: proxyProfileStructure)
+            await applyUnifiedGlobalSelectionIfNeeded(using: client)
             startControllerStreams(client, generation: generation)
             controllerState = .ready
             errorMessage = nil
@@ -8424,6 +8868,97 @@ final class AppModel {
                   isConnected else { return }
             controllerState = .degraded(error.localizedDescription)
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func applyUnifiedGlobalSelectionIfNeeded(
+        using client: MihomoAPIClient
+    ) async {
+        guard unifiedConfigurationEnabled,
+              let workspace = configurationDocument.currentWorkspace,
+              workspace.routingMode == .global,
+              let targetID = workspace.globalProxyGroupID
+                    ?? workspace.proxyGroupIDs.first,
+              let targetName = configurationDocument.proxyGroups.first(where: {
+                  $0.id == targetID && $0.enabled
+              })?.name else {
+            return
+        }
+        do {
+            try await client.selectProxy(group: "GLOBAL", proxy: targetName)
+            let refreshed = try await client.fetchProxies()
+            guard isConnected else { return }
+            applyProxyCollection(refreshed, profileStructure: proxyProfileStructure)
+        } catch {
+            // A missing GLOBAL selector should be visible in the live proxy
+            // surface, but it must not make a healthy core fail to start.
+            appendSupervisorLog(
+                "MClash could not apply the saved Global exit: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Reads the current macOS proxy dictionaries without writing them. The
+    /// result is used to distinguish MClash's state machine from an externally
+    /// enabled proxy that survived an upgrade or belongs to another tool.
+    func refreshSystemProxyObservation() async {
+        do {
+            let snapshot = try await systemProxyManager.captureSnapshot()
+            let enabled = snapshot.services.contains { state in
+                guard let configuration = state.configuration else { return false }
+                return Self.proxyValueIsEnabled(configuration[SystemProxyKeys.httpEnable])
+                    || Self.proxyValueIsEnabled(configuration[SystemProxyKeys.httpsEnable])
+                    || Self.proxyValueIsEnabled(configuration[SystemProxyKeys.socksEnable])
+                    || Self.proxyValueIsEnabled(configuration[SystemProxyKeys.pacEnable])
+                    || Self.proxyValueIsEnabled(configuration[SystemProxyKeys.autoDiscoveryEnable])
+            }
+            guard let endpoints = currentSystemProxyEndpoints() else {
+                systemProxyObservedEnabled = enabled
+                systemProxyObservedMatchesMClash = false
+                systemProxyObservedAt = Date()
+                if enabled {
+                    appendSupervisorLog(
+                        "macOS system proxy is enabled, but MClash has no active listener to compare. MClash left it untouched."
+                    )
+                }
+                return
+            }
+            let matches: Bool
+            if enabled {
+                matches = try await systemProxyManager.configurationMatches(
+                    endpoints: endpoints,
+                    bypassDomains: systemProxyPreferences.effectiveBypassDomains
+                )
+            } else {
+                matches = false
+            }
+            systemProxyObservedEnabled = enabled
+            systemProxyObservedMatchesMClash = matches
+            systemProxyObservedAt = Date()
+            if enabled && !matches {
+                appendSupervisorLog(
+                    "macOS system proxy is enabled externally and does not match MClash's current listener. MClash left it untouched."
+                )
+            } else if enabled && matches && systemProxyState == .off {
+                appendSupervisorLog(
+                    "macOS system proxy matches the MClash listener, but no MClash ownership snapshot is available."
+                )
+            }
+        } catch {
+            systemProxyObservedAt = Date()
+            appendSupervisorLog(
+                "MClash could not observe the macOS system proxy state: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private static func proxyValueIsEnabled(
+        _ value: SystemProxyPropertyValue?
+    ) -> Bool {
+        switch value {
+        case let .integer(number): number == 1
+        case let .bool(value): value
+        default: false
         }
     }
 
@@ -11286,7 +11821,28 @@ final class AppModel {
     }
 
     private var activeNetworkExtensionMihomoListener: NetworkExtensionMihomoListenerConfiguration? {
-        networkCapturePreferences.enabled ? networkExtensionMihomoListener : nil
+        guard networkCapturePreferences.enabled,
+              let listener = networkExtensionMihomoListener else { return nil }
+        guard unifiedConfigurationEnabled else { return listener }
+        return sanitizedUnifiedNetworkExtensionListener(listener)
+    }
+
+    private func sanitizedUnifiedNetworkExtensionListener(
+        _ listener: NetworkExtensionMihomoListenerConfiguration
+    ) -> NetworkExtensionMihomoListenerConfiguration? {
+        let validNames = unifiedRuntimeProxyNames()
+        let retainedRoutes = Set(
+            listener.routeListeners.compactMap { routeListener -> MihomoRoute? in
+                unifiedRuntimeRouteIsValid(
+                    routeListener.route,
+                    proxyNames: validNames
+                ) ? routeListener.route : nil
+            }
+        )
+        guard retainedRoutes.count != listener.routeListeners.count else {
+            return listener
+        }
+        return try? listener.retaining(routes: retainedRoutes)
     }
 
     private var activeProfileDedicatedMixedListener:
@@ -11858,6 +12414,33 @@ final class AppModel {
                 listenerPorts.formUnion(listener.routeListeners.map { Int($0.port) })
             }
         }
+        // A live listener may intentionally retain an idle route endpoint, but
+        // it must never retain an outbound proxy name that no longer exists in
+        // the authoritative MClash workspace.  This commonly happens when a
+        // legacy "MClash Select" group is renamed by the preset migration:
+        // Mihomo's syntax checker accepts the stale string, while a real relay
+        // fails later with "unknown proxy group".  Prune only invalid policy
+        // routes and keep the endpoint/credential material for valid ones.
+        if unifiedConfigurationEnabled {
+            let validNames = unifiedRuntimeProxyNames()
+            var sanitized: [ProfileID: NetworkExtensionMihomoListenerConfiguration] = [:]
+            for (profileID, listener) in listeners {
+                let retainedRoutes = Set(
+                    listener.routeListeners.compactMap { routeListener -> MihomoRoute? in
+                        unifiedRuntimeRouteIsValid(
+                            routeListener.route,
+                            proxyNames: validNames
+                        ) ? routeListener.route : nil
+                    }
+                )
+                if retainedRoutes.count == listener.routeListeners.count {
+                    sanitized[profileID] = listener
+                } else if let narrowed = try? listener.retaining(routes: retainedRoutes) {
+                    sanitized[profileID] = narrowed
+                }
+            }
+            listeners = sanitized
+        }
         networkExtensionProfileListeners = listeners
         networkExtensionMihomoListener = listeners[activeProfileID]
 
@@ -12278,7 +12861,15 @@ final class AppModel {
         } else {
             sourceData = try await profileStore.configurationData(for: profileID)
         }
-        let managedSourceData = try composer.sanitizingForManagedSession(sourceData)
+        // A compiled unified document is already a blank, MClash-owned YAML
+        // document. Sanitizing it as if it were an imported source would
+        // remove the named HTTP/SOCKS listeners on every live rule update.
+        let managedSourceData: Data
+        if unifiedConfigurationEnabled {
+            managedSourceData = sourceData
+        } else {
+            managedSourceData = try composer.sanitizingForManagedSession(sourceData)
+        }
         let runtimeData = try composer.applying(
             effectiveRuntimeOverrides(for: profileID),
             to: managedSourceData,
@@ -12286,7 +12877,10 @@ final class AppModel {
             profileMixedListener: unifiedConfigurationEnabled
                 ? nil
                 : activeProfileDedicatedMixedListener,
-            routeListeners: profileRouteListeners(for: profileID)
+            routeListeners: profileRouteListeners(for: profileID),
+            allowedOutboundProxyNames: unifiedConfigurationEnabled
+                ? unifiedRuntimeProxyNames()
+                : nil
         )
         _ = try await hotReloadRuntimeConfiguration(
             runtimeData,
@@ -12364,6 +12958,28 @@ final class AppModel {
               existingPorts.allSatisfy({ !excludedPorts.contains($0) })
         else { return nil }
         return existing
+    }
+
+    private func unifiedRuntimeProxyNames() -> Set<String> {
+        let workspace = configurationDocument.currentWorkspace
+        var names = Set<String>(ConfigurationBuiltInPolicy.allCases.map(\.rawValue))
+        for group in configurationDocument.proxyGroups where
+            group.enabled && workspace?.proxyGroupIDs.contains(group.id) == true {
+            names.insert(group.name)
+        }
+        return names
+    }
+
+    private func unifiedRuntimeRouteIsValid(
+        _ route: MihomoRoute,
+        proxyNames: Set<String>
+    ) -> Bool {
+        switch route.profileRoute {
+        case .rules, .global:
+            return true
+        case let .group(name):
+            return proxyNames.contains(name)
+        }
     }
 
     private func expandNetworkExtensionMihomoListener(

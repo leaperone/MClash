@@ -45,11 +45,26 @@ struct ProvidersView: View {
                 }
             } else if allProvidersAreEmpty {
                 ContentUnavailableView {
-                    Label("No providers", systemImage: "shippingbox")
+                    Label(
+                        model.unifiedConfigurationEnabled
+                            ? AppLocalization.string("No active providers")
+                            : AppLocalization.string("No providers"),
+                        systemImage: "shippingbox"
+                    )
                 } description: {
-                    Text("The active profile does not define proxy or rule providers.")
+                    Text(
+                        model.unifiedConfigurationEnabled
+                            ? AppLocalization.string("Source providers are not executed. Add a MClash Rule Set from the Rules page if you need a remote rule collection.")
+                            : AppLocalization.string("The active source does not define proxy or rule providers.")
+                    )
                 } actions: {
-                    Button("Open Profiles") { model.selection = .profiles }
+                    Button(
+                        model.unifiedConfigurationEnabled
+                            ? AppLocalization.string("Open Rules")
+                            : AppLocalization.string("Open Profiles")
+                    ) {
+                        model.selection = model.unifiedConfigurationEnabled ? .rules : .profiles
+                    }
                 }
             } else {
                 List {

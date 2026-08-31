@@ -174,9 +174,9 @@ struct MenuBarContent: View {
 
     private var appRoutingStatus: some View {
         Button {
-            // Application capture is a capability toggle; activity and
-            // evidence live in the unified Traffic workspace.
-            showMainWindow(destination: .connections)
+            // Application capture is an entrance switch. Detailed activity
+            // remains available from the Traffic workspace.
+            showMainWindow(destination: .entrances)
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: appRoutingStatusSymbol)
@@ -256,9 +256,16 @@ struct MenuBarContent: View {
     private var primaryAction: some View {
         if model.activeProfile == nil, !model.isConnected {
             Button {
-                showMainWindow(destination: .profiles)
+                showMainWindow(
+                    destination: model.unifiedConfigurationEnabled ? .sources : .profiles
+                )
             } label: {
-                Label("Choose a Profile", systemImage: "doc.badge.plus")
+                Label(
+                    AppLocalization.string(
+                        model.unifiedConfigurationEnabled ? "Sources" : "Choose a Profile"
+                    ),
+                    systemImage: "doc.badge.plus"
+                )
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -285,6 +292,34 @@ struct MenuBarContent: View {
     }
 
     private var profileControl: some View {
+        if model.unifiedConfigurationEnabled {
+            return AnyView(configurationControl)
+        }
+        return AnyView(legacyProfileControl)
+    }
+
+    private var configurationControl: some View {
+        LabeledContent(AppLocalization.string("Configuration")) {
+            Button {
+                showMainWindow(destination: .workspaces)
+            } label: {
+                HStack(spacing: 5) {
+                    Text(
+                        model.configurationDocument.currentWorkspace.map {
+                            configurationDisplayName($0.name)
+                        } ?? AppLocalization.string("No Configuration")
+                    )
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.borderless)
+            .lineLimit(1)
+        }
+    }
+
+    private var legacyProfileControl: some View {
         LabeledContent("Profile") {
             Menu {
                 if model.profiles.isEmpty {
@@ -353,6 +388,13 @@ struct MenuBarContent: View {
                         : "Route compatible macOS applications through MClash's local proxy listeners."
                 )
             )
+
+            if let warning = model.systemProxyOwnershipWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Routing Mode")
@@ -749,7 +791,7 @@ struct MenuBarContent: View {
         case .on:
             if model.appRoutingProviderStatusFailureCount > 0 {
                 return AppLocalization.string(
-                    "The provider runtime check is retrying. Open App Routing for details."
+                    "The provider runtime check is retrying. Open Entrances for details."
                 )
             }
             return AppLocalization.string("The provider runtime is being verified.")
@@ -759,7 +801,7 @@ struct MenuBarContent: View {
             )
         default:
             return AppLocalization.string(
-                "Open App Routing for provider status and recovery actions."
+                "Open Entrances for the App Routing switch and recovery actions."
             )
         }
     }

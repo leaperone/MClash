@@ -1469,9 +1469,13 @@ final class AutomationCommandGateway {
             "unified": .bool(model.unifiedConfigurationEnabled),
             "workspaceID": workspace.map { .string($0.id.rawValue.uuidString.lowercased()) } ?? .null,
             "workspaceName": workspace.map { .string($0.name) } ?? .null,
+            "routingMode": workspace.map { .string($0.routingMode.rawValue) } ?? .null,
+            "sourcePolicy": .string("nodes-only"),
             "nodeCount": .integer(Int64(model.configurationDocument.nodes.count)),
             "groupCount": .integer(Int64(model.configurationDocument.proxyGroups.count)),
             "ruleCount": .integer(Int64(model.configurationDocument.rules.count)),
+            "ruleSetCount": .integer(Int64(model.configurationDocument.ruleSets.count)),
+            "entranceCount": .integer(Int64(model.activeConfiguredEntrances.count)),
             "runtimeHash": model.compiledConfiguration.map { .string($0.configHash) } ?? .null,
         ])
     }
@@ -1497,25 +1501,54 @@ final class AutomationCommandGateway {
         case .ready: "ready"
         case .degraded: "degraded"
         }
-        var listeners = model.localListenerEndpoints.map { endpoint in
-            AutomationJSONValue.object([
-                "kind": .string(endpoint.kind.rawValue),
-                "address": .string(endpoint.address),
-                "managed": .bool(true),
-            ])
+        var listeners: [AutomationJSONValue]
+        if model.unifiedConfigurationEnabled {
+            listeners = []
+            listeners.append(contentsOf: model.activeConfiguredEntrances.map { entrance in
+                .object([
+                    "id": .string(entrance.id.rawValue.uuidString.lowercased()),
+                    "name": .string(entrance.name),
+                    "kind": .string(entrance.kind.rawValue),
+                    "address": entrance.address.map(AutomationJSONValue.string) ?? .null,
+                    "enabled": .bool(entrance.enabled),
+                    "workspaceID": model.configurationDocument.currentWorkspace.map {
+                        AutomationJSONValue.string($0.id.rawValue.uuidString.lowercased())
+                    } ?? .null,
+                    "routingMode": model.configurationDocument.currentWorkspace.map {
+                        AutomationJSONValue.string($0.routingMode.rawValue)
+                    } ?? .null,
+                    "source": .string("MClash configuration"),
+                    "managed": .bool(true),
+                ])
+            })
+        } else {
+            listeners = model.localListenerEndpoints.map { endpoint in
+                AutomationJSONValue.object([
+                    "name": .string(AppLocalization.string("MClash local fallback")),
+                    "kind": .string(endpoint.kind.rawValue),
+                    "address": .string(endpoint.address),
+                    "managed": .bool(true),
+                ])
+            }
         }
-        listeners.append(contentsOf: model.profileRuntimePlan.routeListeners.map { listener in
-            .object([
-                "id": .string(listener.id.uuidString.lowercased()),
-                "name": .string(listener.name),
-                "kind": .string(listener.protocolType.rawValue),
-                "address": .string("127.0.0.1:\(listener.port)"),
-                "profileID": .string(listener.profileID.description),
-                "enabled": .bool(listener.enabled),
-                "target": profileRouteListenerTargetJSON(listener.target),
-                "managed": .bool(true),
-            ])
-        })
+        // Route listeners belong to the legacy per-profile fleet. In unified
+        // mode the workspace entrances above are authoritative; reporting the
+        // retained legacy plan here would make internal recovery ports look
+        // like extra user entrances.
+        if !model.unifiedConfigurationEnabled {
+            listeners.append(contentsOf: model.profileRuntimePlan.routeListeners.map { listener in
+                .object([
+                    "id": .string(listener.id.uuidString.lowercased()),
+                    "name": .string(listener.name),
+                    "kind": .string(listener.protocolType.rawValue),
+                    "address": .string("127.0.0.1:\(listener.port)"),
+                    "profileID": .string(listener.profileID.description),
+                    "enabled": .bool(listener.enabled),
+                    "target": profileRouteListenerTargetJSON(listener.target),
+                    "managed": .bool(true),
+                ])
+            })
+        }
         return .object([
             "state": .string(state),
             "connected": .bool(model.isConnected),
@@ -1651,6 +1684,11 @@ final class AutomationCommandGateway {
         return .object([
             "state": .string(state),
             "enabled": .bool(model.systemProxyEnabled),
+            "observedEnabled": .bool(model.systemProxyObservedEnabled),
+            "observedMatchesMClash": .bool(model.systemProxyObservedMatchesMClash),
+            "observedAt": model.systemProxyObservedAt.map {
+                .string($0.ISO8601Format())
+            } ?? .null,
             "recoveryRequired": .bool(model.systemProxyRecoveryRequired),
             "guardEnabled": .bool(model.systemProxyPreferences.guardEnabled),
             "guardHealthy": .bool(model.systemProxyGuardFailure == nil),
@@ -2265,18 +2303,18 @@ final class AutomationCommandGateway {
         + "configuration.proxyGroup.selectors.export. "
         + "Sparse writes use nodeSettings enabled/userAliasUpdate/removeUserAlias/tagsUpdate/"
         + "regionUpdate/removeRegion, proxyGroups.membersUpdate/memberSelectors, rules.matchersUpdate, "
-        + "ruleSets.rulesUpdate/sourceURLUpdate/removeSourceURL, dnsPolicies.nameserversUpdate/"
+        + "ruleSets.rulesUpdate/sourceURLUpdate/removeSourceURL/behavior/format/pathUpdate/removePath/enabled, dnsPolicies.nameserversUpdate/"
         + "fallbackNameserversUpdate/proxyServerUpdate/removeProxyServer/rulesUpdate, and "
         + "workspaces nodeScope/nodeIDsUpdate/proxyGroupIDsUpdate/ruleIDsUpdate/ruleSetIDsUpdate/"
-        + "entranceIDsUpdate; *Count fields are read-only summaries. Enums: nodeScope="
+        + "entranceIDsUpdate/routingMode/globalProxyGroupID/removeGlobalProxyGroupID; *Count fields are read-only summaries. Enums: nodeScope="
         + "allEnabled|listed; member.kind="
         + "node|group; proxyGroups.type=select|fallback|urlTest|loadBalance|direct|reject|relay; "
         + "selector condition.kind=nameContains|nameEquals|hostContains|hostEquals|ipEquals|"
         + "source|protocolIs|tagContains; memberCount is explicit-only and selectorCount is policy count; "
         + "memberSelectors is a write-only whole replacement: omit to preserve, [] to clear; "
         + "selector include conditions are ANDed, excludes remove automatic matches, and selectors are ORed; "
-        + "matcher.kind=application|processPath|userID|domainExact|domainSuffix|domainWildcard|"
-        + "ipCIDR|transport|port|portRange; action.kind=direct|reject|proxyGroup; "
+        + "matcher.kind=application|processPath|processName|userID|domainExact|domainSuffix|domainWildcard|"
+        + "ipCIDR|geoIP|geoIP6|geoSite|transport|port|portRange; action.kind=direct|reject|proxyGroup; "
         + "unavailableFallback=direct|reject; dnsPolicies.mode=system|fakeIP|redirHost; "
         + "entrances.kind=http|socks5|appRouting|tun"
 
@@ -2771,7 +2809,8 @@ final class AutomationCommandGateway {
             let object = try configurationObject(value, path: "document.ruleSets[\(index)]")
             try rejectUnknownConfigurationKeys(object, allowed: [
                 "id", "name", "rulesUpdate", "ruleCount", "defaultAction",
-                "sourceURLUpdate", "removeSourceURL",
+                "sourceURLUpdate", "removeSourceURL", "behavior", "format",
+                "pathUpdate", "removePath", "enabled",
             ], path: "document.ruleSets[\(index)]")
             try validateConfigurationAction(object["defaultAction"], path: "document.ruleSets[\(index)].defaultAction")
         }
@@ -2790,7 +2829,7 @@ final class AutomationCommandGateway {
         for (index, value) in try configurationArray(document["entrances"], path: "document.entrances").enumerated() {
             let object = try configurationObject(value, path: "document.entrances[\(index)]")
             try rejectUnknownConfigurationKeys(object, allowed: [
-                "id", "kind", "enabled", "bindAddress", "port", "defaultAction",
+                "id", "name", "kind", "enabled", "bindAddress", "port", "defaultAction",
                 "workspaceOverride",
             ], path: "document.entrances[\(index)]")
             try validateConfigurationAction(object["defaultAction"], path: "document.entrances[\(index)].defaultAction")
@@ -2803,7 +2842,8 @@ final class AutomationCommandGateway {
                     "effectiveNodeCount",
                     "proxyGroupIDsUpdate", "proxyGroupCount", "ruleIDsUpdate",
                     "ruleCount", "ruleSetIDsUpdate", "ruleSetCount", "dnsPolicyID",
-                    "entranceIDsUpdate", "entranceCount", "revision",
+                    "entranceIDsUpdate", "routingMode", "globalProxyGroupID", "removeGlobalProxyGroupID",
+                    "entranceCount", "revision",
                 ],
                 path: "document.workspaces[\(index)]"
             )

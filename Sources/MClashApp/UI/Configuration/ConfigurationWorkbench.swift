@@ -194,10 +194,15 @@ struct ConfigurationWorkbench: View {
                 Text(AppLocalization.number(filteredItems.count))
                     .font(.title3.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
-                Button { onAdd?(section) } label: { Image(systemName: "plus") }
-                    .buttonStyle(.bordered)
-                    .help(AppLocalization.format("Add %@", AppLocalization.string(section.presentationSingularTitle)))
-                    .accessibilityLabel(AppLocalization.format("Add %@", AppLocalization.string(section.presentationSingularTitle)))
+                Button { onAdd?(section) } label: {
+                    ViewThatFits(in: .horizontal) {
+                        Label(addButtonTitle, systemImage: "plus")
+                        Image(systemName: "plus")
+                    }
+                }
+                .buttonStyle(.bordered)
+                    .help(addButtonTitle)
+                    .accessibilityLabel(addButtonTitle)
                     .disabled(onAdd == nil)
             }
             .padding(.horizontal, MClashLayout.pagePadding)
@@ -270,6 +275,7 @@ struct ConfigurationWorkbench: View {
         case .nodes: AppLocalization.string("Search by name, host, protocol or source.")
         case .proxyGroups: AppLocalization.string("Pin nodes or describe automatic membership conditions.")
         case .rules: AppLocalization.string("Rules are evaluated from the lowest priority number.")
+        case .ruleSets: AppLocalization.string("Reusable Mihomo rule collections with an explicit source and format.")
         case .entrances: AppLocalization.string("Choose where traffic enters the unified policy.")
         case .dns: AppLocalization.string("MClash resolves DNS using this shared policy.")
         case .sources: AppLocalization.string("Sources provide node data only.")
@@ -279,6 +285,13 @@ struct ConfigurationWorkbench: View {
 
     private var inspectorButtonTitle: String {
         compactLayout || !inspectorVisible ? "Show Inspector" : "Hide Inspector"
+    }
+
+    private var addButtonTitle: String {
+        AppLocalization.format(
+            "Add %@",
+            AppLocalization.string(section.presentationSingularTitle)
+        )
     }
 
     private var emptyDescription: String {
@@ -293,6 +306,7 @@ struct ConfigurationWorkbench: View {
         case .nodes: return AppLocalization.string("Nodes appear here after a source is imported.")
         case .proxyGroups: return AppLocalization.string("Add a group, then choose fixed nodes or automatic matches.")
         case .rules: return AppLocalization.string("Add a rule to route an application, domain, IP or port.")
+        case .ruleSets: return AppLocalization.string("Add a rule set for GFW, GEOSITE, domain or IP collections.")
         case .entrances: return AppLocalization.string("No traffic entrances are configured yet.")
         case .dns: return AppLocalization.string("Create a DNS policy to choose resolvers and takeover behavior.")
         case .workspaces: return AppLocalization.string("Create a configuration to choose the active policy.")

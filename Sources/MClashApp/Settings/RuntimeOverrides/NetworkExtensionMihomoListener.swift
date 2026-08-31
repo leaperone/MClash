@@ -151,6 +151,26 @@ public struct NetworkExtensionMihomoListenerConfiguration: Equatable, Sendable {
         }
     }
 
+    /// Returns a listener configuration containing only the requested routes,
+    /// while preserving the authenticated listener and every retained route's
+    /// port.  The live updater normally keeps removed routes as an endpoint
+    /// superset so existing relays can drain; callers may use this narrow
+    /// operation when a policy target was renamed or deleted and the old
+    /// outbound proxy name would otherwise remain executable in Mihomo.
+    public func retaining(routes requested: Set<MihomoRoute>) throws -> Self {
+        let routePorts = Dictionary(
+            uniqueKeysWithValues: routeListeners
+                .filter { requested.contains($0.route) }
+                .map { ($0.route, Int($0.port)) }
+        )
+        return try Self(
+            port: Int(port),
+            authentication: authentication,
+            routePorts: routePorts,
+            includesLegacyProfileRules: includesLegacyProfileRules
+        )
+    }
+
     public func encodedRouteProxyCatalog() throws -> Data {
         try MihomoRouteProxyCatalog.encode(try routeProxyEndpoints())
     }

@@ -236,28 +236,38 @@ struct SettingsView: View {
 
             Section {
                 DisclosureGroup("Advanced", isExpanded: $advancedSettingsExpanded) {
-                    Button(
-                        AppLocalization.string(
-                            model.isConnected ? "Edit Ports & Restart…" : "Edit Ports…"
-                        )
-                    ) {
-                        showingListenerPortSettings = true
-                    }
-                    .disabled(!model.canPerform(.changeRuntimeSettings))
+                    if model.unifiedConfigurationEnabled {
+                        Button(AppLocalization.string("Entrances")) {
+                            model.selection = .entrances
+                        }
+                        Text(AppLocalization.string("HTTP, SOCKS5, and App Routing are managed on the Entrances page in unified Configuration."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Button(
+                            AppLocalization.string(
+                                model.isConnected ? "Edit Ports & Restart…" : "Edit Ports…"
+                            )
+                        ) {
+                            showingListenerPortSettings = true
+                        }
+                        .disabled(!model.canPerform(.changeRuntimeSettings))
 
-                    Button(
-                        AppLocalization.string(
-                            model.isConnected
-                                ? "Manage Dedicated Ports & Restart…"
-                                : "Manage Dedicated Ports…"
+                        Button(
+                            AppLocalization.string(
+                                model.isConnected
+                                    ? "Manage Dedicated Ports & Restart…"
+                                    : "Manage Dedicated Ports…"
+                            )
+                        ) {
+                            showingProfileRouteListenerSettings = true
+                        }
+                        .disabled(
+                            model.profiles.isEmpty
+                                || !model.canPerform(.changeRuntimeSettings)
                         )
-                    ) {
-                        showingProfileRouteListenerSettings = true
                     }
-                    .disabled(
-                        model.profiles.isEmpty
-                            || !model.canPerform(.changeRuntimeSettings)
-                    )
 
                     runtimeSettingsFeedback
 
@@ -292,10 +302,17 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                     commandLineToolFeedback
 
-                    Button("Edit Runtime Configuration…") {
-                        showingRuntimeSettings = true
+                    if model.unifiedConfigurationEnabled {
+                        Text(AppLocalization.string("Runtime policy is owned by MClash Configuration; imported source settings are not edited here."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Button("Edit Runtime Configuration…") {
+                            showingRuntimeSettings = true
+                        }
+                        .disabled(!model.canPerform(.changeRuntimeSettings))
                     }
-                    .disabled(!model.canPerform(.changeRuntimeSettings))
 
                     DisclosureGroup("Core Details", isExpanded: $coreDetailsExpanded) {
                         LabeledContent("Distribution", value: "Bundled mihomo Alpha")
@@ -790,7 +807,11 @@ private struct RuntimeSettingsEditor: View {
                     DisclosureGroup("Transparent Proxy Ports", isExpanded: $portsExpanded) {
                         OptionalPortField("Redirect", value: $overrides.ports.redirPort, suggestedValue: 0)
                         OptionalPortField("TProxy", value: $overrides.ports.tproxyPort, suggestedValue: 0)
-                        Text("The Mixed port is configured from Local Proxy settings. Separate HTTP and SOCKS5 listeners are disabled by MClash.")
+                        Text(AppLocalization.string(
+                            model.unifiedConfigurationEnabled
+                                ? "Unified Configuration owns named HTTP and SOCKS5 entrances on the Entrances page."
+                                : "The Mixed port is configured from Local Proxy settings. Separate HTTP and SOCKS5 listeners are disabled by MClash."
+                        ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

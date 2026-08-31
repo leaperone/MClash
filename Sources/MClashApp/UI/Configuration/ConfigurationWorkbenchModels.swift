@@ -4,7 +4,7 @@ import Foundation
 /// These intentionally contain no Mihomo or imported-profile types: sources
 /// can be replaced without changing the user's workspace organisation.
 enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable {
-    case workspaces, sources, nodes, proxyGroups, rules, entrances, dns
+    case workspaces, sources, nodes, proxyGroups, rules, ruleSets, entrances, dns
 
     var id: String { rawValue }
     var title: String {
@@ -14,6 +14,7 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         case .nodes: "Nodes"
         case .proxyGroups: "Node Groups"
         case .rules: "Rules"
+        case .ruleSets: "Rule Sets"
         case .entrances: "Entrances"
         case .dns: "DNS"
         }
@@ -35,6 +36,7 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         case .nodes: "Node"
         case .proxyGroups: "Node Group"
         case .rules: "Rule"
+        case .ruleSets: "Rule Set"
         case .entrances: "Entrance"
         case .dns: "DNS"
         }
@@ -53,6 +55,7 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         case .nodes: "point.3.connected.trianglepath.dotted"
         case .proxyGroups: "square.3.layers.3d"
         case .rules: "list.bullet.indent"
+        case .ruleSets: "list.bullet.rectangle"
         case .entrances: "arrow.triangle.branch"
         case .dns: "network"
         }
@@ -153,5 +156,50 @@ extension DNSMode {
         case .fakeIP: AppLocalization.string("Fake IP")
         case .redirHost: AppLocalization.string("Redir Host")
         }
+    }
+}
+
+extension RuleSetBehavior {
+    var localizedTitle: String {
+        switch self {
+        case .classical: AppLocalization.string("Classical (mixed rules)")
+        case .domain: AppLocalization.string("Domain list")
+        case .ipcidr: AppLocalization.string("IP/CIDR list")
+        }
+    }
+}
+
+extension RuleSetFormat {
+    var localizedTitle: String {
+        switch self {
+        case .yaml: "YAML"
+        case .text: AppLocalization.string("Text")
+        case .mrs: "MRS"
+        }
+    }
+}
+
+func configurationRoutingModeTitle(_ mode: ConfigurationRoutingMode) -> String {
+    switch mode {
+    case .rule: AppLocalization.string("Rule")
+    case .global: AppLocalization.string("Global")
+    case .direct: AppLocalization.string("Direct")
+    }
+}
+
+func configurationRoutingModeExplanation(_ mode: ConfigurationRoutingMode) -> String {
+    switch mode {
+    case .rule:
+        AppLocalization.string(
+            "Rule mode evaluates the MClash rule list, then sends traffic to its selected strategy group."
+        )
+    case .global:
+        AppLocalization.string(
+            "Global mode sends every entrance to the selected Global exit group; rules are not evaluated."
+        )
+    case .direct:
+        AppLocalization.string(
+            "Direct mode bypasses proxy groups and connects through the system network."
+        )
     }
 }

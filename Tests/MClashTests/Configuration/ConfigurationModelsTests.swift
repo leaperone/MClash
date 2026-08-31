@@ -138,10 +138,10 @@ struct ConfigurationModelsTests {
         #expect(diagnostics.map(\.code) == ["missing_dns_policy", "missing_node"])
     }
 
-    @Test func validatorRejectsMultipleEnabledListenersOfOneType() throws {
+    @Test func validatorAndCompilerKeepMultipleEnabledHTTPEntrances() throws {
         let dns = DNSPolicy(name: "DNS")
-        let first = Entrance(kind: .http, enabled: true, port: 7890)
-        let second = Entrance(kind: .http, enabled: true, port: 7892)
+        let first = Entrance(name: "HTTP Browser", kind: .http, enabled: true, port: 7890)
+        let second = Entrance(name: "HTTP Tools", kind: .http, enabled: true, port: 7892)
         let workspace = Workspace(
             name: "Everyday",
             dnsPolicyID: dns.id,
@@ -155,7 +155,22 @@ struct ConfigurationModelsTests {
             dnsPolicies: [dns],
             entrances: [first, second]
         )
-        #expect(diagnostics.contains { $0.code == "duplicate_entrance_kind" })
+        #expect(!diagnostics.contains { $0.code == "duplicate_entrance_kind" })
+        let document = ConfigurationDocument(
+            proxyGroups: [],
+            dnsPolicies: [dns],
+            entrances: [first, second],
+            workspaces: [workspace],
+            currentWorkspaceID: workspace.id
+        )
+        let yaml = String(
+            decoding: try ConfigurationCompiler().compile(document: document).yaml,
+            as: UTF8.self
+        )
+        #expect(yaml.contains("name: \"HTTP Browser\""))
+        #expect(yaml.contains("name: \"HTTP Tools\""))
+        #expect(yaml.contains("port: 7890"))
+        #expect(yaml.contains("port: 7892"))
     }
 
     @Test func modelsRoundTripCodable() throws {

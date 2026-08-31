@@ -69,7 +69,19 @@ public enum ConfigurationValidator {
         let workspaceGroups = groups.filter {
             workspaceGroupIDs.contains($0.id) && $0.enabled
         }
-        let workspaceRuleSets = ruleSets.filter { workspaceRuleSetIDs.contains($0.id) }
+        if workspace.routingMode == .global, workspaceGroups.isEmpty {
+            result.append(.init(
+                severity: .error,
+                code: "missing_global_exit",
+                subject: workspace.id.rawValue.uuidString.lowercased(),
+                message: AppLocalization.string("Global mode needs at least one enabled strategy group for its exit.")
+            ))
+        }
+        // Disabled rule sets are retained for authoring/export, but their
+        // contents are not part of the active runtime and must not block it.
+        let workspaceRuleSets = ruleSets.filter {
+            workspaceRuleSetIDs.contains($0.id) && $0.enabled
+        }
         let enabledNodeIDs = Set(workspaceNodes.map(\.id))
         let enabledGroupIDs = Set(workspaceGroups.map(\.id))
         result += duplicateDiagnostics(nodes.map(\.id), code: "duplicate_node", message: AppLocalization.string("Node catalog contains duplicate identities."))
@@ -113,7 +125,33 @@ public enum ConfigurationValidator {
             if ruleSet.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.append(.init(severity: .error, code: "invalid_ruleset_name", subject: subject, message: AppLocalization.string("Rule set name cannot be empty.")))
             }
-            if ruleSet.sourceURL != nil {
+            if let sourceURL = ruleSet.sourceURL,
+               !["http", "https"].contains(sourceURL.scheme?.lowercased() ?? "") {
+                result.append(.init(
+                    severity: .error,
+                    code: "invalid_ruleset_source_url",
+                    subject: subject,
+                    message: AppLocalization.string("Rule set source must be an HTTP or HTTPS URL.")
+                ))
+            }
+            if let path = ruleSet.path {
+                let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedPath.isEmpty
+                    || trimmedPath.hasPrefix("/")
+                    || trimmedPath.contains("..")
+                    || trimmedPath.contains(where: {
+                        $0 == "\n" || $0 == "\r" || $0 == "\\" || $0 == ":"
+                    }) {
+                    result.append(.init(
+                        severity: .error,
+                        code: "invalid_ruleset_path",
+                        subject: subject,
+                        message: AppLocalization.string("Rule set path must be a relative safe path without line breaks or parent-directory segments.")
+                    ))
+                }
+            }
+            if ruleSet.sourceURL != nil
+                || !(ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
                 let runtimeName = ConfigurationCompiler.ruleSetRuntimeName(ruleSet.name)
                 ruleSetRuntimeNames[Data(runtimeName.utf8), default: []].append(subject)
             }
@@ -141,6 +179,12 @@ public enum ConfigurationValidator {
             }
         }
         for id in workspace.proxyGroupIDs where !groupIDs.contains(id) { result.append(.init(severity: .error, code: "missing_group", subject: String(describing: id.rawValue), message: AppLocalization.string("Workspace references a proxy group that does not exist."))) }
+        if workspace.routingMode == .global,
+           let globalProxyGroupID = workspace.globalProxyGroupID,
+           (!workspaceGroupIDs.contains(globalProxyGroupID)
+            || workspaceGroups.first(where: { $0.id == globalProxyGroupID })?.enabled != true) {
+            result.append(.init(severity: .error, code: "invalid_global_proxy_group", subject: String(describing: globalProxyGroupID.rawValue), message: AppLocalization.string("Global routing must target an enabled proxy group in this workspace.")))
+        }
         for id in workspace.ruleIDs where !ruleIDs.contains(id) { result.append(.error("missing_rule", id, AppLocalization.string("Workspace references a routing rule that does not exist."))) }
         for id in workspace.ruleSetIDs where !setIDs.contains(id) { result.append(.error("missing_ruleset", id, AppLocalization.string("Workspace references a rule set that does not exist."))) }
         for id in workspace.entranceIDs where !entranceIDs.contains(id) { result.append(.error("missing_entrance", id, AppLocalization.string("Workspace references an entrance that does not exist."))) }
@@ -152,12 +196,9 @@ public enum ConfigurationValidator {
         for entrance in enabledEntrances where entrance.kind == .tun {
             result.append(.init(severity: .error, code: "unsupported_tun_entrance", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("TUN entrances are not supported.")))
         }
-        for kind in EntranceKind.allCases
+        for kind in [EntranceKind.appRouting, .tun]
             where enabledEntrances.filter({ $0.kind == kind }).count > 1 {
             result.append(.init(severity: .error, code: "duplicate_entrance_kind", subject: kind.rawValue, message: AppLocalization.string("Only one enabled entrance of each kind is supported per workspace.")))
-        }
-        if Set(enabledEntrances.map(\.defaultAction)).count > 1 {
-            result.append(.init(severity: .error, code: "inconsistent_entrance_default_action", subject: "entrances", message: AppLocalization.string("Enabled entrances must use the same default action.")))
         }
         for entrance in enabledEntrances {
             validate(
@@ -185,11 +226,20 @@ public enum ConfigurationValidator {
             }
             if entrance.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.append(.init(severity: .error, code: "invalid_bind_address", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("An enabled entrance requires a bind address.")))
+            } else if entrance.bindAddress.contains(where: { $0 == "\n" || $0 == "\r" }) {
+                result.append(.init(severity: .error, code: "invalid_bind_address", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("An enabled entrance bind address cannot contain line breaks.")))
             }
         }
-        let bindAddresses = Set(enabledPortEntrances.map { $0.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
-        if bindAddresses.count > 1 {
-            result.append(.init(severity: .error, code: "inconsistent_bind_addresses", subject: "entrances", message: AppLocalization.string("Enabled HTTP and SOCKS entrances must share one Mihomo bind address.")))
+        var entranceNames = Set<String>()
+        for entrance in enabledEntrances {
+            let normalized = entrance.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized.isEmpty {
+                result.append(.init(severity: .error, code: "invalid_entrance_name", subject: String(describing: entrance.id.rawValue), message: AppLocalization.string("An enabled entrance requires a name.")))
+            } else if normalized.hasPrefix("mclash-") {
+                result.append(.init(severity: .error, code: "reserved_entrance_name", subject: normalized, message: AppLocalization.string("Entrance names beginning with mclash- are reserved for internal listeners.")))
+            } else if !entranceNames.insert(normalized).inserted {
+                result.append(.init(severity: .error, code: "duplicate_entrance_name", subject: normalized, message: AppLocalization.string("Enabled entrances must have unique names.")))
+            }
         }
         guard dnsIDs.contains(workspace.dnsPolicyID) else { result.append(.error("missing_dns_policy", workspace.dnsPolicyID, AppLocalization.string("Workspace references a DNS policy that does not exist."))); return sorted(result) }
         for group in groups where enabledGroupIDs.contains(group.id) {
@@ -325,11 +375,20 @@ public enum ConfigurationValidator {
                     result.append(.init(severity: .error, code: "invalid_rule_port", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Rule ports must be between 1 and 65535.")))
                 case let .transport(value) where !["tcp", "udp"].contains(value.lowercased()):
                     result.append(.init(severity: .error, code: "invalid_rule_transport", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Routing rule transport must be TCP or UDP.")))
+                case let .geoIP(value) where !isValidGeoToken(value):
+                    result.append(.init(severity: .error, code: "invalid_geoip_token", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("GEOIP requires a two- or three-letter country code such as CN or US.")))
+                case .geoIP6:
+                    result.append(.init(severity: .error, code: "unsupported_geoip6", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.")))
+                case let .geoSite(value) where !isValidGeoToken(value):
+                    result.append(.init(severity: .error, code: "invalid_geosite_token", subject: String(describing: rule.id.rawValue), message: AppLocalization.string("GEOSITE requires a database set name such as gfw, google, or cn.")))
                 default:
                     break
                 }
                 let value: String? = switch matcher {
-                case let .application(value), let .processPath(value), let .domainExact(value), let .domainSuffix(value), let .domainWildcard(value), let .ipCIDR(value), let .transport(value): value
+                case let .application(value), let .processPath(value), let .processName(value),
+                     let .domainExact(value), let .domainSuffix(value), let .domainWildcard(value),
+                     let .ipCIDR(value), let .geoIP(value), let .geoIP6(value),
+                     let .geoSite(value), let .transport(value): value
                 case let .userID(value): String(value)
                 case let .port(value): String(value)
                 case let .portRange(value): "\(value.lowerBound)-\(value.upperBound)"
@@ -358,6 +417,22 @@ public enum ConfigurationValidator {
             for rawRule in ruleSet.rules {
                 if !isValidRuleSetRule(rawRule) {
                     result.append(.init(severity: .error, code: "invalid_ruleset_rule", subject: String(describing: ruleSet.id.rawValue), message: AppLocalization.string("Rule set contains an invalid rule entry.")))
+                    break
+                }
+                if let target = ruleSetTarget(rawRule),
+                   !isAvailableRuleSetTarget(
+                       target,
+                       availableGroupIDs: enabledGroupIDs,
+                       groups: groups
+                   ) {
+                    result.append(.init(
+                        severity: .error,
+                        code: "invalid_ruleset_target",
+                        subject: String(describing: ruleSet.id.rawValue),
+                        message: AppLocalization.string(
+                            "Routing rule targets a missing proxy group."
+                        )
+                    ))
                     break
                 }
             }
@@ -813,7 +888,10 @@ public enum ConfigurationValidator {
             severity: severity,
             code: "configuration_resource_limit",
             subject: subject,
-            message: AppLocalization.string("Configuration exceeds a supported resource limit.")
+            message: AppLocalization.format(
+                "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set.",
+                subject
+            )
         )
     }
 
@@ -823,13 +901,14 @@ public enum ConfigurationValidator {
         var result = (destinations: 0, ports: 0, transports: 0)
         for matcher in rule.matchers {
             switch matcher {
-            case .domainExact, .domainSuffix, .domainWildcard, .ipCIDR:
+            case .domainExact, .domainSuffix, .domainWildcard, .ipCIDR,
+                 .geoIP, .geoIP6, .geoSite:
                 result.destinations += 1
             case .port, .portRange:
                 result.ports += 1
             case .transport:
                 result.transports += 1
-            case .application, .processPath, .userID:
+            case .application, .processPath, .processName, .userID:
                 break
             }
         }
@@ -839,7 +918,7 @@ public enum ConfigurationValidator {
     private static func hasSourceMatcher(_ rule: RoutingRule) -> Bool {
         rule.matchers.contains {
             switch $0 {
-            case .application, .processPath, .userID: return true
+            case .application, .processPath, .processName, .userID: return true
             default: return false
             }
         }
@@ -854,11 +933,69 @@ public enum ConfigurationValidator {
         let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
         if parts.count == 1 { return isSafeDomainSuffix(trimmed) }
         let allowedTypes = [
-            "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "IP-CIDR6",
+            "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
+            "DOMAIN-REGEX", "IP-CIDR", "IP-CIDR6", "SRC-IP-CIDR",
+            "IP-SUFFIX", "SRC-IP-SUFFIX", "GEOIP", "SRC-GEOIP", "GEOSITE",
+            "IP-ASN", "RULE-SET", "PROCESS-NAME", "PROCESS-PATH",
+            "PROCESS-NAME-REGEX", "PROCESS-PATH-REGEX",
+            "PROCESS-NAME-WILDCARD", "PROCESS-PATH-WILDCARD", "DST-PORT",
+            "SRC-PORT", "NETWORK", "UID", "DSCP", "IN-PORT", "IN-TYPE",
+            "IN-USER", "IN-NAME", "REMATCH-NAME", "SUB-RULE", "OR", "AND",
+            "NOT", "MATCH",
         ]
-        return parts.count == 2
-            && allowedTypes.contains(String(parts[0]))
-            && !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard (2...8).contains(parts.count),
+              allowedTypes.contains(String(parts[0]).uppercased()) else {
+            return false
+        }
+        return parts.dropFirst().allSatisfy { part in
+            !String(part).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !part.contains(where: { $0 == "\n" || $0 == "\r" })
+        }
+    }
+
+    /// Returns an explicit target from Mihomo's
+    /// `TYPE,PAYLOAD,TARGET[,PARAMS...]` grammar. Targetless entries carrying
+    /// `no-resolve` or `src` are completed by the compiler with the rule-set's
+    /// selected default action.
+    private static func ruleSetTarget(_ rawRule: String) -> String? {
+        let parts = rawRule
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard parts.count >= 3,
+              let type = parts.first?.uppercased(),
+              !["AND", "OR", "NOT", "SUB-RULE", "DOMAIN-REGEX",
+                "PROCESS-NAME-REGEX", "PROCESS-PATH-REGEX"].contains(type)
+        else { return nil }
+        let parameters: Set<String> = ["no-resolve", "src"]
+        return parameters.contains(parts[2].lowercased()) ? nil : parts[2]
+    }
+
+    private static func isAvailableRuleSetTarget(
+        _ target: String,
+        availableGroupIDs: Set<ProxyGroupID>,
+        groups: [ProxyGroup]
+    ) -> Bool {
+        let builtIns: Set<String> = [
+            "DIRECT", "REJECT", "REJECT-DROP", "GLOBAL", "PASS", "COMPATIBLE",
+        ]
+        if builtIns.contains(target.uppercased()) { return true }
+        return groups.contains {
+            availableGroupIDs.contains($0.id)
+                && $0.enabled
+                && $0.name.caseInsensitiveCompare(target) == .orderedSame
+        }
+    }
+
+    private static func isValidGeoToken(_ value: String) -> Bool {
+        let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (2...64).contains(token.utf8.count),
+              !token.contains(where: { $0 == "," || $0 == "\n" || $0 == "\r" }) else {
+            return false
+        }
+        return token.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" || $0 == "!"
+        }
     }
 
     private static func isSafeDomainSuffix(_ value: String) -> Bool {

@@ -79,8 +79,8 @@ struct ConfigurationCompilerMihomoSmoke {
             rules: ["+.example.com"],
             takeoverEnabled: true
         )
-        let http = Entrance(kind: .http, enabled: true, port: 18_080, defaultAction: .proxyGroup(group.id))
-        let socks = Entrance(kind: .socks5, enabled: true, port: 18_081, defaultAction: .proxyGroup(group.id))
+        let http = Entrance(name: "Smoke HTTP", kind: .http, enabled: true, port: 18_080, defaultAction: .proxyGroup(group.id))
+        let socks = Entrance(name: "Smoke SOCKS", kind: .socks5, enabled: true, port: 18_081, defaultAction: .direct)
         let appRouting = Entrance(kind: .appRouting, enabled: true, defaultAction: .proxyGroup(group.id))
         let domainRule = RoutingRule(
             priority: 10,
@@ -97,10 +97,30 @@ struct ConfigurationCompilerMihomoSmoke {
             matchers: [.application("com.example.Smoke")],
             action: .direct
         )
+        let geoRule = RoutingRule(
+            priority: 30,
+            matchers: [.geoIP("CN")],
+            action: .direct
+        )
+        let geositeRule = RoutingRule(
+            priority: 40,
+            matchers: [.geoSite("gfw")],
+            action: .direct
+        )
+        let processRule = RoutingRule(
+            priority: 50,
+            matchers: [.processName("curl")],
+            action: .direct
+        )
+        let processPathRule = RoutingRule(
+            priority: 60,
+            matchers: [.processPath("/usr/bin/curl")],
+            action: .direct
+        )
         let workspace = Workspace(
             name: "Smoke workspace",
             proxyGroupIDs: [group.id, regional.id, automatic.id],
-            ruleIDs: [domainRule.id, appRule.id],
+            ruleIDs: [domainRule.id, appRule.id, geoRule.id, geositeRule.id, processRule.id, processPathRule.id],
             dnsPolicyID: dns.id,
             entranceIDs: [http.id, socks.id, appRouting.id]
         )
@@ -108,7 +128,7 @@ struct ConfigurationCompilerMihomoSmoke {
             sources: [source],
             nodes: [reality, webSocket, fallback],
             proxyGroups: [group, regional, automatic],
-            rules: [domainRule, appRule],
+            rules: [domainRule, appRule, geoRule, geositeRule, processRule, processPathRule],
             dnsPolicies: [dns],
             entrances: [http, socks, appRouting],
             workspaces: [workspace],
@@ -118,9 +138,10 @@ struct ConfigurationCompilerMihomoSmoke {
         let compiled = try ConfigurationCompiler().compile(document: document)
         let yaml = String(decoding: compiled.yaml, as: UTF8.self)
         for required in [
-            "port: 18080", "socks-port: 18081", "reality-opts",
+            "name: \"Smoke HTTP\"", "name: \"Smoke SOCKS\"", "port: 18080", "port: 18081", "proxy: \"Smoke Select\"", "proxy: \"DIRECT\"", "listeners:", "reality-opts",
             "ws-opts", "DOMAIN-WILDCARD,*.example.com", "AND,((DOMAIN-WILDCARD",
-            "IP-CIDR,192.0.2.0/24", "nameserver-policy", "MATCH,Smoke Select",
+            "IP-CIDR,192.0.2.0/24", "GEOIP,CN", "GEOSITE,gfw", "PROCESS-NAME,curl", "PROCESS-PATH,/usr/bin/curl",
+            "find-process-mode: strict", "nameserver-policy", "MATCH,Smoke Select",
             "name: \"US Priority\"", "type: fallback", "type: url-test",
         ] where !yaml.contains(required) {
             throw SmokeFailure.missingOutput(required)
@@ -128,7 +149,11 @@ struct ConfigurationCompilerMihomoSmoke {
         guard !yaml.contains("\\/") else {
             throw SmokeFailure.invalidYAMLSlashEscape
         }
-        guard compiled.captureEnabled, compiled.networkExtensionRules.count == 1 else {
+        // PROCESS-NAME is evaluated by Mihomo itself. Only bundle/application,
+        // executable-path, and UID matchers are bridged to the Network
+        // Extension capture provider, so this fixture has two capture rules
+        // (the application rule and the process-path rule).
+        guard compiled.captureEnabled, compiled.networkExtensionRules.count == 2 else {
             throw SmokeFailure.appRoutingNotBridged
         }
 

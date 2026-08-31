@@ -41,6 +41,28 @@ extension AppModel.LocalListenerSource {
     }
 }
 
+extension AppModel.ActiveEntranceKind {
+    var presentationTitle: String {
+        switch self {
+        case .http: "HTTP"
+        case .socks5: "SOCKS5"
+        case .appRouting: AppLocalization.string("App Routing")
+        case .tun: "TUN"
+        case .mixed: "Mixed"
+        }
+    }
+
+    var presentationSystemImage: String {
+        switch self {
+        case .http: "globe"
+        case .socks5: "network"
+        case .appRouting: "app.badge"
+        case .tun: "point.3.connected.trianglepath.dotted"
+        case .mixed: "arrow.triangle.branch"
+        }
+    }
+}
+
 func formattedByteCount(
     _ value: Int64,
     style: ByteCountFormatStyle.Style = .file

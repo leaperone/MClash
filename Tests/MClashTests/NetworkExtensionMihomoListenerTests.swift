@@ -80,6 +80,63 @@ struct NetworkExtensionMihomoListenerTests {
         #expect(configuration.endpoint(for: .group("Auto Select"))?.port == 17_883)
     }
 
+    @Test("Managed listener references are checked against the unified group catalog")
+    func rejectsUnknownManagedListenerProxy() throws {
+        let configuration = try NetworkExtensionMihomoListenerConfiguration(
+            port: 17_884,
+            routePorts: [.group("Old Group"): 17_885]
+        )
+        #expect(throws: RuntimeConfigurationComposerError.unknownListenerProxyReference("Old Group")) {
+            try RuntimeConfigurationComposer().applying(
+                .empty,
+                to: Data("rules: []\n".utf8),
+                networkExtensionListener: configuration,
+                allowedOutboundProxyNames: ["Node Selection"]
+            )
+        }
+    }
+
+    @Test("Unified user entrances survive managed listener composition")
+    func preservesCompiledEntrancesWhenAppendingManagedListeners() throws {
+        let configuration = try NetworkExtensionMihomoListenerConfiguration(
+            port: 17_886,
+            routePorts: [.global: 17_887]
+        )
+        let compiled = Data(
+            """
+            listeners:
+              - name: HTTP work
+                type: http
+                listen: "127.0.0.1"
+                port: 18100
+                proxy: "Node Selection"
+              - name: SOCKS tools
+                type: socks
+                listen: "127.0.0.1"
+                port: 18101
+                proxy: "DIRECT"
+                udp: true
+            rules: []
+            """.utf8
+        )
+        let result = try RuntimeConfigurationComposer().applying(
+            .empty,
+            to: compiled,
+            networkExtensionListener: configuration,
+            allowedOutboundProxyNames: ["Node Selection"]
+        )
+        let yaml = try #require(String(data: result, encoding: .utf8))
+        #expect(yaml.contains("name: HTTP work"))
+        #expect(yaml.contains("port: 18100"))
+        #expect(yaml.contains("proxy: \"Node Selection\""))
+        #expect(yaml.contains("name: SOCKS tools"))
+        #expect(yaml.contains("port: 18101"))
+        #expect(yaml.contains("proxy: \"DIRECT\""))
+        #expect(yaml.contains(NetworkExtensionMihomoListenerConfiguration.ipv4ListenerName))
+        #expect(yaml.contains("port: 17886"))
+        #expect(yaml.contains("proxy: \"GLOBAL\""))
+    }
+
     @Test("Route listener names remain stable when an earlier route is appended")
     func routeListenerNamesAreIdentityStable() throws {
         let original = try NetworkExtensionMihomoListenerConfiguration(
