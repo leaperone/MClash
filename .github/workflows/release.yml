@@ -96,6 +96,12 @@ jobs:
     needs: prepare
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      # The integration smoke fetches the pinned MetaCubeX GEO snapshot. An
+      # unauthenticated GitHub REST request is easily rate-limited on shared
+      # runners, so pass the workflow token explicitly to that read-only step.
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

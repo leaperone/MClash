@@ -65,9 +65,11 @@ for upstream_name in geoip.metadb geoip.dat geosite.dat GeoLite2-ASN.mmdb; do
   checksum_file="${staging}/${upstream_name}.sha256sum"
   downloaded_file="${staging}/${packaged_name}"
   /usr/bin/curl -fsSL --retry 4 --retry-all-errors \
+    "${headers[@]}" \
     "${raw_base}/${upstream_name}.sha256sum" \
     -o "${checksum_file}"
   /usr/bin/curl -fsSL --retry 4 --retry-all-errors \
+    "${headers[@]}" \
     "${raw_base}/${upstream_name}" \
     -o "${downloaded_file}"
 
