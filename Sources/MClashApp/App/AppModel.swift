@@ -1057,6 +1057,7 @@ final class AppModel {
         var startupUnifiedMigrationActivated = false
         var startupUnifiedMigrationPreviousProfileID: ProfileID?
         var startupUnifiedMigrationPreviousDocument: ConfigurationDocument?
+        var startupUnifiedMigrationPreviousNetworkCapturePreferences: NetworkCapturePreferences?
         do {
             try LoginItemManager().migrateLegacyRegistrationIfNeeded()
             let loginItemManager = LoginItemManager()
@@ -1168,6 +1169,7 @@ final class AppModel {
                 if startupUnifiedMigrationPending {
                     startupUnifiedMigrationPreviousProfileID = activeProfileID
                     startupUnifiedMigrationPreviousDocument = configurationDocument
+                    startupUnifiedMigrationPreviousNetworkCapturePreferences = networkCapturePreferences
                     try await prepareDocumentForUnifiedMigration()
                 }
                 if startupUnifiedMigrationPending || unifiedConfigurationEnabled {
@@ -1289,6 +1291,32 @@ final class AppModel {
                         for: previousDocument
                     )
                     try? await configurationStore?.save(previousDocument)
+                }
+                if let previousPreferences = startupUnifiedMigrationPreviousNetworkCapturePreferences,
+                   let captureStore = networkCaptureConfigurationStore {
+                    do {
+                        let durablePreferences = try await captureStore.load()
+                        if durablePreferences != previousPreferences {
+                            // replaceRules allocates the next revision; restoring
+                            // the old revision verbatim would make a subsequent
+                            // update fail the store's monotonicity check.
+                            networkCapturePreferences = try await captureStore.replaceRules(
+                                previousPreferences.snapshot.rules,
+                                enabled: previousPreferences.enabled,
+                                dnsEnabled: previousPreferences.dnsEnabled,
+                                failOpen: previousPreferences.failOpen
+                            )
+                        } else {
+                            networkCapturePreferences = previousPreferences
+                        }
+                    } catch {
+                        appendSupervisorLog(
+                            AppLocalization.format(
+                                "Startup migration could not restore App Routing settings: %@",
+                                error.localizedDescription
+                            )
+                        )
+                    }
                 }
             }
             let message = error.localizedDescription
@@ -1561,7 +1589,22 @@ final class AppModel {
                 sourceNames: sourceNames
             )
             if !migration.rules.isEmpty {
-                candidate.rules = migration.rules
+                // The current workspace is being replaced by the migrated
+                // App Routing rules. Preserve rules owned by another
+                // workspace, including disabled legacy rules, so those
+                // workspaces do not retain dangling rule IDs after startup.
+                let otherWorkspaceRuleIDs = Set(
+                    candidate.workspaces
+                        .filter { $0.id != workspace.id }
+                        .flatMap(\.ruleIDs)
+                )
+                let preservedRules = candidate.rules.filter { rule in
+                    otherWorkspaceRuleIDs.contains(rule.id)
+                }
+                let migratedRuleIDs = Set(migration.rules.map(\.id))
+                candidate.rules = preservedRules.filter {
+                    !migratedRuleIDs.contains($0.id)
+                } + migration.rules
                 candidate.proxyGroups = migration.proxyGroups
                 candidate.workspaces[workspaceIndex].proxyGroupIDs =
                     migration.workspaceProxyGroupIDs

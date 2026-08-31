@@ -123,6 +123,49 @@ swiftc -parse-as-library -swift-version 6 \
     "${build_dir}/app-model-smoke"
 )
 
+compiler_sources=(
+  "${repo_root}/Sources/MClashApp/App/AppLanguage.swift"
+  "${repo_root}/Sources/MClashApp/App/AppLocalization.swift"
+  "${repo_root}/Sources/MClashApp/Diagnostics/DiagnosticTextRedactor.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/ConfigurationAutomationModels.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/ConfigurationCaptureAdapter.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/ConfigurationCompiler.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/ConfigurationDefaults.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/ConfigurationModels.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/ConfigurationStore.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/ConfigurationValidation.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/NodeSelectors.swift"
+  "${repo_root}/Sources/MClashApp/Profiles/ProfileDirectoryLayout.swift"
+  "${repo_root}/Sources/MClashApp/Profiles/ProfileModels.swift"
+)
+swiftc -parse-as-library -swift-version 6 \
+  -strict-concurrency=complete \
+  -warnings-as-errors \
+  -F "${sparkle_framework_dir}" \
+  -framework AppKit \
+  -framework NetworkExtension \
+  -framework Security \
+  -framework ServiceManagement \
+  -framework Sparkle \
+  -framework SwiftUI \
+  -framework SystemConfiguration \
+  -framework SystemExtensions \
+  -framework UserNotifications \
+  -lsqlite3 \
+  -I "${build_dir}" \
+  -L "${build_dir}" \
+  -lMClashNetworkShared \
+  -lMClashAutomationProtocol \
+  -Xlinker -rpath \
+  -Xlinker "${sparkle_framework_dir}" \
+  "${compiler_sources[@]}" \
+  "${repo_root}/Tests/Integration/ConfigurationCompilerMihomoSmoke.swift" \
+  -o "${build_dir}/configuration-compiler-mihomo-smoke"
+(
+  cd "${repo_root}"
+  MCLASH_TEST_CORE="${core}" "${build_dir}/configuration-compiler-mihomo-smoke"
+)
+
 system_proxy_sources=("${repo_root}"/Sources/MClashApp/SystemProxy/*.swift(N))
 system_proxy_sources=("${(@)system_proxy_sources:#*/SystemProxyPreferences.swift}")
 swiftc -swift-version 6 -framework SystemConfiguration \

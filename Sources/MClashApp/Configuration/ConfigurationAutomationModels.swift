@@ -19,7 +19,13 @@ enum ConfigurationAutomationLimits {
     static let selectorTextBytes = 256
     static let selectorMatchOperationsPerWorkspace = 4 * 1_024 * 1_024
     static let selectorMatchOperationsPerPlan = 16 * 1_024 * 1_024
-    static let ruleMatchers = 256
+    // Mihomo does not impose a 256-item limit on the matcher values carried
+    // by one logical rule. A legacy App Routing import can legitimately
+    // produce thousands of domain matchers (the existing migration data has
+    // 2,882). Keep this aligned with the per-rule expansion budget: larger
+    // rules are rejected deterministically while ordinary large subscriptions
+    // remain usable.
+    static let ruleMatchers = 4_096
     static let ruleSetRules = 8_192
     static let dnsNameservers = 64
     static let dnsRules = 512

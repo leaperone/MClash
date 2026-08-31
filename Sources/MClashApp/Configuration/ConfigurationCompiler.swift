@@ -427,7 +427,7 @@ public struct ConfigurationCompiler: Sendable {
             switch matcher {
             case let .domainExact(value): destinations.append("DOMAIN,\(safeCSV(value))")
             case let .domainSuffix(value): destinations.append("DOMAIN-SUFFIX,\(safeCSV(value))")
-            case let .domainWildcard(value): destinations.append("DOMAIN-KEYWORD,\(safeCSV(value.replacingOccurrences(of: "*", with: "")))")
+            case let .domainWildcard(value): destinations.append("DOMAIN-WILDCARD,\(safeCSV(value))")
             case let .ipCIDR(value): destinations.append("IP-CIDR,\(safeCSV(value))")
             case let .port(value): ports.append("DST-PORT,\(value)")
             case let .portRange(range): ports.append("DST-PORT,\(range.lowerBound)-\(range.upperBound)")
@@ -498,7 +498,12 @@ public struct ConfigurationCompiler: Sendable {
     }
 
     private func yamlString(_ value: String) -> String {
-        String(decoding: try! JSONEncoder().encode(value), as: UTF8.self)
+        let encoder = JSONEncoder()
+        // JSON permits escaping `/` as `\/`, but Mihomo's YAML parser rejects
+        // that sequence inside a double-quoted scalar. Keep JSON's otherwise
+        // useful string escaping while emitting YAML-compatible slashes.
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return String(decoding: try! encoder.encode(value), as: UTF8.self)
     }
 
     private func yamlScalar(_ value: String) -> String {

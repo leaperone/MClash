@@ -80,6 +80,50 @@ struct ConfigurationModelsTests {
         #expect(document.proxyGroups.first?.members.isEmpty == true)
     }
 
+    @Test func mihomoRuleAcceptsLargeDomainMatcherListWithinExpansionBudget() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        let group = try #require(document.proxyGroups.first)
+        let domains = (0..<2_882).map {
+            RoutingMatcher.domainSuffix("service-\($0).example.com")
+        }
+        let rule = RoutingRule(
+            priority: 10,
+            matchers: domains + [.transport("tcp")],
+            action: .proxyGroup(group.id)
+        )
+        document.rules = [rule]
+        document.workspaces[0].ruleIDs = [rule.id]
+
+        let diagnostics = ConfigurationValidator.automationPlanDiagnostics(document: document)
+        #expect(!diagnostics.contains { $0.severity == .error })
+
+        let compiled = try ConfigurationCompiler().compile(document: document)
+        #expect(compiled.yaml.count < ConfigurationAutomationLimits.compiledYAMLBytes)
+        let yaml = String(decoding: compiled.yaml, as: UTF8.self)
+        #expect(yaml.contains("DOMAIN-SUFFIX,service-2881.example.com"))
+        #expect(yaml.contains("AND,((DOMAIN-SUFFIX"))
+    }
+
+    @Test func mihomoRuleRejectsOnlyGenuinelyExcessiveMatcherList() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        let group = try #require(document.proxyGroups.first)
+        let domains = (0...ConfigurationAutomationLimits.ruleMatchers).map {
+            RoutingMatcher.domainSuffix("service-\($0).example.com")
+        }
+        let rule = RoutingRule(
+            priority: 10,
+            matchers: domains,
+            action: .proxyGroup(group.id)
+        )
+        document.rules = [rule]
+        document.workspaces[0].ruleIDs = [rule.id]
+
+        let diagnostics = ConfigurationValidator.automationPlanDiagnostics(document: document)
+        #expect(diagnostics.contains {
+            $0.severity == .error && $0.code == "configuration_resource_limit"
+        })
+    }
+
     @Test func proxyGroupWithoutNewSelectorFieldRemainsCodableCompatible() throws {
         let group = ProxyGroup(name: "US", members: [])
         let data = try JSONEncoder().encode(group)
