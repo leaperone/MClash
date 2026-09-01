@@ -384,6 +384,15 @@ public struct ConfigurationCompiler: Sendable {
                 lines.append("  - \(yamlString(line))")
             }
         }
+        // Keep the common mainland-China safety net immediately before the
+        // catch-all. Explicit MClash rules above it still win (for example a
+        // user may intentionally proxy one domestic service), while
+        // unclassified CN domains/IPs stay direct instead of silently using a
+        // proxy group.
+        let chinaGeositeRule = yamlString("GEOSITE,cn,DIRECT")
+        let chinaGeoIPRule = yamlString("GEOIP,CN,DIRECT,no-resolve")
+        lines.append("  - \(chinaGeositeRule)")
+        lines.append("  - \(chinaGeoIPRule)")
         // App Routing has no TCP listener of its own, so its catch-all capture
         // path uses that entrance's default action when enabled. If the
         // capability is off, fall back to the first enabled public entrance.

@@ -8,9 +8,17 @@ public struct ProfileDirectoryLayout: Equatable, Sendable {
     }
 
     public static func applicationSupport(
-        applicationIdentifier: String = "MClash",
+        applicationIdentifier: String? = nil,
         fileManager: FileManager = .default
     ) throws -> ProfileDirectoryLayout {
+        // The environment override is intentionally opt-in.  Production
+        // launches have no such variable and therefore retain the historical
+        // `MClash` directory.  This gives development builds a private store
+        // without changing the app's bundle identifier or live state.
+        let applicationIdentifier = resolvedApplicationIdentifier(
+            explicit: applicationIdentifier,
+            environment: ProcessInfo.processInfo.environment
+        )
         guard
             !applicationIdentifier.isEmpty,
             applicationIdentifier != ".",
@@ -33,6 +41,18 @@ public struct ProfileDirectoryLayout: Equatable, Sendable {
                 isDirectory: true
             )
         )
+    }
+
+    static func resolvedApplicationIdentifier(
+        explicit: String?,
+        environment: [String: String]
+    ) -> String {
+        explicit
+            ?? environment["MCLASH_APPLICATION_SUPPORT_IDENTIFIER"]
+            ?? (CommandLine.arguments.contains("--mclash-test-instance")
+                ? "MClash-Shadow"
+                : nil)
+            ?? "MClash"
     }
 
     public var profilesDirectory: URL {

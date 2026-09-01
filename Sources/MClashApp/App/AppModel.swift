@@ -813,6 +813,7 @@ final class AppModel {
     private(set) var preparationInProgress = false
     private var shutdownInProgress = false
     private var startupPreparationErrorMessage: String?
+    private let testInstance: Bool
 
     init(
         supervisor: CoreSupervisor = CoreSupervisor(),
@@ -823,8 +824,8 @@ final class AppModel {
         profileDirectoryLayout: ProfileDirectoryLayout? = nil,
         profileStoreOverride: ProfileStore? = nil,
         geoDataInstaller: BundledGeoDataInstaller = .applicationBundle(),
-        preferenceDefaults: UserDefaults = .standard,
-        networkExtensionControl: any NetworkExtensionControlling = NetworkExtensionControlService.live(),
+        preferenceDefaults: UserDefaults? = nil,
+        networkExtensionControl: (any NetworkExtensionControlling)? = nil,
         networkEnvironmentMonitor: (any NetworkEnvironmentMonitoring)? = nil,
         profileProxyControllerResolver: ProfileProxyControllerResolver? = nil
     ) {
@@ -835,76 +836,105 @@ final class AppModel {
         self.systemProxyManager = systemProxyManager
         self.localPortProbe = localPortProbe
         self.geoDataInstaller = geoDataInstaller
-        self.preferenceDefaults = preferenceDefaults
         profileProxyControllerResolverOverride = profileProxyControllerResolver
+        let environment = ProcessInfo.processInfo.environment
+        testInstance = environment["MCLASH_TEST_MODE"] == "1"
+            || CommandLine.arguments.contains("--mclash-test-instance")
+        let defaults: UserDefaults
+        if let preferenceDefaults {
+            defaults = preferenceDefaults
+        } else if testInstance {
+            let namespace = ProcessInfo.processInfo.environment[
+                "MCLASH_INSTANCE_NAMESPACE"
+            ] ?? "isolated"
+            defaults = UserDefaults(
+                suiteName: "one.leaper.mclash.\(namespace)"
+            ) ?? .standard
+        } else {
+            defaults = .standard
+        }
+        self.preferenceDefaults = defaults
         self.networkExtensionControl = networkExtensionControl
+            ?? (testInstance
+                ? NetworkExtensionControlService.inert()
+                : NetworkExtensionControlService.live())
         if let networkEnvironmentMonitor {
             self.networkEnvironmentMonitor = networkEnvironmentMonitor
         } else {
             self.networkEnvironmentMonitor = AppleNetworkEnvironmentMonitor()
         }
-        if preferenceDefaults.object(forKey: Self.trafficHistoryPersistenceChoiceKey) == nil {
+        if defaults.object(forKey: Self.trafficHistoryPersistenceChoiceKey) == nil {
             trafficHistoryPersistenceChoice = .undecided
         } else {
             trafficHistoryPersistenceChoice = TrafficHistoryPersistenceChoice(
-                rawValue: preferenceDefaults.integer(
+                rawValue: defaults.integer(
                     forKey: Self.trafficHistoryPersistenceChoiceKey
                 )
             ) ?? .undecided
         }
-        if preferenceDefaults.object(forKey: Self.autoConnectOnLaunchKey) == nil {
+        if defaults.object(forKey: Self.autoConnectOnLaunchKey) == nil {
             autoConnectOnLaunch = true
         } else {
-            autoConnectOnLaunch = preferenceDefaults.bool(forKey: Self.autoConnectOnLaunchKey)
+            autoConnectOnLaunch = defaults.bool(forKey: Self.autoConnectOnLaunchKey)
         }
-        if preferenceDefaults.object(forKey: Self.connectionDesiredOnLaunchKey) == nil {
+        if defaults.object(forKey: Self.connectionDesiredOnLaunchKey) == nil {
             // Preserve the pre-1.3 startup behavior on upgrade. Subsequent
             // explicit Connect/Disconnect actions make this an exact last
             // user intent instead of an unconditional reconnect.
             connectionDesiredOnLaunch = true
         } else {
-            connectionDesiredOnLaunch = preferenceDefaults.bool(
+            connectionDesiredOnLaunch = defaults.bool(
                 forKey: Self.connectionDesiredOnLaunchKey
             )
         }
-        if preferenceDefaults.object(forKey: Self.autoEnableSystemProxyKey) == nil {
+        if defaults.object(forKey: Self.autoEnableSystemProxyKey) == nil {
             autoEnableSystemProxy = true
         } else {
-            autoEnableSystemProxy = preferenceDefaults.bool(forKey: Self.autoEnableSystemProxyKey)
+            autoEnableSystemProxy = defaults.bool(forKey: Self.autoEnableSystemProxyKey)
         }
-        menuBarDisplayStyle = preferenceDefaults.string(
+        menuBarDisplayStyle = defaults.string(
             forKey: Self.menuBarDisplayStyleKey
         )
         .flatMap(MenuBarDisplayStyle.init(rawValue:)) ?? .logo
         pinnedQuickRouteNames = Self.normalizedQuickRouteNames(
-            preferenceDefaults.stringArray(forKey: Self.pinnedQuickRouteNamesKey) ?? []
+            defaults.stringArray(forKey: Self.pinnedQuickRouteNamesKey) ?? []
         )
-        if preferenceDefaults.object(forKey: Self.closeConnectionsOnRoutingChangeKey) == nil {
+        if defaults.object(forKey: Self.closeConnectionsOnRoutingChangeKey) == nil {
             closeConnectionsOnRoutingChange = true
         } else {
-            closeConnectionsOnRoutingChange = preferenceDefaults.bool(
+            closeConnectionsOnRoutingChange = defaults.bool(
                 forKey: Self.closeConnectionsOnRoutingChangeKey
             )
         }
-        notificationsEnabled = preferenceDefaults.bool(forKey: Self.notificationsEnabledKey)
-        if preferenceDefaults.object(forKey: Self.openAtLoginSilentlyKey) == nil {
+        notificationsEnabled = defaults.bool(forKey: Self.notificationsEnabledKey)
+        if defaults.object(forKey: Self.openAtLoginSilentlyKey) == nil {
             openAtLoginSilently = true
         } else {
-            openAtLoginSilently = preferenceDefaults.bool(
+            openAtLoginSilently = defaults.bool(
                 forKey: Self.openAtLoginSilentlyKey
             )
         }
-        lightweightMode = preferenceDefaults.bool(forKey: Self.lightweightModeKey)
-        if preferenceDefaults.object(forKey: Self.unifiedConfigurationEnabledKey) == nil {
+        lightweightMode = defaults.bool(forKey: Self.lightweightModeKey)
+        if testInstance {
+            autoConnectOnLaunch = true
+            connectionDesiredOnLaunch = true
+            autoEnableSystemProxy = false
+            unifiedConfigurationEnabled = true
+        } else if defaults.object(forKey: Self.unifiedConfigurationEnabledKey) == nil {
             unifiedConfigurationEnabled = false
         } else {
-            unifiedConfigurationEnabled = preferenceDefaults.bool(
+            unifiedConfigurationEnabled = defaults.bool(
                 forKey: Self.unifiedConfigurationEnabledKey
             )
         }
-        let loginItemManager = LoginItemManager()
-        launchAtLogin = loginItemManager.isEnabled
-        launchAtLoginRequiresApproval = loginItemManager.requiresApproval
+        if testInstance {
+            launchAtLogin = false
+            launchAtLoginRequiresApproval = false
+        } else {
+            let loginItemManager = LoginItemManager()
+            launchAtLogin = loginItemManager.isEnabled
+            launchAtLoginRequiresApproval = loginItemManager.requiresApproval
+        }
 
         var initializationFailures: [StorageInitializationFailure] = []
         let layout: ProfileDirectoryLayout?
@@ -1091,10 +1121,12 @@ final class AppModel {
         var startupUnifiedMigrationPreviousDocument: ConfigurationDocument?
         var startupUnifiedMigrationPreviousNetworkCapturePreferences: NetworkCapturePreferences?
         do {
-            try LoginItemManager().migrateLegacyRegistrationIfNeeded()
-            let loginItemManager = LoginItemManager()
-            launchAtLogin = loginItemManager.isEnabled
-            launchAtLoginRequiresApproval = loginItemManager.requiresApproval
+            if !testInstance {
+                try LoginItemManager().migrateLegacyRegistrationIfNeeded()
+                let loginItemManager = LoginItemManager()
+                launchAtLogin = loginItemManager.isEnabled
+                launchAtLoginRequiresApproval = loginItemManager.requiresApproval
+            }
         } catch {
             appendSupervisorLog(
                 "Launch at Login could not be migrated to the system main-app registration: \(error.localizedDescription)"
@@ -1249,6 +1281,7 @@ final class AppModel {
                 }
                 await refreshActiveProfileListenerPorts()
                 try await loadProfileRuntimePlan()
+                try await repairManagedMixedPortCollision()
                 try await prepareProfileRoutingSessions(
                     for: networkCapturePreferences.enabled
                         ? networkCapturePreferences.snapshot.rules
@@ -2168,6 +2201,21 @@ final class AppModel {
                     document.proxyGroups[index].memberSelectors = [NodeSelector(name: "All enabled nodes")]
                 }
             }
+            // Older unified manifests expanded every region selector with the
+            // other regions as a fallback, making US/JP/HK groups identical.
+            // Once a CUNOE source is present, repair only that known legacy
+            // shape; genuinely user-authored groups remain untouched.
+            if Self.hasLegacyFlattenedRegionalPreset(in: document) {
+                if let repaired = try? ConfigurationProxyGroupPreset.apply(
+                    to: document,
+                    workspaceID: document.currentWorkspace?.id
+                ) {
+                    document = repaired.document
+                    appendSupervisorLog(
+                        "Repaired legacy regional groups to use CUNOE-Proxy source selectors."
+                    )
+                }
+            }
             try await configurationStore.save(document)
             configurationDocument = document
             let sourceDiagnostics = document.sources.flatMap(\.parseDiagnostics)
@@ -2268,6 +2316,39 @@ final class AppModel {
         "ws-opts", "reality-opts", "grpc-opts", "http-opts", "h2-opts",
         "quic-opts", "obfs-opts", "smux", "dialer-proxy",
     ]
+
+    private static func hasLegacyFlattenedRegionalPreset(
+        in document: ConfigurationDocument
+    ) -> Bool {
+        let hasCUNOE = document.sources.contains { source in
+            source.displayName
+                .unicodeScalars
+                .filter { CharacterSet.alphanumerics.contains($0) }
+                .map(String.init)
+                .joined()
+                .localizedCaseInsensitiveContains("cunoeproxy")
+        }
+        guard hasCUNOE else { return false }
+        let regionalNames = [
+            ConfigurationProxyGroupPreset.hongKongGroupName,
+            ConfigurationProxyGroupPreset.unitedStatesGroupName,
+            ConfigurationProxyGroupPreset.japanGroupName,
+        ]
+        let regionalGroups = document.proxyGroups.filter {
+            regionalNames.contains($0.name)
+        }
+        guard regionalGroups.count == regionalNames.count else { return false }
+        let foreignLabels = regionalNames
+            .map { "\($0) ·" }
+        return regionalGroups.contains { group in
+            group.memberSelectors.contains { selector in
+                foreignLabels.contains { label in
+                    selector.name.hasPrefix(label)
+                        && !selector.name.hasPrefix("\(group.name) ·")
+                }
+            }
+        }
+    }
 
     private func unifiedCaptureRules() throws -> [CaptureRule] {
         guard let compiledConfiguration else {
@@ -3197,19 +3278,6 @@ final class AppModel {
                 throw ConfigurationAutomationError.invalidInput(message)
             }
         }
-        // The core fleet keeps one managed Mixed socket (the stable local
-        // compatibility endpoint) in addition to user-defined listeners. A
-        // configured HTTP/SOCKS listener cannot silently claim that same port;
-        // reject it before disconnecting the healthy current session.
-        if let managedPort = positivePort(profileRuntimePlan.defaultMixedPort),
-           (try? RuntimeConfigurationComposer().boundListenerPorts(in: compiled.yaml))?.contains(managedPort) == true {
-            throw ConfigurationAutomationError.invalidInput(
-                AppLocalization.format(
-                    "Entrance port %d is reserved for MClash's managed local fallback listener. Choose another port.",
-                    managedPort
-                )
-            )
-        }
         let shouldReconnect = isConnected || isBusy
         let previousProfileID = activeProfileID
         guard let profileStore, let runtimeOverrideCoordinator else {
@@ -3223,6 +3291,12 @@ final class AppModel {
         if profileRuntimePlan.primaryProfileID != activationProfileID {
             try await loadProfileRuntimePlan()
         }
+        // The core fleet keeps one managed Mixed socket (the stable local
+        // compatibility endpoint) in addition to user-defined listeners. A
+        // configured HTTP/SOCKS listener cannot silently claim that same port;
+        // repair the durable managed port before disconnecting the healthy
+        // current session.
+        try await repairManagedMixedPortCollision(compiled: compiled)
 
         try await configurationStore.saveActivationJournal(
             ConfigurationActivationJournal(
@@ -5325,6 +5399,7 @@ final class AppModel {
             if unifiedConfigurationEnabled, runtimeOverrideCoordinator == nil {
                 throw AppModelError.profileStoreUnavailable
             }
+            try await repairManagedMixedPortCollision()
             if let activeProfileID, runtimeOverrideCoordinator != nil {
                 let activation = try await activateStoredProfile(
                     activeProfileID,
@@ -8972,6 +9047,46 @@ final class AppModel {
             : profileRuntimePlan.defaultMixedPort
         let requiresExactListeners = requestedMixedPort != nil
         if let port = positivePort(initialConfig.mixedPort) {
+            // A unified runtime owns this endpoint. If mihomo came up with a
+            // stale source/legacy port, repair it in place before probing the
+            // listener instead of treating the mismatch as a missing port.
+            if let requested = requestedMixedPort, requested != port {
+                do {
+                    try await client.patchConfig(
+                        MihomoConfigPatch(mixedPort: requested)
+                    )
+                    let config = try await client.fetchConfig()
+                    guard config.mixedPort == requested else {
+                        throw AppModelError.localProxyOverrideRejected(requested)
+                    }
+                    try await localPortProbe.waitUntilProxyProtocols(
+                        httpPort: requested,
+                        socksPort: requested
+                    )
+                    if let dedicatedPort = activeProfileDedicatedMixedListener.map({
+                        Int($0.port)
+                    }) {
+                        try await localPortProbe.waitUntilProxyProtocols(
+                            httpPort: dedicatedPort,
+                            socksPort: dedicatedPort
+                        )
+                    }
+                    if let activeProfileID {
+                        try await verifyProfileRouteListenerProtocols(
+                            profileID: activeProfileID
+                        )
+                    }
+                    return config
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    if requiresExactListeners {
+                        throw AppModelError.explicitLocalProxyListenersUnavailable(
+                            [requested]
+                        )
+                    }
+                }
+            }
             do {
                 try await localPortProbe.waitUntilProxyProtocols(
                     httpPort: port,
@@ -9013,7 +9128,45 @@ final class AppModel {
             }
         } else {
             if requiresExactListeners {
-                throw AppModelError.explicitLocalProxyListenersIncomplete
+                // Source profiles are intentionally node-only and commonly do
+                // not define a Mixed port. The unified runtime supplies it;
+                // if mihomo did not load that override, repair the endpoint
+                // through the authenticated controller before failing.
+                if let requested = requestedMixedPort {
+                    do {
+                        try await client.patchConfig(
+                            MihomoConfigPatch(mixedPort: requested)
+                        )
+                        let config = try await client.fetchConfig()
+                        guard config.mixedPort == requested else {
+                            throw AppModelError.localProxyOverrideRejected(requested)
+                        }
+                        try await localPortProbe.waitUntilProxyProtocols(
+                            httpPort: requested,
+                            socksPort: requested
+                        )
+                        if let dedicatedPort = activeProfileDedicatedMixedListener.map({
+                            Int($0.port)
+                        }) {
+                            try await localPortProbe.waitUntilProxyProtocols(
+                                httpPort: dedicatedPort,
+                                socksPort: dedicatedPort
+                            )
+                        }
+                        if let activeProfileID {
+                            try await verifyProfileRouteListenerProtocols(
+                                profileID: activeProfileID
+                            )
+                        }
+                        return config
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        throw AppModelError.explicitLocalProxyListenersUnavailable(
+                            [requested]
+                        )
+                    }
+                }
             }
             appendSupervisorLog(
                 "The profile has no usable Mixed listener; applying a temporary MClash mixed port."
@@ -11800,6 +11953,55 @@ final class AppModel {
 
     private func positivePort(_ port: Int) -> Int? {
         port > 0 ? port : nil
+    }
+
+    /// Validates the invariant shared by startup, reconnect, and Workspace
+    /// activation: the strategy-owned HTTP/SOCKS listeners must not bind the
+    /// port reserved for MClash's stable managed Mixed endpoint. Keeping this
+    /// check at the runtime boundary is important because the compiler emits
+    /// the policy document without the runtime-only Mixed override.
+    private func repairManagedMixedPortCollision(
+        compiled: CompiledConfiguration? = nil
+    ) async throws {
+        guard unifiedConfigurationEnabled,
+              let managedPort = positivePort(profileRuntimePlan.defaultMixedPort)
+        else { return }
+        let candidate: CompiledConfiguration
+        if let compiled {
+            candidate = compiled
+        } else {
+            guard let current = try compiledConfigurationForCurrentWorkspace() else {
+                return
+            }
+            candidate = current
+        }
+        let boundPorts = try RuntimeConfigurationComposer().boundListenerPorts(in: candidate.yaml)
+        guard boundPorts.contains(managedPort) else {
+            return
+        }
+        var excluded = boundPorts
+        excluded.formUnion(profileRuntimePlan.sessions.map(\.mixedPort))
+        excluded.formUnion(profileRuntimePlan.routeListeners.map(\.port))
+        excluded.remove(managedPort)
+        let replacement = try localPortProbe.availableTCPAndUDPPorts(
+            count: 1,
+            excluding: excluded
+        )[0]
+        var candidatePlan = profileRuntimePlan
+        candidatePlan.defaultMixedPort = replacement
+        try ProfileRuntimePlanValidator().validate(candidatePlan)
+        guard let store = profileRuntimePlanStore else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        try await store.save(candidatePlan)
+        profileRuntimePlan = candidatePlan
+        appendSupervisorLog(
+            AppLocalization.format(
+                "The managed Mixed port %@ conflicted with a configured entrance; MClash moved it to %@.",
+                String(managedPort),
+                String(replacement)
+            )
+        )
     }
 
     private func mixedPortIsAvailableForStart(

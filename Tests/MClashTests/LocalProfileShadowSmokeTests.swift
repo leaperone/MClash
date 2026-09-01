@@ -55,28 +55,45 @@ struct LocalProfileShadowSmokeTests {
         }) else { throw ShadowSmokeFailure.noConfiguration }
         runtimeDocument.workspaces[workspaceIndex].nodeIDs = []
 
-        let ports = try LocalPortProbe().availableTCPAndUDPPorts(count: 3)
-        let httpPort = ports[0]
-        let socksPort = ports[1]
-        let controllerPort = ports[2]
         let workspaceEntranceIDs = Set(
             runtimeDocument.workspaces[workspaceIndex].entranceIDs
         )
+        let enabledPortEntranceCount = runtimeDocument.entrances.filter {
+            workspaceEntranceIDs.contains($0.id)
+                && $0.enabled
+                && ($0.kind == .http || $0.kind == .socks5)
+        }.count
+        let ports = try LocalPortProbe().availableTCPAndUDPPorts(
+            count: enabledPortEntranceCount + 1
+        )
+        var nextPortIndex = 0
+        var firstHTTPPort: Int?
+        var firstSOCKSPort: Int?
         for index in runtimeDocument.entrances.indices
         where workspaceEntranceIDs.contains(runtimeDocument.entrances[index].id) {
             switch runtimeDocument.entrances[index].kind {
             case .http:
                 runtimeDocument.entrances[index].enabled = true
                 runtimeDocument.entrances[index].bindAddress = "127.0.0.1"
-                runtimeDocument.entrances[index].port = httpPort
+                let port = ports[nextPortIndex]
+                nextPortIndex += 1
+                runtimeDocument.entrances[index].port = port
+                firstHTTPPort = firstHTTPPort ?? port
             case .socks5:
                 runtimeDocument.entrances[index].enabled = true
                 runtimeDocument.entrances[index].bindAddress = "127.0.0.1"
-                runtimeDocument.entrances[index].port = socksPort
+                let port = ports[nextPortIndex]
+                nextPortIndex += 1
+                runtimeDocument.entrances[index].port = port
+                firstSOCKSPort = firstSOCKSPort ?? port
             case .appRouting, .tun:
                 runtimeDocument.entrances[index].enabled = false
             }
         }
+        guard let httpPort = firstHTTPPort, let socksPort = firstSOCKSPort else {
+            throw ShadowSmokeFailure.noUsableEntrance
+        }
+        let controllerPort = ports[nextPortIndex]
         if let dnsIndex = runtimeDocument.dnsPolicies.firstIndex(where: {
             $0.id == runtimeDocument.workspaces[workspaceIndex].dnsPolicyID
         }) {
@@ -256,6 +273,7 @@ private struct ShadowSystemProxyBackend: SystemProxyBackend {
 private enum ShadowSmokeFailure: Error {
     case noProfiles
     case noConfiguration
+    case noUsableEntrance
     case preferencesUnavailable
     case sourceStrategyLeaked
     case profileChanged

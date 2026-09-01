@@ -53,11 +53,32 @@ final class ApplicationInstanceLock {
     }
 
     static func defaultLockURL(
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> URL {
-        homeDirectory
+        let namespace = resolvedNamespace(environment: environment)
+        return homeDirectory
             .appendingPathComponent("Library/Caches", isDirectory: true)
-            .appendingPathComponent("one.leaper.mclash", isDirectory: true)
+            .appendingPathComponent(namespace, isDirectory: true)
             .appendingPathComponent("application-instance.lock", isDirectory: false)
+    }
+
+    /// The namespace is deliberately opt-in and constrained to one path
+    /// component. Invalid values fall back to the production namespace so a
+    /// malformed development environment can never redirect the lock outside
+    /// the expected cache hierarchy.
+    static func resolvedNamespace(environment: [String: String]) -> String {
+        guard let candidate = environment["MCLASH_INSTANCE_NAMESPACE"]
+                ?? (CommandLine.arguments.contains("--mclash-test-instance")
+                    ? "one.leaper.mclash-shadow"
+                    : nil),
+              !candidate.isEmpty,
+              candidate != ".",
+              candidate != "..",
+              !candidate.contains("/"),
+              !candidate.contains(":") else {
+            return "one.leaper.mclash"
+        }
+        return candidate
     }
 }

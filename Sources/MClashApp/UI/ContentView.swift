@@ -5,7 +5,7 @@ struct ContentView: View {
     @Bindable var model: AppModel
     @Bindable var applicationUpdater: ApplicationUpdater
     @AppStorage("mclash.navigation.destination") private var restoredDestinationRawValue =
-        AppModel.Destination.overview.rawValue
+        AppModel.Destination.entrances.rawValue
     @AppStorage("mclash.navigation.advancedExpanded") private var advancedExpanded = false
     @State private var hasRestoredDestination = false
 
@@ -13,17 +13,26 @@ struct ContentView: View {
         NavigationSplitView {
             List(selection: $model.selection) {
                 Section {
-                    destinationRow(.overview)
+                    // Traffic enters MClash here. Keep capture surfaces at the
+                    // top of the sidebar so the navigation follows the actual
+                    // path of a request (entrance → mode → rules → exit).
+                    destinationRow(.entrances)
                 }
 
-                Section(AppLocalization.string("Configure")) {
-                    destinationRow(.workspaces, title: "Configuration")
-                    destinationRow(.rules, title: "Rules")
-                    destinationRow(.entrances)
+                Section(AppLocalization.string("Configuration")) {
+                    destinationRow(.workspaces, title: "Configuration & Mode")
+                    destinationRow(.dns)
+                }
+
+                Section {
+                    destinationRow(.rules, title: "Rules & Rule Sets")
+                    destinationRow(.proxyGroups, title: "Node Groups")
                     destinationRow(.nodes)
                     destinationRow(.sources)
-                    destinationRow(.dns)
-                    destinationRow(.proxyGroups, title: "Node Groups")
+                }
+
+                Section {
+                    destinationRow(.overview)
                 }
 
                 Section(AppLocalization.string("Monitor")) {
@@ -164,7 +173,7 @@ struct ContentView: View {
             return
         }
 
-        var destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .overview
+        var destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .entrances
         if destination == .appRouting {
             destination = .entrances
             restoredDestinationRawValue = destination.rawValue

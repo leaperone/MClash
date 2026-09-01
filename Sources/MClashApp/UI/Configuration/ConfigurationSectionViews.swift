@@ -490,7 +490,18 @@ struct ConfigurationEntrancesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            appRoutingEntranceControl
+            VStack(alignment: .leading, spacing: MClashLayout.compactSpacing) {
+                Text(AppLocalization.string("Traffic entrances"))
+                    .font(.title3.weight(.semibold))
+                Text(AppLocalization.string("Choose how traffic enters MClash. Routing mode, rules and node groups determine where it goes next."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: MClashLayout.controlSpacing) {
+                    appRoutingEntranceControl
+                    systemProxyEntranceControl
+                }
+            }
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, MClashLayout.compactPagePadding)
             Divider()
@@ -581,6 +592,50 @@ struct ConfigurationEntrancesView: View {
             .disabled(!hasEntrance || !model.canPerform(.changeNetworkCapture))
             .accessibilityLabel(AppLocalization.string("App Routing"))
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(MClashLayout.compactPagePadding)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// macOS System Proxy is a capture entrance, not a configuration or
+    /// advanced setting. It is displayed beside App Routing while retaining
+    /// its distinct system-level semantics and recovery state.
+    private var systemProxyEntranceControl: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "macbook.and.iphone")
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(AppLocalization.string("macOS System Proxy"))
+                    .font(.headline)
+                Text(AppLocalization.string("Send macOS application traffic to a MClash HTTP or SOCKS entrance."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.systemProxyRecoveryRequired {
+                    Label(AppLocalization.string("Needs restoration"), systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+            Spacer(minLength: 8)
+            Toggle(
+                AppLocalization.string("macOS System Proxy"),
+                isOn: Binding(
+                    get: { model.pendingSystemProxyEnabled ?? model.systemProxyEnabled },
+                    set: { enabled in
+                        Task { await model.setSystemProxyEnabled(enabled) }
+                    }
+                )
+            )
+            .labelsHidden()
+            .disabled(!model.canPerform(.changeSystemProxy) || model.systemProxyRecoveryRequired)
+            .accessibilityLabel(AppLocalization.string("macOS System Proxy"))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(MClashLayout.compactPagePadding)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

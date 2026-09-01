@@ -4,6 +4,17 @@ import Testing
 
 @Suite("Application instance lock", .serialized)
 struct ApplicationInstanceLockTests {
+    @Test("Development namespace is opt-in and path-safe")
+    func developmentNamespace() {
+        #expect(ApplicationInstanceLock.resolvedNamespace(environment: [:]) == "one.leaper.mclash")
+        #expect(ApplicationInstanceLock.resolvedNamespace(
+            environment: ["MCLASH_INSTANCE_NAMESPACE": "one.leaper.mclash-dev"]
+        ) == "one.leaper.mclash-dev")
+        #expect(ApplicationInstanceLock.resolvedNamespace(
+            environment: ["MCLASH_INSTANCE_NAMESPACE": "../production"]
+        ) == "one.leaper.mclash")
+    }
+
     @Test("Only one process owner can hold the application lock")
     func lockHasSingleOwner() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

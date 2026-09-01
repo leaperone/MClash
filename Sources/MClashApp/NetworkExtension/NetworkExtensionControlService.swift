@@ -145,6 +145,13 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
         )
     }
 
+    /// Development-only boundary used by isolated shadow instances. It keeps
+    /// a test build from touching the user's installed System Extension while
+    /// exercising the same AppModel startup and routing lifecycle.
+    static func inert() -> any NetworkExtensionControlling {
+        InertNetworkExtensionControl()
+    }
+
     func enable(
         _ configuration: NetworkExtensionRuntimeConfiguration,
         progress reportProgress: @escaping @Sendable (NetworkExtensionEnableProgress) -> Void
@@ -641,6 +648,41 @@ actor NetworkExtensionControlService: NetworkExtensionControlling {
         }
         return status.isOperational
     }
+}
+
+private actor InertNetworkExtensionControl: NetworkExtensionControlling {
+    func enable(
+        _ configuration: NetworkExtensionRuntimeConfiguration,
+        progress reportProgress: @escaping @Sendable (NetworkExtensionEnableProgress) -> Void
+    ) async throws -> NetworkExtensionEnableOutcome { .running }
+
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> NetworkExtensionEnableOutcome { .running }
+
+    func disable() async throws {}
+
+    func uninstall() async throws -> NetworkExtensionUninstallOutcome { .uninstalled }
+
+    func currentState() async -> NetworkExtensionControlState { .inactive }
+
+    func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus {
+        throw URLError(.unsupportedURL)
+    }
+
+    func appRoutingActivity(
+        after cursor: UInt64,
+        limit: Int
+    ) async throws -> AppRoutingActivityBatch {
+        AppRoutingActivityBatch(
+            activities: [],
+            nextCursor: cursor,
+            droppedBeforeSequence: nil,
+            hasMore: false
+        )
+    }
+
+    func clearAppRoutingActivity() async throws {}
 }
 
 private extension TransparentProxyProviderStatus {

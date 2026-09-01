@@ -5,6 +5,14 @@ import Testing
 
 @Suite("MClash automation protocol")
 struct AutomationProtocolTests {
+    @Test("Development discovery namespace is opt-in")
+    func developmentDiscoveryNamespace() {
+        #expect(AutomationDiscovery.resolvedApplicationIdentifier(environment: [:]) == "MClash")
+        #expect(AutomationDiscovery.resolvedApplicationIdentifier(
+            environment: ["MCLASH_AUTOMATION_DIRECTORY_IDENTIFIER": "MClash-Dev"]
+        ) == "MClash-Dev")
+    }
+
     @Test("JSON-RPC request and response round-trip with stable API version")
     func rpcRoundTrip() throws {
         let request = AutomationRPCRequest(

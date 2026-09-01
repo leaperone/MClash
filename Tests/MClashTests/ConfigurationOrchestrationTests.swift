@@ -677,6 +677,48 @@ struct ConfigurationOrchestrationTests {
         #expect(sourceAfter == Data(sourceYAML.utf8))
     }
 
+    @Test("Unified runtime overlays its managed Mixed port after blank compilation")
+    func unifiedRuntimeAlwaysIncludesManagedMixedPort() throws {
+        // The unified compiler deliberately emits a policy-only document. The
+        // runtime coordinator must add MClash's reserved local listener before
+        // handing the document to mihomo; imported source YAML is not allowed
+        // to be the source of this listener.
+        var document = ConfigurationDocument.mclashDefault()
+        document.nodes = []
+        let compiled = try ConfigurationCompiler().compile(document: document)
+        let compiledYAML = String(decoding: compiled.yaml, as: UTF8.self)
+        #expect(!compiledYAML.contains("mixed-port:"))
+
+        let managedPort = 17_890
+        let runtime = try RuntimeConfigurationComposer().applying(
+            RuntimeOverrides(
+                ports: RuntimePortOverrides(mixedPort: managedPort)
+            ),
+            to: compiled.yaml
+        )
+
+        #expect(
+            try RuntimeConfigurationComposer().listenerPorts(in: runtime).mixedPort
+                == managedPort
+        )
+        #expect(
+            try RuntimeConfigurationComposer().boundListenerPorts(in: runtime)
+                .contains(managedPort)
+        )
+    }
+
+    @Test("Unified runtime keeps mainland China safeguards before catch-all")
+    func unifiedRuntimePlacesChinaSafeguardsBeforeCatchAll() throws {
+        let document = ConfigurationDocument.mclashDefault()
+        let compiled = try ConfigurationCompiler().compile(document: document)
+        let yaml = String(decoding: compiled.yaml, as: UTF8.self)
+        let geosite = try #require(yaml.range(of: "GEOSITE,cn,DIRECT"))
+        let geoip = try #require(yaml.range(of: "GEOIP,CN,DIRECT,no-resolve"))
+        let match = try #require(yaml.range(of: "MATCH,MClash Select"))
+        #expect(geosite.lowerBound < match.lowerBound)
+        #expect(geoip.lowerBound < match.lowerBound)
+    }
+
     @MainActor
     @Test func failedUnifiedStartupMigrationDoesNotMarkOrReplaceLegacyRuntime() async throws {
         let root = FileManager.default.temporaryDirectory.appending(

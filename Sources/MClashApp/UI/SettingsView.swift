@@ -71,25 +71,15 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Routing & macOS Proxy") {
-                LabeledContent(AppLocalization.string("Application traffic"), value: appRoutingStatus)
-                LabeledContent(
-                    "macOS System Proxy",
-                    value: systemProxyStatus
-                )
-                appRoutingFeedback
-                systemProxySettingsFeedback
-
+            Section("Advanced connection behavior") {
+                Text(AppLocalization.string("Traffic entrances and their on/off controls are managed together on the Entrances page."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Button(AppLocalization.string("Open Entrances…")) {
                     model.selection = .entrances
                 }
-
                 DisclosureGroup("Connection Behavior") {
-                    Text(AppLocalization.string("Use the Application traffic switch in Entrances to enable or disable capture."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
                     Toggle("Enable macOS system proxy when connecting", isOn: $model.autoEnableSystemProxy)
                         .disabled(model.networkCapturePreferences.enabled)
                     if model.networkCapturePreferences.enabled {
@@ -189,6 +179,8 @@ struct SettingsView: View {
                     }
                     .disabled(!model.canPerform(.changeSystemProxySettings))
                 }
+                appRoutingFeedback
+                systemProxySettingsFeedback
             }
 
             if let applicationSettingsError {
@@ -455,22 +447,6 @@ struct SettingsView: View {
         commandLineToolError = nil
     }
 
-    private var systemProxyStatus: String {
-        if model.pendingSystemProxyEnabled == true {
-            return AppLocalization.string("Turning On")
-        }
-        if model.pendingSystemProxyEnabled == false {
-            return AppLocalization.string("Turning Off")
-        }
-        if model.systemProxyRecoveryRequired {
-            return AppLocalization.string("Needs Restoration")
-        }
-        if model.systemProxyEnabled, !model.systemProxyPreferences.guardEnabled {
-            return AppLocalization.string("On · Guard Paused")
-        }
-        return AppLocalization.string(model.systemProxyEnabled ? "On" : "Off")
-    }
-
     @ViewBuilder
     private var systemProxySettingsFeedback: some View {
         if let receipt = model.systemProxySettingsReceipt {
@@ -513,35 +489,6 @@ struct SettingsView: View {
                 .font(.callout)
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var appRoutingStatus: String {
-        switch model.networkCaptureState {
-        case .waitingForConnection:
-            return AppLocalization.string("Waiting for Connection")
-        case .awaitingUserApproval:
-            return AppLocalization.string("System Approval Required")
-        case .requiresReboot:
-            return AppLocalization.string("Restart Required")
-        case .failed:
-            return AppLocalization.string("Needs Attention")
-        case .off, .enabling, .on, .disabling:
-            break
-        }
-        if let pending = model.pendingNetworkCaptureEnabled {
-            return AppLocalization.string(pending ? "Turning On" : "Turning Off")
-        }
-        return switch model.networkCaptureState {
-        case .off: AppLocalization.string("Off")
-        case .waitingForConnection: AppLocalization.string("Waiting for Connection")
-        case .enabling: AppLocalization.string("Starting")
-        case .awaitingUserApproval: AppLocalization.string("System Approval Required")
-        case let .on(revision):
-            AppLocalization.format("On · revision %@", String(revision))
-        case .disabling: AppLocalization.string("Stopping")
-        case .requiresReboot: AppLocalization.string("Restart Required")
-        case .failed: AppLocalization.string("Needs Attention")
         }
     }
 

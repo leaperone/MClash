@@ -311,21 +311,48 @@ public enum AutomationCodeSignature {
 }
 
 public enum AutomationDiscovery {
+    /// Returns the discovery directory for this process.  An explicit
+    /// absolute path is useful for an isolated development instance; an
+    /// identifier keeps the normal Application Support layout while changing
+    /// only its namespace.  With neither variable set this is exactly the
+    /// production `~/Library/Application Support/MClash/Automation` path.
     public static func defaultDirectory(
         fileManager: FileManager = .default
     ) throws -> URL {
+        let environment = ProcessInfo.processInfo.environment
         let support = try fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
         )
+        if let path = environment["MCLASH_AUTOMATION_DIRECTORY_PATH"], !path.isEmpty {
+            guard path.hasPrefix("/") else {
+                throw AutomationSocketError.invalidDiscoveryDirectory(path)
+            }
+            return URL(filePath: path).standardizedFileURL
+        }
+        let identifier = resolvedApplicationIdentifier(
+            environment: environment
+        )
+        guard !identifier.isEmpty,
+              identifier != ".",
+              identifier != "..",
+              !identifier.contains("/"),
+              !identifier.contains(":") else {
+            throw AutomationSocketError.invalidDiscoveryDirectory(identifier)
+        }
         return support
-            .appendingPathComponent(
-                MClashAutomationProtocol.defaultApplicationIdentifier,
-                isDirectory: true
-            )
+            .appendingPathComponent(identifier, isDirectory: true)
             .appendingPathComponent("Automation", isDirectory: true)
+    }
+
+    static func resolvedApplicationIdentifier(environment: [String: String]) -> String {
+        environment["MCLASH_AUTOMATION_DIRECTORY_IDENTIFIER"]
+            ?? (CommandLine.arguments.contains("--mclash-test-instance")
+                ? "MClash-Shadow"
+                : nil)
+            ?? MClashAutomationProtocol.defaultApplicationIdentifier
     }
 
     public static func defaultFileURL(
@@ -394,6 +421,7 @@ public enum AutomationDiscovery {
 }
 
 public enum AutomationSocketError: Error, LocalizedError, Sendable {
+    case invalidDiscoveryDirectory(String)
     case pathTooLong(String)
     case connectionClosed
     case systemCall(String, Int32)
@@ -406,6 +434,8 @@ public enum AutomationSocketError: Error, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case let .invalidDiscoveryDirectory(path):
+            "The MClash automation discovery directory is invalid: " + path
         case let .pathTooLong(path):
             "The automation socket path is too long: \(path)"
         case .connectionClosed:

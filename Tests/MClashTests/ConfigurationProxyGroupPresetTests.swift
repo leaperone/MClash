@@ -6,24 +6,37 @@ struct ConfigurationProxyGroupPresetTests {
     @Test("Common strategy preset creates a stable nested group hierarchy")
     func createsNestedHierarchyAndRedirectsProxyRules() throws {
         var document = ConfigurationDocument.mclashDefault()
+        let cunoe = Source(kind: .subscription, displayName: "CUNOE-Proxy")
+        let other = Source(kind: .subscription, displayName: "Other subscription")
+        document.sources = [cunoe, other]
         document.nodes = [
             try Node(
                 displayName: "🇺🇸 US primary",
                 protocol: .vless,
                 host: "us.example.com",
-                port: 443
+                port: 443,
+                sourceLinks: [cunoe.id]
             ),
             try Node(
                 displayName: "🇯🇵 日本 backup",
                 protocol: .vless,
                 host: "jp.example.com",
-                port: 443
+                port: 443,
+                sourceLinks: [cunoe.id]
             ),
             try Node(
                 displayName: "🇭🇰 香港 backup",
                 protocol: .vless,
                 host: "hk.example.com",
-                port: 443
+                port: 443,
+                sourceLinks: [cunoe.id]
+            ),
+            try Node(
+                displayName: "🇺🇸 US from another source",
+                protocol: .vless,
+                host: "other.example.com",
+                port: 443,
+                sourceLinks: [other.id]
             ),
         ]
         let originalGroup = try #require(document.proxyGroups.first)
@@ -63,6 +76,46 @@ struct ConfigurationProxyGroupPresetTests {
         #expect(yaml.contains("\"🇺🇸 美国优先\""))
         #expect(yaml.contains("DOMAIN-SUFFIX,example.com,🚀 节点选择"))
         #expect(!yaml.contains("MClash Select"))
+
+        let regionalGroups = [
+            ConfigurationProxyGroupPreset.hongKongGroupName,
+            ConfigurationProxyGroupPreset.unitedStatesGroupName,
+            ConfigurationProxyGroupPreset.japanGroupName,
+        ]
+        for name in regionalGroups {
+            let group = try #require(second.document.proxyGroups.first(where: { $0.name == name }))
+            let resolved = NodeSelectorResolver.resolve(selectors: group.memberSelectors, nodes: second.document.nodes)
+            #expect(resolved.nodeIDs.count == Set(resolved.nodeIDs).count)
+            #expect(!resolved.nodeIDs.contains(where: { $0 == second.document.nodes[3].id }))
+        }
+        let us = try #require(second.document.proxyGroups.first(where: {
+            $0.name == ConfigurationProxyGroupPreset.unitedStatesGroupName
+        }))
+        let usNodes = NodeSelectorResolver.resolve(selectors: us.memberSelectors, nodes: second.document.nodes).nodeIDs
+        #expect(usNodes == [second.document.nodes[0].id])
+    }
+
+    @Test("Regional selectors are source-scoped and remain empty without CUNOE")
+    func regionalSelectorsDoNotImportOtherSources() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        let source = Source(kind: .subscription, displayName: "Other")
+        document.sources = [source]
+        document.nodes = [try Node(
+            displayName: "🇺🇸 US",
+            protocol: .vless,
+            host: "us.example.com",
+            port: 443,
+            sourceLinks: [source.id]
+        )]
+        let result = try ConfigurationProxyGroupPreset.apply(to: document)
+        let groups = result.document.proxyGroups.filter {
+            [ConfigurationProxyGroupPreset.hongKongGroupName,
+             ConfigurationProxyGroupPreset.unitedStatesGroupName,
+             ConfigurationProxyGroupPreset.japanGroupName].contains($0.name)
+        }
+        #expect(groups.allSatisfy {
+            NodeSelectorResolver.resolve(selectors: $0.memberSelectors, nodes: result.document.nodes).nodeIDs.isEmpty
+        })
     }
 
     @Test("A shared proxy rule is cloned before redirecting one configuration")

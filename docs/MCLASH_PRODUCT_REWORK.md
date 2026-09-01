@@ -183,9 +183,9 @@ entrances support multiple named listeners.
 - [x] Re-run typecheck, the complete direct test suite, and the integration
       smoke suite against the final working tree. Bundled Alpha `-t` and actual
       HTTP/SOCKS I/O passed for the copied current manifest.
-- [x] Perform final read-only live acceptance against the currently running
-      1.4.11 app; production PIDs, controller, listeners and system extension
-      state were unchanged.
+- [x] Perform read-only live acceptance against the currently running
+      downgraded 1.3.7 app; production PIDs, controller, listeners and system
+      extension state were unchanged.
 - [x] Re-run the complete release build from a clean commit and inspect the
       packaged generated runtime with the bundled Alpha core.
 - [x] Prepare and verify the next patch artifact (`v1.4.13`), then keep
@@ -205,3 +205,32 @@ entrances support multiple named listeners.
   `Notarized Developer ID`, and its bundled Alpha core/GeoData pass local
   verification. The next release gate is installation acceptance, which is
   intentionally separate and still requires explicit user authorization.
+
+## Follow-up feedback backlog (2026-09-01)
+
+The following items are now part of the same product task and must be closed
+before the next patch is considered complete:
+
+- [x] Make navigation follow the traffic model: Entrances first, then
+      Configuration/Mode, Rules and Rule Sets, Node Groups, Nodes, and Sources.
+      Keep Overview as status, not as the first configuration step.
+- [x] Represent macOS System Proxy and App Routing as entrance capabilities;
+      remove standalone duplicate tabs/switches and explain capture semantics
+      in the Entrances surface.
+- [x] Scope active node groups to the selected CUNOE-Proxy source unless the
+      user explicitly opts into another source. Regional groups must not
+      flatten unrelated regions or duplicate nodes across US/JP/HK groups.
+- [x] Repair stale managed Mixed-port collisions and runtimes where mihomo
+      reports `mixed-port: 0`; a node-only source must never be treated as a
+      missing Mixed configuration.
+- [x] Put China routing safeguards (`GEOSITE,cn` and `GEOIP,CN`) before the
+      proxy catch-all, and expose matched rule, payload, process, bytes and
+      chain in the traffic inspector.
+- [x] Make Traffic a packet-workbench with explicit Live/Paused/Refresh
+      snapshots and primary context actions for exact/suffix domain, app,
+      process, IP/CIDR, GEOIP/GEOSITE and rule-set entries; keep Copy secondary.
+- [ ] Replace opaque “new rule/group/workspace” flows with task-oriented
+      templates and selector criteria, including visible fallback priority.
+- [x] Provide an isolated test-app namespace (data, lock, automation discovery
+      and loopback ports) so new builds can be exercised without replacing the
+      user's running MClash or Network Extension.
