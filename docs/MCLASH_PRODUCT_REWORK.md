@@ -129,13 +129,13 @@ YAML remains a node source; the MClash workspace owns policy and runtime output.
 ## Current status
 
 The 1.4.11 runtime is unified and live on this Mac. The implementation slice in
-the working tree covers the product contract above. Final release work remains
-gated on a clean build, a fresh shadow run using copied Profiles, and read-only
-live acceptance. The bundled Alpha core rejects the non-existent `GEOIP6`
-matcher; IPv6 country-style routing must use `IP-CIDR6` or supported
+the working tree covers the product contract above. Local and remote release
+verification is complete through `v1.4.13`; installation acceptance remains a
+separate explicit action. The bundled Alpha core rejects the non-existent
+`GEOIP6` matcher; IPv6 country-style routing must use `IP-CIDR6` or supported
 `GEOIP`/`GEOSITE` rules. TUN remains explicitly unsupported by this macOS build,
 and App Routing remains one system capture capability even though HTTP/SOCKS5
-entrances are unlimited.
+entrances support multiple named listeners.
 
 ## Implementation ledger (2026-09-01)
 
@@ -186,7 +186,22 @@ entrances are unlimited.
 - [x] Perform final read-only live acceptance against the currently running
       1.4.11 app; production PIDs, controller, listeners and system extension
       state were unchanged.
-- [ ] Re-run the complete release build from a clean commit and inspect the
+- [x] Re-run the complete release build from a clean commit and inspect the
       packaged generated runtime with the bundled Alpha core.
-- [ ] Prepare and verify the next patch artifact (expected `v1.4.12`), then ask
-      separately before installing it over the active app.
+- [x] Prepare and verify the next patch artifact (`v1.4.13`), then keep
+      installation separate from publication.
+
+### Release verification record
+
+- `v1.4.12` tag/run is intentionally retained as a failed, immutable attempt:
+  its code verification passed, but the shared runner's unauthenticated
+  MetaCubeX GEO request hit GitHub REST rate limit (`403`). It was not
+  published and was not reused.
+- `v1.4.13` was published from commit `95c79f3` after passing the authenticated
+  GEO verification fix. GitHub Actions run `33451368492` completed all verify,
+  signing, notarization, packaging, and publication jobs successfully.
+- Published artifact checks were repeated from the release: DMG and ZIP
+  hashes match `SHA256SUMS`; the ZIP bundle is accepted by `spctl` as
+  `Notarized Developer ID`, and its bundled Alpha core/GeoData pass local
+  verification. The next release gate is installation acceptance, which is
+  intentionally separate and still requires explicit user authorization.
