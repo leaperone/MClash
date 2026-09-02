@@ -187,3 +187,24 @@ enum OutboundConnectorRoutingPolicy {
         return false
     }
 }
+
+enum NativeConnectorRegistryError: Error, Equatable, Sendable {
+    case unsupportedProtocol(String)
+}
+
+/// Central protocol dispatch for the native connector rollout. Keeping this
+/// table explicit prevents an unknown subscription protocol from silently
+/// being treated as a Mihomo route.
+enum NativeConnectorRegistry {
+    static let supportedProtocols: Set<String> = ["socks5", "vless", "trojan", "hysteria2"]
+
+    static func supports(_ target: OutboundNodeTarget) -> Bool {
+        supportedProtocols.contains(target.protocolName)
+    }
+
+    static func validate(_ target: OutboundNodeTarget) throws {
+        guard supports(target) else {
+            throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
+        }
+    }
+}

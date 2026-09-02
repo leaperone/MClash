@@ -107,4 +107,13 @@ struct OutboundConnectorTests {
         connection.cancel()
         #expect(target.protocolName == "hysteria2")
     }
+
+    @Test("Native connector registry rejects unknown subscription protocols")
+    func registryRejectsUnknownProtocol() throws {
+        let target = try OutboundNodeTarget(protocolName: "quic", host: "node.example.com", port: 443)
+        #expect(!NativeConnectorRegistry.supports(target))
+        #expect(throws: NativeConnectorRegistryError.unsupportedProtocol("quic")) {
+            try NativeConnectorRegistry.validate(target)
+        }
+    }
 }
