@@ -871,6 +871,17 @@ final class AppModel {
         return try? DNSUpstreamBootstrap(endpoints: endpoints)
     }
 
+    private var configuredNativeInboundListenerRegistry: MClashListenerRegistry? {
+        guard usesNativeRuntime,
+              let workspace = configurationDocument.currentWorkspace else {
+            return nil
+        }
+        let entrances = workspace.entranceIDs.compactMap { id in
+            configurationDocument.entrances.first(where: { $0.id == id })
+        }
+        return try? MClashListenerRegistryAdapter.registry(from: entrances)
+    }
+
     init(
         supervisor: (any NativeRuntimeController)? = nil,
         binaryLocator: CoreBinaryLocator = CoreBinaryLocator(),
@@ -7027,7 +7038,9 @@ final class AppModel {
                     routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
                     dnsUpstreamMode: configuredDNSUpstreamMode,
                     nativeUpstreamBootstrap: configuredNativeDNSUpstreamBootstrap,
-                    outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
+                    outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog(),
+                    inboundListenerRegistry: configuredNativeInboundListenerRegistry,
+                    nativeInboundListenersEnabled: usesNativeRuntime
                 )
                 let updateOutcome = try await networkExtensionControl
                     .updateRuntimeConfiguration(configuration)
@@ -7219,7 +7232,9 @@ final class AppModel {
                         routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
                         dnsUpstreamMode: configuredDNSUpstreamMode,
                         nativeUpstreamBootstrap: configuredNativeDNSUpstreamBootstrap,
-                        outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
+                        outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog(),
+                        inboundListenerRegistry: configuredNativeInboundListenerRegistry,
+                        nativeInboundListenersEnabled: usesNativeRuntime
                     )
                     let rollbackOutcome = try await networkExtensionControl
                         .updateRuntimeConfiguration(rollbackConfiguration)
@@ -7505,7 +7520,9 @@ final class AppModel {
                 routeProxyEndpoints: routeProxyEndpoints,
                 dnsUpstreamMode: configuredDNSUpstreamMode,
                 nativeUpstreamBootstrap: configuredNativeDNSUpstreamBootstrap,
-                outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
+                outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog(),
+                inboundListenerRegistry: configuredNativeInboundListenerRegistry,
+                nativeInboundListenersEnabled: usesNativeRuntime
             )
             guard !shutdownInProgress else { throw CancellationError() }
             let outcome = try await networkExtensionControl.enable(
