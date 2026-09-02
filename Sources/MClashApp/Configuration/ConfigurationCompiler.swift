@@ -58,8 +58,14 @@ extension ConfigurationCompilationError: LocalizedError {
 /// sections can never leak into runtime configuration.
 public struct ConfigurationCompiler: Sendable {
     public static let version = "mclash-config-1"
+    /// Compatibility switch for the staged inbound-listener migration. New
+    /// callers can disable Mihomo-owned listeners while retaining the same
+    /// outbound node document; MClash then owns the configured ports.
+    public let emitsMihomoListeners: Bool
 
-    public init() {}
+    public init(emitsMihomoListeners: Bool = true) {
+        self.emitsMihomoListeners = emitsMihomoListeners
+    }
 
     public func compile(
         document: ConfigurationDocument,
@@ -172,7 +178,8 @@ public struct ConfigurationCompiler: Sendable {
             dns: dns,
             entrances: workspace.entranceIDs.compactMap { entrancesByID[$0] },
             routingMode: workspace.routingMode,
-            globalProxyGroupID: workspace.globalProxyGroupID ?? workspaceGroups.first?.id
+            globalProxyGroupID: workspace.globalProxyGroupID ?? workspaceGroups.first?.id,
+            emitsMihomoListeners: emitsMihomoListeners
         )
         let yamlData = Data(yaml.utf8)
         guard yamlData.count <= ConfigurationAutomationLimits.compiledYAMLBytes else {
@@ -228,9 +235,12 @@ public struct ConfigurationCompiler: Sendable {
         dns: DNSPolicy?,
         entrances: [Entrance],
         routingMode: ConfigurationRoutingMode,
-        globalProxyGroupID: ProxyGroupID?
+        globalProxyGroupID: ProxyGroupID?,
+        emitsMihomoListeners: Bool
     ) -> String {
-        let enabledPortEntrances = entrances.filter { ($0.kind == .http || $0.kind == .socks5) && $0.enabled }
+        let enabledPortEntrances = emitsMihomoListeners
+            ? entrances.filter { ($0.kind == .http || $0.kind == .socks5) && $0.enabled }
+            : []
         let bindAddress = enabledPortEntrances.first?.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         var groups = groups
         if routingMode == .global, let globalProxyGroupID,

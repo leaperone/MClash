@@ -65,3 +65,18 @@ struct ConfigurationRoutingModeTests {
         #expect(!direct.contains("proxy: \"GLOBAL\""))
     }
 }
+
+extension ConfigurationRoutingModeTests {
+    @Test("Native inbound mode omits Mihomo-owned listeners")
+    func nativeInboundCompilerOmitsListeners() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        document.entrances[0].enabled = true
+        let yaml = String(
+            decoding: try ConfigurationCompiler(emitsMihomoListeners: false)
+                .compile(document: document).yaml,
+            as: UTF8.self
+        )
+        #expect(!yaml.contains("listeners:"))
+        #expect(yaml.contains("proxies:"))
+    }
+}
