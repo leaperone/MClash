@@ -2528,15 +2528,32 @@ final class AppModel {
         guard let store = networkCaptureConfigurationStore else {
             throw AppModelError.profileStoreUnavailable
         }
-        guard networkCapturePreferences.snapshot.rules != compiled.captureRules
+        if networkCapturePreferences.snapshot.rules != compiled.captureRules
                 || networkCapturePreferences.enabled != compiled.captureEnabled
-                || networkCapturePreferences.dnsEnabled != compiled.captureDNSEnabled
-        else { return }
-        networkCapturePreferences = try await store.replaceRules(
-            compiled.captureRules,
-            enabled: compiled.captureEnabled,
-            dnsEnabled: compiled.captureDNSEnabled,
-            failOpen: networkCapturePreferences.failOpen
+                || networkCapturePreferences.dnsEnabled != compiled.captureDNSEnabled {
+            networkCapturePreferences = try await store.replaceRules(
+                compiled.captureRules,
+                enabled: compiled.captureEnabled,
+                dnsEnabled: compiled.captureDNSEnabled,
+                failOpen: networkCapturePreferences.failOpen
+            )
+        }
+        try await synchronizeNativeRuntimePolicy(compiled)
+    }
+
+    /// Pushes the same compiled snapshot used by capture into the native
+    /// runtime. The explicit capability gate leaves production's legacy
+    /// Mihomo controller untouched until MCLASH_NATIVE_RUNTIME=1 is set.
+    private func synchronizeNativeRuntimePolicy(
+        _ compiled: CompiledConfiguration
+    ) async throws {
+        guard usesNativeRuntime else { return }
+        let listeners = try MClashListenerRegistryAdapter.registry(
+            from: compiled.runtimePlan.entrances
+        )
+        try await supervisor.configure(
+            plan: compiled.runtimePlan,
+            listeners: listeners
         )
     }
 

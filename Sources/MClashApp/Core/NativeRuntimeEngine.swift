@@ -177,6 +177,13 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
         }
         sessionState = state
         listenerHandles = Self.makeListenerHandles(for: listeners)
+        // A policy reload may occur while the native runtime is active. The
+        // Network Extension owns actual sockets, so refreshing the safe
+        // handles is enough here; mirror the current running state for
+        // enabled entrances without binding anything in this process.
+        if currentState.isRunning {
+            beginListeners()
+        }
         sessionValidationError = nil
         lastError = nil
         continuation.yield(.log(CoreLogLine(

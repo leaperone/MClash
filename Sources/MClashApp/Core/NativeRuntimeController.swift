@@ -1,4 +1,5 @@
 import Foundation
+import MClashNetworkShared
 
 /// Connector-neutral lifecycle surface used by the application model.
 ///
@@ -19,6 +20,10 @@ protocol NativeRuntimeController: AnyObject, Sendable {
     func stop() async -> Bool
     func validate(_ configuration: CoreLaunchConfiguration) async throws
     func validateWithoutStateChanges(_ configuration: CoreLaunchConfiguration) async throws
+
+    /// Attach MClash's connector-neutral policy snapshot to a native runtime.
+    /// Legacy controllers intentionally ignore this state during migration.
+    func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws
 
     /// Log forwarding is deliberately synchronous: CoreSupervisor uses this
     /// from pipe callbacks, and the gate itself is thread-safe.
@@ -45,8 +50,14 @@ extension CoreSupervisor {
             workspaceRevision: nil,
             listenerCount: 0,
             enabledListenerCount: 0,
-            sessionValidationError: nil
+            sessionValidationError: nil,
+            listenerStates: [:]
         )
+    }
+
+    func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
+        // CoreSupervisor remains the legacy Mihomo adapter. Native policy is
+        // consumed only by NativeRuntimeEngine.
     }
 }
 
@@ -90,6 +101,11 @@ final actor MihomoRuntimeControllerAdapter: NativeRuntimeController {
 
     func validateWithoutStateChanges(_ configuration: CoreLaunchConfiguration) async throws {
         try await supervisor.validateWithoutStateChanges(configuration)
+    }
+
+    func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
+        // Keep the legacy adapter's behavior unchanged while native runtime is
+        // opt-in. The arguments are intentionally not rendered to Mihomo.
     }
 
     nonisolated func setProcessLogForwardingEnabled(_ enabled: Bool) {
