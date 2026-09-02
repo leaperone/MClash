@@ -269,4 +269,14 @@ enum NativeConnectorRegistry {
     static func kind(for target: OutboundNodeTarget) -> NativeConnectorKind? {
         NativeConnectorKind(rawValue: target.protocolName)
     }
+
+    static func validateForProduction(_ target: OutboundNodeTarget) throws {
+        guard let kind = kind(for: target) else {
+            throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
+        }
+        switch kind {
+        case .socks5, .vless, .trojan, .hysteria2:
+            break
+        }
+    }
 }
