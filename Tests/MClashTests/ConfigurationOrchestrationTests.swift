@@ -729,6 +729,7 @@ struct ConfigurationOrchestrationTests {
         #expect(yaml.contains("GEOSITE,cn,DIRECT"))
         #expect(yaml.contains("GEOIP,CN,DIRECT,no-resolve"))
         #expect(yaml.contains("GEOSITE,gfw,MClash Select"))
+        #expect(yaml.contains("tv.parsec.www"))
     }
 
     @MainActor

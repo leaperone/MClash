@@ -91,7 +91,7 @@ public extension ConfigurationDocument {
             "192.168.0.0/16", "169.254.0.0/16", "::1/128",
             "fc00::/7", "fe80::/10",
         ]
-        return cidrs.enumerated().map { offset, cidr in
+        let networkRules = cidrs.enumerated().map { offset, cidr in
             RoutingRule(
                 id: RoutingRuleID.stable(for: "mclash-builtin-lan-direct-v1|\(cidr)"),
                 priority: -1_000 + offset,
@@ -99,5 +99,12 @@ public extension ConfigurationDocument {
                 action: .direct
             )
         }
+        let parsec = RoutingRule(
+            id: RoutingRuleID.stable(for: "mclash-builtin-parsec-direct-v1"),
+            priority: -900,
+            matchers: [.application("tv.parsec.www")],
+            action: .direct
+        )
+        return networkRules + [parsec]
     }
 }
