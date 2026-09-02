@@ -36,6 +36,23 @@ public struct Hysteria2Session: Sendable {
         return true
     }
 
+    public mutating func handleAuthenticationResponse(
+        statusCode: Int,
+        headers: [String: String]
+    ) -> Bool {
+        guard state == .authenticating else { return false }
+        do {
+            let response = try Hysteria2Codec.decodeAuthResponse(
+                statusCode: statusCode,
+                headers: headers
+            )
+            return authenticationSucceeded(udpEnabled: response.udpEnabled)
+        } catch {
+            fail(String(describing: error))
+            return false
+        }
+    }
+
     public mutating func beginClose() -> Bool {
         guard state != .closed, state != .closing else { return false }
         state = .closing

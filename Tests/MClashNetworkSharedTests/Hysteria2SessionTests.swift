@@ -23,4 +23,16 @@ struct Hysteria2SessionTests {
         #expect(!session.authenticationSucceeded(udpEnabled: false))
         #expect(session.beginAuthentication())
     }
+
+    @Test("Only a valid 233 auth response enters ready")
+    func authenticationResponse() {
+        var session = Hysteria2Session()
+        #expect(session.beginConnect())
+        #expect(session.beginAuthentication())
+        #expect(session.handleAuthenticationResponse(
+            statusCode: 233,
+            headers: ["Hysteria-UDP": "true"]
+        ))
+        #expect(session.state == .ready(udpEnabled: true))
+    }
 }
