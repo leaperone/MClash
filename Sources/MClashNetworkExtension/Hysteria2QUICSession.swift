@@ -123,7 +123,7 @@ final class Hysteria2QUICSession: @unchecked Sendable {
     func openTCPStream(
         to destination: SOCKS5Endpoint,
         padding: Data = Data(),
-        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+        completion: @escaping @Sendable (Result<NWConnection, Error>) -> Void
     ) {
         queue.async { [weak self] in
             guard let self, case .ready = self.state.state, let connection = self.connection else {
@@ -136,7 +136,7 @@ final class Hysteria2QUICSession: @unchecked Sendable {
                     if let error {
                         completion(.failure(error))
                     } else {
-                        self.readTCPResponse(completion: completion)
+                        self.readTCPResponse(connection: connection, completion: completion)
                     }
                 })
             } catch {
@@ -229,9 +229,9 @@ final class Hysteria2QUICSession: @unchecked Sendable {
     }
 
     private func readTCPResponse(
-        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+        connection: NWConnection,
+        completion: @escaping @Sendable (Result<NWConnection, Error>) -> Void
     ) {
-        guard let connection else { return }
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             self.queue.async {
@@ -242,17 +242,17 @@ final class Hysteria2QUICSession: @unchecked Sendable {
                 do {
                     guard let data, !data.isEmpty else {
                         if isComplete { throw Hysteria2CodecError.invalidResponse }
-                        self.readTCPResponse(completion: completion)
+                        self.readTCPResponse(connection: connection, completion: completion)
                         return
                     }
                     guard let response = try self.tcpResponseDecoder.append(data) else {
-                        self.readTCPResponse(completion: completion)
+                        self.readTCPResponse(connection: connection, completion: completion)
                         return
                     }
                     guard response.accepted else {
                         throw Hysteria2CodecError.serverRejected(response.message)
                     }
-                    completion(.success(()))
+                    completion(.success(connection))
                 } catch {
                     self.state.fail(error.localizedDescription)
                     completion(.failure(error))

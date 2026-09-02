@@ -9,17 +9,20 @@ final class Hysteria2TCPStreamRelay: @unchecked Sendable {
     private let flow: NEAppProxyTCPFlow
     private let connection: NWConnection
     private let queue: DispatchQueue
+    private let completion: (@Sendable () -> Void)?
     private var stopped = false
     private var opened = false
 
     init(
         flow: NEAppProxyTCPFlow,
         connection: NWConnection,
-        queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.hysteria2-tcp-relay")
+        queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.hysteria2-tcp-relay"),
+        completion: (@Sendable () -> Void)? = nil
     ) {
         self.flow = flow
         self.connection = connection
         self.queue = queue
+        self.completion = completion
     }
 
     func start() {
@@ -113,5 +116,6 @@ final class Hysteria2TCPStreamRelay: @unchecked Sendable {
         connection.cancel()
         flow.closeReadWithError(error)
         flow.closeWriteWithError(error)
+        completion?()
     }
 }

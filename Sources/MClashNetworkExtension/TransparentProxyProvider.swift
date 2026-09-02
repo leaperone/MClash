@@ -19,6 +19,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
     private let runtime = ProviderRuntimeState(providerName: "transparent-proxy")
     private let flowDecisionCoordinator = NetworkExtensionFlowDecisionCoordinator()
     private let tcpRelays = TCPFlowRelayRegistry()
+    private let hysteria2Relays = Hysteria2RelayRegistry()
     private let udpSessions = UDPFlowSessionRegistry()
     private let activities = AppRoutingActivityRing(capacity: 2_000)
 
@@ -57,6 +58,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         completionHandler: @escaping () -> Void
     ) {
         tcpRelays.cancelAll()
+        hysteria2Relays.cancelAll()
         udpSessions.cancelAll()
         runtime.stop()
         completionHandler()
@@ -100,6 +102,20 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 // Native node connectors are independent from the legacy
                 // loopback Mihomo SOCKS listener. Use the original endpoint
                 // for their protocol handshake and allow a nil proxy.
+                // Hysteria2 has a QUIC/HTTP3 handshake and cannot be sent
+                // through the SOCKS5-oriented TCPFlowRelay. Keep it as a
+                // provider-owned native path, with fallback before the
+                // intercepted flow is opened if authentication fails.
+                if let target = plan.nativeTarget,
+                   NativeConnectorRegistry.kind(for: target) == .hysteria2 {
+                    startNativeHysteria2TCP(
+                        flow: tcpFlow,
+                        plan: plan,
+                        target: target
+                    )
+                    return true
+                }
+
                 let destination: SOCKS5Endpoint
                 if plan.nativeConnector != nil {
                     guard let nativeDestination = plan.destination else {
@@ -131,6 +147,91 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             decision = flowDecisionCoordinator.failOpen(.unsupportedRemoteEndpoint)
         }
         return observeWithoutIntercepting(decision)
+    }
+
+    private func startNativeHysteria2TCP(
+        flow: NEAppProxyTCPFlow,
+        plan: TCPFlowInterceptionPlan,
+        target: OutboundNodeTarget
+    ) {
+        let flowID = plan.activity.flowIdentifier
+        let connector = NativeHysteria2OutboundConnector(target: target)
+        let session = Hysteria2QUICSession(connector: connector)
+        hysteria2Relays.retain(session: session, for: flowID)
+        session.start { [weak self, weak flow] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                self.hysteria2Relays.release(flowID: flowID)
+                guard let flow else { return }
+                self.handleNativeHysteria2Failure(
+                    flow: flow,
+                    plan: plan,
+                    error: error
+                )
+            case .success:
+                guard let destination = plan.destination else {
+                    self.hysteria2Relays.release(flowID: flowID)
+                    self.handleNativeHysteria2Failure(
+                        flow: flow,
+                        plan: plan,
+                        error: TCPFlowRelayError.upstreamClosedDuringHandshake
+                    )
+                    return
+                }
+                session.openTCPStream(to: destination) { [weak self, weak flow] openResult in
+                    guard let self else { return }
+                    switch openResult {
+                    case .failure(let error):
+                        self.hysteria2Relays.release(flowID: flowID)
+                        guard let flow else { return }
+                        self.handleNativeHysteria2Failure(
+                            flow: flow,
+                            plan: plan,
+                            error: error
+                        )
+                    case let .success(connection):
+                        guard let flow else {
+                            self.hysteria2Relays.release(flowID: flowID)
+                            return
+                        }
+                        let relay = Hysteria2TCPStreamRelay(
+                            flow: flow,
+                            connection: connection,
+                            completion: { [weak self] in
+                                self?.hysteria2Relays.release(flowID: flowID)
+                            }
+                        )
+                        self.hysteria2Relays.retain(tcp: relay, for: flowID)
+                        relay.start()
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleNativeHysteria2Failure(
+        flow: NEAppProxyTCPFlow,
+        plan: TCPFlowInterceptionPlan,
+        error: Error
+    ) {
+        switch plan.unavailableFallback {
+        case .direct:
+            guard let destination = plan.destination else {
+                flow.closeReadWithError(error)
+                flow.closeWriteWithError(error)
+                return
+            }
+            tcpRelays.startDirect(
+                flow: flow,
+                destination: destination,
+                relayNote: "Hysteria2 native connection failed before application payload forwarding; MClash used the rule's Direct fallback. \(error.localizedDescription)",
+                activityObserver: relayObserver(for: plan.activity.flowIdentifier)
+            )
+        case .reject:
+            flow.closeReadWithError(error)
+            flow.closeWriteWithError(error)
+        }
     }
 
     @available(macOS, introduced: 14.0, obsoleted: 15.0)

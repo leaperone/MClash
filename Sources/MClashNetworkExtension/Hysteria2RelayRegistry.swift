@@ -39,6 +39,17 @@ final class Hysteria2RelayRegistry: @unchecked Sendable {
         session?.cancel()
     }
 
+    /// Releases ownership after a relay has finished itself. Unlike
+    /// `remove`, this does not call cancel again (which would race the
+    /// relay's completion callback).
+    func release(flowID: UUID) {
+        lock.lock()
+        sessions.removeValue(forKey: flowID)
+        tcpRelays.removeValue(forKey: flowID)
+        udpRelays.removeValue(forKey: flowID)
+        lock.unlock()
+    }
+
     func cancelAll() {
         lock.lock()
         let allSessions = Array(sessions.values)
