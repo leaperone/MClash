@@ -173,6 +173,39 @@ struct ConfigurationSplitPathsTests {
         #expect(yaml.contains("port: 7891"))
     }
 
+    @Test("Clearing the browser source unbinds the listener default action")
+    func browserPathClearsSource() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        let source = Source(kind: .subscription, displayName: "Smart Proxy")
+        document.sources = [source]
+        document.nodes = [
+            try Node(
+                displayName: "US 01",
+                protocol: .vless,
+                host: "us.example.com",
+                port: 443,
+                sourceLinks: [source.id]
+            )
+        ]
+        document = try ConfigurationSplitPaths.applyBrowserPath(
+            to: document,
+            sourceID: source.id,
+            kind: .http,
+            port: 7890,
+            enabled: true
+        )
+        document = try ConfigurationSplitPaths.applyBrowserPath(
+            to: document,
+            sourceID: nil,
+            kind: .http,
+            port: 7890,
+            enabled: true
+        )
+        let path = ConfigurationSplitPaths.browserPath(from: document)
+        #expect(path.sourceID == nil)
+        #expect(document.entrances.first { $0.kind == .http }?.defaultAction == .direct)
+    }
+
     @Test("An app source remains selected even before any app is listed")
     func appPathRemembersSourceWithoutRules() throws {
         var document = ConfigurationDocument.mclashDefault()

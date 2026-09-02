@@ -2388,10 +2388,6 @@ final class AppModel {
         defer { end(.changeRuntimeSettings) }
         _ = try ConfigurationCompiler().compile(document: document)
         try await persistConfigurationDocument(document)
-        guard unifiedConfigurationEnabled else { return }
-        let compiled = try compileConfiguration()
-        compiledConfiguration = compiled
-        try await synchronizeCompiledCaptureState(compiled)
     }
 
     @discardableResult

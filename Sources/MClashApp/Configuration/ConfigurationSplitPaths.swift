@@ -99,7 +99,7 @@ enum ConfigurationSplitPaths {
             )
             action = .proxyGroup(groupID)
         } else {
-            action = browserEntrance(in: document)?.defaultAction ?? .direct
+            action = .direct
         }
 
         let entranceID = upsertPortEntrance(
@@ -344,18 +344,9 @@ enum ConfigurationSplitPaths {
     private static func selectedAppSourceID(in document: ConfigurationDocument) -> SourceID? {
         guard let linked = document.currentWorkspace?.proxyGroupIDs else { return nil }
         let linkedSet = Set(linked)
-        if let source = document.sources.first(where: { source in
+        return document.sources.first { source in
             linkedSet.contains(groupID(for: source.id, role: .apps))
-        }) {
-            return source.id
-        }
-        for id in linked {
-            guard let group = document.proxyGroups.first(where: { $0.id == id }) else { continue }
-            if let source = document.sources.first(where: { isSourceOnlyGroup(group, sourceID: $0.id) }) {
-                return source.id
-            }
-        }
-        return nil
+        }?.id
     }
 
     private static func unlinkOtherAppSourceGroups(
