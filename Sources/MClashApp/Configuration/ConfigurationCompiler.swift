@@ -58,6 +58,12 @@ extension ConfigurationCompilationError: LocalizedError {
 /// sections can never leak into runtime configuration.
 public struct ConfigurationCompiler: Sendable {
     public static let version = "mclash-config-1"
+    /// The fallback is deliberately a domestic resolver.  Cloudflare's
+    /// 1.1.1.1 is not reachable on a number of networks where MClash is used;
+    /// making it part of the generated document turns a transient upstream
+    /// outage into a startup/route failure.  Users can still explicitly add
+    /// another resolver in their MClash DNS policy.
+    public static let defaultDNSNameservers = ["223.5.5.5"]
     /// Compatibility switch for the staged inbound-listener migration. New
     /// callers can disable Mihomo-owned listeners while retaining the same
     /// outbound node document; MClash then owns the configured ports.
@@ -241,7 +247,9 @@ public struct ConfigurationCompiler: Sendable {
         let enabledPortEntrances = emitsMihomoListeners
             ? entrances.filter { ($0.kind == .http || $0.kind == .socks5) && $0.enabled }
             : []
-        let bindAddress = enabledPortEntrances.first?.bindAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bindAddress = enabledPortEntrances.first.map {
+            Self.safeListenerBindAddress($0.bindAddress)
+        }
         var groups = groups
         if routingMode == .global, let globalProxyGroupID,
            groups.contains(where: { $0.id == globalProxyGroupID }),
@@ -295,7 +303,11 @@ public struct ConfigurationCompiler: Sendable {
                 lines.append("  - name: \(yamlString(runtimeEntranceName(entrance)))")
                 lines.append("    type: \(entrance.kind == .http ? "http" : "socks")")
                 lines.append("    port: \(port)")
-                lines.append("    listen: \(yamlString(entrance.bindAddress))")
+                // Imported profiles historically used `0.0.0.0` (and
+                // occasionally `*`) for their listener.  MClash listeners
+                // are local entry points; never expose them on the LAN by
+                // inheriting that source setting.
+                lines.append("    listen: \(yamlString(Self.safeListenerBindAddress(entrance.bindAddress)))")
                 // In rule mode, leave the listener target unset so Mihomo
                 // evaluates the compiled rules table for each connection.
                 // Setting `proxy` here bypasses rules entirely and makes an
@@ -436,7 +448,7 @@ public struct ConfigurationCompiler: Sendable {
         let dnsEnabled = dns?.takeoverEnabled == true && dns?.mode != .system
         lines.append("  enable: \(dnsEnabled)")
         lines.append("  enhanced-mode: \(mihomoDNSMode(dns?.mode ?? .system))")
-        let nameservers = dns?.nameservers.isEmpty == false ? dns!.nameservers : ["223.5.5.5", "1.1.1.1"]
+        let nameservers = dns?.nameservers.isEmpty == false ? dns!.nameservers : Self.defaultDNSNameservers
         lines.append("  nameserver: [\(nameservers.map(yamlString).joined(separator: ", "))]")
         if let fallback = dns?.fallbackNameservers, !fallback.isEmpty {
             lines.append("  fallback: [\(fallback.map(yamlString).joined(separator: ", "))]")
@@ -452,6 +464,16 @@ public struct ConfigurationCompiler: Sendable {
         }
 
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func safeListenerBindAddress(_ raw: String) -> String {
+        let address = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch address.lowercased() {
+        case "", "*", "0.0.0.0", "::", "[::]":
+            return "127.0.0.1"
+        default:
+            return address
+        }
     }
 
     private func render(node: Node, name: String?) -> [String] {

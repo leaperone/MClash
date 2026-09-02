@@ -5,7 +5,7 @@ public extension ConfigurationDocument {
     /// provider nodes and source rules; importing a source only fills the node
     /// catalog and never replaces these MClash-owned policies.
     static func mclashDefault() -> Self {
-        let dns = DNSPolicy(name: "MClash DNS", mode: .redirHost, nameservers: ["223.5.5.5", "1.1.1.1"], takeoverEnabled: true)
+        let dns = DNSPolicy(name: "MClash DNS", mode: .redirHost, nameservers: ConfigurationCompiler.defaultDNSNameservers, takeoverEnabled: true)
         // An empty include list means “all enabled nodes in the catalog”. It
         // keeps the default group dynamic as subscriptions grow; individual
         // pins are stored separately by the group editor.
