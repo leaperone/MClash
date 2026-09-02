@@ -5,6 +5,16 @@ import MClashNetworkShared
 /// capture wire format during the staged migration. It is intentionally
 /// one-way: provider activity never mutates authoritative rules.
 public enum ConfigurationCaptureAdapter {
+    /// Network Extension capture providers have a much smaller per-rule
+    /// matcher budget than Mihomo's native rules table.  Keep large imported
+    /// lists (notably GFWList) representable by emitting adjacent equivalent
+    /// rules instead of putting thousands of destinations in one rule.
+    ///
+    /// The chunks deliberately retain the same source, ports, protocol and
+    /// action.  Since CaptureRuleEngine evaluates rules in priority/insertion
+    /// order, adjacent chunks are one logical OR over the destination list.
+    private static let maximumDestinationsPerCaptureRule = 256
+
     public struct Result: Equatable, Sendable {
         public let rules: [CaptureRule]
         public let diagnostics: [ConfigurationDiagnostic]
@@ -115,18 +125,35 @@ public enum ConfigurationCaptureAdapter {
                 action = .mihomo(.group(name))
             }
             do {
-                let captureRule = try CaptureRule(
-                    id: rule.id.rawValue.uuidString.lowercased(),
-                    enabled: rule.enabled,
-                    priority: rule.priority,
-                    sources: sources,
-                    destinations: destinations,
-                    protocols: protocols,
-                    portRanges: ports,
-                    action: action,
-                    unavailableFallback: rule.unavailableFallback == .direct ? .direct : .reject
-                )
-                converted.append(captureRule)
+                let chunks: [[DestinationMatcher]]
+                if destinations.isEmpty {
+                    chunks = [[]]
+                } else {
+                    chunks = stride(
+                        from: 0,
+                        to: destinations.count,
+                        by: Self.maximumDestinationsPerCaptureRule
+                    ).map { start in
+                        Array(destinations[
+                            start ..< min(start + Self.maximumDestinationsPerCaptureRule, destinations.count)
+                        ])
+                    }
+                }
+                let baseID = rule.id.rawValue.uuidString.lowercased()
+                for (index, chunk) in chunks.enumerated() {
+                    let captureRule = try CaptureRule(
+                        id: chunks.count == 1 ? baseID : baseID + "-part-" + String(index + 1),
+                        enabled: rule.enabled,
+                        priority: rule.priority,
+                        sources: sources,
+                        destinations: chunk,
+                        protocols: protocols,
+                        portRanges: ports,
+                        action: action,
+                        unavailableFallback: rule.unavailableFallback == .direct ? .direct : .reject
+                    )
+                    converted.append(captureRule)
+                }
             } catch {
                 diagnostics.append(.init(
                     severity: .error,
