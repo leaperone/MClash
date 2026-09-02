@@ -91,26 +91,10 @@ jobs:
             echo "prerelease=${prerelease}"
           } >> "${GITHUB_OUTPUT}"
 
-  verify-typecheck:
-    name: Verify typecheck and links
-    needs: prepare
-    runs-on: macos-15
-    timeout-minutes: 35
-    steps:
-      - name: Check out source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ needs.prepare.outputs.tag }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Typecheck and link all products
-        shell: zsh {0}
-        run: ./scripts/typecheck.sh
-
   verify-unit:
     name: Verify unit and release metadata tests
     needs: prepare
-    runs-on: macos-15
+    runs-on: macos-15-xlarge
     timeout-minutes: 25
     steps:
       - name: Check out source
@@ -128,7 +112,7 @@ jobs:
   verify-integration:
     name: Verify Mihomo integration smoke
     needs: prepare
-    runs-on: macos-15
+    runs-on: macos-15-xlarge
     timeout-minutes: 35
     env:
       GH_TOKEN: ${{ github.token }}
@@ -146,8 +130,11 @@ jobs:
 
   release:
     name: Sign, notarize, and publish
-    needs: [prepare, verify-typecheck, verify-unit, verify-integration]
-    runs-on: macos-15
+    # The signed release build is the authoritative full-product compile/link
+    # gate. A separate typecheck job duplicated that work and added ~18 minutes
+    # to each release, so typecheck remains a developer/PR check only.
+    needs: [prepare, verify-unit, verify-integration]
+    runs-on: macos-15-xlarge
     timeout-minutes: 60
     environment:
       name: release
