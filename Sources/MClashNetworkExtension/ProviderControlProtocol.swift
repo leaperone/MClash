@@ -61,6 +61,8 @@ enum ProviderConfigurationKey {
     static let captureConfigurationSnapshot = "captureConfigurationSnapshot"
     /// JSON-encoded `[MihomoRouteProxyEndpoint]` stored as `Data`/`NSData`.
     static let mihomoRouteProxyCatalog = "mihomoRouteProxyCatalog"
+    /// JSON-encoded `OutboundNodeTargetCatalog` for native connector rollout.
+    static let outboundNodeTargetCatalog = "outboundNodeTargetCatalog"
     static let mihomoSOCKSHost = "mihomoSOCKSHost"
     static let mihomoSOCKSPort = "mihomoSOCKSPort"
     static let mihomoSOCKSUsername = "mihomoSOCKSUsername"

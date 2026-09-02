@@ -14,6 +14,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     let captureEnabled: Bool
     let encodedCaptureSnapshot: Data?
     let encodedMihomoRouteProxyCatalog: Data?
+    let encodedOutboundNodeTargetCatalog: Data?
     let encodedDNSProxyBootstrap: Data?
     let mihomoListener: NetworkExtensionMihomoListenerConfiguration?
     let dnsUpstreamMode: DNSUpstreamMode
@@ -33,6 +34,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         captureEnabled = true
         encodedCaptureSnapshot = nil
         encodedMihomoRouteProxyCatalog = nil
+        encodedOutboundNodeTargetCatalog = nil
         encodedDNSProxyBootstrap = nil
         mihomoListener = nil
     }
@@ -70,6 +72,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         let endpoints = try routeProxyEndpoints ?? mihomoListener.routeProxyEndpoints()
         let routeProxyCatalog = try MihomoRouteProxyCatalog.encode(endpoints)
         encodedMihomoRouteProxyCatalog = routeProxyCatalog
+        encodedOutboundNodeTargetCatalog = nil
         guard let profileRulesProxy = endpoints.first(where: { $0.route == .profileRules }) else {
             throw NetworkExtensionRuntimeConfigurationError.missingProfileRulesProxy
         }
@@ -96,6 +99,9 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         }
         if let encodedMihomoRouteProxyCatalog {
             configuration["mihomoRouteProxyCatalog"] = encodedMihomoRouteProxyCatalog as NSData
+        }
+        if let encodedOutboundNodeTargetCatalog {
+            configuration["outboundNodeTargetCatalog"] = encodedOutboundNodeTargetCatalog as NSData
         }
         if let encodedDNSProxyBootstrap {
             configuration["dnsProxyBootstrap"] = encodedDNSProxyBootstrap as NSData
