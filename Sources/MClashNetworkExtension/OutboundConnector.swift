@@ -255,6 +255,7 @@ final class VLESSWebSocketStreamCodec: NativeStreamCodec, @unchecked Sendable {
 enum VLESSWebSocketCodecError: Error, Equatable, Sendable {
     case invalidFrame
     case messageTooLarge
+    case upgradeRequiresTwoPhaseHandshake
 }
 
 /// VLESS over WebSocket connector. The HTTP upgrade and VLESS request are
@@ -286,6 +287,12 @@ struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHa
     }
 
     func responseHandshake(for destination: SOCKS5Endpoint) throws -> Data {
+        // The current relay can send one initial request and then only read
+        // until the response gate opens. Sending VLESS bytes before the 101
+        // response is invalid for strict WebSocket servers, so this foundation
+        // connector must fail closed until a post-upgrade write hook exists.
+        throw VLESSWebSocketCodecError.upgradeRequiresTwoPhaseHandshake
+        /*
         guard target.parameters["uuid"] != nil else { throw VLESSCodecError.invalidUUID }
         let codec = try VLESSWebSocketStreamCodec(target: target, destination: destination)
         let keyData = (0..<16).map { _ in UInt8.random(in: 0...255) }
@@ -306,6 +313,7 @@ struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHa
         var result = Data(request.utf8)
         result.append(try codec.encodeDestination())
         return result
+        */
     }
 
     func validateResponse(_ response: Data) throws {
