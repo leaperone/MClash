@@ -815,6 +815,15 @@ final class AppModel {
     private var startupPreparationErrorMessage: String?
     private let testInstance: Bool
 
+    /// Opt-in during the staged migration. Native DNS is exercised in Shadow
+    /// instances first; production remains on the verified Mihomo relay until
+    /// the complete DNS/network-extension acceptance suite is green.
+    private var configuredDNSUpstreamMode: DNSUpstreamMode {
+        ProcessInfo.processInfo.environment["MCLASH_NATIVE_DNS"] == "1"
+            ? .native
+            : .mihomo
+    }
+
     init(
         supervisor: CoreSupervisor = CoreSupervisor(),
         binaryLocator: CoreBinaryLocator = CoreBinaryLocator(),
@@ -6884,7 +6893,8 @@ final class AppModel {
                 let configuration = try NetworkExtensionRuntimeConfiguration(
                     preferences: candidate,
                     mihomoListener: listener,
-                    routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints()
+                    routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
+                    dnsUpstreamMode: configuredDNSUpstreamMode
                 )
                 let updateOutcome = try await networkExtensionControl
                     .updateRuntimeConfiguration(configuration)
@@ -7078,7 +7088,8 @@ final class AppModel {
                     let rollbackConfiguration = try NetworkExtensionRuntimeConfiguration(
                         preferences: networkCapturePreferences,
                         mihomoListener: listener,
-                        routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints()
+                        routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
+                        dnsUpstreamMode: configuredDNSUpstreamMode
                     )
                     let rollbackOutcome = try await networkExtensionControl
                         .updateRuntimeConfiguration(rollbackConfiguration)
@@ -7358,7 +7369,8 @@ final class AppModel {
             let configuration = try NetworkExtensionRuntimeConfiguration(
                 preferences: networkCapturePreferences,
                 mihomoListener: listener,
-                routeProxyEndpoints: routeProxyEndpoints
+                routeProxyEndpoints: routeProxyEndpoints,
+                dnsUpstreamMode: configuredDNSUpstreamMode
             )
             guard !shutdownInProgress else { throw CancellationError() }
             let outcome = try await networkExtensionControl.enable(
