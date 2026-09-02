@@ -7,8 +7,13 @@ import Foundation
 /// move to native connectors without changing AppModel's lifecycle code.
 protocol NativeRuntimeController: AnyObject, Sendable {
     var events: AsyncStream<CoreEvent> { get }
+    /// The control-plane implementation behind this lifecycle surface. This
+    /// is deliberately observable so the UI/diagnostics can distinguish a
+    /// native runtime from the legacy Mihomo adapter during migration.
+    nonisolated var runtimeCapabilities: Set<NativeRuntimeCapability> { get }
 
     func state() async -> CoreRunState
+    func diagnostics() async -> NativeRuntimeDiagnostics
     func start(_ configuration: CoreLaunchConfiguration) async throws
     @discardableResult
     func stop() async -> Bool
@@ -22,6 +27,23 @@ protocol NativeRuntimeController: AnyObject, Sendable {
 
 extension CoreSupervisor: NativeRuntimeController {}
 
+extension CoreSupervisor {
+    nonisolated var runtimeCapabilities: Set<NativeRuntimeCapability> {
+        [.legacyCore, .legacyController]
+    }
+
+    func diagnostics() async -> NativeRuntimeDiagnostics {
+        NativeRuntimeDiagnostics(
+            state: currentState,
+            capabilities: runtimeCapabilities,
+            backend: "mihomo",
+            controlPlaneAvailable: currentState.isRunning,
+            lastError: nil,
+            startedAt: currentState.session?.startedAt
+        )
+    }
+}
+
 /// Compatibility adapter for the current Mihomo-backed runtime.
 ///
 /// No behavior is added here: the adapter forwards lifecycle operations to
@@ -29,6 +51,9 @@ extension CoreSupervisor: NativeRuntimeController {}
 /// runtime can replace it at the AppModel boundary in a later migration.
 final actor MihomoRuntimeControllerAdapter: NativeRuntimeController {
     nonisolated let events: AsyncStream<CoreEvent>
+    nonisolated var runtimeCapabilities: Set<NativeRuntimeCapability> {
+        [.legacyCore, .legacyController]
+    }
     private let supervisor: CoreSupervisor
 
     init(supervisor: CoreSupervisor = CoreSupervisor()) {
@@ -38,6 +63,10 @@ final actor MihomoRuntimeControllerAdapter: NativeRuntimeController {
 
     func state() async -> CoreRunState {
         await supervisor.state()
+    }
+
+    func diagnostics() async -> NativeRuntimeDiagnostics {
+        await supervisor.diagnostics()
     }
 
     func start(_ configuration: CoreLaunchConfiguration) async throws {
