@@ -131,5 +131,14 @@ struct OutboundConnectorTests {
             try NativeConnectorRegistry.validate(target)
         }
         #expect(NativeConnectorRegistry.capability(for: target) == .unsupported)
+        #expect(NativeConnectorRegistry.kind(for: target) == nil)
+    }
+
+    @Test("Registry preserves protocol-specific connector kinds")
+    func registryKinds() throws {
+        for name in ["socks5", "vless", "trojan", "hysteria2"] {
+            let target = try OutboundNodeTarget(protocolName: name, host: "node.example.com", port: 443)
+            #expect(NativeConnectorRegistry.kind(for: target)?.rawValue == name)
+        }
     }
 }
