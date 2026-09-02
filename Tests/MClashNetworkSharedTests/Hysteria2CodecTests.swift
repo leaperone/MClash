@@ -43,6 +43,16 @@ struct Hysteria2CodecTests {
         #expect(Array(data.suffix(2)) == [0xde, 0xad])
     }
 
+    @Test("Decodes successful and rejected TCP responses")
+    func tcpResponse() throws {
+        let accepted = try Hysteria2Codec.decodeTCPResponse(Data([0x00, 0x02, 0x6f, 0x6b, 0x00]))
+        #expect(accepted.accepted)
+        #expect(accepted.message == "ok")
+        #expect(throws: Hysteria2CodecError.serverRejected("denied")) {
+            try Hysteria2Codec.decodeTCPResponse(Data([0x01, 0x06]) + Data("denied".utf8) + Data([0x00]))
+        }
+    }
+
     @Test("Rejects empty credentials, targets, and oversized padding")
     func rejectsInvalidInput() {
         #expect(throws: Hysteria2CodecError.invalidAuth) {

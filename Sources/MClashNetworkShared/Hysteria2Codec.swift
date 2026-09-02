@@ -5,6 +5,7 @@ public enum Hysteria2CodecError: Error, Equatable, Sendable {
     case invalidAddress
     case invalidVarint
     case oversized
+    case serverRejected(String)
 }
 
 /// Hysteria2 HTTP/3 authentication and proxy request wire helpers. HTTP/3 and
@@ -69,11 +70,44 @@ public enum Hysteria2Codec: Sendable {
         return result
     }
 
+    public static func decodeTCPResponse(_ data: Data) throws -> (accepted: Bool, message: String) {
+        guard !data.isEmpty else { throw Hysteria2CodecError.invalidVarint }
+        let status = data[data.startIndex]
+        var offset = 1
+        let messageLength = try decodeVarint(data, offset: &offset)
+        guard messageLength <= 4096, offset + Int(messageLength) <= data.count else {
+            throw Hysteria2CodecError.oversized
+        }
+        let messageData = data[offset..<(offset + Int(messageLength))]
+        offset += Int(messageLength)
+        let paddingLength = try decodeVarint(data, offset: &offset)
+        guard paddingLength <= 4096, offset + Int(paddingLength) == data.count else {
+            throw Hysteria2CodecError.invalidVarint
+        }
+        let message = String(decoding: messageData, as: UTF8.self)
+        guard status == 0 else { throw Hysteria2CodecError.serverRejected(message) }
+        return (true, message)
+    }
+
     private static func encodeVarint(_ value: UInt64) -> Data {
         if value < (1 << 6) { return Data([UInt8(value)]) }
         if value < (1 << 14) { let v = UInt16(value) | 0x4000; return Data([UInt8(v >> 8), UInt8(v)]) }
         if value < (1 << 30) { let v = UInt32(value) | 0x80000000; return Data([UInt8(v >> 24), UInt8(v >> 16), UInt8(v >> 8), UInt8(v)]) }
         let v = value | 0xc000000000000000
         return Data((0..<8).reversed().map { UInt8(v >> (UInt64($0) * 8)) })
+    }
+
+    private static func decodeVarint(_ data: Data, offset: inout Int) throws -> UInt64 {
+        guard offset < data.count else { throw Hysteria2CodecError.invalidVarint }
+        let first = data[data.startIndex + offset]
+        let prefix = first >> 6
+        let length = 1 << Int(prefix)
+        guard offset + length <= data.count else { throw Hysteria2CodecError.invalidVarint }
+        var value = UInt64(first & 0x3f)
+        for index in 1..<length {
+            value = (value << 8) | UInt64(data[data.startIndex + offset + index])
+        }
+        offset += length
+        return value
     }
 }
