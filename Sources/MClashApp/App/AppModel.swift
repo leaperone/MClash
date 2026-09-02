@@ -824,6 +824,29 @@ final class AppModel {
             : .native
     }
 
+    /// Builds the connector-neutral DNS payload used by the native DNS
+    /// provider. Only literal IP nameservers can be sent to the POSIX UDP/TCP
+    /// resolver today; hostname/DoH entries remain on the legacy path until a
+    /// dedicated native resolver supports them.
+    private var configuredNativeDNSUpstreamBootstrap: DNSUpstreamBootstrap? {
+        guard configuredDNSUpstreamMode == .native,
+              let workspace = configurationDocument.currentWorkspace,
+              let policy = configurationDocument.dnsPolicies.first(where: {
+                  $0.id == workspace.dnsPolicyID && $0.takeoverEnabled
+              }) else {
+            return nil
+        }
+        var seen = Set<IPAddress>()
+        let endpoints = (policy.nameservers + policy.fallbackNameservers).compactMap {
+            raw -> DNSUpstreamEndpoint? in
+            guard let address = try? IPAddress(raw), seen.insert(address).inserted else {
+                return nil
+            }
+            return try? DNSUpstreamEndpoint(address: address, transport: .udp)
+        }
+        return try? DNSUpstreamBootstrap(endpoints: endpoints)
+    }
+
     init(
         supervisor: CoreSupervisor = CoreSupervisor(),
         binaryLocator: CoreBinaryLocator = CoreBinaryLocator(),
@@ -6940,6 +6963,7 @@ final class AppModel {
                     mihomoListener: listener,
                     routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
                     dnsUpstreamMode: configuredDNSUpstreamMode,
+                    nativeUpstreamBootstrap: configuredNativeDNSUpstreamBootstrap,
                     outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
                 )
                 let updateOutcome = try await networkExtensionControl
@@ -7136,6 +7160,7 @@ final class AppModel {
                         mihomoListener: listener,
                         routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
                         dnsUpstreamMode: configuredDNSUpstreamMode,
+                        nativeUpstreamBootstrap: configuredNativeDNSUpstreamBootstrap,
                         outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
                     )
                     let rollbackOutcome = try await networkExtensionControl
@@ -7418,6 +7443,7 @@ final class AppModel {
                 mihomoListener: listener,
                 routeProxyEndpoints: routeProxyEndpoints,
                 dnsUpstreamMode: configuredDNSUpstreamMode,
+                nativeUpstreamBootstrap: configuredNativeDNSUpstreamBootstrap,
                 outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
             )
             guard !shutdownInProgress else { throw CancellationError() }
