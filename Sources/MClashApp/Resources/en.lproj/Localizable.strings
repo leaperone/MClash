@@ -2385,3 +2385,9 @@
 "MClash configuration · %@ · source %@" = "MClash configuration · %@ · source %@";
 "Runtime" = "Runtime";
 "MClash is temporarily using this internal endpoint because the configured entrances were unavailable." = "MClash is temporarily using this internal endpoint because the configured entrances were unavailable.";
+"All traffic" = "All traffic";
+"Choose how traffic enters MClash. Routing mode, rules and node groups determine where it goes next." = "Choose how traffic enters MClash. Routing mode, rules and node groups determine where it goes next.";
+"Needs restoration" = "Needs restoration";
+"Send macOS application traffic to a MClash HTTP or SOCKS entrance." = "Send macOS application traffic to a MClash HTTP or SOCKS entrance.";
+"Traffic entrances" = "Traffic entrances";
+"Traffic entrances and their on/off controls are managed together on the Entrances page." = "Traffic entrances and their on/off controls are managed together on the Entrances page.";

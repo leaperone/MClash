@@ -18,6 +18,27 @@ YAML remains a node source; the MClash workspace owns policy and runtime output.
 5. Every generated runtime is validated by the bundled Mihomo before it can be
    activated; a failed candidate never replaces the last known-good runtime.
 
+## Control-plane boundary (next architecture slice)
+
+MClash is the control plane and traffic policy engine. Mihomo is an outbound
+connector only. The intended boundary is:
+
+- MClash owns entrance listeners (HTTP, SOCKS5, Mixed, App Routing and future
+  TUN), protocol parsing, DNS policy, rule evaluation, proxy-group selection,
+  DIRECT/REJECT handling, traffic inspection and UI state.
+- A DIRECT decision returns the flow to the native macOS network path; it must
+  not open a Mihomo listener or relay. REJECT is terminated by MClash.
+- Only a proxy decision crosses an outbound connector interface. Mihomo may
+  establish the selected node connection, but its listeners, DNS, rules,
+  proxy-groups and mode switches are not authoritative.
+- The connector interface must be replaceable so a native MClash node
+  implementation can supersede Mihomo without changing the routing model.
+
+The migration is staged: first make every entrance a first-class editable
+record, then move HTTP/SOCKS protocol listeners behind an MClash-owned adapter,
+then reduce the Mihomo runtime to outbound profiles and remove remaining
+control-plane fields.
+
 ## Workstreams and acceptance gates
 
 ### A. Configuration truth and terminology

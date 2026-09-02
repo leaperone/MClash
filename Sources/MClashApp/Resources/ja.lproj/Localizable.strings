@@ -2386,3 +2386,9 @@
 "MClash configuration · %@ · source %@" = "MClash 構成 · %@ · ソース %@";
 "Runtime" = "ランタイム";
 "MClash is temporarily using this internal endpoint because the configured entrances were unavailable." = "設定された入口を利用できないため、MClash は一時的にこの内部エンドポイントを使用しています。";
+"All traffic" = "すべてのトラフィック";
+"Choose how traffic enters MClash. Routing mode, rules and node groups determine where it goes next." = "トラフィックを MClash に取り込む方法を選択します。ルーティングモード、ルール、ノードグループがその後の経路を決めます。";
+"Needs restoration" = "復元が必要";
+"Send macOS application traffic to a MClash HTTP or SOCKS entrance." = "macOS アプリのトラフィックを MClash の HTTP または SOCKS 入口へ送信します。";
+"Traffic entrances" = "トラフィック入口";
+"Traffic entrances and their on/off controls are managed together on the Entrances page." = "トラフィック入口とそのオン／オフは「入口」ページでまとめて管理します。";

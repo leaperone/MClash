@@ -205,9 +205,8 @@ struct ConfigurationEditorSheet: View {
                         Text(kind.localizedTitle).tag(kind)
                     }
                 }
-                .disabled(entranceKind == .appRouting)
                 if entranceKind == .appRouting {
-                    Text(AppLocalization.string("Application traffic is a capability switch. Manage its matching rules on the Rules page."))
+                    Text(AppLocalization.string("App Routing is an entrance. Its matching rules are managed on the Rules page."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -220,7 +219,6 @@ struct ConfigurationEditorSheet: View {
                 TextField(AppLocalization.string("Bind Address"), text: $bindAddress)
                 TextField(AppLocalization.string("Port (Optional)"), text: $portText)
                     .textFieldStyle(.roundedBorder)
-                    .disabled(entranceKind == .appRouting || entranceKind == .tun)
                 Picker(AppLocalization.string("Default action"), selection: $entranceAction) {
                     Text(AppLocalization.string("Direct")).tag(RuleActionChoice.direct)
                     Text(AppLocalization.string("Reject")).tag(RuleActionChoice.reject)
@@ -230,13 +228,6 @@ struct ConfigurationEditorSheet: View {
                     }
                 }
                 Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
-                    .disabled(entranceKind == .appRouting)
-                if entranceKind == .appRouting {
-                    Text(AppLocalization.string("Use the App Routing switch on the Entrances page to start or stop capture."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
         case .dns:
             Section(AppLocalization.string("DNS")) {
@@ -791,18 +782,6 @@ struct ConfigurationEditorSheet: View {
                 errorMessage = AppLocalization.string("Entrance name is required.")
                 return
             }
-            if enabled,
-               (entranceKind == .appRouting || entranceKind == .tun),
-               document.entrances.enumerated().contains(where: { offset, entrance in
-                   (existingIndex.map { offset != $0 } ?? true)
-                       && entrance.enabled
-                       && entrance.kind == entranceKind
-               }) {
-                errorMessage = AppLocalization.string(
-                    "Only one entrance of each type can be enabled in the current Mihomo runtime."
-                )
-                return
-            }
             if let port,
                enabled,
                document.entrances.enumerated().contains(where: { offset, entrance in
@@ -921,17 +900,10 @@ struct ConfigurationEditorSheet: View {
     }
 
     private var entranceKindOptions: [EntranceKind] {
-        // App Routing is a singleton capability supplied by the default
-        // configuration. TUN is intentionally omitted because the bundled
-        // macOS runtime does not support it; it remains visible when editing a
-        // legacy record so the user can disable/remove it.
-        var options: [EntranceKind] = [.http, .socks5]
-        if entranceKind == .appRouting {
-            options.insert(.appRouting, at: 0)
-        } else if entranceKind == .tun {
-            options.append(.tun)
-        }
-        return options
+        // Every supported entrance is a first-class configuration object. A
+        // capability may still be unavailable on this macOS build, but it is
+        // represented and edited as an entrance rather than a global switch.
+        [.http, .socks5, .appRouting, .tun]
     }
 
     private func currentWorkspaceIndex(in document: ConfigurationDocument) -> Int? {

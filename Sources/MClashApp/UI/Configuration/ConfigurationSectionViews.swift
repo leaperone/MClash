@@ -497,10 +497,6 @@ struct ConfigurationEntrancesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(alignment: .top, spacing: MClashLayout.controlSpacing) {
-                    appRoutingEntranceControl
-                    systemProxyEntranceControl
-                }
             }
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, MClashLayout.compactPagePadding)
@@ -548,19 +544,8 @@ struct ConfigurationEntrancesView: View {
         }
     }
 
-    /// App Routing is intentionally the single capability switch above. Do not
-    /// repeat it as an editable listener row beside HTTP and SOCKS entrances.
     private var entranceWorkbenchItems: [ConfigurationWorkbenchSection: [ConfigurationWorkbenchItem]] {
-        var items = model.configurationWorkbenchItems
-        let appRoutingIDs = Set(
-            model.configurationDocument.entrances
-                .filter { $0.kind == .appRouting }
-                .map { $0.id.rawValue }
-        )
-        items[.entrances] = items[.entrances, default: []].filter {
-            !appRoutingIDs.contains($0.id)
-        }
-        return items
+        model.configurationWorkbenchItems
     }
 
     private var appRoutingEntranceControl: some View {

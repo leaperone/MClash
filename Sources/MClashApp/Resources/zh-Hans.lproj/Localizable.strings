@@ -2384,3 +2384,9 @@
 "MClash configuration · %@ · source %@" = "MClash 配置 · %@ · 来源 %@";
 "Runtime" = "运行时";
 "MClash is temporarily using this internal endpoint because the configured entrances were unavailable." = "配置的入口不可用，MClash 当前临时使用此内部端点。";
+"All traffic" = "全部流量";
+"Choose how traffic enters MClash. Routing mode, rules and node groups determine where it goes next." = "选择流量如何进入 MClash；路由模式、规则和节点组将决定后续的去向。";
+"Needs restoration" = "需要恢复";
+"Send macOS application traffic to a MClash HTTP or SOCKS entrance." = "将 macOS 应用流量发送到 MClash 的 HTTP 或 SOCKS 入口。";
+"Traffic entrances" = "流量入口";
+"Traffic entrances and their on/off controls are managed together on the Entrances page." = "流量入口及其开关统一在“入口”页面管理。";
