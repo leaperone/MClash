@@ -232,6 +232,7 @@ struct MClashApp: App {
         applicationDelegate.willTerminateHandler = { [automationServer] in
             automationServer.stop()
         }
+        await model.prepare()
         do {
             try automationServer.start(
                 model: model,
@@ -245,7 +246,6 @@ struct MClashApp: App {
                 error.localizedDescription
             )
         }
-        await model.prepare()
     }
 }
 
