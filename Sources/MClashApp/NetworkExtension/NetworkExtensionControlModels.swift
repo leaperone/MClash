@@ -50,7 +50,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
 
     init(
         preferences: NetworkCapturePreferences,
-        mihomoListener: NetworkExtensionMihomoListenerConfiguration,
+        mihomoListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
         dnsUpstreamMode: DNSUpstreamMode = .mihomo,
         nativeUpstreamBootstrap: DNSUpstreamBootstrap? = nil,
@@ -80,22 +80,36 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = preferences.enabled
         self.encodedCaptureSnapshot = encodedSnapshot
-        let endpoints = try routeProxyEndpoints ?? mihomoListener.routeProxyEndpoints()
-        let routeProxyCatalog = try MihomoRouteProxyCatalog.encode(endpoints)
+        let endpoints = try routeProxyEndpoints ?? mihomoListener?.routeProxyEndpoints() ?? []
+        let routeProxyCatalog = endpoints.isEmpty ? nil : try MihomoRouteProxyCatalog.encode(endpoints)
         encodedOutboundConnectorCatalog = routeProxyCatalog
         encodedOutboundNodeTargetCatalog = try outboundNodeTargetCatalog?.encoded()
-        guard let profileRulesProxy = endpoints.first(where: { $0.route == .profileRules }) else {
-            throw NetworkExtensionRuntimeConfigurationError.missingProfileRulesProxy
+        if dnsUpstreamMode == .native {
+            // Native DNS and native outbound connectors are independent of a
+            // loopback Mihomo listener. This is the node-only activation path.
+            guard let nativeUpstreamBootstrap else {
+                throw NetworkExtensionRuntimeConfigurationError.missingNativeUpstreamBootstrap
+            }
+            encodedDNSProxyBootstrap = try DNSProxyBootstrapConfiguration(
+                revision: revision,
+                activationIdentifier: activationIdentifier,
+                encodedCaptureSnapshot: encodedSnapshot,
+                nativeUpstreamBootstrap: nativeUpstreamBootstrap
+            ).encoded()
+        } else {
+            guard let profileRulesProxy = endpoints.first(where: { $0.route == .profileRules }) else {
+                throw NetworkExtensionRuntimeConfigurationError.missingProfileRulesProxy
+            }
+            encodedDNSProxyBootstrap = try DNSProxyBootstrapConfiguration(
+                revision: revision,
+                activationIdentifier: activationIdentifier,
+                profileRulesProxy: profileRulesProxy,
+                routeProxyEndpoints: endpoints,
+                encodedCaptureSnapshot: encodedSnapshot,
+                dnsUpstreamMode: dnsUpstreamMode,
+                nativeUpstreamBootstrap: nativeUpstreamBootstrap
+            ).encoded()
         }
-        encodedDNSProxyBootstrap = try DNSProxyBootstrapConfiguration(
-            revision: revision,
-            activationIdentifier: activationIdentifier,
-            profileRulesProxy: profileRulesProxy,
-            routeProxyEndpoints: endpoints,
-            encodedCaptureSnapshot: encodedSnapshot,
-            dnsUpstreamMode: dnsUpstreamMode,
-            nativeUpstreamBootstrap: nativeUpstreamBootstrap
-        ).encoded()
         self.mihomoListener = mihomoListener
     }
 
@@ -170,6 +184,7 @@ enum NetworkExtensionRuntimeConfigurationError: Error, Equatable, LocalizedError
     case invalidRevision(UInt64)
     case snapshotTooLarge(actual: Int, maximum: Int)
     case missingProfileRulesProxy
+    case missingNativeUpstreamBootstrap
 
     var errorDescription: String? {
         switch self {
@@ -187,6 +202,10 @@ enum NetworkExtensionRuntimeConfigurationError: Error, Equatable, LocalizedError
         case .missingProfileRulesProxy:
             AppLocalization.string(
                 "The private Mihomo listener catalog is missing the profile-rules route required by DNS Routing."
+            )
+        case .missingNativeUpstreamBootstrap:
+            AppLocalization.string(
+                "Native DNS activation requires at least one literal IP upstream."
             )
         }
     }

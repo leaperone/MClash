@@ -5,6 +5,32 @@ import Testing
 
 @Suite("Network extension control")
 struct NetworkExtensionControlTests {
+    @Test("Native-only runtime does not require a Mihomo listener")
+    func nativeOnlyRuntimeOmitsLegacyListener() throws {
+        let snapshot = try CaptureConfigurationSnapshot(revision: 1, rules: [])
+        let preferences = try NetworkCapturePreferences(
+            enabled: true,
+            dnsEnabled: true,
+            failOpen: true,
+            snapshot: snapshot
+        )
+        let upstream = try DNSUpstreamBootstrap(endpoints: [
+            try DNSUpstreamEndpoint(
+                address: IPAddress("223.5.5.5"),
+                transport: .udp
+            )
+        ])
+        let configuration = try NetworkExtensionRuntimeConfiguration(
+            preferences: preferences,
+            dnsUpstreamMode: .native,
+            nativeUpstreamBootstrap: upstream
+        )
+
+        #expect(configuration.mihomoListener == nil)
+        #expect(configuration.encodedOutboundConnectorCatalog == nil)
+        #expect(configuration.encodedDNSProxyBootstrap != nil)
+    }
+
     @Test("Reducer enforces the full enable order")
     func reducerEnableOrder() throws {
         var state = NetworkExtensionControlState.inactive

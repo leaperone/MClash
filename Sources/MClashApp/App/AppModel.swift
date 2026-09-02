@@ -6950,21 +6950,22 @@ final class AppModel {
             if canAttemptLiveUpdate,
                candidate.dnsEnabled == previous.dnsEnabled,
                case let .on(activeRevision) = networkCaptureState,
-               activeRevision == previous.snapshot.revision,
-               let listener = networkExtensionMihomoListener {
-                try await hotReloadActiveProfileRoutingConfigurationIfNeeded(
-                    profileID: activeProfileID
-                )
-                try await localPortProbe.waitUntilListening(
-                    ports: Set(
-                        try activeNetworkExtensionRouteProxyEndpoints().map {
-                            Int($0.port)
-                        }
+                activeRevision == previous.snapshot.revision {
+                if configuredDNSUpstreamMode != .native {
+                    try await hotReloadActiveProfileRoutingConfigurationIfNeeded(
+                        profileID: activeProfileID
                     )
-                )
+                    try await localPortProbe.waitUntilListening(
+                        ports: Set(
+                            try activeNetworkExtensionRouteProxyEndpoints().map {
+                                Int($0.port)
+                            }
+                        )
+                    )
+                }
                 let configuration = try NetworkExtensionRuntimeConfiguration(
                     preferences: candidate,
-                    mihomoListener: listener,
+                    mihomoListener: activeNetworkExtensionMihomoListener,
                     routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
                     dnsUpstreamMode: configuredDNSUpstreamMode,
                     nativeUpstreamBootstrap: configuredNativeDNSUpstreamBootstrap,
@@ -7149,19 +7150,14 @@ final class AppModel {
                         captureEnabled: previous.enabled,
                         startAuxiliary: wasConnected
                     )
-                    try await hotReloadActiveProfileRoutingConfigurationIfNeeded(
-                        profileID: activeProfileID
-                    )
-                    guard let listener = networkExtensionMihomoListener else {
-                        throw AppModelError.profileActivationFailed(
-                            AppLocalization.string(
-                                "The previous private App Routing listener could not be restored."
-                            )
+                    if configuredDNSUpstreamMode != .native {
+                        try await hotReloadActiveProfileRoutingConfigurationIfNeeded(
+                            profileID: activeProfileID
                         )
                     }
                     let rollbackConfiguration = try NetworkExtensionRuntimeConfiguration(
                         preferences: networkCapturePreferences,
-                        mihomoListener: listener,
+                        mihomoListener: networkExtensionMihomoListener,
                         routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
                         dnsUpstreamMode: configuredDNSUpstreamMode,
                         nativeUpstreamBootstrap: configuredNativeDNSUpstreamBootstrap,
@@ -7427,7 +7423,8 @@ final class AppModel {
             networkCaptureState = .off
             return
         }
-        guard let listener = activeNetworkExtensionMihomoListener else {
+        let listener = activeNetworkExtensionMihomoListener
+        guard configuredDNSUpstreamMode == .native || listener != nil else {
             reportNetworkCaptureFailure(
                 AppLocalization.string("The private mihomo listener is unavailable.")
             )
@@ -7439,9 +7436,11 @@ final class AppModel {
         dnsProxyAutomaticallyDisabled = false
         do {
             let routeProxyEndpoints = try activeNetworkExtensionRouteProxyEndpoints()
-            try await localPortProbe.waitUntilListening(
-                ports: Set(routeProxyEndpoints.map { Int($0.port) })
-            )
+            if configuredDNSUpstreamMode != .native {
+                try await localPortProbe.waitUntilListening(
+                    ports: Set(routeProxyEndpoints.map { Int($0.port) })
+                )
+            }
             let configuration = try NetworkExtensionRuntimeConfiguration(
                 preferences: networkCapturePreferences,
                 mihomoListener: listener,
@@ -12250,7 +12249,12 @@ final class AppModel {
         let endpoints = try networkExtensionProfileListeners
             .sorted { $0.key.description < $1.key.description }
             .flatMap { try $0.value.routeProxyEndpoints() }
-        try MihomoRouteProxyCatalog.validate(endpoints)
+        // Native-only activation deliberately has no loopback Mihomo
+        // listeners. Preserve validation for legacy endpoint catalogs while
+        // allowing an empty connector-neutral catalog.
+        if !endpoints.isEmpty {
+            try MihomoRouteProxyCatalog.validate(endpoints)
+        }
         return endpoints
     }
 
