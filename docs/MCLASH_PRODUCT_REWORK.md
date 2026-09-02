@@ -39,6 +39,11 @@ record, then move HTTP/SOCKS protocol listeners behind an MClash-owned adapter,
 then reduce the Mihomo runtime to outbound profiles and remove remaining
 control-plane fields.
 
+Implementation checkpoint: the shared MClash HTTP CONNECT codec and the
+replaceable `OutboundConnector` boundary are now in place. The live listener
+integration and Mihomo DNS/listener removal remain gated on Shadow end-to-end
+tests.
+
 ## Workstreams and acceptance gates
 
 ### A. Configuration truth and terminology
