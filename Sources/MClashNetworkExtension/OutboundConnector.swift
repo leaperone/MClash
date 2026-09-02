@@ -292,3 +292,44 @@ struct NativeConnectorDescriptor: Equatable, Sendable {
     let kind: NativeConnectorKind
     let target: OutboundNodeTarget
 }
+
+struct NativeTCPConnectionPlan: Sendable {
+    let connection: NWConnection
+    let initialPayload: Data?
+    let usesSOCKS5Handshake: Bool
+}
+
+enum NativeConnectorFactory {
+    static func makeTCPPlan(
+        target: OutboundNodeTarget,
+        destination: SOCKS5Endpoint
+    ) throws -> NativeTCPConnectionPlan {
+        try NativeConnectorRegistry.validateForProduction(target)
+        switch NativeConnectorRegistry.kind(for: target) {
+        case .socks5:
+            return NativeTCPConnectionPlan(
+                connection: NativeSOCKS5OutboundConnector(target: target).makeConnection(),
+                initialPayload: nil,
+                usesSOCKS5Handshake: true
+            )
+        case .vless:
+            let connector = NativeVLESSOutboundConnector(target: target)
+            return NativeTCPConnectionPlan(
+                connection: connector.makeConnection(),
+                initialPayload: try connector.handshake(for: destination),
+                usesSOCKS5Handshake: false
+            )
+        case .trojan:
+            let connector = NativeTrojanOutboundConnector(target: target)
+            return NativeTCPConnectionPlan(
+                connection: connector.makeConnection(),
+                initialPayload: try connector.handshake(for: destination),
+                usesSOCKS5Handshake: false
+            )
+        case .hysteria2:
+            throw NativeConnectorRegistryError.unsupportedProtocol("hysteria2 requires QUIC session")
+        case nil:
+            throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
+        }
+    }
+}

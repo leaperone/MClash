@@ -149,4 +149,19 @@ struct OutboundConnectorTests {
         #expect(descriptor.kind == .vless)
         #expect(descriptor.target == target)
     }
+
+    @Test("Factory emits protocol-specific TCP plans")
+    func factoryPlans() throws {
+        let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
+        let target = try OutboundNodeTarget(
+            protocolName: "vless",
+            host: "node.example.com",
+            port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001"]
+        )
+        let plan = try NativeConnectorFactory.makeTCPPlan(target: target, destination: destination)
+        #expect(plan.initialPayload?.first == 0x01)
+        #expect(!plan.usesSOCKS5Handshake)
+        plan.connection.cancel()
+    }
 }
