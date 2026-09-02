@@ -41,6 +41,12 @@ struct Hysteria2CodecTests {
         #expect(data[8] == 0x0f)
         #expect(String(decoding: data[9..<24], as: UTF8.self) == "example.com:53")
         #expect(Array(data.suffix(2)) == [0xde, 0xad])
+        let decoded = try Hysteria2Codec.decodeUDPMessage(data)
+        #expect(decoded.sessionID == 0x01020304)
+        #expect(decoded.packetID == 0x0506)
+        #expect(decoded.fragmentID == 1 && decoded.fragmentCount == 2)
+        #expect(decoded.host == "example.com" && decoded.port == 53)
+        #expect(decoded.payload == Data([0xde, 0xad]))
     }
 
     @Test("Decodes successful and rejected TCP responses")

@@ -12,6 +12,15 @@ public enum Hysteria2CodecError: Error, Equatable, Sendable {
 /// QUIC transport are supplied by the connector; this type only emits the
 /// protocol payloads defined by PROTOCOL.md.
 public enum Hysteria2Codec: Sendable {
+    public struct UDPMessage: Equatable, Sendable {
+        public let sessionID: UInt32
+        public let packetID: UInt16
+        public let fragmentID: UInt8
+        public let fragmentCount: UInt8
+        public let host: String
+        public let port: UInt16
+        public let payload: Data
+    }
     public static func authHeaders(
         password: String,
         receiveRate: UInt64 = 0,
@@ -68,6 +77,40 @@ public enum Hysteria2Codec: Sendable {
         result.append(contentsOf: address.utf8)
         result.append(payload)
         return result
+    }
+
+    public static func decodeUDPMessage(_ data: Data) throws -> UDPMessage {
+        guard data.count >= 9 else { throw Hysteria2CodecError.invalidVarint }
+        let sessionID = UInt32(data[0]) << 24 | UInt32(data[1]) << 16
+            | UInt32(data[2]) << 8 | UInt32(data[3])
+        let packetID = UInt16(data[4]) << 8 | UInt16(data[5])
+        let fragmentID = data[6]
+        let fragmentCount = data[7]
+        guard fragmentCount > 0, fragmentID < fragmentCount else {
+            throw Hysteria2CodecError.invalidAddress
+        }
+        var offset = 8
+        let addressLength = try decodeVarint(data, offset: &offset)
+        guard addressLength > 0, addressLength <= 1024,
+              offset + Int(addressLength) <= data.count else {
+            throw Hysteria2CodecError.invalidAddress
+        }
+        let address = String(decoding: data[offset..<(offset + Int(addressLength))], as: UTF8.self)
+        offset += Int(addressLength)
+        guard let separator = address.lastIndex(of: ":"),
+              let port = UInt16(address[address.index(after: separator)...]),
+              port > 0 else { throw Hysteria2CodecError.invalidAddress }
+        let host = String(address[..<separator])
+        guard !host.isEmpty else { throw Hysteria2CodecError.invalidAddress }
+        return UDPMessage(
+            sessionID: sessionID,
+            packetID: packetID,
+            fragmentID: fragmentID,
+            fragmentCount: fragmentCount,
+            host: host,
+            port: port,
+            payload: Data(data[offset...])
+        )
     }
 
     public static func decodeTCPResponse(_ data: Data) throws -> (accepted: Bool, message: String) {
