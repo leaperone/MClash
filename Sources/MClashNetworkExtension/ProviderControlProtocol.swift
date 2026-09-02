@@ -61,6 +61,9 @@ enum ProviderConfigurationKey {
     static let captureConfigurationSnapshot = "captureConfigurationSnapshot"
     /// JSON-encoded `[MihomoRouteProxyEndpoint]` stored as `Data`/`NSData`.
     static let mihomoRouteProxyCatalog = "mihomoRouteProxyCatalog"
+    /// Connector-neutral replacement for the legacy catalog key. The legacy
+    /// spelling remains accepted for older providers and persisted sessions.
+    static let outboundConnectorCatalog = "outboundConnectorCatalog"
     /// JSON-encoded `OutboundNodeTargetCatalog` for native connector rollout.
     static let outboundNodeTargetCatalog = "outboundNodeTargetCatalog"
     static let mihomoSOCKSHost = "mihomoSOCKSHost"

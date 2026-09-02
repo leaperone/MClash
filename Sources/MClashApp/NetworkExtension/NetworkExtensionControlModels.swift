@@ -13,11 +13,20 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     let failOpen: Bool
     let captureEnabled: Bool
     let encodedCaptureSnapshot: Data?
-    let encodedMihomoRouteProxyCatalog: Data?
+    /// Connector-neutral route endpoint catalog sent to the provider.
+    let encodedOutboundConnectorCatalog: Data?
     let encodedOutboundNodeTargetCatalog: Data?
     let encodedDNSProxyBootstrap: Data?
     let mihomoListener: NetworkExtensionMihomoListenerConfiguration?
     let dnsUpstreamMode: DNSUpstreamMode
+
+    /// Deprecated compatibility view for callers that still use the pre-
+    /// connector-neutral vocabulary. New code should use
+    /// `encodedOutboundConnectorCatalog`.
+    @available(*, deprecated, message: "Use encodedOutboundConnectorCatalog")
+    var encodedMihomoRouteProxyCatalog: Data? {
+        encodedOutboundConnectorCatalog
+    }
 
     init(
         revision: UInt64,
@@ -33,7 +42,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = true
         encodedCaptureSnapshot = nil
-        encodedMihomoRouteProxyCatalog = nil
+        encodedOutboundConnectorCatalog = nil
         encodedOutboundNodeTargetCatalog = nil
         encodedDNSProxyBootstrap = nil
         mihomoListener = nil
@@ -72,7 +81,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         self.encodedCaptureSnapshot = encodedSnapshot
         let endpoints = try routeProxyEndpoints ?? mihomoListener.routeProxyEndpoints()
         let routeProxyCatalog = try MihomoRouteProxyCatalog.encode(endpoints)
-        encodedMihomoRouteProxyCatalog = routeProxyCatalog
+        encodedOutboundConnectorCatalog = routeProxyCatalog
         encodedOutboundNodeTargetCatalog = try outboundNodeTargetCatalog?.encoded()
         guard let profileRulesProxy = endpoints.first(where: { $0.route == .profileRules }) else {
             throw NetworkExtensionRuntimeConfigurationError.missingProfileRulesProxy
@@ -98,8 +107,11 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         if let encodedCaptureSnapshot {
             configuration["captureConfigurationSnapshot"] = encodedCaptureSnapshot as NSData
         }
-        if let encodedMihomoRouteProxyCatalog {
-            configuration["mihomoRouteProxyCatalog"] = encodedMihomoRouteProxyCatalog as NSData
+        if let encodedOutboundConnectorCatalog {
+            configuration["outboundConnectorCatalog"] = encodedOutboundConnectorCatalog as NSData
+            // Keep the old key during the rolling upgrade window. Older
+            // providers ignore the canonical key and continue to function.
+            configuration["mihomoRouteProxyCatalog"] = encodedOutboundConnectorCatalog as NSData
         }
         if let encodedOutboundNodeTargetCatalog {
             configuration["outboundNodeTargetCatalog"] = encodedOutboundNodeTargetCatalog as NSData
@@ -126,8 +138,8 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         from previous: NetworkExtensionRuntimeConfiguration
     ) -> Bool {
         switch (
-            previous.encodedMihomoRouteProxyCatalog,
-            encodedMihomoRouteProxyCatalog
+            previous.encodedOutboundConnectorCatalog,
+            encodedOutboundConnectorCatalog
         ) {
         case (nil, nil):
             return true

@@ -91,6 +91,18 @@ struct ProviderSOCKSConfigurationTests {
         )?.port == 18_000)
     }
 
+    @Test("Connector-neutral catalog key is accepted by the provider")
+    func connectorNeutralCatalogKey() throws {
+        let (_, routeB, data) = try profileCatalog()
+        let catalog = try #require(ProviderSOCKSConfiguration.routeCatalog(
+            providerConfiguration: [
+                ProviderConfigurationKey.outboundConnectorCatalog: data
+            ]
+        ))
+
+        #expect(ProviderSOCKSConfiguration.proxy(for: routeB, in: catalog)?.port == 18_002)
+    }
+
     @Test("TCP plan uses the requested profile endpoint and does not alias a missing target")
     func tcpProfilePlan() throws {
         let (routeA, routeB, data) = try profileCatalog()

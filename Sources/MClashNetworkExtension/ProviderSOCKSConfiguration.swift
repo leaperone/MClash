@@ -72,9 +72,12 @@ struct ProviderSOCKSConfiguration: Equatable, Sendable {
         providerConfiguration: [String: Any]?
     ) -> [MihomoRoute: ProviderSOCKSConfiguration]? {
         guard let providerConfiguration else { return nil }
-        if let data = providerConfiguration[
+        let catalogData = (providerConfiguration[
+            ProviderConfigurationKey.outboundConnectorCatalog
+        ] as? Data) ?? (providerConfiguration[
             ProviderConfigurationKey.mihomoRouteProxyCatalog
-        ] as? Data {
+        ] as? Data)
+        if let data = catalogData {
             guard let endpoints = try? MihomoRouteProxyCatalog.decode(data) else {
                 return nil
             }

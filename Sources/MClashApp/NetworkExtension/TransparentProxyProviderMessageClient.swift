@@ -304,7 +304,7 @@ struct TransparentProxyProviderMessageClient: Sendable {
                 captureEnabled: configuration.captureEnabled,
                 failOpen: configuration.failOpen,
                 captureConfigurationSnapshot: configuration.encodedCaptureSnapshot,
-                mihomoRouteProxyCatalog: configuration.encodedMihomoRouteProxyCatalog,
+                mihomoRouteProxyCatalog: configuration.encodedOutboundConnectorCatalog,
                 mihomoSOCKSHost: listener?.ipv4Endpoint.host,
                 mihomoSOCKSPort: listener?.port,
                 mihomoSOCKSUsername: listener?.authentication?.username,
