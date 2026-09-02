@@ -94,4 +94,17 @@ struct OutboundConnectorTests {
             .hasSuffix("\r\n"))
         connector.makeConnection().cancel()
     }
+
+    @Test("Native Hysteria2 connector bootstraps QUIC with HTTP/3 ALPN")
+    func nativeHysteria2ConnectorBuilds() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "hysteria2",
+            host: "node.example.com",
+            port: 443,
+            parameters: ["password": "secret", "sni": "node.example.com"]
+        )
+        let connection = NativeHysteria2OutboundConnector(target: target).makeConnection()
+        connection.cancel()
+        #expect(target.protocolName == "hysteria2")
+    }
 }

@@ -150,6 +150,34 @@ struct NativeTrojanOutboundConnector: Sendable {
     }
 }
 
+/// Native Hysteria2 transport bootstrap. This establishes the QUIC/TLS layer;
+/// HTTP/3 CONNECT-UDP stream framing is intentionally handled by the future
+/// session implementation rather than being confused with SOCKS5 relay bytes.
+struct NativeHysteria2OutboundConnector: Sendable {
+    let target: OutboundNodeTarget
+
+    func makeConnection() -> NWConnection {
+        let quic = NWProtocolQUIC.Options(alpn: ["h3"])
+        quic.direction = .bidirectional
+        quic.isDatagram = true
+        quic.maxDatagramFrameSize = 1350
+        let serverName = target.parameters["sni"]
+            ?? target.parameters["servername"]
+            ?? target.host
+        serverName.withCString {
+            sec_protocol_options_set_tls_server_name(
+                quic.securityProtocolOptions,
+                $0
+            )
+        }
+        return NWConnection(
+            host: NWEndpoint.Host(target.host),
+            port: NWEndpoint.Port(rawValue: target.port)!,
+            using: NWParameters(quic: quic)
+        )
+    }
+}
+
 /// Pure policy used by relays and tests to enforce the ownership boundary.
 /// Direct and Reject are terminal MClash decisions and therefore do not
 /// require (or permit) an outbound connector invocation.
