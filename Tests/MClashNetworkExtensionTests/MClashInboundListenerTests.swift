@@ -77,4 +77,70 @@ struct MClashInboundListenerTests {
         #expect(manager.lifecycleStates()[app.id] == .stopped)
         manager.stop()
     }
+
+    @Test("Outbound listener routes are rejected until an inbound handshake connector exists")
+    func outboundRouteRequiresHandshakeConnector() throws {
+        let route: OutboundRoute = .group("CUNOE")
+        let target = try OutboundNodeTarget(
+            protocolName: "socks5",
+            host: "proxy.example.com",
+            port: 1080
+        )
+        let catalog = try OutboundNodeTargetCatalog(
+            entries: [OutboundNodeTargetEntry(route: route, target: target)]
+        )
+        let spec = try MClashListenerSpec(
+            name: "Native HTTP",
+            kind: .http,
+            enabled: true,
+            port: 20_811,
+            route: .outbound(route)
+        )
+        let manager = NativeInboundListenerManager(
+            routeResolver: { _, _ in .direct },
+            connector: Connector()
+        )
+        #expect(throws: NativeInboundListenerConfigurationError.unsupportedOutboundTransport(
+            route: route,
+            protocolName: "socks5"
+        )) {
+            try manager.configure(
+                try MClashListenerRegistry(listeners: [spec]),
+                outboundCatalog: catalog
+            )
+        }
+    }
+
+    @Test("Unsupported native outbound protocols fail closed at configure time")
+    func unsupportedOutboundRouteIsRejected() throws {
+        let route: OutboundRoute = .group("Legacy")
+        let target = try OutboundNodeTarget(
+            protocolName: "tuic",
+            host: "proxy.example.com",
+            port: 443
+        )
+        let catalog = try OutboundNodeTargetCatalog(
+            entries: [OutboundNodeTargetEntry(route: route, target: target)]
+        )
+        let spec = try MClashListenerSpec(
+            name: "Unsupported SOCKS",
+            kind: .socks5,
+            enabled: true,
+            port: 20_812,
+            route: .outbound(route)
+        )
+        let manager = NativeInboundListenerManager(
+            routeResolver: { _, _ in .direct },
+            connector: Connector()
+        )
+        #expect(throws: NativeInboundListenerConfigurationError.unsupportedOutboundProtocol(
+            route: route,
+            protocolName: "tuic"
+        )) {
+            try manager.configure(
+                try MClashListenerRegistry(listeners: [spec]),
+                outboundCatalog: catalog
+            )
+        }
+    }
 }

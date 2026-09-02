@@ -677,7 +677,17 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
             )
         }
         do {
-            try nativeInboundListeners.configure(registry)
+            let outboundCatalog = Self.data(
+                configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog]
+            ).flatMap { try? OutboundNodeTargetCatalog.decode($0) }
+            let outboundConnector: (any MClashInboundOutboundConnector)? = outboundCatalog.map {
+                NativeInboundCatalogConnector(catalog: $0)
+            }
+            try nativeInboundListeners.configure(
+                registry,
+                outboundCatalog: outboundCatalog,
+                outboundConnector: outboundConnector
+            )
             nativeInboundListeners.start()
             return nil
         } catch {
