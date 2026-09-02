@@ -32,6 +32,30 @@ struct NativeRuntimeDiagnostics: Equatable, Sendable {
     /// represented by safe in-process handles; this does not imply that a
     /// production socket was bound by the engine.
     let listenerStates: [UUID: NativeListenerLifecycleState]
+    /// Connector capabilities discovered from the attached node catalog.
+    /// Unknown protocols are reported here instead of silently falling back
+    /// to a direct connection.
+    let unsupportedConnectors: [NativeRuntimeConnectorDiagnostic]
+}
+
+/// A connector-neutral explanation for a node that the native data plane
+/// cannot currently use.  This is deliberately a value type so the UI and
+/// CLI can present an actionable diagnostic without knowing Mihomo's model.
+struct NativeRuntimeConnectorDiagnostic: Equatable, Sendable {
+    let route: OutboundRoute
+    let protocolName: String
+    let reason: String
+}
+
+/// The result of evaluating one intercepted flow against MClash's policy.
+/// `decision` remains authoritative; `route` and `target` are populated only
+/// for an outbound decision whose group can be resolved in the node catalog.
+/// A missing/unsupported target is explicit and never becomes `.direct`.
+struct NativeRuntimeRouteEvaluation: Equatable, Sendable {
+    let decision: NativeRouteDecision
+    let route: OutboundRoute?
+    let target: OutboundNodeTarget?
+    let connectorDiagnostic: NativeRuntimeConnectorDiagnostic?
 }
 
 enum NativeListenerLifecycleState: Equatable, Sendable {
@@ -140,6 +164,7 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
     private var sessionState: NativeRuntimeSessionState?
     private var sessionValidationError: String?
     private var listenerHandles: [UUID: NativeListenerHandle] = [:]
+    private var outboundNodeTargets: OutboundNodeTargetCatalog?
 
     init() {
         let pair = AsyncStream<CoreEvent>.makeStream(
@@ -150,12 +175,17 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
         continuation = pair.continuation
         sessionState = nil
         sessionValidationError = nil
+        outboundNodeTargets = nil
     }
 
     /// Creates an engine with a validated, MClash-owned policy snapshot.
     /// This initializer is intentionally separate from the no-argument
     /// compatibility initializer used by AppModel's opt-in switch.
-    init(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) throws {
+    init(
+        plan: CompiledRuntimePlan,
+        listeners: MClashListenerRegistry,
+        outboundNodeTargets: OutboundNodeTargetCatalog? = nil
+    ) throws {
         let pair = AsyncStream<CoreEvent>.makeStream(
             of: CoreEvent.self,
             bufferingPolicy: .bufferingNewest(500)
@@ -165,6 +195,7 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
         sessionState = try NativeRuntimeSessionState(plan: plan, listeners: listeners)
         sessionValidationError = nil
         listenerHandles = Self.makeListenerHandles(for: listeners)
+        self.outboundNodeTargets = outboundNodeTargets
     }
 
     func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
@@ -192,6 +223,64 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
         )))
     }
 
+    /// Attach the connector-neutral node material used by the native data
+    /// plane. This is intentionally separate from `configure` so the existing
+    /// NativeRuntimeController seam stays source-compatible with the legacy
+    /// Mihomo adapter during migration.
+    func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) {
+        outboundNodeTargets = catalog
+    }
+
+    /// Evaluate one flow using MClash's rule projection and resolve its
+    /// selected group to node material. No socket is opened here; this pure
+    /// decision hook is consumed by the listener/relay layer and is easy to
+    /// exercise in isolation.
+    func evaluate(_ context: FlowContext) -> NativeRuntimeRouteEvaluation {
+        guard let sessionState else {
+            return NativeRuntimeRouteEvaluation(
+                decision: NativeRouteDecision(action: .direct),
+                route: nil,
+                target: nil,
+                connectorDiagnostic: NativeRuntimeConnectorDiagnostic(
+                    route: .profileRules,
+                    protocolName: "",
+                    reason: "Native runtime has no compiled policy session."
+                )
+            )
+        }
+
+        let decision = NativeRuleEngineProjection(plan: sessionState.plan).evaluate(context)
+        guard case let .outbound(groupID) = decision.action,
+              let group = sessionState.plan.proxyGroups.first(where: { $0.id == groupID }) else {
+            return NativeRuntimeRouteEvaluation(decision: decision, route: nil, target: nil, connectorDiagnostic: nil)
+        }
+
+        let route = OutboundRoute.group(group.name)
+        guard let target = outboundNodeTargets?.target(for: route) else {
+            let diagnostic = NativeRuntimeConnectorDiagnostic(
+                route: route,
+                protocolName: "",
+                reason: "Proxy group \(group.name) has no native node target."
+            )
+            return NativeRuntimeRouteEvaluation(decision: decision, route: route, target: nil, connectorDiagnostic: diagnostic)
+        }
+
+        if let reason = Self.unsupportedConnectorReason(for: target) {
+            let diagnostic = NativeRuntimeConnectorDiagnostic(
+                route: route,
+                protocolName: target.protocolName,
+                reason: reason
+            )
+            return NativeRuntimeRouteEvaluation(decision: decision, route: route, target: target, connectorDiagnostic: diagnostic)
+        }
+        return NativeRuntimeRouteEvaluation(decision: decision, route: route, target: target, connectorDiagnostic: nil)
+    }
+
+    /// Labelled form for call sites that handle several destination kinds.
+    func evaluate(destination context: FlowContext) -> NativeRuntimeRouteEvaluation {
+        evaluate(context)
+    }
+
     func nativeSessionState() -> NativeRuntimeSessionState? { sessionState }
 
     func state() async -> CoreRunState { currentState }
@@ -210,7 +299,8 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
             listenerCount: sessionState?.listeners.listeners.count ?? 0,
             enabledListenerCount: sessionState?.listeners.enabledListeners.count ?? 0,
             sessionValidationError: sessionValidationError,
-            listenerStates: listenerHandles.mapValues(\.state)
+            listenerStates: listenerHandles.mapValues(\.state),
+            unsupportedConnectors: Self.unsupportedConnectors(in: outboundNodeTargets)
         )
     }
 
@@ -341,5 +431,41 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
 
     private func emitLog(_ message: String) {
         continuation.yield(.log(CoreLogLine(stream: .supervisor, message: message)))
+    }
+
+    private static let nativeConnectorProtocols: Set<String> = [
+        "http", "socks5", "shadowsocks", "vless", "trojan", "hysteria2"
+    ]
+
+    private static func unsupportedConnectorReason(for target: OutboundNodeTarget) -> String? {
+        guard nativeConnectorProtocols.contains(target.protocolName) else {
+            return "Native connector for protocol \(target.protocolName) is not implemented."
+        }
+        if target.protocolName == "hysteria2" {
+            return "Hysteria2 requires a verified QUIC session connector."
+        }
+        if target.protocolName == "shadowsocks",
+           target.parameters["plugin"] != nil || target.parameters["plugin-opts"] != nil {
+            return "Shadowsocks plugins require a dedicated native transport."
+        }
+        if target.protocolName == "vless",
+           target.parameters["network"]?.lowercased() == "ws" {
+            return "VLESS WebSocket transport is not implemented by the native connector."
+        }
+        return nil
+    }
+
+    private static func unsupportedConnectors(
+        in catalog: OutboundNodeTargetCatalog?
+    ) -> [NativeRuntimeConnectorDiagnostic] {
+        guard let catalog else { return [] }
+        return catalog.entries.compactMap { entry in
+            guard let reason = unsupportedConnectorReason(for: entry.target) else { return nil }
+            return NativeRuntimeConnectorDiagnostic(
+                route: entry.route,
+                protocolName: entry.target.protocolName,
+                reason: reason
+            )
+        }
     }
 }

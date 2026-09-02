@@ -51,7 +51,8 @@ extension CoreSupervisor {
             listenerCount: 0,
             enabledListenerCount: 0,
             sessionValidationError: nil,
-            listenerStates: [:]
+            listenerStates: [:],
+            unsupportedConnectors: []
         )
     }
 

@@ -234,6 +234,94 @@ struct NativeRuntimeControllerTests {
         }
     }
 
+    @Test("Native engine evaluates policy and resolves connector-neutral node target")
+    func nativeRouteEvaluationResolvesTarget() async throws {
+        let group = ProxyGroup(name: "CUNOE-Proxy")
+        let rule = RoutingRule(
+            priority: 1,
+            matchers: [.domainSuffix("example.com")],
+            action: .proxyGroup(group.id)
+        )
+        let base = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let plan = CompiledRuntimePlan(
+            workspaceID: base.workspaceID,
+            workspaceRevision: 2,
+            nodes: [],
+            proxyGroups: [group],
+            rules: [rule],
+            ruleSets: [],
+            dnsPolicy: nil,
+            entrances: [],
+            routingMode: .rule,
+            globalProxyGroupID: nil
+        )
+        let target = try OutboundNodeTarget(
+            protocolName: "socks5",
+            host: "proxy.example",
+            port: 443
+        )
+        let catalog = try OutboundNodeTargetCatalog(entries: [
+            OutboundNodeTargetEntry(route: .group("CUNOE-Proxy"), target: target)
+        ])
+        let engine = try NativeRuntimeEngine(
+            plan: plan,
+            listeners: try MClashListenerRegistry(),
+            outboundNodeTargets: catalog
+        )
+
+        let evaluation = await engine.evaluate(destination: FlowContext(
+            source: FlowSource(processIdentifier: 1, auditToken: Data(), userID: 501),
+            destination: try FlowDestination(hostname: "api.example.com", port: 443),
+            transportProtocol: .tcp
+        ))
+        #expect(evaluation.decision.action == .outbound(group.id))
+        #expect(evaluation.route == .group("CUNOE-Proxy"))
+        #expect(evaluation.target == target)
+        #expect(evaluation.connectorDiagnostic == nil)
+    }
+
+    @Test("Native engine reports unsupported connector instead of silently going direct")
+    func nativeRouteEvaluationReportsUnsupportedConnector() async throws {
+        let group = ProxyGroup(name: "Imported")
+        let rule = RoutingRule(priority: 1, action: .proxyGroup(group.id))
+        let base = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let plan = CompiledRuntimePlan(
+            workspaceID: base.workspaceID,
+            workspaceRevision: 3,
+            nodes: [],
+            proxyGroups: [group],
+            rules: [rule],
+            ruleSets: [],
+            dnsPolicy: nil,
+            entrances: [],
+            routingMode: .rule,
+            globalProxyGroupID: nil
+        )
+        let target = try OutboundNodeTarget(protocolName: "vmess", host: "proxy.example", port: 443)
+        let catalog = try OutboundNodeTargetCatalog(entries: [
+            OutboundNodeTargetEntry(route: .group("Imported"), target: target)
+        ])
+        let engine = try NativeRuntimeEngine(
+            plan: plan,
+            listeners: try MClashListenerRegistry(),
+            outboundNodeTargets: catalog
+        )
+        let evaluation = await engine.evaluate(try FlowContext(
+            source: FlowSource(processIdentifier: 1, auditToken: Data(), userID: 501),
+            destination: FlowDestination(hostname: "example.com", port: 443),
+            transportProtocol: .tcp
+        ))
+        #expect(evaluation.decision.action == .outbound(group.id))
+        #expect(evaluation.target == target)
+        #expect(evaluation.connectorDiagnostic?.protocolName == "vmess")
+        #expect(evaluation.connectorDiagnostic?.reason.contains("not implemented") == true)
+        #expect((await engine.diagnostics()).unsupportedConnectors.count == 1)
+    }
+
     @Test("Mihomo adapter preserves the stopped initial state")
     func mihomoAdapterPreservesInitialState() async {
         let supervisor = CoreSupervisor()
