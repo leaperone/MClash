@@ -137,10 +137,10 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
             throw CoreSupervisorError.configurationInvalid("The native runtime controller port is invalid.")
         }
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(
+        if !FileManager.default.fileExists(
             atPath: configuration.homeDirectory.path,
             isDirectory: &isDirectory
-        ) else {
+        ) {
             try FileManager.default.createDirectory(
                 at: configuration.homeDirectory,
                 withIntermediateDirectories: true,
