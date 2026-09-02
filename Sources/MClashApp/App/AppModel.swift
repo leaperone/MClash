@@ -701,7 +701,7 @@ final class AppModel {
     private(set) var systemProxyGuardRepairCount = 0
     private(set) var systemProxySettingsReceipt: SystemProxySettingsReceipt?
 
-    private let supervisor: CoreSupervisor
+    private let supervisor: any NativeRuntimeController
     private let coreFleet: CoreFleetSupervisor
     private let binaryLocator: CoreBinaryLocator
     private let secretStore: any CoreSecretProviding
@@ -852,7 +852,7 @@ final class AppModel {
     }
 
     init(
-        supervisor: CoreSupervisor = CoreSupervisor(),
+        supervisor: any NativeRuntimeController = MihomoRuntimeControllerAdapter(),
         binaryLocator: CoreBinaryLocator = CoreBinaryLocator(),
         secretStore: any CoreSecretProviding = EphemeralCoreSecretProvider(),
         systemProxyManager: SystemProxyManager = SystemProxyManager(),
