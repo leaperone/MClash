@@ -729,7 +729,14 @@ struct ConfigurationOrchestrationTests {
         #expect(yaml.contains("GEOSITE,cn,DIRECT"))
         #expect(yaml.contains("GEOIP,CN,DIRECT,no-resolve"))
         #expect(yaml.contains("GEOSITE,gfw,MClash Select"))
-        #expect(yaml.contains("tv.parsec.www"))
+        #expect(compiled.captureRules.contains { rule in
+            rule.destinations.isEmpty && rule.sources.contains {
+                if case let .applicationIdentifierPattern(pattern) = $0 {
+                    return pattern.pattern == "tv.parsec.www"
+                }
+                return false
+            }
+        })
     }
 
     @MainActor
