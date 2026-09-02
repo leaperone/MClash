@@ -56,6 +56,7 @@ public struct ShadowsocksAEADStreamEncoder: Sendable {
     public let salt: Data
     private let key: SymmetricKey
     private var nonceCounter: UInt64 = 0
+    private var saltEmitted = false
 
     public init(
         methodName: String,
@@ -81,6 +82,10 @@ public struct ShadowsocksAEADStreamEncoder: Sendable {
         var length = Data([UInt8(payload.count >> 8), UInt8(payload.count & 0xff)])
         length = try seal(length)
         let body = try seal(payload)
+        if saltEmitted {
+            return length + body
+        }
+        saltEmitted = true
         return salt + length + body
     }
 
