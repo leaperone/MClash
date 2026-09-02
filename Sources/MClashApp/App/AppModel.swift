@@ -815,6 +815,26 @@ final class AppModel {
     private var startupPreparationErrorMessage: String?
     private let testInstance: Bool
 
+    /// Whether this instance was explicitly opted into the in-process native
+    /// runtime. Production keeps the Mihomo adapter unless this flag is set;
+    /// this makes the migration reversible without relying on profile shape or
+    /// the presence of a generated YAML file.
+    private var usesNativeRuntime: Bool {
+        supervisor.runtimeCapabilities.contains(.nativeRuntime)
+    }
+
+    /// Runtime selection is intentionally an explicit opt-in. Keeping this
+    /// small factory internal also lets lifecycle tests exercise the exact
+    /// environment contract without mutating the process environment.
+    static func runtimeController(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> any NativeRuntimeController {
+        if environment["MCLASH_NATIVE_RUNTIME"] == "1" {
+            return NativeRuntimeEngine()
+        }
+        return MihomoRuntimeControllerAdapter()
+    }
+
     /// Native DNS is the unified-runtime default. Set the explicit legacy
     /// switch only for rollback during migration; it is never inferred from
     /// missing configuration so a fresh install stays on the MClash path.
@@ -852,7 +872,7 @@ final class AppModel {
     }
 
     init(
-        supervisor: any NativeRuntimeController = MihomoRuntimeControllerAdapter(),
+        supervisor: (any NativeRuntimeController)? = nil,
         binaryLocator: CoreBinaryLocator = CoreBinaryLocator(),
         secretStore: any CoreSecretProviding = EphemeralCoreSecretProvider(),
         systemProxyManager: SystemProxyManager = SystemProxyManager(),
@@ -866,6 +886,7 @@ final class AppModel {
         profileProxyControllerResolver: ProfileProxyControllerResolver? = nil
     ) {
         self.supervisor = supervisor
+            ?? Self.runtimeController()
         coreFleet = CoreFleetSupervisor()
         self.binaryLocator = binaryLocator
         self.secretStore = secretStore
@@ -1113,7 +1134,7 @@ final class AppModel {
         }
         storageInitializationFailures = initializationFailures
 
-        eventTask = Task { [weak self, events = supervisor.events] in
+        eventTask = Task { [weak self, events = self.supervisor.events] in
             for await event in events {
                 guard !Task.isCancelled else { break }
                 self?.receive(event)
@@ -1437,8 +1458,9 @@ final class AppModel {
               connectionDesiredOnLaunch,
               let activeProfileID,
               profiles.contains(where: { $0.id == activeProfileID }),
-              let activeConfigURL,
-              FileManager.default.fileExists(atPath: activeConfigURL.path),
+              (usesNativeRuntime || (activeConfigURL.map {
+                  FileManager.default.fileExists(atPath: $0.path)
+              } == true)),
               !systemProxyRecoveryRequired,
               !shutdownInProgress,
               !Task.isCancelled,
@@ -1491,6 +1513,7 @@ final class AppModel {
 
     var controllerIsReady: Bool {
         controllerState == .ready
+            || (usesNativeRuntime && isConnected)
     }
 
     var liveDataIsDegraded: Bool {
@@ -4451,7 +4474,7 @@ final class AppModel {
         shouldRestoreSystemProxy: Bool
     ) async throws {
         guard shouldReconnect else { return }
-        guard activeConfigURL != nil else {
+        guard usesNativeRuntime || activeConfigURL != nil else {
             throw AppModelError.profileActivationFailed(
                 AppLocalization.string(
                     "The restored backup does not contain an active profile to reconnect."
@@ -5547,15 +5570,25 @@ final class AppModel {
                 )
                 activeConfigURL = activation.configurationURL
             }
-            guard let activeConfigURL, let activeProfileID else {
+            guard let activeProfileID else {
                 throw AppModelError.profileStoreUnavailable
             }
-            let primaryConfigurationData = try Data(
-                contentsOf: activeConfigURL,
-                options: .mappedIfSafe
-            )
-            let primaryBoundPorts = try RuntimeConfigurationComposer()
-                .boundListenerPorts(in: primaryConfigurationData)
+            let primaryBoundPorts: Set<Int>
+            if usesNativeRuntime {
+                // NativeRuntimeEngine owns listeners and routing directly;
+                // no generated Mihomo YAML is required for activation.
+                primaryBoundPorts = []
+            } else {
+                guard let activeConfigURL else {
+                    throw AppModelError.profileStoreUnavailable
+                }
+                let primaryConfigurationData = try Data(
+                    contentsOf: activeConfigURL,
+                    options: .mappedIfSafe
+                )
+                primaryBoundPorts = try RuntimeConfigurationComposer()
+                    .boundListenerPorts(in: primaryConfigurationData)
+            }
             let primarySourceBoundPorts = try await primarySourceBoundListenerPorts(
                 profileID: activeProfileID
             )
@@ -5575,10 +5608,14 @@ final class AppModel {
                     conflictingPorts.sorted()
                 )
             }
-            let binaryURL = try binaryLocator.locate()
+            let binaryURL = usesNativeRuntime
+                ? URL(fileURLWithPath: "/dev/null")
+                : try binaryLocator.locate()
             let secret = try secretStore.loadOrCreate()
             let homeDirectory = try coreHomeDirectory()
-            try geoDataInstaller.installIfNeeded(into: homeDirectory)
+            if !usesNativeRuntime {
+                try geoDataInstaller.installIfNeeded(into: homeDirectory)
+            }
             let controllerPort = try availableTCPPort(
                 excluding: Set(
                     profileRuntimePlan.enabledSessions.map(\.mixedPort)
@@ -5590,7 +5627,8 @@ final class AppModel {
             let configuration = CoreLaunchConfiguration(
                 binaryURL: binaryURL,
                 homeDirectory: homeDirectory,
-                configURL: activeConfigURL,
+                configURL: activeConfigURL
+                    ?? homeDirectory.appending(path: "native-runtime-plan.json"),
                 controllerPort: UInt16(controllerPort),
                 secret: secret
             )
@@ -5610,7 +5648,10 @@ final class AppModel {
                 for: networkCapturePreferences.enabled
                     ? networkCapturePreferences.snapshot.rules
                     : [],
-                startAuxiliary: true
+                // Native runtime owns the active profile in-process. Do not
+                // launch auxiliary Mihomo instances while the opt-in path is
+                // being exercised.
+                startAuxiliary: !usesNativeRuntime
             )
             if isConnected, controllerIsReady, networkCapturePreferences.enabled {
                 await performNetworkCaptureActivation()
@@ -9000,6 +9041,12 @@ final class AppModel {
     }
 
     private func makeProfileValidator() throws -> ClosureProfileValidator {
+        if usesNativeRuntime {
+            // Native profiles contain node material only. Their route plan is
+            // compiled by MClash, so validating a legacy YAML would both be
+            // misleading and make native activation depend on Mihomo.
+            return ClosureProfileValidator { _ in }
+        }
         let binaryURL = try binaryLocator.locate()
         let homeDirectory = try validationHomeDirectory()
         try geoDataInstaller.installIfNeeded(into: homeDirectory)
@@ -9032,6 +9079,20 @@ final class AppModel {
     }
 
     private func controllerDidStart(_ session: CoreSession) async {
+        if usesNativeRuntime {
+            // NativeRuntimeEngine intentionally has no Mihomo HTTP controller.
+            // Mark the lifecycle ready directly and leave API-backed telemetry
+            // disabled until the native observation stream is wired in.
+            controllerSetupOperation?.task.cancel()
+            controllerSetupOperation = nil
+            apiClient = nil
+            activeControllerEndpoint = session.endpoint
+            controllerGeneration &+= 1
+            controllerState = .ready
+            errorMessage = nil
+            appendSupervisorLog("Native runtime is ready; no Mihomo controller was contacted.")
+            return
+        }
         if activeControllerEndpoint == session.endpoint, controllerState == .ready {
             return
         }
