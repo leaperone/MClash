@@ -25,6 +25,8 @@ public enum HTTPProxyCodecError: Error, Equatable, Sendable {
     case unsupportedMethod
     case invalidTarget
     case invalidHeader
+    case invalidResponse
+    case proxyRejected(status: Int)
 }
 
 public enum HTTPProxyCodec: Sendable {
@@ -72,6 +74,72 @@ public enum HTTPProxyCodec: Sendable {
         Data("HTTP/1.1 \(status) \(reason)\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".utf8)
     }
 
+    /// Encodes the wire request sent to an HTTP proxy node.  Credentials are
+    /// deliberately passed as already-normalized values so this layer never
+    /// logs or persists secrets.  CONNECT is the only supported outbound
+    /// method; forwarding arbitrary HTTP requests would bypass MClash routing.
+    public static func encodeConnectRequest(
+        host: String,
+        port: UInt16,
+        username: String? = nil,
+        password: String? = nil,
+        extraHeaders: [String: String] = [:]
+    ) throws -> Data {
+        let target = try HTTPConnectRequest(host: host, port: port)
+        guard (username == nil) == (password == nil) else {
+            throw HTTPProxyCodecError.invalidHeader
+        }
+        var lines = ["CONNECT \(formatTarget(target)) HTTP/1.1", "Host: \(formatTarget(target))"]
+        if let username, let password {
+            let credentials = Data("\(username):\(password)".utf8).base64EncodedString()
+            lines.append("Proxy-Authorization: Basic \(credentials)")
+        }
+        for (name, value) in extraHeaders {
+            let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty,
+                  !normalized.contains(where: { $0 == "\r" || $0 == "\n" || $0 == ":" }),
+                  !value.contains(where: { $0 == "\r" || $0 == "\n" }) else {
+                throw HTTPProxyCodecError.invalidHeader
+            }
+            // Never allow callers to override framing or authentication.
+            guard normalized.caseInsensitiveCompare("Host") != .orderedSame,
+                  normalized.caseInsensitiveCompare("Proxy-Authorization") != .orderedSame else {
+                continue
+            }
+            lines.append("\(normalized): \(value)")
+        }
+        return Data((lines.joined(separator: "\r\n") + "\r\n\r\n").utf8)
+    }
+
+    /// Validates an HTTP proxy response to CONNECT.  A response is complete
+    /// only once the header terminator is present, allowing callers to use it
+    /// as an incremental handshake gate before opening the intercepted flow.
+    public static func decodeConnectResponse(_ data: Data) throws -> Int {
+        guard data.count <= maximumHeaderBytes else { throw HTTPProxyCodecError.inputTooLarge }
+        guard let end = data.range(of: Data("\r\n\r\n".utf8)) else {
+            throw HTTPProxyCodecError.truncatedHeaders
+        }
+        guard let text = String(data: data[..<end.lowerBound], encoding: .utf8) else {
+            throw HTTPProxyCodecError.invalidResponse
+        }
+        let lines = text.components(separatedBy: "\r\n")
+        guard let status = lines.first?.split(separator: " ", omittingEmptySubsequences: true),
+              status.count >= 2, status[0].hasPrefix("HTTP/"),
+              let code = Int(status[1]) else {
+            throw HTTPProxyCodecError.invalidResponse
+        }
+        guard (200 ... 299).contains(code) else {
+            throw HTTPProxyCodecError.proxyRejected(status: code)
+        }
+        for line in lines.dropFirst() {
+            guard let separator = line.firstIndex(of: ":"),
+                  !line[..<separator].trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw HTTPProxyCodecError.invalidHeader
+            }
+        }
+        return code
+    }
+
     private static func parseTarget(_ value: String) throws -> (host: String, port: UInt16) {
         if value.first == "[", let close = value.firstIndex(of: "]") {
             let host = String(value[value.index(after: value.startIndex)..<close])
@@ -89,5 +157,12 @@ public enum HTTPProxyCodec: Sendable {
         let host = String(value[..<separator])
         guard !host.isEmpty else { throw HTTPProxyCodecError.invalidTarget }
         return (host, port)
+    }
+
+    private static func formatTarget(_ request: HTTPConnectRequest) -> String {
+        if request.host.contains(":"), !request.host.hasPrefix("[") {
+            return "[\(request.host)]:\(request.port)"
+        }
+        return "\(request.host):\(request.port)"
     }
 }

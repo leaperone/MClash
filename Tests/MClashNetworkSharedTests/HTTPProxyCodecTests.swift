@@ -36,4 +36,43 @@ struct HTTPProxyCodecTests {
         #expect(String(decoding: HTTPProxyCodec.encodeFailureResponse(), as: UTF8.self)
             .hasPrefix("HTTP/1.1 502 Bad Gateway"))
     }
+
+    @Test("Encodes authenticated HTTP CONNECT request")
+    func outboundConnectRequest() throws {
+        let data = try HTTPProxyCodec.encodeConnectRequest(
+            host: "example.com", port: 443, username: "alice", password: "secret",
+            extraHeaders: ["X-MClash": "native"]
+        )
+        #expect(String(decoding: data, as: UTF8.self) ==
+            "CONNECT example.com:443 HTTP/1.1\r\n" +
+            "Host: example.com:443\r\n" +
+            "Proxy-Authorization: Basic YWxpY2U6c2VjcmV0\r\n" +
+            "X-MClash: native\r\n\r\n")
+    }
+
+    @Test("Accepts only complete successful CONNECT responses")
+    func outboundConnectResponse() throws {
+        #expect(try HTTPProxyCodec.decodeConnectResponse(
+            Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8)
+        ) == 200)
+        #expect(throws: HTTPProxyCodecError.truncatedHeaders) {
+            try HTTPProxyCodec.decodeConnectResponse(Data("HTTP/1.1 200 OK\r\n".utf8))
+        }
+        #expect(throws: HTTPProxyCodecError.proxyRejected(status: 407)) {
+            try HTTPProxyCodec.decodeConnectResponse(Data("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n".utf8))
+        }
+    }
+
+    @Test("Rejects credential mismatch and header injection")
+    func outboundConnectValidation() {
+        #expect(throws: HTTPProxyCodecError.invalidHeader) {
+            try HTTPProxyCodec.encodeConnectRequest(host: "example.com", port: 443, username: "alice")
+        }
+        #expect(throws: HTTPProxyCodecError.invalidHeader) {
+            try HTTPProxyCodec.encodeConnectRequest(
+                host: "example.com", port: 443,
+                extraHeaders: ["X-Test": "ok\r\nInjected: yes"]
+            )
+        }
+    }
 }
