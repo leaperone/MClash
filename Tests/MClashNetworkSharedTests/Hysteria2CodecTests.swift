@@ -49,6 +49,16 @@ struct Hysteria2CodecTests {
         #expect(decoded.payload == Data([0xde, 0xad]))
     }
 
+    @Test("Brackets IPv6 UDP targets for unambiguous port parsing")
+    func ipv6UDPMessage() throws {
+        let encoded = try Hysteria2Codec.encodeUDPMessage(
+            sessionID: 1, packetID: 1, host: "2001:db8::1", port: 53, payload: Data([7])
+        )
+        let decoded = try Hysteria2Codec.decodeUDPMessage(encoded)
+        #expect(decoded.host == "2001:db8::1")
+        #expect(decoded.port == 53)
+    }
+
     @Test("Decodes successful and rejected TCP responses")
     func tcpResponse() throws {
         let accepted = try Hysteria2Codec.decodeTCPResponse(Data([0x00, 0x02, 0x6f, 0x6b, 0x00]))

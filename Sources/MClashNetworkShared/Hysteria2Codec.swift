@@ -41,7 +41,8 @@ public enum Hysteria2Codec: Sendable {
     }
 
     public static func encodeTCPRequest(host: String, port: UInt16, padding: Data = Data()) throws -> Data {
-        let address = "\(host):\(port)"
+        let addressHost = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        let address = "\(addressHost):\(port)"
         guard !host.isEmpty, port > 0, address.utf8.count <= 1024 else {
             throw Hysteria2CodecError.invalidAddress
         }
@@ -63,7 +64,8 @@ public enum Hysteria2Codec: Sendable {
         port: UInt16,
         payload: Data
     ) throws -> Data {
-        let address = "\(host):\(port)"
+        let addressHost = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        let address = "\(addressHost):\(port)"
         guard !host.isEmpty, port > 0, address.utf8.count <= 1024,
               fragmentCount > 0, fragmentID < fragmentCount else {
             throw Hysteria2CodecError.invalidAddress
@@ -100,7 +102,11 @@ public enum Hysteria2Codec: Sendable {
         guard let separator = address.lastIndex(of: ":"),
               let port = UInt16(address[address.index(after: separator)...]),
               port > 0 else { throw Hysteria2CodecError.invalidAddress }
-        let host = String(address[..<separator])
+        var host = String(address[..<separator])
+        if host.first == "[", host.last == "]" {
+            host.removeFirst()
+            host.removeLast()
+        }
         guard !host.isEmpty else { throw Hysteria2CodecError.invalidAddress }
         return UDPMessage(
             sessionID: sessionID,
