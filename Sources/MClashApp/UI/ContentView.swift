@@ -22,9 +22,6 @@ struct ContentView: View {
                 Section(AppLocalization.string("Configuration")) {
                     destinationRow(.workspaces, title: "Configuration & Mode")
                     destinationRow(.dns)
-                }
-
-                Section {
                     destinationRow(.rules, title: "Rules & Rule Sets")
                     destinationRow(.proxyGroups, title: "Node Groups")
                     destinationRow(.nodes)

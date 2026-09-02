@@ -55,8 +55,8 @@ struct AutomationSocketServerTests {
         #expect(permissions.intValue & 0o077 == 0)
     }
 
-    @Test("Unpaired clients cannot dispatch destructive commands")
-    func destructiveCommandRequiresAuthentication() async throws {
+    @Test("Same-user private socket dispatches destructive commands without pairing")
+    func destructiveCommandDoesNotRequireAuthentication() async throws {
         let root = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent(
             "mcac-\(UUID().uuidString.prefix(8))",
             isDirectory: true
@@ -86,7 +86,29 @@ struct AutomationSocketServerTests {
                 AutomationRPCRequest(method: "traffic.history.clear")
             )
         }.value
-        #expect(response.error?.type == "authentication_required")
+        #expect(response.error == nil)
+
+        let pairingResponse = try await Task.detached {
+            try AutomationSocketClient(
+                unsafeDevelopmentSocketPath: endpoint.socketPath
+            ).send(
+                AutomationRPCRequest(
+                    method: "auth.pair",
+                    params: [
+                        "name": .string("trusted-test"),
+                        "scopes": .array([.string("read")]),
+                    ],
+                    allowInteraction: false
+                )
+            )
+        }.value
+        #expect(pairingResponse.error == nil)
+        let alreadyTrusted: Bool? = if case let .object(values) = pairingResponse.result {
+            values["alreadyTrusted"]?.boolValue
+        } else {
+            nil
+        }
+        #expect(alreadyTrusted == true)
     }
 
     @Test("Tokens are scoped, identity-bound, expiring, and revocable")

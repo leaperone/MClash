@@ -286,13 +286,16 @@ public struct ConfigurationCompiler: Sendable {
                 lines.append("    type: \(entrance.kind == .http ? "http" : "socks")")
                 lines.append("    port: \(port)")
                 lines.append("    listen: \(yamlString(entrance.bindAddress))")
-                // Mihomo listeners accept an inbound-specific proxy target;
-                // keep HTTP/SOCKS entrances independent instead of forcing
-                // every enabled entrance to share one default action.
-                let listenerTarget: String
+                // In rule mode, leave the listener target unset so Mihomo
+                // evaluates the compiled rules table for each connection.
+                // Setting `proxy` here bypasses rules entirely and makes an
+                // ordinary HTTP/SOCKS entrance unexpectedly proxy every
+                // destination (including domestic domains). Global and
+                // Direct remain explicit mode overrides below.
+                let listenerTarget: String?
                 switch routingMode {
                 case .rule:
-                    listenerTarget = render(action: entrance.defaultAction, groupNames: groupNames)
+                    listenerTarget = nil
                 case .global:
                     // Global mode is an explicit user override: every
                     // entrance enters Mihomo's GLOBAL selector.
@@ -300,7 +303,9 @@ public struct ConfigurationCompiler: Sendable {
                 case .direct:
                     listenerTarget = ConfigurationBuiltInPolicy.direct.rawValue
                 }
-                lines.append("    proxy: \(yamlString(listenerTarget))")
+                if let listenerTarget {
+                    lines.append("    proxy: \(yamlString(listenerTarget))")
+                }
                 if entrance.kind == .socks5 {
                     lines.append("    udp: true")
                 }
@@ -362,6 +367,8 @@ public struct ConfigurationCompiler: Sendable {
 
         lines.append("")
         lines.append("rules:")
+        var hasChinaGeositeRule = false
+        var hasChinaGeoIPRule = false
         for ruleSet in ruleSets {
             let action = render(action: ruleSet.defaultAction, groupNames: groupNames)
             let hasProvider = ruleSet.sourceURL != nil
@@ -375,12 +382,20 @@ public struct ConfigurationCompiler: Sendable {
                     defaultAction: action,
                     groupNames: groupNames
                 )
+                hasChinaGeositeRule = hasChinaGeositeRule
+                    || rendered.caseInsensitiveCompare("GEOSITE,cn,DIRECT") == .orderedSame
+                hasChinaGeoIPRule = hasChinaGeoIPRule
+                    || rendered.caseInsensitiveCompare("GEOIP,CN,DIRECT,no-resolve") == .orderedSame
                 lines.append("  - \(yamlString(rendered))")
             }
         }
         for rule in rules {
             let action = render(action: rule.action, groupNames: groupNames)
             for line in render(rule: rule, action: action) {
+                hasChinaGeositeRule = hasChinaGeositeRule
+                    || line.caseInsensitiveCompare("GEOSITE,cn,DIRECT") == .orderedSame
+                hasChinaGeoIPRule = hasChinaGeoIPRule
+                    || line.caseInsensitiveCompare("GEOIP,CN,DIRECT,no-resolve") == .orderedSame
                 lines.append("  - \(yamlString(line))")
             }
         }
@@ -389,10 +404,14 @@ public struct ConfigurationCompiler: Sendable {
         // user may intentionally proxy one domestic service), while
         // unclassified CN domains/IPs stay direct instead of silently using a
         // proxy group.
-        let chinaGeositeRule = yamlString("GEOSITE,cn,DIRECT")
-        let chinaGeoIPRule = yamlString("GEOIP,CN,DIRECT,no-resolve")
-        lines.append("  - \(chinaGeositeRule)")
-        lines.append("  - \(chinaGeoIPRule)")
+        if !hasChinaGeositeRule {
+            let chinaGeositeRule = yamlString("GEOSITE,cn,DIRECT")
+            lines.append("  - \(chinaGeositeRule)")
+        }
+        if !hasChinaGeoIPRule {
+            let chinaGeoIPRule = yamlString("GEOIP,CN,DIRECT,no-resolve")
+            lines.append("  - \(chinaGeoIPRule)")
+        }
         // App Routing has no TCP listener of its own, so its catch-all capture
         // path uses that entrance's default action when enabled. If the
         // capability is off, fall back to the first enabled public entrance.

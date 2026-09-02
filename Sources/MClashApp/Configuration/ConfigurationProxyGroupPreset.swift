@@ -13,6 +13,8 @@ enum ConfigurationProxyGroupPreset {
     static let residentialGroupName = "🏠 家宽节点"
     static let manualGroupName = "☑️ 手动切换"
     static let automaticGroupName = "♻️ 自动选择"
+    static let highPriorityGroupName = "🚀 高优先级节点"
+    static let mediumPriorityGroupName = "🚀 中优先级节点"
     static let directGroupName = "🎯 全球直连"
 
     static let groupNames: [String] = [
@@ -24,6 +26,8 @@ enum ConfigurationProxyGroupPreset {
         residentialGroupName,
         manualGroupName,
         automaticGroupName,
+        highPriorityGroupName,
+        mediumPriorityGroupName,
         directGroupName,
     ]
 
@@ -63,11 +67,12 @@ enum ConfigurationProxyGroupPreset {
             document.proxyGroups.first(where: { $0.name == name })?.id
         }
 
+        var directGroupIDForFallback: ProxyGroupID?
+
         func upsert(
             name: String,
             type: ProxyGroupType,
             members: [ProxyGroupMember] = [],
-            selectors: [NodeSelector] = [],
             preferredID: ProxyGroupID? = nil
         ) -> ProxyGroupID {
             let id = preferredID ?? existingID(named: name) ?? stableID(name)
@@ -76,12 +81,20 @@ enum ConfigurationProxyGroupPreset {
             // a preset is applied over an older document.
             var seenMembers = Set<ProxyGroupMember>()
             let uniqueMembers = members.filter { seenMembers.insert($0).inserted }
+            let safeMembers: [ProxyGroupMember]
+            if uniqueMembers.isEmpty, type != .direct, type != .reject {
+                // A fixed allow-list can legitimately have no match after a
+                // provider removes a node. Keep the group valid and fail
+                // closed to DIRECT until the next refresh restores a pin.
+                safeMembers = [.group(directGroupIDForFallback ?? stableID(directGroupName))]
+            } else {
+                safeMembers = uniqueMembers
+            }
             let replacement = ProxyGroup(
                 id: id,
                 name: name,
                 type: type,
-                members: uniqueMembers,
-                memberSelectors: selectors,
+                members: safeMembers,
                 enabled: true
             )
             if let index = document.proxyGroups.firstIndex(where: { $0.id == id }) {
@@ -108,67 +121,68 @@ enum ConfigurationProxyGroupPreset {
             }
             .map(\.id)
 
-        func sourceConditions(for sourceID: SourceID) -> [NodeSelectorCondition] {
-            [.source(sourceID)]
+        // The source profile is intentionally treated as a node catalogue.
+        // Do not retain selectors here: selectors would silently pull AWS or
+        // provider notice entries into a routing group after a refresh.  The
+        // CUNOE plan is a deliberate, fixed allow-list copied from the
+        // provider's original groups. Stable NodeIDs keep these pins attached
+        // when credentials or display metadata are refreshed.
+        let cunoeNodes = document.nodes.filter { node in
+            node.enabled && node.sourceLinks.contains { cunoeSourceIDs.contains($0) }
         }
+        let originalPlanNames: Set<String> = [
+            "🇺🇸 美国|us|9929|ws|private",
+            "🇭🇰 香港|ws|private",
+            "🇺🇸 美国|us|9929|ws|private|10001VIRCS",
+            "🇺🇸 美国|us|9929|ws|private|10002VIRCS",
+            "🇺🇸 美国|us|9929|ws|private|10003VIRCS",
+            "🇭🇰 香港|juhost|ws",
+            "🇺🇸 美国|us|9929|ws|warp",
+            "🇯🇵 日本", "🇯🇵 日本 2", "🇯🇵 日本 3", "🇯🇵 日本 4",
+        ]
+        let pinnedNodes = cunoeNodes.filter { originalPlanNames.contains($0.displayName) }
 
-        func sourceIDsOrSentinel() -> [SourceID] {
-            // No CUNOE source means the preset intentionally resolves to no
-            // nodes rather than silently importing nodes from another source.
-            // This is recoverable: selectors begin matching on refresh once a
-            // CUNOE-Proxy source is added.
-            cunoeSourceIDs.isEmpty ? [SourceID(rawValue: UUID.stable(
-                for: "mclash-common-routing-selector-v1|missing-cunoe-source"
-            ))] : cunoeSourceIDs
-        }
-
-        func nameSelectors(
-            _ label: String,
-            patterns: [String]
-        ) -> [NodeSelector] {
-            sourceIDsOrSentinel().flatMap { sourceID in
-                patterns.map { pattern in
-                NodeSelector(
-                    id: UUID.stable(
-                        for: "mclash-common-routing-selector-v1|\(label)|\(sourceID.rawValue)|\(pattern)"
-                    ),
-                    name: label + " · " + pattern,
-                    include: sourceConditions(for: sourceID) + [.nameContains(pattern)]
-                )
-                }
+        func fixedMembers(named names: [String]) -> [ProxyGroupMember] {
+            // Preserve the order from the original CUNOE profile.  This is
+            // meaningful for fallback groups (first healthy node wins) and
+            // makes the priority visible instead of depending on catalog
+            // refresh order.
+            names.compactMap { name in
+                pinnedNodes.first { $0.displayName == name }.map { .node($0.id) }
             }
         }
+        let hongKongMembers = fixedMembers(named: [
+            "🇭🇰 香港|juhost|ws", "🇭🇰 香港|ws|private", "🇯🇵 日本",
+            "🇺🇸 美国|us|9929|ws|private",
+        ])
+        let unitedStatesMembers = fixedMembers(named: [
+            "🇺🇸 美国|us|9929|ws|private", "🇭🇰 香港|juhost|ws",
+            "🇭🇰 香港|ws|private", "🇯🇵 日本",
+        ])
+        let japanMembers = fixedMembers(named: [
+            "🇯🇵 日本", "🇭🇰 香港|juhost|ws", "🇭🇰 香港|ws|private",
+            "🇺🇸 美国|us|9929|ws|private",
+        ])
+        let residentialMembers = fixedMembers(named: [
+            "🇺🇸 美国|us|9929|ws|private|10001VIRCS",
+            "🇺🇸 美国|us|9929|ws|private|10002VIRCS",
+            "🇺🇸 美国|us|9929|ws|private|10003VIRCS",
+            "🇯🇵 日本 2", "🇯🇵 日本 3", "🇯🇵 日本 4",
+        ])
+        let manualMembers = pinnedNodes.map { ProxyGroupMember.node($0.id) }
+        let automaticMembers = manualMembers
+        let highPriorityMembers = fixedMembers(named: [
+            "🇺🇸 美国|us|9929|ws|private", "🇭🇰 香港|ws|private",
+        ])
+        let mediumPriorityMembers = fixedMembers(named: [
+            "🇭🇰 香港|juhost|ws", "🇺🇸 美国|us|9929|ws|warp",
+        ])
 
-        let allNodesSelectors = sourceIDsOrSentinel().map { sourceID in
-            NodeSelector(
-                id: UUID.stable(for: "mclash-common-routing-selector-v1|all|\(sourceID.rawValue)"),
-                name: "CUNOE-Proxy · 所有已启用节点",
-                include: sourceConditions(for: sourceID)
-            )
-        }
-        let hongKongSelectors = nameSelectors(
-            hongKongGroupName,
-            patterns: [
-                "🇭🇰", "香港", "Hong Kong", "HK ", "HK-", "HK_", "HK|", "[HK]",
-            ]
-        )
-        let unitedStatesSelectors = nameSelectors(
-            unitedStatesGroupName,
-            patterns: [
-                "🇺🇸", "美国", "美國", "United States", "US ", "US-", "US_", "US|", "[US]",
-            ]
-        )
-        let japanSelectors = nameSelectors(
-            japanGroupName,
-            patterns: [
-                "🇯🇵", "日本", "Japan", "Tokyo", "东京", "東京",
-                "JP ", "JP-", "JP_", "JP|", "[JP]",
-            ]
-        )
-        let residentialSelectors = nameSelectors(
-            residentialGroupName,
-            patterns: ["家宽", "家寬", "住宅", "Residential", "VIRCS"]
-        )
+        // Keep a real DIRECT group available as a safe terminal member for
+        // fixed groups whose named CUNOE nodes are temporarily absent. This
+        // avoids invalid empty groups during a partial subscription refresh.
+        let directID = upsert(name: directGroupName, type: .direct)
+        directGroupIDForFallback = directID
 
         // Region fallback order is intentional. If the preferred region is
         // unavailable, mihomo walks the remaining region pools instead of
@@ -176,42 +190,51 @@ enum ConfigurationProxyGroupPreset {
         let hongKongID = upsert(
             name: hongKongGroupName,
             type: .fallback,
-            selectors: hongKongSelectors
+            members: hongKongMembers
         )
         let unitedStatesID = upsert(
             name: unitedStatesGroupName,
             type: .fallback,
-            selectors: unitedStatesSelectors
+            members: unitedStatesMembers
         )
         let japanID = upsert(
             name: japanGroupName,
             type: .fallback,
-            selectors: japanSelectors
+            members: japanMembers
         )
         let residentialID = upsert(
             name: residentialGroupName,
             type: .select,
-            selectors: residentialSelectors
+            members: residentialMembers
         )
         let manualID = upsert(
             name: manualGroupName,
             type: .select,
-            selectors: allNodesSelectors
+            members: manualMembers
         )
         let automaticID = upsert(
             name: automaticGroupName,
             type: .urlTest,
-            selectors: allNodesSelectors
+            members: automaticMembers
         )
-        let directID = upsert(name: directGroupName, type: .direct)
+        let highPriorityID = upsert(
+            name: highPriorityGroupName,
+            type: .fallback,
+            members: highPriorityMembers
+        )
+        let mediumPriorityID = upsert(
+            name: mediumPriorityGroupName,
+            type: .fallback,
+            members: mediumPriorityMembers
+        )
         let failoverID = upsert(
             name: failoverGroupName,
             type: .fallback,
             members: [
-                .group(unitedStatesID),
-                .group(japanID),
-                .group(hongKongID),
+                .group(highPriorityID),
+                .group(mediumPriorityID),
                 .group(automaticID),
+                .group(directID),
             ]
         )
         let mainID = upsert(
@@ -223,6 +246,8 @@ enum ConfigurationProxyGroupPreset {
                 .group(japanID),
                 .group(failoverID),
                 .group(residentialID),
+                .group(highPriorityID),
+                .group(mediumPriorityID),
                 .group(manualID),
                 .group(automaticID),
                 .group(directID),
@@ -239,6 +264,8 @@ enum ConfigurationProxyGroupPreset {
             residentialID,
             manualID,
             automaticID,
+            highPriorityID,
+            mediumPriorityID,
             directID,
         ]
         let presetIDSet = Set(presetIDs)
