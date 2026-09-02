@@ -38,13 +38,13 @@ enum DNSProxyBootstrapError: LocalizedError {
 enum DNSRelayRoute: Equatable, Sendable {
     case directTrustedComponent
     case directLocalResolver
-    case mihomo(MihomoRoute)
+    case proxy(OutboundRoute)
 
     var bypassesMihomo: Bool {
         switch self {
         case .directTrustedComponent, .directLocalResolver:
             true
-        case .mihomo:
+        case .proxy:
             false
         }
     }
@@ -61,7 +61,7 @@ enum DNSRelayRoutingPolicy {
         if destination.address.ipAddress?.isLocalNetwork == true {
             return .directLocalResolver
         }
-        return .mihomo(.profileRules)
+        return .proxy(.profileRules)
     }
 }
 
@@ -371,7 +371,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 activityObserver: observer
             )
         } else {
-            guard case let .mihomo(mihomoRoute) = route,
+            guard case let .proxy(mihomoRoute) = route,
                   let proxy = runtimeState.proxyCatalog[mihomoRoute] else {
                 reject(flow, category: .backendUnavailable)
                 return true
@@ -671,7 +671,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     ) -> UDPFlowInterceptionPlan {
         let bypassMihomo = route.bypassesMihomo
         let mihomoRoute: MihomoRoute = {
-            guard case let .mihomo(value) = route else { return .profileRules }
+            guard case let .proxy(value) = route else { return .profileRules }
             return value
         }()
         let decision = FlowTrafficDecision(
@@ -724,7 +724,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             "Trusted MClash DNS egress bypassed the private SOCKS listener."
         case .directLocalResolver:
             "Local DNS resolver bypassed the private SOCKS listener."
-        case let .mihomo(route):
+        case let .proxy(route):
             "DNS relayed through \(route.stableSortKey)."
         }
     }
@@ -744,19 +744,19 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         )
         if case let .mihomo(route) = decision.disposition,
            proxyCatalog[route] != nil {
-            return .mihomo(route)
+            return .proxy(route)
         }
         // Destination-only rules cannot be evaluated from a DNS resolver
         // flow, and some system-generated DNS flows have no usable app
         // identity. Both cases deliberately retain the primary profile route.
-        return .mihomo(.profileRules)
+        return .proxy(.profileRules)
     }
 
     private func proxy(
         for route: DNSRelayRoute,
         in proxyCatalog: [MihomoRoute: ProviderSOCKSConfiguration]
     ) -> ProviderSOCKSConfiguration? {
-        guard case let .mihomo(mihomoRoute) = route else { return nil }
+        guard case let .proxy(mihomoRoute) = route else { return nil }
         return proxyCatalog[mihomoRoute]
     }
 
