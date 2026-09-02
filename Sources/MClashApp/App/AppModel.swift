@@ -1725,8 +1725,11 @@ final class AppModel {
                 changed = true
             }
         }
+        let builtInRuleOrder = ConfigurationDocument.builtInRoutingRules().map(\.id)
+        let builtInRuleIDs = Set(builtInRuleOrder)
         let hasMeaningfulUnifiedRules = candidate.rules.contains {
-            $0.enabled || !$0.matchers.isEmpty
+            !builtInRuleIDs.contains($0.id)
+                && ($0.enabled || !$0.matchers.isEmpty)
         }
         if !hasMeaningfulUnifiedRules,
            !networkCapturePreferences.snapshot.rules.isEmpty,
@@ -1754,6 +1757,7 @@ final class AppModel {
                 )
                 let preservedRules = candidate.rules.filter { rule in
                     otherWorkspaceRuleIDs.contains(rule.id)
+                        || builtInRuleIDs.contains(rule.id)
                 }
                 let migratedRuleIDs = Set(migration.rules.map(\.id))
                 candidate.rules = preservedRules.filter {
@@ -1763,7 +1767,7 @@ final class AppModel {
                 candidate.workspaces[workspaceIndex].proxyGroupIDs =
                     migration.workspaceProxyGroupIDs
                 candidate.workspaces[workspaceIndex].ruleIDs =
-                    migration.rules.map(\.id)
+                    builtInRuleOrder + migration.rules.map(\.id)
                 migrationDiagnostics = migration.diagnostics
                 changed = true
                 appendSupervisorLog(
@@ -2214,6 +2218,63 @@ final class AppModel {
                     appendSupervisorLog(
                         "Repaired legacy regional groups to use CUNOE-Proxy source selectors."
                     )
+                }
+            }
+            // Seed MClash-owned GeoSite policy for older manifests that were
+            // created before Rule Sets became first-class. These are not
+            // imported source providers: they reference the bundled mihomo
+            // GeoData and stay editable in the Rules surface.
+            if let workspaceIndex = document.workspaces.firstIndex(where: {
+                $0.id == document.currentWorkspace?.id
+            }),
+               let targetGroupID = document.workspaces[workspaceIndex]
+                    .proxyGroupIDs
+                    .compactMap({ id in
+                        document.proxyGroups.first {
+                            $0.id == id && $0.enabled
+                        }?.id
+                    })
+                    .first {
+                let builtIns = ConfigurationDocument.builtInRuleSets(
+                    proxyGroupID: targetGroupID
+                )
+                var changedRuleSets = false
+                for ruleSet in builtIns where !document.ruleSets.contains(where: {
+                    $0.id == ruleSet.id
+                }) {
+                    document.ruleSets.append(ruleSet)
+                    changedRuleSets = true
+                }
+                let builtInIDs = builtIns.map(\.id)
+                let existingIDs = document.workspaces[workspaceIndex].ruleSetIDs
+                let updatedIDs = builtInIDs + existingIDs.filter {
+                    !builtInIDs.contains($0)
+                }
+               if changedRuleSets || existingIDs != updatedIDs {
+                    document.workspaces[workspaceIndex].ruleSetIDs = updatedIDs
+                    document.workspaces[workspaceIndex].revision += 1
+                }
+
+                // Keep private/LAN destinations out of the transparent
+                // capture path (Docker, SSH, printers, and local services).
+                // Older manifests predate these MClash-owned safeguards, so
+                // add them once while preserving every user rule and order.
+                let builtInRoutingRules = ConfigurationDocument.builtInRoutingRules()
+                var changedRoutingRules = false
+                for rule in builtInRoutingRules where !document.rules.contains(where: {
+                    $0.id == rule.id
+                }) {
+                    document.rules.append(rule)
+                    changedRoutingRules = true
+                }
+                let builtInRuleIDs = builtInRoutingRules.map(\.id)
+                let existingRuleIDs = document.workspaces[workspaceIndex].ruleIDs
+                let updatedRuleIDs = builtInRuleIDs + existingRuleIDs.filter {
+                    !builtInRuleIDs.contains($0)
+                }
+                if changedRoutingRules || existingRuleIDs != updatedRuleIDs {
+                    document.workspaces[workspaceIndex].ruleIDs = updatedRuleIDs
+                    document.workspaces[workspaceIndex].revision += 1
                 }
             }
             try await configurationStore.save(document)

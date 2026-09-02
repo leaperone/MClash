@@ -246,7 +246,9 @@ struct ConfigurationAdvancedTests {
         #expect(yaml.contains("port: 18100"))
         #expect(yaml.contains("port: 18101"))
         #expect(yaml.contains("port: 18102"))
-        #expect(yaml.contains("proxy: \"Node Selection\""))
+        // Rule-mode entrances must use the compiled rules table. An
+        // inbound `proxy` target would short-circuit those rules.
+        #expect(!yaml.contains("proxy: \"Node Selection\""))
     }
 
     @Test("Fallback member order is preserved instead of being UUID-sorted")

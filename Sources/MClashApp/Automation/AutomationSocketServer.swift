@@ -64,7 +64,8 @@ final class AutomationSocketServer: @unchecked Sendable {
                 directory: discoveryDirectory ?? AutomationDiscovery.defaultDirectory(),
                 storage: authorizationStorage
             ),
-            showWindow: showWindow
+            showWindow: showWindow,
+            localSocketTrusted: true
         )
         let created = try Self.createEndpoint(baseDirectory: socketBaseDirectory)
         stateLock.lock()

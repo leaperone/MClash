@@ -12,6 +12,12 @@ final class AutomationCommandGateway {
     private let updater: ApplicationUpdater
     private let showWindow: ShowWindow
     private let authorizationStore: AutomationAuthorizationStore
+    /// The gateway is currently only exposed through a private, same-user Unix
+    /// socket.  The socket server has already authenticated the peer with
+    /// getpeereid, ownership/permissions, and process identity, so repeating
+    /// the Keychain-backed pairing flow here only creates an authorization
+    /// prompt loop (especially after helper updates).
+    private let localSocketTrusted: Bool
     private var mutationInProgress = false
     private var lastPairingPromptAt: Date?
     private var lastInteractionPromptAt: Date?
@@ -26,12 +32,14 @@ final class AutomationCommandGateway {
         model: AppModel,
         updater: ApplicationUpdater,
         authorizationStore: AutomationAuthorizationStore,
-        showWindow: @escaping ShowWindow
+        showWindow: @escaping ShowWindow,
+        localSocketTrusted: Bool = false
     ) {
         self.model = model
         self.updater = updater
         self.authorizationStore = authorizationStore
         self.showWindow = showWindow
+        self.localSocketTrusted = localSocketTrusted
     }
 
     func execute(
@@ -54,6 +62,15 @@ final class AutomationCommandGateway {
             }
             try Self.validateParameters(request)
             if request.method == "auth.pair" {
+                if localSocketTrusted {
+                    // Keep the method for protocol compatibility with older
+                    // clients, but never prompt or persist a token for the
+                    // already-authenticated local transport.
+                    return AutomationRPCResponse(
+                        id: request.id,
+                        result: .object(["alreadyTrusted": .bool(true)])
+                    )
+                }
                 guard !mutationInProgress else {
                     throw GatewayError.operationInProgress
                 }
@@ -73,7 +90,7 @@ final class AutomationCommandGateway {
                 )
             }
             var authorizedClient: AutomationAuthorizationStore.PublicClient?
-            if request.method != "system.capabilities" {
+            if request.method != "system.capabilities", !localSocketTrusted {
                 authorizedClient = try authorizationStore.authorize(
                     token: request.authorization,
                     requiredScope: Self.requiredScope(for: capability),
@@ -110,6 +127,7 @@ final class AutomationCommandGateway {
                 if ownsMutationSlot { mutationInProgress = false }
             }
             if capability.risk == .destructive,
+               !localSocketTrusted,
                authorizedClient?.trust != .trusted {
                 try confirmDestructiveRequest(
                     request,
