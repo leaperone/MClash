@@ -14,49 +14,50 @@ struct MClashApp: App {
         )
 
     var body: some Scene {
-        Window("MClash", id: "main") {
-            Group {
-                if mainWindowContentIsActive {
-                    ContentView(model: model, applicationUpdater: applicationUpdater)
-                } else {
-                    MainWindowDormantView()
-                }
+        // Quiet login and `mclashctl --mclash-background` do not instantiate
+        // Window content. Core, Network Extension, and automation must start
+        // from the scene graph itself.
+        ApplicationBootstrapScene {
+            applicationDelegate.registerApplicationPreparation {
+                await prepareApplication()
             }
-                .frame(
-                    minWidth: MClashLayout.mainWindowMinimumWidth,
-                    minHeight: MClashLayout.mainWindowMinimumHeight
-                )
-                .background {
-                    MainWindowRegistrationView { window in
-                        applicationDelegate.registerMainWindow(
-                            window,
-                            telemetryVisibilityDidChange: { isVisible in
-                                model.setMainWindowPresentationTelemetryVisible(isVisible)
+        } content: {
+            Window("MClash", id: "main") {
+                Group {
+                    if mainWindowContentIsActive {
+                        ContentView(model: model, applicationUpdater: applicationUpdater)
+                    } else {
+                        MainWindowDormantView()
+                    }
+                }
+                    .frame(
+                        minWidth: MClashLayout.mainWindowMinimumWidth,
+                        minHeight: MClashLayout.mainWindowMinimumHeight
+                    )
+                    .background {
+                        MainWindowRegistrationView { window in
+                            applicationDelegate.registerMainWindow(
+                                window,
+                                telemetryVisibilityDidChange: { isVisible in
+                                    model.setMainWindowPresentationTelemetryVisible(isVisible)
+                                }
+                            ) { isVisible in
+                                mainWindowContentIsActive = isVisible
+                                model.setMainWindowVisible(isVisible)
                             }
-                        ) { isVisible in
-                            mainWindowContentIsActive = isVisible
-                            model.setMainWindowVisible(isVisible)
                         }
                     }
-                }
-                .background {
-                    ApplicationLifecycleRegistrationView {
-                        applicationDelegate.registerApplicationPreparation {
-                            await prepareApplication()
-                        }
+                    .onOpenURL { url in
+                        applicationDelegate.showMainWindow()
+                        Task { await model.handleIncomingURL(url) }
                     }
-                }
-                .onOpenURL { url in
-                    applicationDelegate.showMainWindow()
-                    Task { await model.handleIncomingURL(url) }
-                }
-                .onChange(of: model.lightweightMode, initial: true) { _, isEnabled in
-                    applicationDelegate.setLightweightMode(isEnabled)
-                }
-        }
-        .environment(\.locale, selectedLanguage.locale)
-        .defaultSize(width: 1_180, height: 760)
-        .commands {
+                    .onChange(of: model.lightweightMode, initial: true) { _, isEnabled in
+                        applicationDelegate.setLightweightMode(isEnabled)
+                    }
+            }
+            .environment(\.locale, selectedLanguage.locale)
+            .defaultSize(width: 1_180, height: 760)
+            .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     applicationUpdater.checkForUpdates()
@@ -134,6 +135,7 @@ struct MClashApp: App {
         }
         .environment(\.locale, selectedLanguage.locale)
         .menuBarExtraStyle(.window)
+        }
     }
 
     private var selectedLanguage: AppLanguage {
@@ -247,30 +249,19 @@ struct MClashApp: App {
     }
 }
 
-private struct ApplicationLifecycleRegistrationView: NSViewRepresentable {
-    let register: @MainActor () -> Void
+private struct ApplicationBootstrapScene<Content: Scene>: Scene {
+    private let content: Content
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeNSView(context: Context) -> NSView {
-        registerIfNeeded(context.coordinator)
-        return NSView(frame: .zero)
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        registerIfNeeded(context.coordinator)
-    }
-
-    private func registerIfNeeded(_ coordinator: Coordinator) {
-        guard !coordinator.didRegister else { return }
-        coordinator.didRegister = true
+    init(
+        register: () -> Void,
+        @SceneBuilder content: () -> Content
+    ) {
         register()
+        self.content = content()
     }
 
-    final class Coordinator {
-        var didRegister = false
+    var body: some Scene {
+        content
     }
 }
 
