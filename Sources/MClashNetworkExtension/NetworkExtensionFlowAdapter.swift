@@ -267,7 +267,11 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                   NativeConnectorRegistry.supportsNativeTCP(target),
                   let kind = NativeConnectorRegistry.kind(for: target) else { return nil }
             switch kind {
+            case .http: return nil
             case .socks5: return NativeSOCKS5RelayConnector(target: target)
+            case .shadowsocks:
+                guard let destination = routePlan?.destinations.original else { return nil }
+                return NativeShadowsocksRelayConnector(target: target, destination: destination)
             case .vless: return NativeVLESSRelayConnector(target: target)
             case .trojan: return NativeTrojanRelayConnector(target: target)
             case .hysteria2: return nil
@@ -287,7 +291,8 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             }
         }()
         let nativeUsesSOCKS5 = nativeConnector == nil
-            || nativeInitialPayload == nil
+            || (nativeInitialPayload == nil
+                && nativeTarget.map { NativeConnectorRegistry.kind(for: $0) } != .some(.shadowsocks))
         let capability: NativeConnectorCapability = if nativeConnector != nil {
             .native
         } else if routePlan?.proxy != nil {

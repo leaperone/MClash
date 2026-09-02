@@ -12,6 +12,18 @@ protocol OutboundConnector: Sendable {
     func makeConnection(
         to proxy: ProviderSOCKSConfiguration?
     ) -> NWConnection
+
+    func makeStreamCodec(for destination: SOCKS5Endpoint) throws -> (any NativeStreamCodec)?
+}
+
+extension OutboundConnector {
+    func makeStreamCodec(for _: SOCKS5Endpoint) throws -> (any NativeStreamCodec)? { nil }
+}
+
+protocol NativeStreamCodec: AnyObject, Sendable {
+    func encodeDestination() throws -> Data
+    func encode(_ payload: Data) throws -> Data
+    func decode(_ input: Data) throws -> [Data]
 }
 
 /// Compatibility connector backed by the private loopback Mihomo SOCKS5
@@ -53,6 +65,39 @@ struct NativeSOCKS5RelayConnector: OutboundConnector {
 
     func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
         NativeSOCKS5OutboundConnector(target: target).makeConnection()
+    }
+}
+
+private final class ShadowsocksStreamCodecBox: NativeStreamCodec, @unchecked Sendable {
+    private var encoder: ShadowsocksAEADStreamEncoder
+    private var decoder: ShadowsocksAEADStreamDecoder
+    private let destination: Data
+
+    init(target: OutboundNodeTarget, destination: SOCKS5Endpoint) throws {
+        let method = target.parameters["method"] ?? target.parameters["cipher"] ?? "aes-256-gcm"
+        let password = target.parameters["password"] ?? target.parameters["passwd"] ?? ""
+        encoder = try ShadowsocksAEADStreamEncoder(methodName: method, password: password)
+        decoder = try ShadowsocksAEADStreamDecoder(methodName: method, password: password)
+        let host = destination.address.domain ?? destination.address.ipAddress?.presentation ?? ""
+        self.destination = try ShadowsocksAEADStreamEncoder.encodeDestination(host: host, port: destination.port)
+    }
+
+    func encodeDestination() throws -> Data { try encoder.encode(destination) }
+    func encode(_ payload: Data) throws -> Data { try encoder.encode(payload) }
+    func decode(_ input: Data) throws -> [Data] { try decoder.append(input) }
+}
+
+struct NativeShadowsocksRelayConnector: OutboundConnector {
+    let target: OutboundNodeTarget
+    let destination: SOCKS5Endpoint
+
+    func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
+        NWConnection(host: NWEndpoint.Host(target.host),
+                     port: NWEndpoint.Port(rawValue: target.port)!, using: .tcp)
+    }
+
+    func makeStreamCodec(for _: SOCKS5Endpoint) throws -> (any NativeStreamCodec)? {
+        try ShadowsocksStreamCodecBox(target: target, destination: destination)
     }
 }
 
@@ -166,6 +211,68 @@ struct NativeTrojanRelayConnector: OutboundConnector {
     }
 }
 
+/// HTTP CONNECT node connector foundation.  The HTTP proxy handshake is
+/// intentionally represented separately from SOCKS5: callers must consume
+/// and validate the 2xx response before opening a flow.  Until that response
+/// gate is wired into TCPFlowRelay, the registry reports this protocol as a
+/// legacy fallback so an HTTP node can never be misclassified as native.
+struct NativeHTTPConnectOutboundConnector: Sendable {
+    let target: OutboundNodeTarget
+
+    func makeConnection() -> NWConnection {
+        let useTLS = ["true", "1", "yes"].contains(
+            target.parameters["tls"]?.lowercased() ?? "false"
+        )
+        let parameters: NWParameters
+        if useTLS {
+            let tls = NWProtocolTLS.Options()
+            let serverName = target.parameters["sni"]
+                ?? target.parameters["servername"]
+                ?? target.host
+            serverName.withCString {
+                sec_protocol_options_set_tls_server_name(
+                    tls.securityProtocolOptions,
+                    $0
+                )
+            }
+            parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+        } else {
+            parameters = .tcp
+        }
+        return NWConnection(
+            host: NWEndpoint.Host(target.host),
+            port: NWEndpoint.Port(rawValue: target.port)!,
+            using: parameters
+        )
+    }
+
+    func handshake(for destination: SOCKS5Endpoint) throws -> Data {
+        let host = destination.address.domain
+            ?? destination.address.ipAddress?.presentation
+            ?? ""
+        return try HTTPProxyCodec.encodeConnectRequest(
+            host: host,
+            port: destination.port,
+            username: target.parameters["username"]
+                ?? target.parameters["user"],
+            password: target.parameters["password"]
+                ?? target.parameters["pass"]
+        )
+    }
+
+    func validate(response: Data) throws -> Int {
+        try HTTPProxyCodec.decodeConnectResponse(response)
+    }
+}
+
+struct NativeHTTPConnectRelayConnector: OutboundConnector {
+    let target: OutboundNodeTarget
+
+    func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
+        NativeHTTPConnectOutboundConnector(target: target).makeConnection()
+    }
+}
+
 /// Native Hysteria2 transport bootstrap. This establishes the QUIC/TLS layer;
 /// HTTP/3 CONNECT-UDP stream framing is intentionally handled by the future
 /// session implementation rather than being confused with SOCKS5 relay bytes.
@@ -256,7 +363,9 @@ enum NativeConnectorCapability: String, Equatable, Sendable {
 }
 
 enum NativeConnectorKind: String, Equatable, Sendable {
+    case http
     case socks5
+    case shadowsocks
     case vless
     case trojan
     case hysteria2
@@ -266,7 +375,7 @@ enum NativeConnectorKind: String, Equatable, Sendable {
 /// table explicit prevents an unknown subscription protocol from silently
 /// being treated as a Mihomo route.
 enum NativeConnectorRegistry {
-    static let supportedProtocols: Set<String> = ["socks5", "vless", "trojan", "hysteria2"]
+    static let supportedProtocols: Set<String> = ["http", "socks5", "shadowsocks", "vless", "trojan", "hysteria2"]
 
     static func supports(_ target: OutboundNodeTarget) -> Bool {
         supportedProtocols.contains(target.protocolName)
@@ -278,8 +387,20 @@ enum NativeConnectorRegistry {
     static func supportsNativeTCP(_ target: OutboundNodeTarget) -> Bool {
         guard supports(target) else { return false }
         switch target.protocolName {
+        case "http":
+            // Requires a response-aware handshake gate in TCPFlowRelay.
+            // Keep this on compatibility fallback until that is integrated.
+            return false
         case "socks5":
             return true
+        case "shadowsocks":
+            // SIP002 TCP AEAD only. SIP003 plugins and UDP require a separate
+            // transport and therefore remain on the legacy compatibility path.
+            let plugin = target.parameters["plugin"] ?? target.parameters["plugin-opts"]
+            guard plugin?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return false }
+            let method = target.parameters["method"] ?? target.parameters["cipher"] ?? "aes-256-gcm"
+            let password = target.parameters["password"] ?? target.parameters["passwd"] ?? ""
+            return !password.isEmpty && ShadowsocksAEADMethod(rawValue: method.lowercased()) != nil
         case "vless":
             let network = target.parameters["network"]?.lowercased() ?? "tcp"
             return network == "tcp" && !hasUnsupportedRealityOrXTLSParameters(target.parameters)
@@ -369,7 +490,11 @@ enum NativeConnectorRegistry {
             throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
         }
         switch kind {
-        case .socks5:
+        case .http:
+            throw NativeConnectorRegistryError.unsupportedProtocol(
+                "http CONNECT response validation is not integrated"
+            )
+        case .socks5, .shadowsocks:
             break
         case .vless, .trojan:
             guard supportsNativeTCP(target) else {
@@ -401,12 +526,18 @@ enum NativeConnectorFactory {
     ) throws -> NativeTCPConnectionPlan {
         try NativeConnectorRegistry.validateForProduction(target)
         switch NativeConnectorRegistry.kind(for: target) {
+        case .http:
+            throw NativeConnectorRegistryError.unsupportedProtocol(
+                "http CONNECT response validation is not integrated"
+            )
         case .socks5:
             return NativeTCPConnectionPlan(
                 connection: NativeSOCKS5OutboundConnector(target: target).makeConnection(),
                 initialPayload: nil,
                 usesSOCKS5Handshake: true
             )
+        case .shadowsocks:
+            throw NativeConnectorRegistryError.unsupportedProtocol("shadowsocks stream requires relay framing")
         case .vless:
             let connector = NativeVLESSOutboundConnector(target: target)
             return NativeTCPConnectionPlan(

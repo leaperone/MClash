@@ -70,6 +70,7 @@ final class TCPFlowRelay: @unchecked Sendable {
     private let flow: NEAppProxyTCPFlow
     private let proxy: ProviderSOCKSConfiguration?
     private let outboundConnector: any OutboundConnector
+    private var streamCodec: (any NativeStreamCodec)?
     private let initialPayload: Data?
     private let usesSOCKS5Handshake: Bool
     private let destination: SOCKS5Endpoint
@@ -123,6 +124,16 @@ final class TCPFlowRelay: @unchecked Sendable {
     func start() {
         queue.async { [self] in
             guard !finished else { return }
+            if let outboundConnector = self.outboundConnector as? NativeShadowsocksRelayConnector {
+                do {
+                    self.streamCodec = try outboundConnector.makeStreamCodec(for: self.destination)
+                } catch {
+                    self.finish(error: error)
+                    return
+                }
+            } else {
+                self.streamCodec = try? self.outboundConnector.makeStreamCodec(for: self.destination)
+            }
             let connection = outboundConnector.makeConnection(to: proxy)
             self.connection = connection
             connection.stateUpdateHandler = { [weak self] state in
@@ -149,6 +160,13 @@ final class TCPFlowRelay: @unchecked Sendable {
             relayLocalPort = Self.localPort(of: connection)
             if usesSOCKS5Handshake {
                 beginSOCKSHandshake()
+            } else if let streamCodec {
+                do {
+                    let destinationPayload = try streamCodec.encodeDestination()
+                    try send(destinationPayload) { [weak self] in self?.openFlow(initialUpstreamPayload: Data()) }
+                } catch {
+                    finish(error: error)
+                }
             } else if let initialPayload {
                 do {
                     try send(initialPayload) { [weak self] in self?.openFlow(initialUpstreamPayload: Data()) }
@@ -391,8 +409,15 @@ final class TCPFlowRelay: @unchecked Sendable {
                     ))
                     return
                 }
+                let outboundData: Data
+                do {
+                    outboundData = try self.streamCodec?.encode(data) ?? data
+                } catch {
+                    self.finish(error: error)
+                    return
+                }
                 connection.send(
-                    content: data,
+                    content: outboundData,
                     completion: .contentProcessed { [weak self] error in
                         guard let self else { return }
                         if let error {
@@ -401,7 +426,7 @@ final class TCPFlowRelay: @unchecked Sendable {
                             ))
                         } else {
                             self.backpressureState.end(.appToUpstream)
-                            self.byteLedger.recordUpstreamAccepted(data.count)
+                            self.byteLedger.recordUpstreamAccepted(outboundData.count)
                             self.failoverState.markApplicationPayloadForwarded()
                             self.report(.relaying)
                             self.readFromFlow()
@@ -430,11 +455,23 @@ final class TCPFlowRelay: @unchecked Sendable {
                 return
             }
             if let data, !data.isEmpty {
-                self.byteLedger.recordUpstreamReceived(data.count)
-                self.writeToFlow(data) { [weak self] in
+                let decoded: Data
+                do {
+                    decoded = try self.streamCodec.map { try $0.decode(data).reduce(Data(), +) } ?? data
+                } catch {
+                    self.finish(error: error)
+                    return
+                }
+                guard !decoded.isEmpty else {
+                    self.backpressureState.end(.upstreamToApp)
+                    if isComplete { self.markUpstreamReadFinished() } else { self.readFromUpstream() }
+                    return
+                }
+                self.byteLedger.recordUpstreamReceived(decoded.count)
+                self.writeToFlow(decoded) { [weak self] in
                     guard let self else { return }
                     self.backpressureState.end(.upstreamToApp)
-                    self.byteLedger.recordAppDelivered(data.count)
+                    self.byteLedger.recordAppDelivered(decoded.count)
                     self.report(.relaying)
                     if isComplete {
                         self.markUpstreamReadFinished()

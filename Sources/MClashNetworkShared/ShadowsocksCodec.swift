@@ -1,5 +1,8 @@
 import CryptoKit
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 /// AEAD methods defined by the Shadowsocks SIP002 specification.
 ///
@@ -87,6 +90,51 @@ public struct ShadowsocksAEADStreamEncoder: Sendable {
         }
         saltEmitted = true
         return salt + length + body
+    }
+
+    /// Encodes the SIP002 target address which is the first stream payload.
+    /// This deliberately accepts the already validated endpoint components so
+    /// the codec remains independent from Network.framework.
+    public static func encodeDestination(host: String, port: UInt16) throws -> Data {
+        let bytes = Array(host.utf8)
+        var result = Data()
+        if let address = Self.parseIPv4(host) {
+            result.append(0x01)
+            result.append(contentsOf: address)
+        } else if let address = Self.parseIPv6(host) {
+            result.append(0x04)
+            result.append(contentsOf: address)
+        } else {
+            guard !bytes.isEmpty, bytes.count <= 255,
+                  !bytes.contains(0), !bytes.contains(where: { $0 < 0x20 || $0 == 0x7f })
+            else { throw ShadowsocksCodecError.invalidPayloadLength(bytes.count) }
+            result.append(0x03)
+            result.append(UInt8(bytes.count))
+            result.append(contentsOf: bytes)
+        }
+        result.append(UInt8(port >> 8))
+        result.append(UInt8(port & 0xff))
+        return result
+    }
+
+    private static func parseIPv4(_ host: String) -> [UInt8]? {
+        #if canImport(Darwin)
+        var storage = in_addr()
+        guard host.withCString({ inet_pton(AF_INET, $0, &storage) }) == 1 else { return nil }
+        return withUnsafeBytes(of: &storage) { Array($0) }
+        #else
+        return nil
+        #endif
+    }
+
+    private static func parseIPv6(_ host: String) -> [UInt8]? {
+        #if canImport(Darwin)
+        var storage = in6_addr()
+        guard host.withCString({ inet_pton(AF_INET6, $0, &storage) }) == 1 else { return nil }
+        return withUnsafeBytes(of: &storage) { Array($0) }
+        #else
+        return nil
+        #endif
     }
 
     private mutating func seal(_ plaintext: Data) throws -> Data {

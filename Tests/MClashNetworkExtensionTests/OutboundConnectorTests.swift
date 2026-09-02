@@ -33,6 +33,33 @@ struct OutboundConnectorTests {
         #expect(target.port == 19080)
     }
 
+    @Test("Shadowsocks AEAD TCP connector frames target and application bytes")
+    func nativeShadowsocksConnectorFramesStream() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "shadowsocks", host: "node.example.com", port: 443,
+            parameters: ["method": "aes-256-gcm", "password": "secret"]
+        )
+        let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
+        let connector = NativeShadowsocksRelayConnector(target: target, destination: destination)
+        let codec = try #require(connector.makeStreamCodec(for: destination))
+        let targetFrame = try codec.encodeDestination()
+        let appFrame = try codec.encode(Data("hello".utf8))
+        var decoder = try ShadowsocksAEADStreamDecoder(methodName: "aes-256-gcm", password: "secret")
+        let decoded = try decoder.append(targetFrame + appFrame)
+        #expect(decoded.count == 2)
+        #expect(decoded[1] == Data("hello".utf8))
+        connector.makeConnection(to: nil).cancel()
+    }
+
+    @Test("Shadowsocks plugins stay on legacy fallback")
+    func shadowsocksPluginIsNotNative() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "shadowsocks", host: "node.example.com", port: 443,
+            parameters: ["method": "aes-256-gcm", "password": "secret", "plugin": "v2ray-plugin"]
+        )
+        #expect(NativeConnectorRegistry.capability(for: target) == .legacyFallback)
+    }
+
     @Test("Native VLESS connector emits a destination handshake")
     func nativeVLESSConnectorHandshake() throws {
         let target = try OutboundNodeTarget(
@@ -123,6 +150,30 @@ struct OutboundConnectorTests {
         #expect(try connector.udpMessage(sessionID: 1, packetID: 1, destination: destination, payload: Data([1])).count > 10)
     }
 
+    @Test("HTTP CONNECT connector emits a bounded authenticated request")
+    func nativeHTTPConnectConnectorHandshake() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "http", host: "proxy.example.com", port: 8080,
+            parameters: ["username": "alice", "password": "secret"]
+        )
+        let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
+        let request = try NativeHTTPConnectOutboundConnector(target: target).handshake(for: destination)
+        #expect(String(decoding: request, as: UTF8.self).contains("CONNECT example.com:443 HTTP/1.1"))
+        #expect(String(decoding: request, as: UTF8.self).contains("Proxy-Authorization: Basic YWxpY2U6c2VjcmV0"))
+        #expect(try NativeHTTPConnectOutboundConnector(target: target).validate(
+            response: Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8)
+        ) == 200)
+    }
+
+    @Test("HTTP CONNECT remains compatibility fallback until response gate is wired")
+    func httpConnectIsNotMisclassifiedAsNative() throws {
+        let target = try OutboundNodeTarget(protocolName: "http", host: "proxy.example.com", port: 8080)
+        #expect(NativeConnectorRegistry.supports(target))
+        #expect(NativeConnectorRegistry.kind(for: target) == .http)
+        #expect(!NativeConnectorRegistry.supportsNativeTCP(target))
+        #expect(NativeConnectorRegistry.capability(for: target) == .legacyFallback)
+    }
+
     @Test("Native connector registry rejects unknown subscription protocols")
     func registryRejectsUnknownProtocol() throws {
         let target = try OutboundNodeTarget(protocolName: "quic", host: "node.example.com", port: 443)
@@ -136,7 +187,7 @@ struct OutboundConnectorTests {
 
     @Test("Registry preserves protocol-specific connector kinds")
     func registryKinds() throws {
-        for name in ["socks5", "vless", "trojan", "hysteria2"] {
+        for name in ["http", "socks5", "vless", "trojan", "hysteria2"] {
             let target = try OutboundNodeTarget(protocolName: name, host: "node.example.com", port: 443)
             #expect(NativeConnectorRegistry.kind(for: target)?.rawValue == name)
         }
