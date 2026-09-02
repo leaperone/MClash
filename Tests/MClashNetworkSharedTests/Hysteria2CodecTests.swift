@@ -15,6 +15,8 @@ struct Hysteria2CodecTests {
         #expect(headers.contains { $0.0 == ":path" && $0.1 == "/auth" })
         #expect(headers.contains { $0.0 == "Hysteria-Auth" && $0.1 == "secret" })
         #expect(headers.contains { $0.0 == "Hysteria-CC-RX" && $0.1 == "1000000" })
+        let frame = try Hysteria2Codec.encodeAuthHeadersFrame(password: "secret")
+        #expect(try HTTP3FrameCodec.decode(frame).type == .headers)
     }
 
     @Test("Encodes TCP request ID and address length as QUIC varints")

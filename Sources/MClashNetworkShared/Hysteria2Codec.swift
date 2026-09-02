@@ -40,6 +40,22 @@ public enum Hysteria2Codec: Sendable {
         ] + (padding.isEmpty ? [] : [("Hysteria-Padding", padding)])
     }
 
+    public static func encodeAuthHeadersFrame(
+        password: String,
+        receiveRate: UInt64 = 0,
+        padding: String = ""
+    ) throws -> Data {
+        let headers = try authHeaders(
+            password: password,
+            receiveRate: receiveRate,
+            padding: padding
+        )
+        let fieldSection = try QPACKEncoder.encodeLiteralFields(headers)
+        return try HTTP3FrameCodec.encode(
+            HTTP3Frame(type: .headers, payload: fieldSection)
+        )
+    }
+
     public static func encodeTCPRequest(host: String, port: UInt16, padding: Data = Data()) throws -> Data {
         let addressHost = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
         let address = "\(addressHost):\(port)"
