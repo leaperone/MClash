@@ -172,11 +172,17 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
             case .success:
                 guard let destination = plan.destination else {
                     self.hysteria2Relays.release(flowID: flowID)
-                    self.handleNativeHysteria2Failure(
-                        flow: flow,
-                        plan: plan,
-                        error: TCPFlowRelayError.upstreamClosedDuringHandshake
-                    )
+                    if let flow {
+                        self.handleNativeHysteria2Failure(
+                            flow: flow,
+                            plan: plan,
+                            error: TCPFlowRelayError.upstreamClosedDuringHandshake
+                        )
+                    }
+                    return
+                }
+                guard let flow else {
+                    self.hysteria2Relays.release(flowID: flowID)
                     return
                 }
                 session.openTCPStream(to: destination) { [weak self, weak flow] openResult in
