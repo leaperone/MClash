@@ -107,7 +107,8 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
                 // provider-owned native path, with fallback before the
                 // intercepted flow is opened if authentication fails.
                 if let target = plan.nativeTarget,
-                   NativeConnectorRegistry.kind(for: target) == .hysteria2 {
+                   NativeConnectorRegistry.kind(for: target) == .hysteria2,
+                   Self.nativeHysteria2OptIn {
                     startNativeHysteria2TCP(
                         flow: tcpFlow,
                         plan: plan,
@@ -238,6 +239,14 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
             flow.closeReadWithError(error)
             flow.closeWriteWithError(error)
         }
+    }
+
+    /// Hysteria2's HTTP/3 stream multiplexing still needs real endpoint
+    /// interoperability coverage before it can become the default data path.
+    /// Keep production on the proven compatibility connector until an
+    /// explicit test build opts in.
+    private static var nativeHysteria2OptIn: Bool {
+        ProcessInfo.processInfo.environment["MCLASH_NATIVE_HYSTERIA2"] == "1"
     }
 
     @available(macOS, introduced: 14.0, obsoleted: 15.0)
