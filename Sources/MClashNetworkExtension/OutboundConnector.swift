@@ -150,6 +150,20 @@ struct NativeTrojanOutboundConnector: Sendable {
     }
 }
 
+struct NativeVLESSRelayConnector: OutboundConnector {
+    let target: OutboundNodeTarget
+    func makeConnection(to _: ProviderSOCKSConfiguration) -> NWConnection {
+        NativeVLESSOutboundConnector(target: target).makeConnection()
+    }
+}
+
+struct NativeTrojanRelayConnector: OutboundConnector {
+    let target: OutboundNodeTarget
+    func makeConnection(to _: ProviderSOCKSConfiguration) -> NWConnection {
+        NativeTrojanOutboundConnector(target: target).makeConnection()
+    }
+}
+
 /// Native Hysteria2 transport bootstrap. This establishes the QUIC/TLS layer;
 /// HTTP/3 CONNECT-UDP stream framing is intentionally handled by the future
 /// session implementation rather than being confused with SOCKS5 relay bytes.

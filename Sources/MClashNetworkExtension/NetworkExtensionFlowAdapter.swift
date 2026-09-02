@@ -188,6 +188,8 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     mihomoDestination: nil,
                     proxy: nil,
                     nativeConnector: nil,
+                    nativeInitialPayload: nil,
+                    nativeUsesSOCKS5Handshake: true,
                     connectorCapability: .native,
                     unavailableFallback: .direct,
                     activity: fallbackActivity(
@@ -207,6 +209,8 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     mihomoDestination: nil,
                     proxy: nil,
                     nativeConnector: nil,
+                    nativeInitialPayload: nil,
+                    nativeUsesSOCKS5Handshake: true,
                     connectorCapability: .native,
                     unavailableFallback: .direct,
                     activity: fallbackActivity(
@@ -235,9 +239,30 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let nativeConnector: (any OutboundConnector)? = {
             guard case let .mihomo(route) = outcome.decision.disposition,
                   let target = currentState.outboundNodeTargets?.target(for: route),
-                  target.protocolName == "socks5" else { return nil }
-            return NativeSOCKS5RelayConnector(target: target)
+                  let kind = NativeConnectorRegistry.kind(for: target) else { return nil }
+            switch kind {
+            case .socks5: return NativeSOCKS5RelayConnector(target: target)
+            case .vless: return NativeVLESSRelayConnector(target: target)
+            case .trojan: return NativeTrojanRelayConnector(target: target)
+            case .hysteria2: return nil
+            }
         }()
+        let nativeInitialPayload: Data? = {
+            guard case let .mihomo(route) = outcome.decision.disposition,
+                  let target = currentState.outboundNodeTargets?.target(for: route) else { return nil }
+            switch NativeConnectorRegistry.kind(for: target) {
+            case .vless:
+                guard let destination = routePlan?.destinations.original else { return nil }
+                return try? NativeVLESSOutboundConnector(target: target).handshake(for: destination)
+            case .trojan:
+                guard let destination = routePlan?.destinations.original else { return nil }
+                return try? NativeTrojanOutboundConnector(target: target).handshake(for: destination)
+            default:
+                return nil
+            }
+        }()
+        let nativeUsesSOCKS5 = nativeConnector == nil
+            || nativeInitialPayload == nil
         let capability: NativeConnectorCapability = if nativeConnector != nil {
             .native
         } else if routePlan?.proxy != nil {
@@ -251,6 +276,8 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             mihomoDestination: routePlan?.destinations.mihomo,
             proxy: routePlan?.proxy,
             nativeConnector: nativeConnector,
+            nativeInitialPayload: nativeInitialPayload,
+            nativeUsesSOCKS5Handshake: nativeUsesSOCKS5,
             connectorCapability: capability,
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
@@ -738,6 +765,8 @@ struct TCPFlowInterceptionPlan: Sendable {
     let mihomoDestination: SOCKS5Endpoint?
     let proxy: ProviderSOCKSConfiguration?
     let nativeConnector: (any OutboundConnector)?
+    let nativeInitialPayload: Data?
+    let nativeUsesSOCKS5Handshake: Bool
     let connectorCapability: NativeConnectorCapability
     let unavailableFallback: UnavailableFallback
     let activity: AppRoutingActivity

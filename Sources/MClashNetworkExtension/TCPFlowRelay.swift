@@ -70,6 +70,8 @@ final class TCPFlowRelay: @unchecked Sendable {
     private let flow: NEAppProxyTCPFlow
     private let proxy: ProviderSOCKSConfiguration
     private let outboundConnector: any OutboundConnector
+    private let initialPayload: Data?
+    private let usesSOCKS5Handshake: Bool
     private let destination: SOCKS5Endpoint
     private let queue: DispatchQueue
     private let completion: @Sendable (UUID, TCPFlowRelayExit) -> Void
@@ -95,6 +97,8 @@ final class TCPFlowRelay: @unchecked Sendable {
         destination: SOCKS5Endpoint,
         unavailableFallback: UnavailableFallback,
         outboundConnector: any OutboundConnector = MihomoSOCKSOutboundConnector(),
+        initialPayload: Data? = nil,
+        usesSOCKS5Handshake: Bool = true,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
         completion: @escaping @Sendable (UUID, TCPFlowRelayExit) -> Void
     ) {
@@ -102,6 +106,8 @@ final class TCPFlowRelay: @unchecked Sendable {
         self.proxy = proxy
         self.destination = destination
         self.outboundConnector = outboundConnector
+        self.initialPayload = initialPayload
+        self.usesSOCKS5Handshake = usesSOCKS5Handshake
         failoverState = TCPRelayFailoverState(
             unavailableFallback: unavailableFallback
         )
@@ -141,7 +147,17 @@ final class TCPFlowRelay: @unchecked Sendable {
             guard !handshakeStarted else { return }
             handshakeStarted = true
             relayLocalPort = Self.localPort(of: connection)
-            beginSOCKSHandshake()
+            if usesSOCKS5Handshake {
+                beginSOCKSHandshake()
+            } else if let initialPayload {
+                do {
+                    try send(initialPayload) { [weak self] in self?.openFlow(initialUpstreamPayload: Data()) }
+                } catch {
+                    finish(error: error)
+                }
+            } else {
+                openFlow(initialUpstreamPayload: Data())
+            }
         case let .failed(error):
             finish(error: TCPFlowRelayError.upstreamFailed(error.localizedDescription))
         case .cancelled:
@@ -534,6 +550,8 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
         directFallbackDestination: SOCKS5Endpoint? = nil,
         unavailableFallback: UnavailableFallback,
         outboundConnector: (any OutboundConnector)? = nil,
+        initialPayload: Data? = nil,
+        usesSOCKS5Handshake: Bool = true,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
     ) {
         let fallbackDestination = directFallbackDestination ?? destination
@@ -563,6 +581,8 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
             destination: destination,
             unavailableFallback: unavailableFallback,
             outboundConnector: outboundConnector ?? MihomoSOCKSOutboundConnector(),
+            initialPayload: initialPayload,
+            usesSOCKS5Handshake: usesSOCKS5Handshake,
             activityObserver: activityObserver
         ) { [weak self] identifier, exit in
             self?.finishMihomo(
