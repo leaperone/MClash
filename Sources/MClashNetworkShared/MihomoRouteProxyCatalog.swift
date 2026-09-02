@@ -34,6 +34,11 @@ public struct MihomoRouteProxyEndpoint: Codable, Equatable, Sendable {
     }
 }
 
+/// Connector-neutral endpoint vocabulary. The legacy Mihomo names remain as
+/// type aliases below so persisted snapshots stay backward compatible while
+/// native connectors are introduced.
+public typealias OutboundRouteEndpoint = MihomoRouteProxyEndpoint
+
 public enum MihomoRouteProxyCatalogError: Error, Equatable, Sendable {
     case nonLoopbackHost(String)
     case invalidPort(UInt16)
@@ -133,3 +138,5 @@ public enum MihomoRouteProxyCatalog {
         endpoints.first { $0.route == route }
     }
 }
+
+public typealias OutboundConnectorCatalog = MihomoRouteProxyCatalog
