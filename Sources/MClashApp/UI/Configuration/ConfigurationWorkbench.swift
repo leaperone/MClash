@@ -215,7 +215,7 @@ struct ConfigurationWorkbench: View {
     @discardableResult
     private func editSelectedItem() -> Bool {
         guard let onEdit, let selectedID,
-              currentItems.contains(where: { $0.id == selectedID }) else {
+              filteredItems.contains(where: { $0.id == selectedID }) else {
             return false
         }
         onEdit(section, selectedID)
@@ -323,6 +323,11 @@ private struct ConfigurationWorkbenchRow: View {
                 Text(item.title).font(.body.weight(.medium)).lineLimit(1)
                 Text(item.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                onEdit?(section, item.id)
+            }
             Spacer(minLength: 4)
             if onActivate != nil {
                 Button(AppLocalization.string("Use This Configuration")) {
@@ -332,15 +337,10 @@ private struct ConfigurationWorkbenchRow: View {
                 .controlSize(.small)
             }
             if let isEnabled = item.isEnabled, onToggleEnabled != nil {
-                Toggle(
-                    AppLocalization.string(isEnabled ? "Enabled" : "Disabled"),
-                    isOn: Binding(
-                        get: { isEnabled },
-                        set: { _ in onToggleEnabled?(section, item.id) }
-                    )
-                )
-                .labelsHidden()
-                .toggleStyle(.switch)
+                Button(AppLocalization.string(isEnabled ? "Disable" : "Enable")) {
+                    onToggleEnabled?(section, item.id)
+                }
+                .buttonStyle(.bordered)
                 .controlSize(.small)
             } else if let isEnabled = item.isEnabled {
                 Image(systemName: isEnabled ? "circle.fill" : "circle")
@@ -349,22 +349,14 @@ private struct ConfigurationWorkbenchRow: View {
                     .accessibilityLabel(AppLocalization.string(isEnabled ? "Enabled" : "Disabled"))
             }
             if onEdit != nil {
-                Button {
+                Button(AppLocalization.string("Edit")) {
                     onEdit?(section, item.id)
-                } label: {
-                    Text(AppLocalization.string("Edit"))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
             }
         }
         .padding(.vertical, 6)
-        .contentShape(Rectangle())
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded {
-                onEdit?(section, item.id)
-            }
-        )
         .contextMenu {
             if let onEdit {
                 Button(AppLocalization.string("Edit")) { onEdit(section, item.id) }
@@ -380,7 +372,7 @@ private struct ConfigurationWorkbenchRow: View {
                 }
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 
