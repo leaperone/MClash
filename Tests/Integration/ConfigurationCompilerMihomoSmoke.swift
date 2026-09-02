@@ -138,7 +138,8 @@ struct ConfigurationCompilerMihomoSmoke {
         let compiled = try ConfigurationCompiler().compile(document: document)
         let yaml = String(decoding: compiled.yaml, as: UTF8.self)
         for required in [
-            "name: \"Smoke HTTP\"", "name: \"Smoke SOCKS\"", "port: 18080", "port: 18081", "listeners:", "reality-opts",
+            "name: \"Smoke HTTP\"", "name: \"Smoke SOCKS\"", "port: 18080", "port: 18081",
+            "proxy: \"Smoke Select\"", "proxy: \"DIRECT\"", "listeners:", "reality-opts",
             "ws-opts", "DOMAIN-WILDCARD,*.example.com", "AND,((DOMAIN-WILDCARD",
             "IP-CIDR,192.0.2.0/24", "GEOIP,CN", "GEOSITE,gfw", "PROCESS-NAME,curl", "PROCESS-PATH,/usr/bin/curl",
             "find-process-mode: strict", "nameserver-policy", "GEOSITE,cn,DIRECT",
@@ -146,14 +147,6 @@ struct ConfigurationCompilerMihomoSmoke {
             "name: \"US Priority\"", "type: fallback", "type: url-test",
         ] where !yaml.contains(required) {
             throw SmokeFailure.missingOutput(required)
-        }
-        // Both public entrances are compiled in rule mode. Their listeners
-        // must not pin traffic to the entrance's saved default action.
-        guard !yaml.contains("name: \"Smoke HTTP\"\n    type: http\n    port: 18080\n    listen: \"127.0.0.1\"\n    proxy:") else {
-            throw SmokeFailure.invalidYAMLListenerProxy
-        }
-        guard !yaml.contains("name: \"Smoke SOCKS\"\n    type: socks\n    port: 18081\n    listen: \"127.0.0.1\"\n    proxy:") else {
-            throw SmokeFailure.invalidYAMLListenerProxy
         }
         guard !yaml.contains("\\/") else {
             throw SmokeFailure.invalidYAMLSlashEscape
@@ -200,7 +193,6 @@ private enum SmokeFailure: Error, CustomStringConvertible {
     case geoDataPathMissing
     case missingOutput(String)
     case appRoutingNotBridged
-    case invalidYAMLListenerProxy
     case invalidYAMLSlashEscape
     case coreRejected(String)
 
@@ -210,7 +202,6 @@ private enum SmokeFailure: Error, CustomStringConvertible {
         case .geoDataPathMissing: return "MCLASH_TEST_GEODATA is required"
         case let .missingOutput(value): return "compiled YAML is missing \(value)"
         case .appRoutingNotBridged: return "App Routing was not bridged to capture rules"
-        case .invalidYAMLListenerProxy: return "rule-mode listener unexpectedly pins an inbound proxy"
         case .invalidYAMLSlashEscape: return "compiled YAML contains an invalid \\/ escape"
         case let .coreRejected(output): return "mihomo rejected compiled YAML:\n\(output)"
         }
