@@ -63,7 +63,7 @@ public struct ConfigurationCompiler: Sendable {
     /// making it part of the generated document turns a transient upstream
     /// outage into a startup/route failure.  Users can still explicitly add
     /// another resolver in their MClash DNS policy.
-    public static let defaultDNSNameservers = ["223.5.5.5"]
+    public static let defaultDNSNameservers = ["223.5.5.5", "119.29.29.29"]
     /// Compatibility switch for the staged inbound-listener migration. New
     /// callers can disable Mihomo-owned listeners while retaining the same
     /// outbound node document; MClash then owns the configured ports.

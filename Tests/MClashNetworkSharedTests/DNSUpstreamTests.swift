@@ -34,7 +34,7 @@ struct DNSUpstreamTests {
         #expect(throws: DNSUpstreamError.invalidMessage("query has response flag")) {
             var invalid = query
             invalid[2] = 0x80
-            try DNSWireMessage.validateQuery(invalid, transport: .udp)
+            _ = try DNSWireMessage.validateQuery(invalid, transport: .udp)
         }
     }
 

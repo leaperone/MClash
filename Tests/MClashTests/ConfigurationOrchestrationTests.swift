@@ -4,6 +4,52 @@ import Testing
 @testable import MClashApp
 
 struct ConfigurationOrchestrationTests {
+    @Test("Large destination lists are chunked for Network Extension capture")
+    func largeDestinationListsAreChunkedForCapture() throws {
+        let group = ProxyGroup(name: "GFW", type: .select)
+        let domains = (0 ..< 513).map { "blocked-\($0).example.com" }
+        let rule = RoutingRule(
+            priority: 10,
+            matchers: domains.map { .domainSuffix($0) },
+            action: .proxyGroup(group.id)
+        )
+
+        let result = ConfigurationCaptureAdapter.convert(from: [rule], groups: [group])
+
+        #expect(result.diagnostics.isEmpty)
+        #expect(result.rules.count == 3)
+        #expect(result.rules.allSatisfy { $0.destinations.count <= 256 })
+        #expect(result.rules.map(\.destinations.count) == [256, 256, 1])
+        #expect(result.rules.map(\.priority) == [10, 10, 10])
+        #expect(result.rules.map(\.id) == [
+            rule.id.rawValue.uuidString.lowercased() + "-part-1",
+            rule.id.rawValue.uuidString.lowercased() + "-part-2",
+            rule.id.rawValue.uuidString.lowercased() + "-part-3",
+        ])
+        #expect(result.rules.flatMap(\.destinations).count == domains.count)
+    }
+
+    @Test("Generated listeners stay on loopback and DNS has no unreachable Cloudflare default")
+    func generatedRuntimeDefaultsAreSafe() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        let workspace = try #require(document.currentWorkspace)
+        let httpID = try #require(workspace.entranceIDs.first { id in
+            document.entrances.first(where: { $0.id == id })?.kind == .http
+        })
+        let entranceIndex = try #require(document.entrances.firstIndex { $0.id == httpID })
+        document.entrances[entranceIndex].bindAddress = "0.0.0.0"
+        document.entrances[entranceIndex].port = 40_808
+        let compiled = try ConfigurationCompiler().compile(document: document)
+        let yaml = String(decoding: compiled.yaml, as: UTF8.self)
+
+        #expect(yaml.contains("port: 40808"))
+        #expect(yaml.contains("listen: \"127.0.0.1\""))
+        #expect(!yaml.contains("listen: \"0.0.0.0\""))
+        #expect(!yaml.contains("1.1.1.1"))
+        #expect(yaml.contains("223.5.5.5"))
+        #expect(yaml.contains("119.29.29.29"))
+    }
+
     @MainActor
     @Test("Legacy materialized all-node scopes become dynamic after refresh")
     func legacyAllNodeScopeIncludesSourceRemovedCatalogEntries() throws {

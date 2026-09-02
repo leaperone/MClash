@@ -6,33 +6,45 @@ struct Hysteria2SessionTests {
     @Test("Accepts connect, authentication, ready, and close transitions")
     func lifecycle() {
         var session = Hysteria2Session()
-        #expect(session.beginConnect())
-        #expect(session.beginAuthentication())
-        #expect(session.authenticationSucceeded(udpEnabled: true))
-        #expect(session.beginClose())
-        #expect(session.finishClose())
+        let connected = session.beginConnect()
+        #expect(connected)
+        let authenticating = session.beginAuthentication()
+        #expect(authenticating)
+        let ready = session.authenticationSucceeded(udpEnabled: true)
+        #expect(ready)
+        let closing = session.beginClose()
+        #expect(closing)
+        let closed = session.finishClose()
+        #expect(closed)
         #expect(session.state == .closed)
     }
 
     @Test("Rejects invalid transitions and permits retry after failure")
     func invalidTransitions() {
         var session = Hysteria2Session()
-        #expect(!session.beginAuthentication())
+        let invalidAuthentication = session.beginAuthentication()
+        #expect(!invalidAuthentication)
         session.fail("timeout")
-        #expect(session.beginConnect())
-        #expect(!session.authenticationSucceeded(udpEnabled: false))
-        #expect(session.beginAuthentication())
+        let retry = session.beginConnect()
+        #expect(retry)
+        let invalidReady = session.authenticationSucceeded(udpEnabled: false)
+        #expect(!invalidReady)
+        let authenticating = session.beginAuthentication()
+        #expect(authenticating)
     }
 
     @Test("Only a valid 233 auth response enters ready")
     func authenticationResponse() {
         var session = Hysteria2Session()
-        #expect(session.beginConnect())
-        #expect(session.beginAuthentication())
-        #expect(session.handleAuthenticationResponse(
+        let connected = session.beginConnect()
+        #expect(connected)
+        let authenticating = session.beginAuthentication()
+        #expect(authenticating)
+        let handled = session.handleAuthenticationResponse(
             statusCode: 233,
             headers: ["Hysteria-UDP": "true"]
-        ))
+        )
+        #expect(handled)
         #expect(session.state == .ready(udpEnabled: true))
     }
 }
