@@ -44,6 +44,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         mihomoListener: NetworkExtensionMihomoListenerConfiguration,
         routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
         dnsUpstreamMode: DNSUpstreamMode = .mihomo,
+        outboundNodeTargetCatalog: OutboundNodeTargetCatalog? = nil,
         activationIdentifier: UUID = UUID()
     ) throws {
         try preferences.snapshot.validate()
@@ -72,7 +73,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         let endpoints = try routeProxyEndpoints ?? mihomoListener.routeProxyEndpoints()
         let routeProxyCatalog = try MihomoRouteProxyCatalog.encode(endpoints)
         encodedMihomoRouteProxyCatalog = routeProxyCatalog
-        encodedOutboundNodeTargetCatalog = nil
+        encodedOutboundNodeTargetCatalog = try outboundNodeTargetCatalog?.encoded()
         guard let profileRulesProxy = endpoints.first(where: { $0.route == .profileRules }) else {
             throw NetworkExtensionRuntimeConfigurationError.missingProfileRulesProxy
         }

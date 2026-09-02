@@ -1642,6 +1642,49 @@ final class AppModel {
         }
     }
 
+    /// Projects the active workspace's selected nodes into the connector
+    /// neutral catalog consumed by the Network Extension. This is deliberately
+    /// a fallback projection during migration; native protocol connectors can
+    /// replace it without changing workspace/rule semantics.
+    private func activeOutboundNodeTargetCatalog() -> OutboundNodeTargetCatalog? {
+        guard let workspace = configurationDocument.currentWorkspace else { return nil }
+        let nodesByID = Dictionary(
+            configurationDocument.nodes.filter { $0.enabled }.compactMap { node in
+                node.outboundTarget.map { (node.id, $0) }
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        func target(for groupID: ProxyGroupID) -> OutboundNodeTarget? {
+            guard let group = configurationDocument.proxyGroups.first(where: { $0.id == groupID }) else { return nil }
+            for member in group.members {
+                switch member {
+                case let .node(nodeID):
+                    if let value = nodesByID[nodeID] { return value }
+                case let .group(childID):
+                    if let value = target(for: childID) { return value }
+                }
+            }
+            return nil
+        }
+        let primaryGroup = workspace.globalProxyGroupID
+            ?? workspace.proxyGroupIDs.first
+        var entries: [OutboundNodeTargetEntry] = []
+        if let primaryGroup, let value = target(for: primaryGroup) {
+            entries.append(.init(route: .profileRules, target: value))
+            entries.append(.init(route: .global, target: value))
+        }
+        for groupID in workspace.proxyGroupIDs {
+            guard let group = configurationDocument.proxyGroups.first(where: { $0.id == groupID }),
+                  let value = target(for: groupID) else { continue }
+            entries.append(.init(route: .group(group.name), target: value))
+        }
+        guard !entries.isEmpty else { return nil }
+        return try? OutboundNodeTargetCatalog(entries: entries.reduce(into: [OutboundNodeTargetEntry]()) { result, entry in
+            guard !result.contains(where: { $0.route == entry.route }) else { return }
+            result.append(entry)
+        })
+    }
+
     /// Whether startup had to create the internal Mixed recovery endpoint
     /// because the configured public listeners were unavailable.
     var managedMixedFallbackIsActive: Bool {
@@ -6894,7 +6937,8 @@ final class AppModel {
                     preferences: candidate,
                     mihomoListener: listener,
                     routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
-                    dnsUpstreamMode: configuredDNSUpstreamMode
+                    dnsUpstreamMode: configuredDNSUpstreamMode,
+                    outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
                 )
                 let updateOutcome = try await networkExtensionControl
                     .updateRuntimeConfiguration(configuration)
@@ -7089,7 +7133,8 @@ final class AppModel {
                         preferences: networkCapturePreferences,
                         mihomoListener: listener,
                         routeProxyEndpoints: try activeNetworkExtensionRouteProxyEndpoints(),
-                        dnsUpstreamMode: configuredDNSUpstreamMode
+                        dnsUpstreamMode: configuredDNSUpstreamMode,
+                        outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
                     )
                     let rollbackOutcome = try await networkExtensionControl
                         .updateRuntimeConfiguration(rollbackConfiguration)
@@ -7370,7 +7415,8 @@ final class AppModel {
                 preferences: networkCapturePreferences,
                 mihomoListener: listener,
                 routeProxyEndpoints: routeProxyEndpoints,
-                dnsUpstreamMode: configuredDNSUpstreamMode
+                dnsUpstreamMode: configuredDNSUpstreamMode,
+                outboundNodeTargetCatalog: activeOutboundNodeTargetCatalog()
             )
             guard !shutdownInProgress else { throw CancellationError() }
             let outcome = try await networkExtensionControl.enable(
