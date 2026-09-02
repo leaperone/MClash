@@ -394,7 +394,7 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "Las rutas aparecen como decisiones de tráfico y se observan conexiones Mihomo.";
 "Routing" = "Enrutamiento";
 "Routing & macOS Proxy" = "Enrutamiento y proxy macOS";
-"Routing Mode" = "Modo de enrutamiento";
+"Routing Mode" = "Modo de enrutado";
 "Routing mode" = "Modo de enrutamiento";
 "Rule" = "Regla";
 "Rule Overrides" = "Anulaciones de reglas";
@@ -1284,7 +1284,7 @@
 "Mixed port off · %@ reserved" = "Puerto mixto desactivado · %@ reservado";
 "Mixed: %@" = "Mixto: %@";
 "More actions for %@" = "Otras acciones para %@";
-"Needs Attention" = "Necesita atención";
+"Needs Attention" = "Requiere atención";
 "Needs Restoration" = "Necesita restauración";
 "Needs attention" = "Necesita atención";
 "Network Extension state transition" = "Transición de estado de extensión de red";
@@ -2347,7 +2347,7 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
-"Rule Sets" = "Rule Sets";
+"Rule Sets" = "Conjuntos de reglas";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "Rule set path must be a relative path without line breaks or parent-directory segments.";
 "Rule set source must be an HTTP or HTTPS URL." = "Rule set source must be an HTTP or HTTPS URL.";
 "Rules surface" = "Rules surface";

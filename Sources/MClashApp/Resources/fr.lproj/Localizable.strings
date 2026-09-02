@@ -428,7 +428,7 @@
 "Starting local proxy listeners…" = "Démarrage des écouteurs proxy locaux…";
 "Startup" = "Démarrage";
 "State" = "État";
-"Status" = "Statut";
+"Status" = "État";
 "Strict" = "Strict";
 "Subscription URL" = "URL d'abonnement";
 "System Proxy Settings" = "Paramètres du proxy système";
@@ -1284,7 +1284,7 @@
 "Mixed port off · %@ reserved" = "Port mixte désactivé · %@ réservé";
 "Mixed: %@" = "Mixte : %@";
 "More actions for %@" = "Actions supplémentaires pour %@";
-"Needs Attention" = "Attention requise";
+"Needs Attention" = "À traiter";
 "Needs Restoration" = "À restaurer";
 "Needs attention" = "Attention requise";
 "Network Extension state transition" = "Transition d’état de l’extension réseau";
@@ -2347,7 +2347,7 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
-"Rule Sets" = "Rule Sets";
+"Rule Sets" = "Jeux de règles";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "Rule set path must be a relative path without line breaks or parent-directory segments.";
 "Rule set source must be an HTTP or HTTPS URL." = "Rule set source must be an HTTP or HTTPS URL.";
 "Rules surface" = "Rules surface";

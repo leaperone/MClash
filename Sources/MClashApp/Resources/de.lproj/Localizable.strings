@@ -1284,7 +1284,7 @@
 "Mixed port off · %@ reserved" = "Mixed-Port aus · %@ reserviert";
 "Mixed: %@" = "Mixed: %@";
 "More actions for %@" = "Weitere Aktionen für %@";
-"Needs Attention" = "Aufmerksamkeit erforderlich";
+"Needs Attention" = "Aufmerksamkeit";
 "Needs Restoration" = "Wiederherstellung erforderlich";
 "Needs attention" = "Aufmerksamkeit erforderlich";
 "Network Extension state transition" = "Statusübergang der Netzwerkerweiterung";
@@ -2347,7 +2347,7 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
-"Rule Sets" = "Rule Sets";
+"Rule Sets" = "Regelsätze";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "Rule set path must be a relative path without line breaks or parent-directory segments.";
 "Rule set source must be an HTTP or HTTPS URL." = "Rule set source must be an HTTP or HTTPS URL.";
 "Rules surface" = "Rules surface";

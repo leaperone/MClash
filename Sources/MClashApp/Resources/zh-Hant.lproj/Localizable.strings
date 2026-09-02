@@ -393,7 +393,7 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "觀測到流量決策和 Mihomo 連線後，路由會顯示在這裡。";
 "Routing" = "路由";
 "Routing & macOS Proxy" = "路由與 macOS 代理";
-"Routing Mode" = "路由模式";
+"Routing Mode" = "代理模式";
 "Routing mode" = "路由模式";
 "Rule" = "規則";
 "Rule Overrides" = "規則覆蓋";
@@ -1284,7 +1284,7 @@
 "Mixed port off · %@ reserved" = "Mixed 連接埠已關閉 · 保留 %@";
 "Mixed: %@" = "Mixed：%@";
 "More actions for %@" = "%@ 的更多操作";
-"Needs Attention" = "需要注意";
+"Needs Attention" = "需要處理";
 "Needs Restoration" = "需要還原";
 "Needs attention" = "需要注意";
 "Network Extension state transition" = "網路延伸功能狀態轉換";
@@ -1896,7 +1896,7 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "已啟用的 HTTP 與 SOCKS 入口必須共用同一個 Mihomo 繫結位址。";
 "Enabled entrances cannot share a listening port." = "已啟用的入口不能共用監聽連接埠。";
 "Entrance port must be between 1 and 65535." = "入口連接埠必須介於 1 到 65535 之間。";
-"Everyday" = "日常使用";
+"Everyday" = "日常";
 "Fallback" = "容錯移轉";
 "Fingerprint" = "指紋";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "已匯入的來源。MClash 僅使用其中的節點資料；來源內的策略區段會被忽略。";

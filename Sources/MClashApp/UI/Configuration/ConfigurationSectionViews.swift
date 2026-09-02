@@ -96,8 +96,8 @@ struct ConfigurationView: View {
 
                 let document = model.configurationDocument
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: MClashLayout.controlSpacing)], spacing: MClashLayout.controlSpacing) {
-                    configurationMetric(AppLocalization.string("Nodes"), value: document.nodes.count, symbol: "point.3.connected.trianglepath.dotted")
-                    configurationMetric(AppLocalization.string("Node Groups"), value: document.proxyGroups.count, symbol: "square.3.layers.3d")
+                    configurationMetric(AppLocalization.string("Node List"), value: document.nodes.count, symbol: "point.3.connected.trianglepath.dotted")
+                    configurationMetric(AppLocalization.string("Nodes"), value: document.proxyGroups.count, symbol: "square.3.layers.3d")
                     configurationMetric(AppLocalization.string("Rules"), value: document.rules.count, symbol: "list.bullet.indent")
                     configurationMetric(AppLocalization.string("Entrances"), value: document.entrances.count, symbol: "arrow.triangle.branch")
                     configurationMetric(AppLocalization.string("DNS"), value: document.dnsPolicies.count, symbol: "network")
@@ -110,8 +110,8 @@ struct ConfigurationView: View {
                         spacing: MClashLayout.compactSpacing
                     ) {
                         configurationLink(AppLocalization.string("Rules"), symbol: "list.bullet.indent", destination: .rules)
-                        configurationLink(AppLocalization.string("Node Groups"), symbol: "square.3.layers.3d", destination: .proxyGroups)
-                        configurationLink(AppLocalization.string("Nodes"), symbol: "point.3.connected.trianglepath.dotted", destination: .nodes)
+                        configurationLink(AppLocalization.string("Nodes"), symbol: "square.3.layers.3d", destination: .proxyGroups)
+                        configurationLink(AppLocalization.string("Node List"), symbol: "point.3.connected.trianglepath.dotted", destination: .nodes)
                         configurationLink(AppLocalization.string("Entrances"), symbol: "arrow.triangle.branch", destination: .entrances)
                         configurationLink(AppLocalization.string("DNS"), symbol: "network", destination: .dns)
                     }

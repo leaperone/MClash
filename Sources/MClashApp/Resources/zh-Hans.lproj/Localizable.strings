@@ -1894,7 +1894,7 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "已启用的 HTTP 和 SOCKS 入口必须共用同一个 Mihomo 绑定地址。";
 "Enabled entrances cannot share a listening port." = "已启用的入口不能共用监听端口。";
 "Entrance port must be between 1 and 65535." = "入口端口必须介于 1 和 65535 之间。";
-"Everyday" = "日常使用";
+"Everyday" = "日常";
 "Fallback" = "故障转移";
 "Fingerprint" = "指纹";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "已导入的来源。MClash 仅使用其中的节点数据；来源中的策略部分会被忽略。";
