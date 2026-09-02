@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import MClash
+@testable import MClashApp
 
 @Suite("MClash listener registry adapter")
 struct MClashListenerRegistryAdapterTests {
