@@ -10,6 +10,7 @@ final class Hysteria2QUICSession: @unchecked Sendable {
     private let queue: DispatchQueue
     private var connection: NWConnection?
     private var state = Hysteria2Session()
+    private var frameDecoder = HTTP3FrameDecoder()
 
     init(connector: NativeHysteria2OutboundConnector, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.hysteria2-quic")) {
         self.connector = connector
@@ -36,8 +37,12 @@ final class Hysteria2QUICSession: @unchecked Sendable {
                             let frame = try QPACKEncoder.encodeLiteralFields(headers)
                             let payload = try HTTP3FrameCodec.encode(HTTP3Frame(type: .headers, payload: frame))
                             connection.send(content: payload, completion: .contentProcessed { error in
-                                if let error { self.state.fail(error.localizedDescription); completion(.failure(error)) }
-                                else { completion(.success(())) }
+                                if let error {
+                                    self.state.fail(error.localizedDescription)
+                                    completion(.failure(error))
+                                } else {
+                                    self.readAuthenticationResponse(completion: completion)
+                                }
                             })
                         } catch {
                             self.state.fail(error.localizedDescription)
@@ -55,6 +60,52 @@ final class Hysteria2QUICSession: @unchecked Sendable {
                 }
             }
             connection.start(queue: self.queue)
+        }
+    }
+
+    private func readAuthenticationResponse(
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+    ) {
+        guard let connection else { return }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            self.queue.async {
+                if let error {
+                    self.state.fail(error.localizedDescription)
+                    completion(.failure(error))
+                    return
+                }
+                do {
+                    let frames = try self.frameDecoder.append(data ?? Data())
+                    for frame in frames where frame.type == .headers {
+                        let fields = try QPACKDecoder.decodeLiteralFields(frame.payload)
+                        let headers = Dictionary(
+                            fields.filter { !$0.0.hasPrefix(":") }.map { ($0.0, $0.1) },
+                            uniquingKeysWith: { _, last in last }
+                        )
+                        let statusText = fields.first { $0.0 == ":status" }?.1 ?? ""
+                        let statusCode = Int(statusText.split(separator: " ").first ?? "") ?? 0
+                        let response = try Hysteria2Codec.decodeAuthResponse(
+                            statusCode: statusCode,
+                            headers: headers
+                        )
+                        guard self.state.handleAuthenticationResponse(
+                            statusCode: statusCode,
+                            headers: headers
+                        ) else {
+                            throw Hysteria2CodecError.invalidResponse
+                        }
+                        _ = response
+                        completion(.success(()))
+                        return
+                    }
+                    if !isComplete { self.readAuthenticationResponse(completion: completion) }
+                    else { throw Hysteria2CodecError.invalidResponse }
+                } catch {
+                    self.state.fail(error.localizedDescription)
+                    completion(.failure(error))
+                }
+            }
         }
     }
 
