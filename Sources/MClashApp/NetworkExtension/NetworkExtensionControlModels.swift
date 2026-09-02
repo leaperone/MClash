@@ -16,6 +16,10 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     /// Connector-neutral route endpoint catalog sent to the provider.
     let encodedOutboundConnectorCatalog: Data?
     let encodedOutboundNodeTargetCatalog: Data?
+    /// JSON-encoded MClashListenerRegistry for the native inbound bridge.
+    /// Disabled by default; the legacy Mihomo listener remains authoritative.
+    let encodedInboundListenerRegistry: Data?
+    let nativeInboundListenersEnabled: Bool
     let encodedDNSProxyBootstrap: Data?
     let mihomoListener: NetworkExtensionMihomoListenerConfiguration?
     let dnsUpstreamMode: DNSUpstreamMode
@@ -44,6 +48,8 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         encodedCaptureSnapshot = nil
         encodedOutboundConnectorCatalog = nil
         encodedOutboundNodeTargetCatalog = nil
+        encodedInboundListenerRegistry = nil
+        nativeInboundListenersEnabled = false
         encodedDNSProxyBootstrap = nil
         mihomoListener = nil
     }
@@ -55,6 +61,8 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         dnsUpstreamMode: DNSUpstreamMode = .mihomo,
         nativeUpstreamBootstrap: DNSUpstreamBootstrap? = nil,
         outboundNodeTargetCatalog: OutboundNodeTargetCatalog? = nil,
+        inboundListenerRegistry: MClashListenerRegistry? = nil,
+        nativeInboundListenersEnabled: Bool = false,
         activationIdentifier: UUID = UUID()
     ) throws {
         try preferences.snapshot.validate()
@@ -84,6 +92,8 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         let routeProxyCatalog = endpoints.isEmpty ? nil : try MihomoRouteProxyCatalog.encode(endpoints)
         encodedOutboundConnectorCatalog = routeProxyCatalog
         encodedOutboundNodeTargetCatalog = try outboundNodeTargetCatalog?.encoded()
+        encodedInboundListenerRegistry = try inboundListenerRegistry?.encoded()
+        self.nativeInboundListenersEnabled = nativeInboundListenersEnabled
         if dnsUpstreamMode == .native {
             // Native DNS and native outbound connectors are independent of a
             // loopback Mihomo listener. This is the node-only activation path.
@@ -132,6 +142,10 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         if let encodedOutboundNodeTargetCatalog {
             configuration["outboundNodeTargetCatalog"] = encodedOutboundNodeTargetCatalog as NSData
         }
+        if let encodedInboundListenerRegistry {
+            configuration["nativeInboundListenerRegistry"] = encodedInboundListenerRegistry as NSData
+        }
+        configuration["nativeInboundListenersEnabled"] = NSNumber(value: nativeInboundListenersEnabled)
         if let encodedDNSProxyBootstrap {
             configuration["dnsProxyBootstrap"] = encodedDNSProxyBootstrap as NSData
         }

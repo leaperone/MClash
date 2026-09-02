@@ -22,6 +22,19 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
     private let hysteria2Relays = Hysteria2RelayRegistry()
     private let udpSessions = UDPFlowSessionRegistry()
     private let activities = AppRoutingActivityRing(capacity: 2_000)
+    /// Native socket entrances are an explicit opt-in bridge. In the normal
+    /// configuration this manager remains empty and Mihomo's listener path is
+    /// untouched.
+    private let nativeInboundListeners = NativeInboundListenerManager(
+        routeResolver: { spec, _ in
+            switch spec.route {
+            case .direct: .direct
+            case .reject: .reject
+            case .outbound: .reject // no silent proxy-to-Direct fallback
+            }
+        },
+        connector: NativeInboundDirectConnector()
+    )
 
     override func startProxy(
         options: [String: Any]? = nil,
@@ -41,6 +54,12 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
         runtime.start(configuration: configuration)
         flowDecisionCoordinator.load(configuration: configuration)
         Self.prepareDNSRegistry(from: configuration)
+        if let error = configureNativeInboundListeners(from: configuration) {
+            nativeInboundListeners.stop()
+            runtime.stop()
+            completionHandler(error)
+            return
+        }
         let runtime = runtime
         let flowDecisionCoordinator = flowDecisionCoordinator
         let completion = ProxyStartCompletion(completionHandler)
@@ -60,6 +79,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
         tcpRelays.cancelAll()
         hysteria2Relays.cancelAll()
         udpSessions.cancelAll()
+        nativeInboundListeners.stop()
         runtime.stop()
         completionHandler()
     }
@@ -545,6 +565,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
                 if response.accepted {
                     flowDecisionCoordinator.load(configuration: configuration)
                     Self.prepareDNSRegistry(from: configuration)
+                    _ = configureNativeInboundListeners(from: configuration)
                 }
             }
         } catch {
@@ -638,10 +659,44 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
         _ = DNSProxyRuntimeRegistry.shared.prepare(bootstrap)
     }
 
+    /// Starts native HTTP/SOCKS listeners only when both an explicit boolean
+    /// and a valid encoded registry are delivered. Missing or disabled data
+    /// leaves the existing Mihomo listener lifecycle completely unchanged.
+    @discardableResult
+    private func configureNativeInboundListeners(from configuration: [String: Any]?) -> Error? {
+        nativeInboundListeners.stop()
+        let enabled = Self.nativeInboundBool(configuration?[ProviderConfigurationKey.nativeInboundListenersEnabled]) ?? false
+        guard enabled else { return nil }
+        guard let data = Self.data(configuration?[ProviderConfigurationKey.nativeInboundListenerRegistry]),
+              let registry = try? MClashListenerRegistry.decode(data)
+        else {
+            return NSError(
+                domain: "one.leaper.mclash.network-extension",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "Native inbound listener registry is invalid"]
+            )
+        }
+        do {
+            try nativeInboundListeners.configure(registry)
+            nativeInboundListeners.start()
+            return nil
+        } catch {
+            return error
+        }
+    }
+
     private static func data(_ value: Any?) -> Data? {
         switch value {
         case let value as Data: value
         case let value as NSData: value as Data
+        default: nil
+        }
+    }
+
+    private static func nativeInboundBool(_ value: Any?) -> Bool? {
+        switch value {
+        case let value as Bool: value
+        case let value as NSNumber: value.boolValue
         default: nil
         }
     }
@@ -792,6 +847,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
     override func sleep(completionHandler: @escaping () -> Void) {
         tcpRelays.cancelAll()
         udpSessions.cancelAll()
+        nativeInboundListeners.stop()
         completionHandler()
     }
 

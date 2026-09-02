@@ -40,12 +40,13 @@ final class MClashInboundListener: @unchecked Sendable {
     private let queue: DispatchQueue
     private let route: @Sendable (MClashInboundDestination) -> MClashInboundRoute
     private let connector: MClashInboundOutboundConnector
+    private let stateHandler: (@Sendable (Bool, UInt16?) -> Void)?
     private var listener: NWListener?
     private var connections = [ObjectIdentifier: NWConnection]()
     private(set) var port: UInt16?
 
-    init(kind: Kind, port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector) throws {
-        self.kind = kind; self.queue = queue; self.route = route; self.connector = connector
+    init(kind: Kind, port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector, stateHandler: (@Sendable (Bool, UInt16?) -> Void)? = nil) throws {
+        self.kind = kind; self.queue = queue; self.route = route; self.connector = connector; self.stateHandler = stateHandler
         let nwListener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
         listener = nwListener
         nwListener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
@@ -55,7 +56,16 @@ final class MClashInboundListener: @unchecked Sendable {
         queue.async(execute: DispatchWorkItem { [weak self] in
             guard let self, let listener = self.listener else { return }
             listener.stateUpdateHandler = { [weak self] state in
-                if case .ready = state { self?.port = listener.port?.rawValue }
+                guard let self else { return }
+                switch state {
+                case .ready:
+                    self.port = listener.port?.rawValue
+                    self.stateHandler?(true, self.port)
+                case .failed, .cancelled:
+                    self.stateHandler?(false, nil)
+                default:
+                    break
+                }
             }
             listener.start(queue: queue)
         })
@@ -66,6 +76,7 @@ final class MClashInboundListener: @unchecked Sendable {
             guard let self else { return }
             listener?.cancel(); listener = nil
             connections.values.forEach { $0.cancel() }; connections.removeAll(); port = nil
+            stateHandler?(false, nil)
         })
     }
 
@@ -132,11 +143,24 @@ final class MClashInboundListener: @unchecked Sendable {
         }
         let upstream: NWConnection
         switch decision { case .direct: upstream = NWConnection(host: NWEndpoint.Host(destination.host), port: NWEndpoint.Port(rawValue: destination.port)!, using: .tcp); case .proxy: upstream = connector.connect(to: destination, route: decision); case .reject: return }
-        client.send(content: response, completion: .contentProcessed { [weak self] error in
-            guard let self, error == nil else { client.cancel(); return }
-            upstream.stateUpdateHandler = { state in if case .ready = state { self.bridge(client, upstream) } else if case .failed = state { client.cancel() } }
-            upstream.start(queue: self.queue)
-        })
+        // Establish the upstream before acknowledging CONNECT/ SOCKS5. This
+        // prevents clients from believing a route is usable while the native
+        // connector is still resolving or has already failed.
+        upstream.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                client.send(content: response, completion: .contentProcessed { error in
+                    guard error == nil else { client.cancel(); upstream.cancel(); return }
+                    self.bridge(client, upstream)
+                })
+            case .failed, .cancelled:
+                client.cancel()
+            default:
+                break
+            }
+        }
+        upstream.start(queue: queue)
     }
 
     private func bridge(_ a: NWConnection, _ b: NWConnection) {

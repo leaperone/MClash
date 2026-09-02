@@ -24,4 +24,57 @@ struct MClashInboundListenerTests {
         #expect(MClashInboundRoute.direct != .proxy("AI"))
         #expect(destination == MClashInboundDestination(host: "example.com", port: 443))
     }
+
+    @Test("Native listener manager starts only configured loopback sockets and stops them")
+    func managerLifecycle() async throws {
+        let id = UUID()
+        let port = UInt16.random(in: 20_000...60_000)
+        let spec = try MClashListenerSpec(
+            id: id,
+            name: "Ephemeral HTTP",
+            kind: .http,
+            enabled: true,
+            port: Int(port)
+        )
+        let registry = try MClashListenerRegistry(listeners: [spec])
+        let manager = NativeInboundListenerManager(
+            routeResolver: { spec, _ in spec.route == .direct ? .direct : .reject },
+            connector: Connector()
+        )
+        try manager.configure(registry)
+        #expect(manager.lifecycleStates()[id] == .stopped)
+        manager.start()
+        // NWListener reports readiness asynchronously; starting is the only
+        // state that may be observed immediately after start().
+        let initial = manager.lifecycleStates()[id]
+        #expect(initial == .starting || initial == .running(port: port))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(manager.lifecycleStates()[id] == .running(port: port))
+        manager.stop()
+        #expect(manager.lifecycleStates()[id] == .stopped)
+    }
+
+    @Test("Disabled and system entrances never bind a socket")
+    func managerDoesNotBindDisabledEntrances() throws {
+        let disabled = try MClashListenerSpec(
+            name: "Disabled SOCKS",
+            kind: .socks5,
+            enabled: false,
+            port: 19_288
+        )
+        let app = try MClashListenerSpec(
+            name: "Application Routing",
+            kind: .appRouting,
+            enabled: true
+        )
+        let manager = NativeInboundListenerManager(
+            routeResolver: { _, _ in .direct },
+            connector: Connector()
+        )
+        try manager.configure(try MClashListenerRegistry(listeners: [disabled, app]))
+        manager.start()
+        #expect(manager.lifecycleStates()[disabled.id] == .stopped)
+        #expect(manager.lifecycleStates()[app.id] == .stopped)
+        manager.stop()
+    }
 }

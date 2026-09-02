@@ -66,6 +66,10 @@ enum ProviderConfigurationKey {
     static let outboundConnectorCatalog = "outboundConnectorCatalog"
     /// JSON-encoded `OutboundNodeTargetCatalog` for native connector rollout.
     static let outboundNodeTargetCatalog = "outboundNodeTargetCatalog"
+    /// JSON-encoded MClashListenerRegistry for the explicit native inbound
+    /// bridge. It is absent in normal/legacy provider configurations.
+    static let nativeInboundListenerRegistry = "nativeInboundListenerRegistry"
+    static let nativeInboundListenersEnabled = "nativeInboundListenersEnabled"
     static let mihomoSOCKSHost = "mihomoSOCKSHost"
     static let mihomoSOCKSPort = "mihomoSOCKSPort"
     static let mihomoSOCKSUsername = "mihomoSOCKSUsername"
