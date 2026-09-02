@@ -393,7 +393,6 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "觀測到流量決策和 Mihomo 連線後，路由會顯示在這裡。";
 "Routing" = "路由";
 "Routing & macOS Proxy" = "路由與 macOS 代理";
-"Routing Mode" = "代理模式";
 "Routing mode" = "路由模式";
 "Rule" = "規則";
 "Rule Overrides" = "規則覆蓋";
@@ -427,7 +426,6 @@
 "Starting local proxy listeners…" = "正在啟動本機代理監聽器…";
 "Startup" = "啟動";
 "State" = "狀態";
-"Status" = "狀態";
 "Strict" = "嚴格";
 "Subscription URL" = "訂閱 URL";
 "System Proxy Settings" = "系統代理設定";
@@ -1284,7 +1282,6 @@
 "Mixed port off · %@ reserved" = "Mixed 連接埠已關閉 · 保留 %@";
 "Mixed: %@" = "Mixed：%@";
 "More actions for %@" = "%@ 的更多操作";
-"Needs Attention" = "需要處理";
 "Needs Restoration" = "需要還原";
 "Needs attention" = "需要注意";
 "Network Extension state transition" = "網路延伸功能狀態轉換";
@@ -1896,7 +1893,6 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "已啟用的 HTTP 與 SOCKS 入口必須共用同一個 Mihomo 繫結位址。";
 "Enabled entrances cannot share a listening port." = "已啟用的入口不能共用監聽連接埠。";
 "Entrance port must be between 1 and 65535." = "入口連接埠必須介於 1 到 65535 之間。";
-"Everyday" = "日常";
 "Fallback" = "容錯移轉";
 "Fingerprint" = "指紋";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "已匯入的來源。MClash 僅使用其中的節點資料；來源內的策略區段會被忽略。";
@@ -2347,7 +2343,6 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "可重複使用的 MClash Mihomo 規則集合，可明確設定來源和格式。";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "讓選定應用程式透過此設定路由；規則仍在「規則」頁管理，此開關只控制入口。";
 "Rule Set" = "規則集";
-"Rule Sets" = "規則集";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "規則集路徑必須是相對路徑，不能包含換行或父目錄片段。";
 "Rule set source must be an HTTP or HTTPS URL." = "規則集來源必須是 HTTP 或 HTTPS URL。";
 "Rules surface" = "規則視圖";

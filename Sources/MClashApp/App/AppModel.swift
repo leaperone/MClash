@@ -452,7 +452,7 @@ final class AppModel {
             case .dns: "DNS"
             case .proxies: "Nodes"
             case .proxyGroups: "Nodes"
-            case .appRouting: "How to Connect"
+            case .appRouting: "App Routing"
             case .profiles: "Config Files"
             case .rules: "Rules"
             case .providers: "Rule Sets"

@@ -394,7 +394,6 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "Routen werden als Verkehrsentscheidungen angezeigt und Mihomo-Verbindungen werden beobachtet.";
 "Routing" = "Routing";
 "Routing & macOS Proxy" = "Routing und macOS-Proxy";
-"Routing Mode" = "Routing-Modus";
 "Routing mode" = "Routing-Modus";
 "Rule" = "Regel";
 "Rule Overrides" = "Regelüberschreibungen";
@@ -428,7 +427,6 @@
 "Starting local proxy listeners…" = "Lokale Proxy-Listener starten…";
 "Startup" = "Start";
 "State" = "Zustand";
-"Status" = "Status";
 "Strict" = "Streng";
 "Subscription URL" = "Abonnement-URL";
 "System Proxy Settings" = "System-Proxy-Einstellungen";
@@ -1284,7 +1282,6 @@
 "Mixed port off · %@ reserved" = "Mixed-Port aus · %@ reserviert";
 "Mixed: %@" = "Mixed: %@";
 "More actions for %@" = "Weitere Aktionen für %@";
-"Needs Attention" = "Aufmerksamkeit";
 "Needs Restoration" = "Wiederherstellung erforderlich";
 "Needs attention" = "Aufmerksamkeit erforderlich";
 "Network Extension state transition" = "Statusübergang der Netzwerkerweiterung";
@@ -1896,7 +1893,6 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "Aktivierte HTTP- und SOCKS-Eingänge müssen dieselbe Mihomo-Bindungsadresse verwenden.";
 "Enabled entrances cannot share a listening port." = "Aktivierte Eingänge dürfen nicht denselben Port verwenden.";
 "Entrance port must be between 1 and 65535." = "Der Eingangsport muss zwischen 1 und 65535 liegen.";
-"Everyday" = "Alltag";
 "Fallback" = "Ausweichroute";
 "Fingerprint" = "Fingerabdruck";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "Importierte Quelle. MClash verwendet daraus nur Knotendaten; Strategiebereiche der Quelle werden ignoriert.";
@@ -2347,7 +2343,6 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
-"Rule Sets" = "Regelsätze";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "Rule set path must be a relative path without line breaks or parent-directory segments.";
 "Rule set source must be an HTTP or HTTPS URL." = "Rule set source must be an HTTP or HTTPS URL.";
 "Rules surface" = "Rules surface";
