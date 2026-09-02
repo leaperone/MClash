@@ -16,17 +16,20 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     let encodedMihomoRouteProxyCatalog: Data?
     let encodedDNSProxyBootstrap: Data?
     let mihomoListener: NetworkExtensionMihomoListenerConfiguration?
+    let dnsUpstreamMode: DNSUpstreamMode
 
     init(
         revision: UInt64,
         dnsEnabled: Bool = true,
         failOpen: Bool = true,
+        dnsUpstreamMode: DNSUpstreamMode = .mihomo,
         activationIdentifier: UUID = UUID()
     ) {
         self.revision = revision
         self.activationIdentifier = activationIdentifier
         self.dnsEnabled = dnsEnabled
         self.failOpen = failOpen
+        self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = true
         encodedCaptureSnapshot = nil
         encodedMihomoRouteProxyCatalog = nil
@@ -38,6 +41,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         preferences: NetworkCapturePreferences,
         mihomoListener: NetworkExtensionMihomoListenerConfiguration,
         routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
+        dnsUpstreamMode: DNSUpstreamMode = .mihomo,
         activationIdentifier: UUID = UUID()
     ) throws {
         try preferences.snapshot.validate()
@@ -60,6 +64,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         self.activationIdentifier = activationIdentifier
         dnsEnabled = preferences.enabled && preferences.dnsEnabled
         failOpen = preferences.failOpen
+        self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = preferences.enabled
         self.encodedCaptureSnapshot = encodedSnapshot
         let endpoints = try routeProxyEndpoints ?? mihomoListener.routeProxyEndpoints()
@@ -73,7 +78,8 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
             activationIdentifier: activationIdentifier,
             profileRulesProxy: profileRulesProxy,
             routeProxyEndpoints: endpoints,
-            encodedCaptureSnapshot: encodedSnapshot
+            encodedCaptureSnapshot: encodedSnapshot,
+            dnsUpstreamMode: dnsUpstreamMode
         ).encoded()
         self.mihomoListener = mihomoListener
     }
