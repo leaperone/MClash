@@ -815,13 +815,13 @@ final class AppModel {
     private var startupPreparationErrorMessage: String?
     private let testInstance: Bool
 
-    /// Opt-in during the staged migration. Native DNS is exercised in Shadow
-    /// instances first; production remains on the verified Mihomo relay until
-    /// the complete DNS/network-extension acceptance suite is green.
+    /// Native DNS is the unified-runtime default. Set the explicit legacy
+    /// switch only for rollback during migration; it is never inferred from
+    /// missing configuration so a fresh install stays on the MClash path.
     private var configuredDNSUpstreamMode: DNSUpstreamMode {
-        ProcessInfo.processInfo.environment["MCLASH_NATIVE_DNS"] == "1"
-            ? .native
-            : .mihomo
+        ProcessInfo.processInfo.environment["MCLASH_LEGACY_DNS"] == "1"
+            ? .mihomo
+            : .native
     }
 
     init(
