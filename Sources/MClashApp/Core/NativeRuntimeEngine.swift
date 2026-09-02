@@ -28,6 +28,42 @@ struct NativeRuntimeDiagnostics: Equatable, Sendable {
     let enabledListenerCount: Int
     /// Validation failures are surfaced independently of lifecycle failures.
     let sessionValidationError: String?
+    /// Lifecycle state of each MClash-owned entrance. Native listeners are
+    /// represented by safe in-process handles; this does not imply that a
+    /// production socket was bound by the engine.
+    let listenerStates: [UUID: NativeListenerLifecycleState]
+}
+
+enum NativeListenerLifecycleState: Equatable, Sendable {
+    case stopped
+    case starting
+    case running
+    case failed(String)
+}
+
+/// A safe handle for a listener owned by the native runtime.  The first
+/// lifecycle slice intentionally models binding rather than opening sockets:
+/// the Network Extension owns the actual listener transport. Keeping this
+/// handle in the engine makes start/stop transactional and observable without
+/// touching user ports during migration tests.
+struct NativeListenerHandle: Equatable, Sendable {
+    let id: UUID
+    let name: String
+    let kind: MClashListenerKind
+    let endpoint: String?
+    let route: MClashListenerRoute
+    let socketBound: Bool
+    var state: NativeListenerLifecycleState
+
+    init(spec: MClashListenerSpec, state: NativeListenerLifecycleState = .stopped) {
+        id = spec.id
+        name = spec.name
+        kind = spec.kind
+        endpoint = spec.endpoint
+        route = spec.route
+        socketBound = false
+        self.state = state
+    }
 }
 
 /// The complete native session policy.  A native engine must receive this
@@ -103,6 +139,7 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
     private var startedAt: Date?
     private var sessionState: NativeRuntimeSessionState?
     private var sessionValidationError: String?
+    private var listenerHandles: [UUID: NativeListenerHandle] = [:]
 
     init() {
         let pair = AsyncStream<CoreEvent>.makeStream(
@@ -127,12 +164,10 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
         continuation = pair.continuation
         sessionState = try NativeRuntimeSessionState(plan: plan, listeners: listeners)
         sessionValidationError = nil
+        listenerHandles = Self.makeListenerHandles(for: listeners)
     }
 
-    func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) throws {
-        guard !currentState.isRunning else {
-            throw CoreSupervisorError.alreadyRunning
-        }
+    func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
         let state: NativeRuntimeSessionState
         do {
             state = try NativeRuntimeSessionState(plan: plan, listeners: listeners)
@@ -141,6 +176,7 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
             throw error
         }
         sessionState = state
+        listenerHandles = Self.makeListenerHandles(for: listeners)
         sessionValidationError = nil
         lastError = nil
         continuation.yield(.log(CoreLogLine(
@@ -166,8 +202,15 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
             workspaceRevision: sessionState?.plan.workspaceRevision,
             listenerCount: sessionState?.listeners.listeners.count ?? 0,
             enabledListenerCount: sessionState?.listeners.enabledListeners.count ?? 0,
-            sessionValidationError: sessionValidationError
+            sessionValidationError: sessionValidationError,
+            listenerStates: listenerHandles.mapValues(\.state)
         )
+    }
+
+    /// Returns a stable snapshot of the native listener handles. Handles are
+    /// sorted by registry order so callers never depend on dictionary order.
+    func nativeListenerHandles() -> [NativeListenerHandle] {
+        listenerHandles.values.sorted { $0.id.uuidString < $1.id.uuidString }
     }
 
     func start(_ configuration: CoreLaunchConfiguration) async throws {
@@ -176,6 +219,7 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
         }
         try await validateConfiguration(configuration)
         transition(to: .starting)
+        beginListeners()
         let now = Date()
         startedAt = now
         lastError = nil
@@ -190,6 +234,7 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
 
     @discardableResult
     func stop() async -> Bool {
+        stopListeners()
         startedAt = nil
         lastError = nil
         transition(to: .stopped)
@@ -253,6 +298,38 @@ final actor NativeRuntimeEngine: NativeRuntimeController {
     private func transition(to state: CoreRunState) {
         currentState = state
         continuation.yield(.stateChanged(state))
+    }
+
+    private static func makeListenerHandles(
+        for registry: MClashListenerRegistry
+    ) -> [UUID: NativeListenerHandle] {
+        Dictionary(uniqueKeysWithValues: registry.listeners.map { spec in
+            (spec.id, NativeListenerHandle(spec: spec))
+        })
+    }
+
+    private func beginListeners() {
+        guard let registry = sessionState?.listeners else { return }
+        for spec in registry.listeners {
+            guard var handle = listenerHandles[spec.id] else { continue }
+            handle.state = spec.enabled ? .starting : .stopped
+            listenerHandles[spec.id] = handle
+        }
+        // Binding is deliberately represented by a handle only. Actual TCP
+        // sockets are started by the Network Extension listener owner.
+        for spec in registry.enabledListeners {
+            guard var handle = listenerHandles[spec.id] else { continue }
+            handle.state = .running
+            listenerHandles[spec.id] = handle
+        }
+    }
+
+    private func stopListeners() {
+        for id in listenerHandles.keys {
+            guard var handle = listenerHandles[id] else { continue }
+            handle.state = .stopped
+            listenerHandles[id] = handle
+        }
     }
 
     private func emitLog(_ message: String) {

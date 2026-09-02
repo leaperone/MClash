@@ -115,6 +115,97 @@ struct NativeRuntimeControllerTests {
         #expect(await engine.stop())
     }
 
+    @Test("Native policy can be updated while the runtime is running")
+    func nativePolicyUpdatesWhileRunning() async throws {
+        let document = ConfigurationDocument.mclashDefault()
+        let plan = try ConfigurationCompiler().compileRuntimePlan(document: document)
+        let initialListener = try MClashListenerSpec(
+            name: "Initial HTTP",
+            kind: .http,
+            enabled: true,
+            port: 18_081
+        )
+        let initialRegistry = try MClashListenerRegistry(listeners: [initialListener])
+        let engine = try NativeRuntimeEngine(plan: plan, listeners: initialRegistry)
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "mclash-native-policy-update-\(UUID().uuidString)",
+                       directoryHint: .isDirectory)
+        let configuration = CoreLaunchConfiguration(
+            binaryURL: root.appending(path: "mihomo-must-not-launch"),
+            homeDirectory: root.appending(path: "home", directoryHint: .isDirectory),
+            configURL: root.appending(path: "missing.yaml"),
+            controllerPort: 19_102,
+            secret: "native-policy-update-secret"
+        )
+        try await engine.start(configuration)
+
+        let updatedListener = try MClashListenerSpec(
+            name: "Updated SOCKS",
+            kind: .socks,
+            enabled: true,
+            port: 18_082
+        )
+        let updatedRegistry = try MClashListenerRegistry(listeners: [updatedListener])
+        try await engine.configure(plan: plan, listeners: updatedRegistry)
+
+        let diagnostics = await engine.diagnostics()
+        #expect(diagnostics.state.isRunning)
+        #expect(diagnostics.listenerCount == 1)
+        #expect(diagnostics.enabledListenerCount == 1)
+        #expect(await engine.nativeSessionState()?.listeners == updatedRegistry)
+        #expect(await engine.stop())
+    }
+
+    @Test("Native engine manages listener handles without binding production sockets")
+    func nativeListenerLifecycleUsesSafeHandles() async throws {
+        let plan = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let http = try MClashListenerSpec(
+            name: "Native HTTP",
+            kind: .http,
+            enabled: true,
+            port: 18_181
+        )
+        let app = try MClashListenerSpec(
+            name: "Native App Routing",
+            kind: .appRouting,
+            enabled: false
+        )
+        let registry = try MClashListenerRegistry(listeners: [http, app])
+        let engine = try NativeRuntimeEngine(plan: plan, listeners: registry)
+
+        let before = await engine.nativeListenerHandles()
+        #expect(before.count == 2)
+        #expect(before.allSatisfy { $0.state == .stopped })
+        #expect(before.allSatisfy { !$0.socketBound })
+
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "mclash-native-listeners-\(UUID().uuidString)",
+                       directoryHint: .isDirectory)
+        let configuration = CoreLaunchConfiguration(
+            binaryURL: root.appending(path: "must-not-launch"),
+            homeDirectory: root.appending(path: "home", directoryHint: .isDirectory),
+            configURL: root.appending(path: "missing.yaml"),
+            controllerPort: 19_131,
+            secret: "native-listener-secret"
+        )
+        try await engine.start(configuration)
+
+        let running = await engine.nativeListenerHandles()
+        #expect(running.first(where: { $0.id == http.id })?.state == .running)
+        #expect(running.first(where: { $0.id == app.id })?.state == .stopped)
+        let diagnostics = await engine.diagnostics()
+        #expect(diagnostics.listenerStates[http.id] == .running)
+        #expect(diagnostics.listenerStates[app.id] == .stopped)
+        #expect(diagnostics.listenerStates.values.filter { $0 == .running }.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: configuration.binaryURL.path))
+
+        #expect(await engine.stop())
+        let stopped = await engine.nativeListenerHandles()
+        #expect(stopped.allSatisfy { $0.state == .stopped })
+    }
+
     @Test("Native session rejects invalid policy before storing it")
     func nativeSessionRejectsInvalidPlan() throws {
         let valid = try ConfigurationCompiler().compileRuntimePlan(
