@@ -884,7 +884,7 @@
 "%@ · v%@ · %@" = "%@ · v%@ · %@";
 "%@ — Mixed %@" = "%@ — Mixed %@";
 "%@ — Mixed port off" = "%@ — Mixed 端口已关闭";
-"%@ — click the card to inspect or the chevron to open the group" = "%@ — 点按卡片查看详情，或点按箭头展开组";
+"%@ — click the card to open the group" = "%@ — 点按卡片打开该组";
 "%@ → %@ → %@" = "%@ → %@ → %@";
 "%@, %@, %@" = "%@，%@，%@";
 "%@, %@, %@, %@ members, %@" = "%@，%@，%@，%@ 个成员，%@";
