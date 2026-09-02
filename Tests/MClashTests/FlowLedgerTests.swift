@@ -7,6 +7,45 @@ import Testing
 struct FlowLedgerTests {
     private let baseDate = Date(timeIntervalSince1970: 1_784_166_400)
 
+    @Test("Native relay observations project into the ledger without Mihomo")
+    func nativeObservationProjection() throws {
+        let observation = FlowRelayObservation(
+            id: "native-h2-1",
+            startedAt: baseDate,
+            endedAt: baseDate.addingTimeInterval(2),
+            network: "tcp",
+            destinationHost: "api.example.com",
+            destinationPort: 443,
+            process: "Safari",
+            inboundName: "native-app-routing",
+            rule: "DOMAIN-SUFFIX",
+            rulePayload: "example.com",
+            routeChain: ["CUNOE-Proxy", "US-01"],
+            connector: "hysteria2",
+            uploadBytes: 17,
+            downloadBytes: 83,
+            state: .completed,
+            route: .relay
+        )
+
+        let ledger = FlowLedger(
+            mihomoConnections: [],
+            flowRelayObservations: [observation]
+        )
+        let entry = try #require(ledger.entries.first)
+
+        #expect(entry.id == .native("native-h2-1"))
+        #expect(entry.application.displayName == "Safari")
+        #expect(entry.captureOrigin == .appRouting)
+        #expect(entry.destination.hostname == "api.example.com")
+        #expect(entry.mihomoRoute?.chain == ["CUNOE-Proxy", "US-01"])
+        #expect(entry.upload == .exact(17))
+        #expect(entry.download == .exact(83))
+        #expect(entry.state == .completed)
+        #expect(entry.outcome == .viaMihomo)
+        #expect(ledger.routeAggregates.first?.traffic.exactTotalBytes == 100)
+    }
+
     @Test("Relay source port wins over a closer heuristic candidate")
     func exactRelayPortWins() throws {
         let activity = appActivity(

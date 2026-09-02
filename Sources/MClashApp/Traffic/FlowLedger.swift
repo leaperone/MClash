@@ -31,6 +31,7 @@ struct FlowLedger: Sendable {
         activeConnections: [MihomoConnection],
         recentlyClosedConnections: [FlowLedgerClosedConnection] = [],
         appRoutingActivities: [AppRoutingActivity] = [],
+        flowRelayObservations: [FlowRelayObservation] = [],
         mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
         defaultProfileID: ProfileID? = nil,
         associationWindow: TimeInterval = defaultAssociationWindow
@@ -47,6 +48,7 @@ struct FlowLedger: Sendable {
         self.init(
             mihomoConnections: activeRecords + closedRecords,
             appRoutingActivities: appRoutingActivities,
+            flowRelayObservations: flowRelayObservations,
             mihomoCaptureOrigins: mihomoCaptureOrigins,
             defaultProfileID: defaultProfileID,
             associationWindow: associationWindow
@@ -56,6 +58,7 @@ struct FlowLedger: Sendable {
     init(
         mihomoConnections: [FlowLedgerMihomoConnectionRecord],
         appRoutingActivities: [AppRoutingActivity] = [],
+        flowRelayObservations: [FlowRelayObservation] = [],
         mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
         defaultProfileID: ProfileID? = nil,
         associationWindow: TimeInterval = defaultAssociationWindow
@@ -84,8 +87,24 @@ struct FlowLedger: Sendable {
         var claimedConnectionIDs: Set<String> = []
         var builtEntries: [FlowLedgerEntry] = []
         builtEntries.reserveCapacity(
-            deduplicatedConnections.count + appRoutingActivities.count
+            deduplicatedConnections.count
+                + appRoutingActivities.count
+                + flowRelayObservations.count
         )
+
+        // Native connectors publish observations directly.  They are projected
+        // before legacy connections so the ledger remains useful when Mihomo
+        // is absent, while the existing connection/activity association keeps
+        // its historical behaviour unchanged.
+        for observation in Self.deduplicated(flowRelayObservations) {
+            guard !Task<Never, Never>.isCancelled else { return }
+            builtEntries.append(
+                Self.entry(
+                    observation: observation,
+                    defaultProfileID: defaultProfileID
+                )
+            )
+        }
 
         // Activities with a relay source port get first choice of a connection.
         // This prevents a less precise destination/time association from claiming
@@ -397,6 +416,38 @@ struct FlowLedger: Sendable {
         return byIdentifier.values.sorted { $0.connection.id < $1.connection.id }
     }
 
+    private static func deduplicated(
+        _ observations: [FlowRelayObservation]
+    ) -> [FlowRelayObservation] {
+        // A connector can publish an active update followed by a terminal
+        // update with the same id. Keep the terminal record, or otherwise the
+        // latest record supplied by the caller, without requiring a Mihomo
+        // connection as a de-duplication anchor.
+        var byIdentifier: [String: FlowRelayObservation] = [:]
+        for observation in observations {
+            if let existing = byIdentifier[observation.id],
+               Self.observationRank(existing.state) > Self.observationRank(observation.state) {
+                continue
+            }
+            byIdentifier[observation.id] = observation
+        }
+        return byIdentifier.values.sorted {
+            let lhsDate = $0.endedAt ?? $0.startedAt ?? .distantPast
+            let rhsDate = $1.endedAt ?? $1.startedAt ?? .distantPast
+            if lhsDate != rhsDate { return lhsDate < rhsDate }
+            return $0.id < $1.id
+        }
+    }
+
+    private static func observationRank(
+        _ state: FlowRelayObservation.State
+    ) -> Int {
+        switch state {
+        case .active: 0
+        case .completed, .rejected, .failed: 1
+        }
+    }
+
     private static func connectionMatch(
         for activity: AppRoutingActivity,
         in index: ConnectionIndex,
@@ -565,6 +616,104 @@ struct FlowLedger: Sendable {
             upload: .exact(normalizedBytes(connection.upload)),
             download: .exact(normalizedBytes(connection.download))
         )
+    }
+
+    private static func entry(
+        observation: FlowRelayObservation,
+        defaultProfileID: ProfileID?
+    ) -> FlowLedgerEntry {
+        let routeEvidence: FlowLedgerMihomoRoute? = {
+            guard observation.route == .relay || !observation.routeChain.isEmpty else {
+                return nil
+            }
+            return FlowLedgerMihomoRoute(
+                rule: nonEmpty(observation.rule),
+                rulePayload: nonEmpty(observation.rulePayload),
+                chain: observation.routeChain,
+                providerChain: observation.providerChain
+            )
+        }()
+        let outcome: FlowLedgerOutcome = switch observation.route {
+        case .direct: .direct
+        case .rejected: .rejected
+        case .failOpen: .failOpen
+        case .relay: .viaMihomo
+        case .unknown: observation.state == .failed ? .relayFailed : .viaMihomo
+        }
+        let state: FlowLedgerState = switch observation.state {
+        case .active: .active
+        case .completed: .completed
+        case .rejected: .rejected
+        case .failed: .failed(message: nil)
+        }
+        let upload: FlowLedgerByteMeasurement = switch observation.route {
+        case .rejected: .notApplicable
+        case .direct, .failOpen where observation.state == .active:
+            .notMeasuredAfterHandoff
+        default: .exact(observation.uploadBytes)
+        }
+        let download: FlowLedgerByteMeasurement = switch observation.route {
+        case .rejected: .notApplicable
+        case .direct, .failOpen where observation.state == .active:
+            .notMeasuredAfterHandoff
+        default: .exact(observation.downloadBytes)
+        }
+        return FlowLedgerEntry(
+            id: .native(observation.id),
+            application: application(observation),
+            captureOrigin: captureOrigin(observation),
+            destination: FlowLedgerDestination(
+                hostname: nonEmpty(observation.destinationHost),
+                ipAddress: nonEmpty(observation.destinationIP),
+                port: observation.destinationPort
+            ),
+            appRoutingRule: nonEmpty(observation.rule),
+            mihomoRoute: routeEvidence,
+            trafficTarget: .defaultProfile,
+            profileID: defaultProfileID,
+            association: .none,
+            state: state,
+            outcome: outcome,
+            startedAt: observation.startedAt,
+            endedAt: observation.endedAt,
+            upload: upload,
+            download: download
+        )
+    }
+
+    private static func application(
+        _ observation: FlowRelayObservation
+    ) -> FlowLedgerApplication {
+        let process = nonEmpty(observation.process)
+        let path = nonEmpty(observation.processPath)
+        guard let displayName = process ?? path.map({ ($0 as NSString).lastPathComponent }) else {
+            return .unattributed
+        }
+        return FlowLedgerApplication(
+            key: applicationKey(
+                bundleIdentifier: nil,
+                executablePath: path,
+                processName: displayName
+            ),
+            displayName: displayName,
+            bundleIdentifier: nil,
+            executablePath: path,
+            processIdentifier: nil,
+            userIdentifier: nil,
+            signingIdentifier: nil
+        )
+    }
+
+    private static func captureOrigin(
+        _ observation: FlowRelayObservation
+    ) -> FlowLedgerCaptureOrigin {
+        guard let inboundName = nonEmpty(observation.inboundName) else {
+            return .unknown
+        }
+        if inboundName.hasPrefix(NetworkExtensionMihomoListenerConfiguration.listenerNamePrefix) {
+            return .appRouting
+        }
+        return .localListener(name: inboundName)
     }
 
     private static func application(
@@ -767,11 +916,13 @@ struct FlowLedger: Sendable {
 enum FlowLedgerEntryID: Hashable, Sendable {
     case appRouting(UUID)
     case mihomo(String)
+    case native(String)
 
     fileprivate var sortKey: String {
         switch self {
         case let .appRouting(id): "app:\(id.uuidString)"
         case let .mihomo(id): "mihomo:\(id)"
+        case let .native(id): "native:\(id)"
         }
     }
 }

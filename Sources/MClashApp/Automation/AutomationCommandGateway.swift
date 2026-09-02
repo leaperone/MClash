@@ -2135,6 +2135,7 @@ final class AutomationCommandGateway {
         let identifier: String = switch entry.id {
         case let .appRouting(id): "app:\(id.uuidString.lowercased())"
         case let .mihomo(id): "mihomo:\(id)"
+        case let .native(id): "native:\(id)"
         }
         let state: String = switch entry.state {
         case .active: "active"

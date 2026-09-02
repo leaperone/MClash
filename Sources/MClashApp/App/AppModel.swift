@@ -11641,6 +11641,12 @@ final class AppModel {
         case let .mihomo(identifier):
             checkpoint = "mihomo:\(identifier)"
             source = .mihomo
+        case let .native(identifier):
+            // Native observations use the existing durable source until the
+            // history schema grows a distinct native source. The checkpoint
+            // remains namespaced so it cannot collide with a Mihomo record.
+            checkpoint = "native:\(identifier)"
+            source = .mihomo
         }
 
         return TrafficHistoryCompletedFlow(
