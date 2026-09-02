@@ -487,68 +487,110 @@ private enum RulesSurface: String, CaseIterable, Identifiable {
 struct ConfigurationEntrancesView: View {
     @Bindable var model: AppModel
     @State private var editRequest: ConfigurationEditRequest?
+    @State private var advancedExpanded = false
+    @State private var applicationCandidates: [ApplicationCaptureCandidate] = []
+    @State private var portText = ""
+    @State private var copiedAddress = false
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: MClashLayout.compactSpacing) {
-                Text(AppLocalization.string("Traffic entrances"))
-                    .font(.title3.weight(.semibold))
-                Text(AppLocalization.string("Choose how traffic enters MClash. Routing mode, rules and node groups determine where it goes next."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(alignment: .top, spacing: MClashLayout.controlSpacing) {
-                    appRoutingEntranceControl
-                    systemProxyEntranceControl
-                }
-            }
-                .padding(.horizontal, MClashLayout.pagePadding)
-                .padding(.vertical, MClashLayout.compactPagePadding)
-            Divider()
-            ConfigurationWorkbench(
-                title: AppLocalization.string("Entrances"),
-                sections: [.entrances],
-                items: entranceWorkbenchItems,
-                onAdd: { _ in
-                    editRequest = ConfigurationEditRequest(
-                        section: .entrances,
-                        itemID: UUID(),
-                        isNew: true
-                    )
-                },
-                statusMessage: model.configurationStatusMessage,
-                onToggleEnabled: { section, id in
-                    Task {
-                        do {
-                            if section == .entrances,
-                               model.configurationDocument.entrances.first(where: {
-                                   $0.id.rawValue == id
-                               })?.kind == .appRouting {
-                                await model.setNetworkCaptureEnabled(
-                                    !model.appRoutingCapabilityEnabled
-                                )
-                            } else {
-                                try await model.toggleConfigurationEnabled(
-                                    section: section,
-                                    id: id
-                                )
+            ScrollView {
+                VStack(alignment: .leading, spacing: MClashLayout.controlSpacing) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(AppLocalization.string("Traffic paths"))
+                            .font(.title3.weight(.semibold))
+                        Text(AppLocalization.string("Use one local port for a browser extension, and App Routing for selected Mac apps. Both share this MClash configuration."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if routingMode != .rule {
+                        splitPathWarning(
+                            AppLocalization.string("Rule mode keeps the browser port and Mac apps on different exits. Global and Direct send both paths to the same place.")
+                        ) {
+                            Button(AppLocalization.string("Use Rule mode")) {
+                                Task {
+                                    do { _ = try await model.setConfigurationRoutingMode(.rule) }
+                                    catch { model.errorMessage = error.localizedDescription }
+                                }
                             }
-                        } catch {
-                            model.errorMessage = error.localizedDescription
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
                         }
                     }
-                },
-                onEdit: { section, id in
-                    editRequest = ConfigurationEditRequest(section: section, itemID: id)
+                    browserPathCard
+                    appPathCard
+                    systemProxyRow
+                    DisclosureGroup(
+                        AppLocalization.string("Advanced listeners"),
+                        isExpanded: $advancedExpanded
+                    ) {
+                        Text(AppLocalization.string("HTTP, SOCKS5, bind address, and extra listeners stay here. The two paths above are enough for an extension plus selected apps."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 6)
+                    }
                 }
-            )
+                .padding(MClashLayout.pagePadding)
+            }
+            .frame(maxHeight: advancedExpanded ? 420 : .infinity)
+            if advancedExpanded {
+                Divider()
+                ConfigurationWorkbench(
+                    title: AppLocalization.string("Entrances"),
+                    sections: [.entrances],
+                    items: entranceWorkbenchItems,
+                    onAdd: { _ in
+                        editRequest = ConfigurationEditRequest(
+                            section: .entrances,
+                            itemID: UUID(),
+                            isNew: true
+                        )
+                    },
+                    statusMessage: model.configurationStatusMessage,
+                    onToggleEnabled: { section, id in
+                        Task {
+                            do {
+                                if section == .entrances,
+                                   model.configurationDocument.entrances.first(where: {
+                                       $0.id.rawValue == id
+                                   })?.kind == .appRouting {
+                                    await model.setNetworkCaptureEnabled(
+                                        !model.appRoutingCapabilityEnabled
+                                    )
+                                } else {
+                                    try await model.toggleConfigurationEnabled(
+                                        section: section,
+                                        id: id
+                                    )
+                                }
+                            } catch {
+                                model.errorMessage = error.localizedDescription
+                            }
+                        }
+                    },
+                    onEdit: { section, id in
+                        editRequest = ConfigurationEditRequest(section: section, itemID: id)
+                    }
+                )
+            }
         }
+        .navigationTitle(AppLocalization.string("Entrances"))
+        .mclashPageSurface()
         .sheet(item: $editRequest) { request in
             ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)
         }
+        .task {
+            applicationCandidates = (await ApplicationCaptureCandidateProvider().loadRunningCandidates()).applications
+            portText = String(browserPath.port)
+        }
+        .onChange(of: browserPath.port) { _, port in
+            if portText != String(port) { portText = String(port) }
+        }
     }
 
-    /// App Routing is intentionally the single capability switch above. Do not
+    /// App Routing is the capability switch on the apps path card. Do not
     /// repeat it as an editable listener row beside HTTP and SOCKS entrances.
     private var entranceWorkbenchItems: [ConfigurationWorkbenchSection: [ConfigurationWorkbenchItem]] {
         var items = model.configurationWorkbenchItems
@@ -563,53 +605,166 @@ struct ConfigurationEntrancesView: View {
         return items
     }
 
-    private var appRoutingEntranceControl: some View {
-        let hasEntrance = model.configurationDocument.entrances.contains { $0.kind == .appRouting }
-        return HStack(spacing: 12) {
-            Image(systemName: "app.badge")
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(AppLocalization.string("App Routing"))
-                    .font(.headline)
-                Text(AppLocalization.string("Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            Toggle(
-                AppLocalization.string("App Routing"),
-                isOn: Binding(
-                    get: { hasEntrance && model.appRoutingCapabilityEnabled },
-                    set: { enabled in
-                        Task { await model.setNetworkCaptureEnabled(enabled) }
-                    }
-                )
-            )
-            .labelsHidden()
-            .disabled(!hasEntrance || !model.canPerform(.changeNetworkCapture))
-            .accessibilityLabel(AppLocalization.string("App Routing"))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(MClashLayout.compactPagePadding)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    private var browserPath: ConfigurationSplitPaths.BrowserPath {
+        ConfigurationSplitPaths.browserPath(from: model.configurationDocument)
     }
 
-    /// macOS System Proxy is a capture entrance, not a configuration or
-    /// advanced setting. It is displayed beside App Routing while retaining
-    /// its distinct system-level semantics and recovery state.
-    private var systemProxyEntranceControl: some View {
+    private var appPath: ConfigurationSplitPaths.AppPath {
+        ConfigurationSplitPaths.appPath(from: model.configurationDocument)
+    }
+
+    private var routingMode: ConfigurationRoutingMode {
+        model.configurationDocument.currentWorkspace?.routingMode ?? .rule
+    }
+
+    private var sources: [Source] {
+        model.configurationDocument.sources
+    }
+
+    private var pathControlsEnabled: Bool {
+        model.canPerform(.changeRuntimeSettings)
+    }
+
+    private var separateExitsEnabled: Bool {
+        pathControlsEnabled && routingMode == .rule
+    }
+
+    private var browserPathCard: some View {
+        let path = browserPath
+        return splitPathCard(
+            title: AppLocalization.string("Browser extension"),
+            symbol: "globe",
+            enabled: Binding(
+                get: { path.enabled },
+                set: { applyBrowser(enabled: $0) }
+            ),
+            enabledLabel: AppLocalization.string("Listen on this port")
+        ) {
+            Text(AppLocalization.string("Fill this address in the browser extension. Keep macOS System Proxy off so the extension can use the port."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Text(path.address)
+                    .font(.body.monospaced())
+                    .textSelection(.enabled)
+                    .accessibilityLabel(AppLocalization.format("Proxy address %@", path.address))
+                Button {
+                    copiedAddress = copyToPasteboard(path.address)
+                } label: {
+                    Label(
+                        copiedAddress
+                            ? AppLocalization.string("Copied")
+                            : AppLocalization.string("Copy address"),
+                        systemImage: copiedAddress ? "checkmark" : "doc.on.doc"
+                    )
+                }
+                .disabled(!path.enabled)
+            }
+            HStack(spacing: 12) {
+                Picker(AppLocalization.string("Protocol"), selection: browserKindBinding) {
+                    Text(AppLocalization.string("HTTP")).tag(EntranceKind.http)
+                    Text(AppLocalization.string("SOCKS5")).tag(EntranceKind.socks5)
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: 180, alignment: .leading)
+                .disabled(!pathControlsEnabled)
+                HStack(spacing: 6) {
+                    Text(AppLocalization.string("Port"))
+                    TextField("7890", text: $portText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                        .onSubmit { commitBrowserPort() }
+                        .disabled(!pathControlsEnabled)
+                        .accessibilityLabel(AppLocalization.string("Port"))
+                }
+            }
+            sourcePicker(
+                selection: browserSourceBinding,
+                accessibilityLabel: AppLocalization.string("Use nodes from")
+            )
+            if path.enabled, model.pendingSystemProxyEnabled ?? model.systemProxyEnabled {
+                splitPathWarning(
+                    AppLocalization.string("macOS System Proxy is on. Turn it off so the browser extension can use this address.")
+                ) {
+                    Button(AppLocalization.string("Turn off System Proxy")) {
+                        Task { await model.setSystemProxyEnabled(false) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(!model.canPerform(.changeSystemProxy) || model.systemProxyRecoveryRequired)
+                }
+            }
+        }
+    }
+
+    private var appPathCard: some View {
+        let path = appPath
+        return splitPathCard(
+            title: AppLocalization.string("Mac apps"),
+            symbol: "app.badge",
+            enabled: Binding(
+                get: { path.enabled },
+                set: { applyApps(enabled: $0) }
+            ),
+            enabledLabel: AppLocalization.string("App Routing")
+        ) {
+            Text(AppLocalization.string("Selected apps use the source below. Apps not listed stay Direct. Do not add a browser if an extension should handle it."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            sourcePicker(
+                selection: appSourceBinding,
+                accessibilityLabel: AppLocalization.string("Use nodes from")
+            )
+            if path.applicationPatterns.contains(where: ConfigurationSplitPaths.isBrowserApplication) {
+                Label(
+                    AppLocalization.string("A listed app looks like a browser. MClash will capture it instead of letting an extension use the local port."),
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(path.applicationPatterns, id: \.self) { pattern in
+                    HStack {
+                        Text(appDisplayName(for: pattern))
+                            .lineLimit(1)
+                        Spacer()
+                        Button(AppLocalization.string("Remove")) {
+                            applyApps(
+                                patterns: path.applicationPatterns.filter { $0 != pattern }
+                            )
+                        }
+                        .controlSize(.small)
+                        .disabled(!pathControlsEnabled)
+                    }
+                }
+                Menu {
+                    ForEach(addableApplications) { candidate in
+                        Button(candidate.displayName) {
+                            guard let pattern = applicationPattern(for: candidate) else { return }
+                            applyApps(patterns: path.applicationPatterns + [pattern])
+                        }
+                    }
+                    if addableApplications.isEmpty {
+                        Text(AppLocalization.string("No running apps to add"))
+                    }
+                } label: {
+                    Label(AppLocalization.string("Add running app"), systemImage: "plus")
+                }
+                .disabled(!pathControlsEnabled || !path.enabled)
+            }
+        }
+    }
+
+    private var systemProxyRow: some View {
         HStack(spacing: 12) {
-            Image(systemName: "macbook.and.iphone")
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(AppLocalization.string("macOS System Proxy"))
                     .font(.headline)
-                Text(AppLocalization.string("Send macOS application traffic to a MClash HTTP or SOCKS entrance."))
+                Text(AppLocalization.string("For apps that read macOS proxy settings. Leave this off when a browser extension uses the port above."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -633,9 +788,176 @@ struct ConfigurationEntrancesView: View {
             .disabled(!model.canPerform(.changeSystemProxy) || model.systemProxyRecoveryRequired)
             .accessibilityLabel(AppLocalization.string("macOS System Proxy"))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(MClashLayout.compactPagePadding)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var browserKindBinding: Binding<EntranceKind> {
+        Binding(
+            get: { browserPath.kind },
+            set: { applyBrowser(kind: $0) }
+        )
+    }
+
+    private var browserSourceBinding: Binding<SourceID?> {
+        Binding(
+            get: { browserPath.sourceID },
+            set: { applyBrowser(sourceID: .some($0)) }
+        )
+    }
+
+    private var appSourceBinding: Binding<SourceID?> {
+        Binding(
+            get: { appPath.sourceID },
+            set: { applyApps(sourceID: .some($0)) }
+        )
+    }
+
+    private var addableApplications: [ApplicationCaptureCandidate] {
+        let selected = Set(appPath.applicationPatterns)
+        return applicationCandidates
+            .filter { candidate in
+                guard let pattern = applicationPattern(for: candidate) else { return false }
+                return !selected.contains(pattern)
+                    && !ConfigurationSplitPaths.isBrowserApplication(pattern)
+            }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    @ViewBuilder
+    private func splitPathCard<Content: View>(
+        title: String,
+        symbol: String,
+        enabled: Binding<Bool>,
+        enabledLabel: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(title, systemImage: symbol)
+                    .font(.headline)
+                Spacer()
+                Toggle(enabledLabel, isOn: enabled)
+                .toggleStyle(.switch)
+                .disabled(!pathControlsEnabled)
+            }
+            content()
+                .disabled(!enabled.wrappedValue)
+        }
+        .padding(MClashLayout.compactPagePadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func sourcePicker(selection: Binding<SourceID?>, accessibilityLabel: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(accessibilityLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker(accessibilityLabel, selection: selection) {
+                Text(AppLocalization.string("Choose a source")).tag(Optional<SourceID>.none)
+                ForEach(sources) { source in
+                    Text(source.displayName).tag(Optional(source.id))
+                }
+            }
+            .labelsHidden()
+            .disabled(!separateExitsEnabled || sources.isEmpty)
+            .accessibilityLabel(accessibilityLabel)
+            if sources.isEmpty {
+                Button(AppLocalization.string("Add a subscription")) {
+                    model.selection = .sources
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private func splitPathWarning<Actions: View>(
+        _ message: String,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                actions()
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(message)
+    }
+
+    private func commitBrowserPort() {
+        guard let port = Int(portText), (1...65_535).contains(port) else {
+            portText = String(browserPath.port)
+            return
+        }
+        applyBrowser(port: port)
+    }
+
+    private func applyBrowser(
+        sourceID sourceChange: SourceID?? = nil,
+        kind: EntranceKind? = nil,
+        port: Int? = nil,
+        enabled: Bool? = nil
+    ) {
+        let current = browserPath
+        Task {
+            do {
+                let document = try ConfigurationSplitPaths.applyBrowserPath(
+                    to: model.configurationDocument,
+                    sourceID: sourceChange ?? current.sourceID,
+                    kind: kind ?? current.kind,
+                    port: port ?? current.port,
+                    enabled: enabled ?? current.enabled
+                )
+                try await model.applySplitTrafficDocument(document)
+            } catch {
+                model.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func applyApps(
+        sourceID sourceChange: SourceID?? = nil,
+        patterns: [String]? = nil,
+        enabled: Bool? = nil
+    ) {
+        let current = appPath
+        Task {
+            do {
+                let document = try ConfigurationSplitPaths.applyAppPath(
+                    to: model.configurationDocument,
+                    sourceID: sourceChange ?? current.sourceID,
+                    applicationPatterns: patterns ?? current.applicationPatterns,
+                    enabled: enabled ?? current.enabled
+                )
+                try await model.applySplitTrafficDocument(document)
+            } catch {
+                model.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func applicationPattern(for candidate: ApplicationCaptureCandidate) -> String? {
+        let value = candidate.bundleIdentifier
+            ?? candidate.fallbackIdentifierPatterns.first
+            ?? candidate.displayName
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized.lowercased()
+    }
+
+    private func appDisplayName(for pattern: String) -> String {
+        applicationCandidates.first { candidate in
+            applicationPattern(for: candidate) == pattern
+        }?.displayName ?? pattern
     }
 }
 
