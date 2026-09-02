@@ -65,7 +65,17 @@ struct NativeVLESSOutboundConnector: Sendable {
     func makeConnection() -> NWConnection {
         let parameters: NWParameters
         if target.parameters["tls"]?.lowercased() == "true" {
-            parameters = .tls
+            let tls = NWProtocolTLS.Options()
+            let serverName = target.parameters["sni"]
+                ?? target.parameters["servername"]
+                ?? target.host
+            serverName.withCString {
+                sec_protocol_options_set_tls_server_name(
+                    tls.securityProtocolOptions,
+                    $0
+                )
+            }
+            parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
         } else {
             parameters = .tcp
         }
