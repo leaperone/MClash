@@ -145,6 +145,13 @@ final class Hysteria2QUICSession: @unchecked Sendable {
         }
     }
 
+    func readyConnection() -> NWConnection? {
+        queue.sync {
+            guard case .ready = state.state else { return nil }
+            return connection
+        }
+    }
+
     func sendUDPMessage(
         _ payload: Data,
         completion: @escaping @Sendable (Error?) -> Void
