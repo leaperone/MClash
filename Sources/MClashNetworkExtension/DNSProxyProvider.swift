@@ -773,6 +773,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             "Local DNS resolver bypassed the private SOCKS listener."
         case let .proxy(route):
             "DNS relayed through \(route.stableSortKey)."
+        case let .native(endpoint):
+            "DNS relayed directly through native upstream \(endpoint.address):\(endpoint.port)."
         }
     }
 

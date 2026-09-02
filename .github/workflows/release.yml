@@ -91,15 +91,46 @@ jobs:
             echo "prerelease=${prerelease}"
           } >> "${GITHUB_OUTPUT}"
 
-  verify:
-    name: Verify source and tests
+  verify-typecheck:
+    name: Verify typecheck and links
     needs: prepare
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Typecheck and link all products
+        shell: zsh {0}
+        run: ./scripts/typecheck.sh
+
+  verify-unit:
+    name: Verify unit and release metadata tests
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run unit tests
+        shell: zsh {0}
+        run: ./scripts/test-direct.sh
+      - name: Test Sparkle delta metadata
+        run: python3 scripts/test-attach-appcast-deltas.py
+
+  verify-integration:
+    name: Verify Mihomo integration smoke
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 35
     env:
-      # The integration smoke fetches the pinned MetaCubeX GEO snapshot. An
-      # unauthenticated GitHub REST request is easily rate-limited on shared
-      # runners, so pass the workflow token explicitly to that read-only step.
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
@@ -109,25 +140,13 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Typecheck and link all products
-        shell: zsh {0}
-        run: ./scripts/typecheck.sh
-
-      - name: Run unit tests
-        shell: zsh {0}
-        run: ./scripts/test-direct.sh
-
-      - name: Test Sparkle delta metadata
-        run: python3 scripts/test-attach-appcast-deltas.py
-
       - name: Run integration tests
         shell: zsh {0}
         run: ./scripts/integration-test.sh
 
   release:
     name: Sign, notarize, and publish
-    needs: [prepare, verify]
+    needs: [prepare, verify-typecheck, verify-unit, verify-integration]
     runs-on: macos-15
     timeout-minutes: 60
     environment:
