@@ -712,23 +712,18 @@ struct ConfigurationOrchestrationTests {
         let document = ConfigurationDocument.mclashDefault()
         let compiled = try ConfigurationCompiler().compile(document: document)
         let yaml = String(decoding: compiled.yaml, as: UTF8.self)
-        let geosite = try #require(yaml.range(of: "GEOSITE,cn,DIRECT"))
-        let geoip = try #require(yaml.range(of: "GEOIP,CN,DIRECT,no-resolve"))
+        let lan = try #require(yaml.range(of: "IP-CIDR,192.168.0.0/16,DIRECT"))
         let match = try #require(yaml.range(of: "MATCH,MClash Select"))
-        #expect(geosite.lowerBound < match.lowerBound)
-        #expect(geoip.lowerBound < match.lowerBound)
+        #expect(lan.lowerBound < match.lowerBound)
     }
 
     @Test("Default configuration includes editable China and GFW rule sets")
     func defaultConfigurationSeedsGeoRuleSets() throws {
         let document = ConfigurationDocument.mclashDefault()
-        let names = document.ruleSets.map(\.name)
-        #expect(names == ["私有网络直连", "中国大陆直连", "GFW List", "广告拦截"])
+        #expect(document.ruleSets.isEmpty)
         let compiled = try ConfigurationCompiler().compile(document: document)
         let yaml = String(decoding: compiled.yaml, as: UTF8.self)
-        #expect(yaml.contains("GEOSITE,cn,DIRECT"))
-        #expect(yaml.contains("GEOIP,CN,DIRECT,no-resolve"))
-        #expect(yaml.contains("GEOSITE,gfw,MClash Select"))
+        #expect(yaml.contains("IP-CIDR,192.168.0.0/16,DIRECT"))
         #expect(compiled.captureRules.contains { rule in
             rule.destinations.isEmpty && rule.sources.contains {
                 if case let .applicationIdentifierPattern(pattern) = $0 {

@@ -14,7 +14,6 @@ public extension ConfigurationDocument {
             type: .select,
             memberSelectors: [NodeSelector(name: "All enabled nodes")]
         )
-        let builtInRuleSets = Self.builtInRuleSets(proxyGroupID: select.id)
         let builtInRoutingRules = Self.builtInRoutingRules()
         let http = Entrance(kind: .http, enabled: true, port: 7890, defaultAction: .proxyGroup(select.id))
         let socks = Entrance(kind: .socks5, enabled: true, port: 7891, defaultAction: .proxyGroup(select.id))
@@ -24,7 +23,6 @@ public extension ConfigurationDocument {
             name: "Everyday",
             proxyGroupIDs: [select.id],
             ruleIDs: builtInRoutingRules.map(\.id),
-            ruleSetIDs: builtInRuleSets.map(\.id),
             dnsPolicyID: dns.id,
             entranceIDs: [http.id, socks.id, appRouting.id, tun.id],
             routingMode: .rule,
@@ -35,7 +33,6 @@ public extension ConfigurationDocument {
             nodes: [],
             proxyGroups: [select],
             rules: builtInRoutingRules,
-            ruleSets: builtInRuleSets,
             dnsPolicies: [dns],
             entrances: [http, socks, appRouting, tun],
             workspaces: [workspace],

@@ -286,16 +286,13 @@ public struct ConfigurationCompiler: Sendable {
                 lines.append("    type: \(entrance.kind == .http ? "http" : "socks")")
                 lines.append("    port: \(port)")
                 lines.append("    listen: \(yamlString(entrance.bindAddress))")
-                // In rule mode, leave the listener target unset so Mihomo
-                // evaluates the compiled rules table for each connection.
-                // Setting `proxy` here bypasses rules entirely and makes an
-                // ordinary HTTP/SOCKS entrance unexpectedly proxy every
-                // destination (including domestic domains). Global and
-                // Direct remain explicit mode overrides below.
-                let listenerTarget: String?
+                // Mihomo listeners accept an inbound-specific proxy target;
+                // keep HTTP/SOCKS entrances independent instead of forcing
+                // every enabled entrance to share one default action.
+                let listenerTarget: String
                 switch routingMode {
                 case .rule:
-                    listenerTarget = nil
+                    listenerTarget = render(action: entrance.defaultAction, groupNames: groupNames)
                 case .global:
                     // Global mode is an explicit user override: every
                     // entrance enters Mihomo's GLOBAL selector.
@@ -303,9 +300,7 @@ public struct ConfigurationCompiler: Sendable {
                 case .direct:
                     listenerTarget = ConfigurationBuiltInPolicy.direct.rawValue
                 }
-                if let listenerTarget {
-                    lines.append("    proxy: \(yamlString(listenerTarget))")
-                }
+                lines.append("    proxy: \(yamlString(listenerTarget))")
                 if entrance.kind == .socks5 {
                     lines.append("    udp: true")
                 }

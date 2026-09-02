@@ -2240,45 +2240,12 @@ final class AppModel {
                     )
                 }
             }
-            // Seed MClash-owned GeoSite policy for older manifests that were
-            // created before Rule Sets became first-class. These are not
-            // imported source providers: they reference the bundled mihomo
-            // GeoData and stay editable in the Rules surface.
+            // Seed LAN/Parsec capture safeguards for older manifests.
+            // Do not inject GFW/ads rule sets: that would override 1.4.20
+            // split-traffic workspaces that keep unlisted apps on Direct.
             if let workspaceIndex = document.workspaces.firstIndex(where: {
                 $0.id == document.currentWorkspace?.id
-            }),
-               let targetGroupID = document.workspaces[workspaceIndex]
-                    .proxyGroupIDs
-                    .compactMap({ id in
-                        document.proxyGroups.first {
-                            $0.id == id && $0.enabled
-                        }?.id
-                    })
-                    .first {
-                let builtIns = ConfigurationDocument.builtInRuleSets(
-                    proxyGroupID: targetGroupID
-                )
-                var changedRuleSets = false
-                for ruleSet in builtIns where !document.ruleSets.contains(where: {
-                    $0.id == ruleSet.id
-                }) {
-                    document.ruleSets.append(ruleSet)
-                    changedRuleSets = true
-                }
-                let builtInIDs = builtIns.map(\.id)
-                let existingIDs = document.workspaces[workspaceIndex].ruleSetIDs
-                let updatedIDs = builtInIDs + existingIDs.filter {
-                    !builtInIDs.contains($0)
-                }
-               if changedRuleSets || existingIDs != updatedIDs {
-                    document.workspaces[workspaceIndex].ruleSetIDs = updatedIDs
-                    document.workspaces[workspaceIndex].revision += 1
-                }
-
-                // Keep private/LAN destinations out of the transparent
-                // capture path (Docker, SSH, printers, and local services).
-                // Older manifests predate these MClash-owned safeguards, so
-                // add them once while preserving every user rule and order.
+            }) {
                 let builtInRoutingRules = ConfigurationDocument.builtInRoutingRules()
                 var changedRoutingRules = false
                 for rule in builtInRoutingRules where !document.rules.contains(where: {
