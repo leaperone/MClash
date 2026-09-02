@@ -288,7 +288,58 @@ struct CopyableValueButton: View {
     }
 }
 
+/// Press feedback for a full-width row. `.borderless` and
+/// `.menuStyle(.borderlessButton)` shrink the hit box to the chevron or label.
+struct MClashRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.72 : 1)
+    }
+}
+
+enum MClashRowIndicator {
+    case menu
+    case navigation
+
+    var systemImage: String {
+        switch self {
+        case .menu: "chevron.up.chevron.down"
+        case .navigation: "chevron.right"
+        }
+    }
+}
+
+/// Title, current value, and a trailing affordance that still lets the whole
+/// row open the menu or destination.
+struct MClashInteractiveRowLabel: View {
+    var title: String
+    var value: String
+    var indicator: MClashRowIndicator = .menu
+
+    var body: some View {
+        HStack(spacing: MClashLayout.compactSpacing) {
+            Text(title)
+            Spacer(minLength: MClashLayout.compactSpacing)
+            Text(value)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Image(systemName: indicator.systemImage)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+        }
+        .mclashFullWidthRowHitTarget()
+    }
+}
+
 extension View {
+    /// Include empty space between a leading title and a trailing chevron in
+    /// the pointer target. Pair with `MClashRowButtonStyle`, not `.borderless`.
+    func mclashFullWidthRowHitTarget() -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+    }
+
     func mclashPageSurface() -> some View {
         frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .windowBackgroundColor))

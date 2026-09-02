@@ -466,60 +466,7 @@ private struct ProxyTopologyNodeView: View {
     }
 
     private var nodeButton: some View {
-        HStack(spacing: 0) {
-            focusButton
-
-            if let onOpenGroup {
-                Button(action: onOpenGroup) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .padding(.trailing, 4)
-                .help(AppLocalization.format("Open group %@", node.title))
-                .accessibilityLabel(AppLocalization.format("Open group %@", node.title))
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(node.backgroundColor)
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(
-                    node.borderColor(isFocused: isFocused),
-                    lineWidth: node.isSelectedPath || isFocused ? 2 : 1
-                )
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .contextMenu {
-            if let onOpenGroup {
-                Button("Open Group", action: onOpenGroup)
-            }
-        }
-        .help(
-            node.opensGroup
-                ? AppLocalization.format(
-                    "%@ — click the card to inspect or the chevron to open the group",
-                    node.title
-                )
-                : "\(node.title) — \(node.subtitle)"
-        )
-    }
-
-    @ViewBuilder
-    private var focusButton: some View {
-        if let onOpenGroup {
-            focusButtonContent
-                .accessibilityAction(named: "Open Group", onOpenGroup)
-        } else {
-            focusButtonContent
-        }
-    }
-
-    private var focusButtonContent: some View {
-        Button(action: onFocus) {
+        Button(action: cardAction) {
             HStack(spacing: 9) {
                 Image(systemName: node.symbol)
                     .foregroundStyle(node.symbolColor)
@@ -538,16 +485,59 @@ private struct ProxyTopologyNodeView: View {
                 }
 
                 Spacer(minLength: 4)
+
+                if onOpenGroup != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 10)
+                        .accessibilityHidden(true)
+                }
             }
             .padding(.leading, 11)
             .padding(.vertical, 9)
+            .mclashFullWidthRowHitTarget()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help(AppLocalization.format("Inspect %@", node.title))
+        .buttonStyle(MClashRowButtonStyle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(node.backgroundColor)
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(
+                    node.borderColor(isFocused: isFocused),
+                    lineWidth: node.isSelectedPath || isFocused ? 2 : 1
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contextMenu {
+            Button("Inspect", action: onFocus)
+            if let onOpenGroup {
+                Button("Open Group", action: onOpenGroup)
+            }
+        }
+        .help(cardHelp)
         .accessibilityLabel(accessibilityDescription)
-        .accessibilityHint("Shows this node in the proxy inspector")
+        .accessibilityHint(
+            onOpenGroup == nil
+                ? AppLocalization.format("Inspect %@", node.title)
+                : AppLocalization.format("Open group %@", node.title)
+        )
+    }
+
+    private func cardAction() {
+        onFocus()
+        onOpenGroup?()
+    }
+
+    private var cardHelp: String {
+        if node.opensGroup {
+            return AppLocalization.format(
+                "%@ — click the card to open the group",
+                node.title
+            )
+        }
+        return "\(node.title) — \(node.subtitle)"
     }
 }
 
