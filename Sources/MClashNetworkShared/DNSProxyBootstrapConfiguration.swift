@@ -86,6 +86,9 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         } catch {
             throw DNSProxyBootstrapConfigurationError.invalidProfileRulesProxy
         }
+        if dnsUpstreamMode == .native, nativeUpstreamBootstrap == nil {
+            throw DNSProxyBootstrapConfigurationError.missingNativeUpstreamBootstrap
+        }
     }
 
     public func encoded() throws -> Data {
@@ -144,6 +147,7 @@ public enum DNSProxyBootstrapConfigurationError: Error, Equatable, Sendable {
     case invalidRevision(UInt64)
     case invalidProfileRulesRoute
     case invalidProfileRulesProxy
+    case missingNativeUpstreamBootstrap
     case encodedPayloadTooLarge(actual: Int, maximum: Int)
 }
 
@@ -158,6 +162,8 @@ extension DNSProxyBootstrapConfigurationError: LocalizedError {
             "DNS proxy bootstrap must use the profile-rules Mihomo route."
         case .invalidProfileRulesProxy:
             "DNS proxy bootstrap contains an invalid private Mihomo SOCKS5 endpoint."
+        case .missingNativeUpstreamBootstrap:
+            "Native DNS mode requires a valid native upstream bootstrap."
         case let .encodedPayloadTooLarge(actual, maximum):
             "DNS proxy bootstrap is \(actual) bytes; the maximum is \(maximum)."
         }

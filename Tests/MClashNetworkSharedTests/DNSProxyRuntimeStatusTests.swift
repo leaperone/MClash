@@ -115,6 +115,23 @@ struct DNSProxyRuntimeStatusTests {
         }
     }
 
+    @Test("Native DNS mode requires its upstream bootstrap")
+    func nativeModeRequiresUpstreamBootstrap() throws {
+        let profileEndpoint = try MihomoRouteProxyEndpoint(
+            route: .profileRules,
+            host: "127.0.0.1",
+            port: 17_891
+        )
+        #expect(throws: DNSProxyBootstrapConfigurationError.missingNativeUpstreamBootstrap) {
+            _ = try DNSProxyBootstrapConfiguration(
+                revision: 1,
+                activationIdentifier: UUID(),
+                profileRulesProxy: profileEndpoint,
+                dnsUpstreamMode: .native
+            )
+        }
+    }
+
     @Test("Bootstrap capacity includes a full capture snapshot after base64 expansion")
     func bootstrapCarriesLargeCaptureSnapshot() throws {
         let profileEndpoint = try MihomoRouteProxyEndpoint(

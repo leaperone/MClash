@@ -45,6 +45,28 @@ struct DNSRelayRoutingPolicyTests {
         #expect(route.bypassesMihomo)
     }
 
+    @Test("Native mode selects the configured bootstrap endpoint")
+    func nativeModeUsesBootstrapEndpoint() throws {
+        let bootstrap = try DNSUpstreamBootstrap(endpoints: [
+            try DNSUpstreamEndpoint(
+                address: IPAddress("9.9.9.9"), port: 853,
+                transport: .tcp
+            ),
+            try DNSUpstreamEndpoint(
+                address: IPAddress("1.1.1.1"), port: 53,
+                transport: .udp
+            ),
+        ])
+        let route = DNSRelayRoutingPolicy.route(
+            destination: try endpoint("192.0.2.1"),
+            isTrustedMClashComponent: false,
+            upstreamMode: .native,
+            transport: .tcp,
+            nativeBootstrap: bootstrap
+        )
+        #expect(route == .native(bootstrap.endpoints[0]))
+    }
+
     @Test("Native mode never captures local resolvers")
     func nativeModePreservesLocalResolverProtection() throws {
         #expect(DNSRelayRoutingPolicy.route(
