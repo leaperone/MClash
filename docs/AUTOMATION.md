@@ -42,25 +42,12 @@ The first positional argument may be any method returned by
 `system.capabilities`. `status` and `capabilities` are aliases for
 `system.snapshot` and `system.capabilities`.
 
-The first authenticated command opens a local pairing dialog. **Allow Needed
-Access** grants the scopes requested so far; later requests accumulate scopes
-and may open the dialog again. **Trust This Client** grants every scope and
-permits unattended destructive operations. `mclashctl` saves the returned token
-in the current user's Keychain and retries the original command with the same
-request ID. MClash stores only a SHA-256 token hash. Pairings expire after 180
-days and can be inspected or revoked with `auth.clients.list` and
-`auth.clients.revoke`. Trust is monotonic for a pairing: revoke the client before
-pairing it again if you want to return it to standard access.
-
-`mclashctl` is intentionally a user-level broker: granting it authority allows
-other processes running under the same macOS login to invoke that authority by
-executing the helper. Standard access still requires a one-time local
-confirmation for each destructive operation. Trusting `mclashctl` allows those
-same-login processes to perform destructive operations unattended. Clients that
-need an identity boundary between agents should use their own independently
-code-signed native executable and connect to the socket directly. Pairing a
-shared interpreter such as Python, Node, or a shell binds the interpreter
-identity, not an individual script.
+The production endpoint is a private same-user Unix socket. Socket ownership,
+mode 0600, peer UID, and process identity are checked before a request is
+accepted, so socket requests are trusted directly and do not open a pairing or
+destructive-operation authorization dialog. The `auth.pair` and
+`auth.clients.*` methods remain in the protocol for compatibility with older
+clients; pairing is a no-op on this endpoint.
 
 CLI options:
 

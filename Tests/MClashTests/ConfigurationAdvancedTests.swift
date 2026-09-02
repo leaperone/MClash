@@ -246,6 +246,8 @@ struct ConfigurationAdvancedTests {
         #expect(yaml.contains("port: 18100"))
         #expect(yaml.contains("port: 18101"))
         #expect(yaml.contains("port: 18102"))
+        // Rule-mode HTTP/SOCKS listeners pin to each entrance default
+        // action so split-traffic browser and app exits stay independent.
         #expect(yaml.contains("proxy: \"Node Selection\""))
     }
 

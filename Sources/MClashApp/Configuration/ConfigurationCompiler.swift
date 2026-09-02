@@ -362,6 +362,8 @@ public struct ConfigurationCompiler: Sendable {
 
         lines.append("")
         lines.append("rules:")
+        var hasChinaGeositeRule = false
+        var hasChinaGeoIPRule = false
         for ruleSet in ruleSets {
             let action = render(action: ruleSet.defaultAction, groupNames: groupNames)
             let hasProvider = ruleSet.sourceURL != nil
@@ -375,12 +377,20 @@ public struct ConfigurationCompiler: Sendable {
                     defaultAction: action,
                     groupNames: groupNames
                 )
+                hasChinaGeositeRule = hasChinaGeositeRule
+                    || rendered.caseInsensitiveCompare("GEOSITE,cn,DIRECT") == .orderedSame
+                hasChinaGeoIPRule = hasChinaGeoIPRule
+                    || rendered.caseInsensitiveCompare("GEOIP,CN,DIRECT,no-resolve") == .orderedSame
                 lines.append("  - \(yamlString(rendered))")
             }
         }
         for rule in rules {
             let action = render(action: rule.action, groupNames: groupNames)
             for line in render(rule: rule, action: action) {
+                hasChinaGeositeRule = hasChinaGeositeRule
+                    || line.caseInsensitiveCompare("GEOSITE,cn,DIRECT") == .orderedSame
+                hasChinaGeoIPRule = hasChinaGeoIPRule
+                    || line.caseInsensitiveCompare("GEOIP,CN,DIRECT,no-resolve") == .orderedSame
                 lines.append("  - \(yamlString(line))")
             }
         }
@@ -389,10 +399,14 @@ public struct ConfigurationCompiler: Sendable {
         // user may intentionally proxy one domestic service), while
         // unclassified CN domains/IPs stay direct instead of silently using a
         // proxy group.
-        let chinaGeositeRule = yamlString("GEOSITE,cn,DIRECT")
-        let chinaGeoIPRule = yamlString("GEOIP,CN,DIRECT,no-resolve")
-        lines.append("  - \(chinaGeositeRule)")
-        lines.append("  - \(chinaGeoIPRule)")
+        if !hasChinaGeositeRule {
+            let chinaGeositeRule = yamlString("GEOSITE,cn,DIRECT")
+            lines.append("  - \(chinaGeositeRule)")
+        }
+        if !hasChinaGeoIPRule {
+            let chinaGeoIPRule = yamlString("GEOIP,CN,DIRECT,no-resolve")
+            lines.append("  - \(chinaGeoIPRule)")
+        }
         // App Routing has no TCP listener of its own, so its catch-all capture
         // path uses that entrance's default action when enabled. If the
         // capability is off, fall back to the first enabled public entrance.

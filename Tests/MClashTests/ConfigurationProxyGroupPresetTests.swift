@@ -11,21 +11,21 @@ struct ConfigurationProxyGroupPresetTests {
         document.sources = [cunoe, other]
         document.nodes = [
             try Node(
-                displayName: "🇺🇸 US primary",
+                displayName: "🇺🇸 美国|us|9929|ws|private",
                 protocol: .vless,
                 host: "us.example.com",
                 port: 443,
                 sourceLinks: [cunoe.id]
             ),
             try Node(
-                displayName: "🇯🇵 日本 backup",
+                displayName: "🇯🇵 日本",
                 protocol: .vless,
                 host: "jp.example.com",
                 port: 443,
                 sourceLinks: [cunoe.id]
             ),
             try Node(
-                displayName: "🇭🇰 香港 backup",
+                displayName: "🇭🇰 香港|ws|private",
                 protocol: .vless,
                 host: "hk.example.com",
                 port: 443,
@@ -37,6 +37,13 @@ struct ConfigurationProxyGroupPresetTests {
                 host: "other.example.com",
                 port: 443,
                 sourceLinks: [other.id]
+            ),
+            try Node(
+                displayName: "🇸🇬 新加坡01aws",
+                protocol: .hysteria2,
+                host: "sg.example.com",
+                port: 443,
+                sourceLinks: [cunoe.id]
             ),
         ]
         let originalGroup = try #require(document.proxyGroups.first)
@@ -61,8 +68,8 @@ struct ConfigurationProxyGroupPresetTests {
 
         #expect(main.name == ConfigurationProxyGroupPreset.mainGroupName)
         #expect(main.type == .select)
-        #expect(main.members.count == 8)
-        #expect(first.createdGroupCount == 8)
+        #expect(main.members.count == 10)
+        #expect(first.createdGroupCount == 10)
         #expect(first.redirectedRuleCount == 0)
         #expect(second.createdGroupCount == 0)
         #expect(second.redirectedRuleCount == 0)
@@ -84,15 +91,33 @@ struct ConfigurationProxyGroupPresetTests {
         ]
         for name in regionalGroups {
             let group = try #require(second.document.proxyGroups.first(where: { $0.name == name }))
-            let resolved = NodeSelectorResolver.resolve(selectors: group.memberSelectors, nodes: second.document.nodes)
-            #expect(resolved.nodeIDs.count == Set(resolved.nodeIDs).count)
-            #expect(!resolved.nodeIDs.contains(where: { $0 == second.document.nodes[3].id }))
+            let nodeIDs = group.members.compactMap { member -> NodeID? in
+                guard case let .node(id) = member else { return nil }
+                return id
+            }
+            #expect(group.memberSelectors.isEmpty)
+            #expect(nodeIDs.count == Set(nodeIDs).count)
+            #expect(!nodeIDs.contains(second.document.nodes[3].id))
         }
         let us = try #require(second.document.proxyGroups.first(where: {
             $0.name == ConfigurationProxyGroupPreset.unitedStatesGroupName
         }))
-        let usNodes = NodeSelectorResolver.resolve(selectors: us.memberSelectors, nodes: second.document.nodes).nodeIDs
-        #expect(usNodes == [second.document.nodes[0].id])
+        let usNodes = us.members.compactMap { member -> NodeID? in
+            guard case let .node(id) = member else { return nil }
+            return id
+        }
+        #expect(usNodes == [
+            second.document.nodes[0].id,
+            second.document.nodes[2].id,
+            second.document.nodes[1].id,
+        ])
+        let manual = try #require(second.document.proxyGroups.first(where: {
+            $0.name == ConfigurationProxyGroupPreset.manualGroupName
+        }))
+        #expect(!manual.members.contains { member in
+            guard case let .node(id) = member else { return false }
+            return id == second.document.nodes[4].id
+        })
     }
 
     @Test("Regional selectors are source-scoped and remain empty without CUNOE")
@@ -113,8 +138,12 @@ struct ConfigurationProxyGroupPresetTests {
              ConfigurationProxyGroupPreset.unitedStatesGroupName,
              ConfigurationProxyGroupPreset.japanGroupName].contains($0.name)
         }
-        #expect(groups.allSatisfy {
-            NodeSelectorResolver.resolve(selectors: $0.memberSelectors, nodes: result.document.nodes).nodeIDs.isEmpty
+        #expect(groups.allSatisfy { group in
+            group.memberSelectors.isEmpty
+                && group.members.allSatisfy {
+                    if case .node = $0 { return false }
+                    return true
+                }
         })
     }
 

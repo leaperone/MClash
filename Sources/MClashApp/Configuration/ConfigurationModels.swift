@@ -6,6 +6,19 @@ import Foundation
 public protocol ConfigurationIdentifier: RawRepresentable, Codable, Hashable, Sendable
 where RawValue == UUID {}
 
+public extension ConfigurationIdentifier {
+    /// Stable UUID derived from a SHA-256 fingerprint. Provider-controlled
+    /// display names are intentionally not part of the identity material.
+    static func stable(for fingerprint: String) -> Self {
+        let bytes = Array(SHA256.hash(data: Data(fingerprint.utf8)).prefix(16))
+        let uuid = UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+        return Self(rawValue: uuid)!
+    }
+}
+
 public struct SourceID: ConfigurationIdentifier { public let rawValue: UUID; public init(rawValue: UUID = UUID()) { self.rawValue = rawValue } }
 public struct NodeID: ConfigurationIdentifier { public let rawValue: UUID; public init(rawValue: UUID = UUID()) { self.rawValue = rawValue } }
 public struct ProxyGroupID: ConfigurationIdentifier { public let rawValue: UUID; public init(rawValue: UUID = UUID()) { self.rawValue = rawValue } }

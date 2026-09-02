@@ -1745,8 +1745,11 @@ final class AppModel {
                 changed = true
             }
         }
+        let builtInRuleOrder = ConfigurationDocument.builtInRoutingRules().map(\.id)
+        let builtInRuleIDs = Set(builtInRuleOrder)
         let hasMeaningfulUnifiedRules = candidate.rules.contains {
-            $0.enabled || !$0.matchers.isEmpty
+            !builtInRuleIDs.contains($0.id)
+                && ($0.enabled || !$0.matchers.isEmpty)
         }
         if !hasMeaningfulUnifiedRules,
            !networkCapturePreferences.snapshot.rules.isEmpty,
@@ -1774,6 +1777,7 @@ final class AppModel {
                 )
                 let preservedRules = candidate.rules.filter { rule in
                     otherWorkspaceRuleIDs.contains(rule.id)
+                        || builtInRuleIDs.contains(rule.id)
                 }
                 let migratedRuleIDs = Set(migration.rules.map(\.id))
                 candidate.rules = preservedRules.filter {
@@ -1783,7 +1787,7 @@ final class AppModel {
                 candidate.workspaces[workspaceIndex].proxyGroupIDs =
                     migration.workspaceProxyGroupIDs
                 candidate.workspaces[workspaceIndex].ruleIDs =
-                    migration.rules.map(\.id)
+                    builtInRuleOrder + migration.rules.map(\.id)
                 migrationDiagnostics = migration.diagnostics
                 changed = true
                 appendSupervisorLog(
@@ -2234,6 +2238,30 @@ final class AppModel {
                     appendSupervisorLog(
                         "Repaired legacy regional groups to use CUNOE-Proxy source selectors."
                     )
+                }
+            }
+            // Seed LAN/Parsec capture safeguards for older manifests.
+            // Do not inject GFW/ads rule sets: that would override 1.4.20
+            // split-traffic workspaces that keep unlisted apps on Direct.
+            if let workspaceIndex = document.workspaces.firstIndex(where: {
+                $0.id == document.currentWorkspace?.id
+            }) {
+                let builtInRoutingRules = ConfigurationDocument.builtInRoutingRules()
+                var changedRoutingRules = false
+                for rule in builtInRoutingRules where !document.rules.contains(where: {
+                    $0.id == rule.id
+                }) {
+                    document.rules.append(rule)
+                    changedRoutingRules = true
+                }
+                let builtInRuleIDs = builtInRoutingRules.map(\.id)
+                let existingRuleIDs = document.workspaces[workspaceIndex].ruleIDs
+                let updatedRuleIDs = builtInRuleIDs + existingRuleIDs.filter {
+                    !builtInRuleIDs.contains($0)
+                }
+                if changedRoutingRules || existingRuleIDs != updatedRuleIDs {
+                    document.workspaces[workspaceIndex].ruleIDs = updatedRuleIDs
+                    document.workspaces[workspaceIndex].revision += 1
                 }
             }
             try await configurationStore.save(document)
