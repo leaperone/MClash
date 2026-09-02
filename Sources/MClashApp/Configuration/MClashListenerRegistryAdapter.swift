@@ -8,7 +8,7 @@ import MClashNetworkShared
 public enum MClashListenerRegistryAdapter {
     public static func registry(from entrances: [Entrance]) throws -> MClashListenerRegistry {
         let specs = try entrances.map { entrance in
-            MClashListenerSpec(
+            try MClashListenerSpec(
                 id: entrance.id.rawValue,
                 name: entrance.name,
                 kind: MClashListenerKind(rawValue: entrance.kind.rawValue) ?? .http,
