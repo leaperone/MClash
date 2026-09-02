@@ -15,6 +15,7 @@ struct QPACKEncoderTests {
         #expect(data.contains(0x20 | 7)) // :method name length
         #expect(String(decoding: data, as: UTF8.self).contains(":method"))
         #expect(String(decoding: data, as: UTF8.self).contains("Hysteria-Auth"))
+        #expect(try QPACKDecoder.decodeLiteralFields(data).map { $0.0 } == [":method", ":path", "Hysteria-Auth"])
     }
 
     @Test("Rejects empty names and oversized values")
@@ -24,6 +25,13 @@ struct QPACKEncoderTests {
         }
         #expect(throws: QPACKEncoderError.invalidFieldValue) {
             try QPACKEncoder.encodeLiteralFields([("name", String(repeating: "x", count: 65_536))])
+        }
+    }
+
+    @Test("Rejects dynamic-table and Huffman representations")
+    func decoderRejectsUnsupportedRepresentations() {
+        #expect(throws: QPACKDecoderError.unsupportedRepresentation) {
+            try QPACKDecoder.decodeLiteralFields(Data([0x01, 0x00]))
         }
     }
 }

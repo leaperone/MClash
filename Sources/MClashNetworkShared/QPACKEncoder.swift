@@ -17,7 +17,7 @@ public enum QPACKEncoder: Sendable {
             let valueBytes = Array(value.utf8)
             guard !nameBytes.isEmpty, nameBytes.count <= 255 else { throw QPACKEncoderError.invalidFieldName }
             guard valueBytes.count <= 65_535 else { throw QPACKEncoderError.invalidFieldValue }
-            result.append(try encodeStringLiteral(nameBytes, prefixBits: 4, prefixPattern: 0x20))
+            result.append(try encodeStringLiteral(nameBytes, prefixBits: 3, prefixPattern: 0x20))
             result.append(try encodeStringLiteral(valueBytes, prefixBits: 7, prefixPattern: 0x00))
         }
         return result
