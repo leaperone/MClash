@@ -142,6 +142,29 @@ struct OutboundConnectorTests {
         }
     }
 
+    @Test("Native TCP capability excludes unimplemented VLESS transports")
+    func nativeTCPCapabilityIsTransportAware() throws {
+        let plain = try OutboundNodeTarget(
+            protocolName: "vless", host: "node.example.com", port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001"]
+        )
+        let websocket = try OutboundNodeTarget(
+            protocolName: "vless", host: "node.example.com", port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "network": "ws"]
+        )
+        let reality = try OutboundNodeTarget(
+            protocolName: "vless", host: "node.example.com", port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "reality": "true"]
+        )
+
+        #expect(NativeConnectorRegistry.supportsNativeTCP(plain))
+        #expect(!NativeConnectorRegistry.supportsNativeTCP(websocket))
+        #expect(!NativeConnectorRegistry.supportsNativeTCP(reality))
+        #expect(NativeConnectorRegistry.capability(for: plain) == .native)
+        #expect(NativeConnectorRegistry.capability(for: websocket) == .legacyFallback)
+        #expect(NativeConnectorRegistry.capability(for: reality) == .legacyFallback)
+    }
+
     @Test("Factory descriptors preserve native protocol and target material")
     func registryDescriptor() throws {
         let target = try OutboundNodeTarget(protocolName: "vless", host: "node.example.com", port: 443)

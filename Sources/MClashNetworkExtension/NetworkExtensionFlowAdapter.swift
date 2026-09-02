@@ -140,9 +140,14 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         ) ?? [:]
         let nativeCatalog = (configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data)
             .flatMap { try? OutboundNodeTargetCatalog.decode($0) }
-        state.mihomoSOCKSConfigurations = routeCatalog
-        state.availableMihomoRoutes = Set(routeCatalog.keys)
         state.outboundNodeTargets = nativeCatalog
+        state.mihomoSOCKSConfigurations = routeCatalog
+        // Route availability includes connector-neutral node targets. A
+        // native SOCKS5 route must not be downgraded to Direct merely because
+        // its legacy loopback Mihomo listener entry is absent.
+        state.availableMihomoRoutes = Set(routeCatalog.keys).union(
+            nativeCatalog?.entries.map(\.route) ?? []
+        )
         state.rulesByIdentifier = Dictionary(
             uniqueKeysWithValues: loadResult.snapshot?.rules.map { ($0.id, $0) } ?? []
         )
@@ -173,9 +178,20 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             configuration[ProviderConfigurationKey.captureConfigurationSnapshot] as? Data
         )
         guard case .loaded = snapshot else { return false }
-        return ProviderSOCKSConfiguration.routeCatalog(
+        // Native node routes do not need a loopback Mihomo SOCKS catalog.
+        // Keep accepting the legacy catalog for fallback routes, while a
+        // valid node-only catalog is sufficient for native connectors.
+        if ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
-        ) != nil
+        ) != nil {
+            return true
+        }
+        guard let data = configuration[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data,
+              let catalog = try? OutboundNodeTargetCatalog.decode(data),
+              !catalog.entries.isEmpty else {
+            return false
+        }
+        return catalog.entries.contains { NativeConnectorRegistry.supportsNativeTCP($0.target) }
     }
 
     func planTCPFlow(_ flow: NEAppProxyTCPFlow) -> TCPFlowInterceptionPlan {
@@ -186,6 +202,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     decision: failOpen(.unsupportedRemoteEndpoint),
                     destination: nil,
                     mihomoDestination: nil,
+                    nativeTarget: nil,
                     proxy: nil,
                     nativeConnector: nil,
                     nativeInitialPayload: nil,
@@ -207,6 +224,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     decision: failOpen(.unsupportedRemoteEndpoint),
                     destination: nil,
                     mihomoDestination: nil,
+                    nativeTarget: nil,
                     proxy: nil,
                     nativeConnector: nil,
                     nativeInitialPayload: nil,
@@ -236,9 +254,17 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             preferredHostname: outcome.destinationHostname,
             routeCatalog: currentState.mihomoSOCKSConfigurations
         )
+        // Native connectors use the node-only catalog directly. A missing
+        // loopback Mihomo route endpoint must not make this target unusable.
+        let nativeTarget: OutboundNodeTarget? = {
+            guard case let .mihomo(route) = outcome.decision.disposition else {
+                return nil
+            }
+            return currentState.outboundNodeTargets?.target(for: route)
+        }()
         let nativeConnector: (any OutboundConnector)? = {
-            guard case let .mihomo(route) = outcome.decision.disposition,
-                  let target = currentState.outboundNodeTargets?.target(for: route),
+            guard let target = nativeTarget,
+                  NativeConnectorRegistry.supportsNativeTCP(target),
                   let kind = NativeConnectorRegistry.kind(for: target) else { return nil }
             switch kind {
             case .socks5: return NativeSOCKS5RelayConnector(target: target)
@@ -248,8 +274,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             }
         }()
         let nativeInitialPayload: Data? = {
-            guard case let .mihomo(route) = outcome.decision.disposition,
-                  let target = currentState.outboundNodeTargets?.target(for: route) else { return nil }
+            guard let target = nativeTarget else { return nil }
             switch NativeConnectorRegistry.kind(for: target) {
             case .vless:
                 guard let destination = routePlan?.destinations.original else { return nil }
@@ -274,6 +299,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             decision: outcome.decision,
             destination: routePlan?.destinations.original,
             mihomoDestination: routePlan?.destinations.mihomo,
+            nativeTarget: nativeTarget,
             proxy: routePlan?.proxy,
             nativeConnector: nativeConnector,
             nativeInitialPayload: nativeInitialPayload,
@@ -344,6 +370,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                 decision: failOpen(.unsupportedRemoteEndpoint),
                 initialDestination: nil,
                 mihomoDestination: nil,
+                nativeTarget: nil,
                 proxy: nil,
                 unavailableFallback: .direct,
                 activity: fallbackActivity(
@@ -382,6 +409,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                 decision: failOpen(.unsupportedRemoteEndpoint),
                 initialDestination: nil,
                 mihomoDestination: nil,
+                nativeTarget: nil,
                 proxy: nil,
                 unavailableFallback: .direct,
                 activity: fallbackActivity(
@@ -545,10 +573,21 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                 routeCatalog: currentState.mihomoSOCKSConfigurations
             )
         }
+        // Native SOCKS5 is a complete UDP association endpoint. Keep this
+        // target independent from the loopback Mihomo route catalog; the
+        // legacy catalog remains available as a fallback below.
+        let nativeTarget: OutboundNodeTarget? = {
+            guard case let .mihomo(route) = outcome.decision.disposition,
+                  let target = currentState.outboundNodeTargets?.target(for: route),
+                  NativeConnectorRegistry.kind(for: target) == .socks5 else { return nil }
+            return target
+        }()
+        let nativeDestination = try? ProviderSOCKSConfiguration.destination(for: endpoint)
         return UDPFlowInterceptionPlan(
             decision: outcome.decision,
-            initialDestination: routePlan?.destinations.original,
+            initialDestination: routePlan?.destinations.original ?? nativeDestination,
             mihomoDestination: routePlan?.destinations.mihomo,
+            nativeTarget: nativeTarget,
             proxy: routePlan?.proxy,
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
@@ -763,6 +802,8 @@ struct TCPFlowInterceptionPlan: Sendable {
     let destination: SOCKS5Endpoint?
     /// Hostname-preserving SOCKS target used only for Mihomo relay.
     let mihomoDestination: SOCKS5Endpoint?
+    /// Node-only target used by native connectors, independent of Mihomo.
+    let nativeTarget: OutboundNodeTarget?
     let proxy: ProviderSOCKSConfiguration?
     let nativeConnector: (any OutboundConnector)?
     let nativeInitialPayload: Data?
@@ -778,6 +819,9 @@ struct UDPFlowInterceptionPlan: Sendable {
     let initialDestination: SOCKS5Endpoint?
     /// Hostname-preserving SOCKS target used only for Mihomo relay.
     let mihomoDestination: SOCKS5Endpoint?
+    /// Node-only native target. Present only for native SOCKS5 UDP routes;
+    /// nil means the route must use the compatibility listener path.
+    let nativeTarget: OutboundNodeTarget?
     let proxy: ProviderSOCKSConfiguration?
     let unavailableFallback: UnavailableFallback
     let activity: AppRoutingActivity
@@ -787,6 +831,7 @@ struct UDPFlowInterceptionPlan: Sendable {
         decision: FlowTrafficDecision,
         initialDestination: SOCKS5Endpoint?,
         mihomoDestination: SOCKS5Endpoint?,
+        nativeTarget: OutboundNodeTarget? = nil,
         proxy: ProviderSOCKSConfiguration?,
         unavailableFallback: UnavailableFallback,
         activity: AppRoutingActivity,
@@ -795,6 +840,7 @@ struct UDPFlowInterceptionPlan: Sendable {
         self.decision = decision
         self.initialDestination = initialDestination
         self.mihomoDestination = mihomoDestination
+        self.nativeTarget = nativeTarget
         self.proxy = proxy
         self.unavailableFallback = unavailableFallback
         self.activity = activity

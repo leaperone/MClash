@@ -272,6 +272,26 @@ enum NativeConnectorRegistry {
         supportedProtocols.contains(target.protocolName)
     }
 
+    /// Native TCP support is deliberately narrower than protocol recognition.
+    /// Transport variants whose framing/options are not implemented must stay
+    /// on the Mihomo compatibility path instead of being labelled native.
+    static func supportsNativeTCP(_ target: OutboundNodeTarget) -> Bool {
+        guard supports(target) else { return false }
+        switch target.protocolName {
+        case "socks5":
+            return true
+        case "vless":
+            let network = target.parameters["network"]?.lowercased() ?? "tcp"
+            let reality = target.parameters["reality"]?.lowercased() == "true"
+            return network == "tcp" && !reality
+        case "trojan":
+            let network = target.parameters["network"]?.lowercased() ?? "tcp"
+            return network == "tcp"
+        default:
+            return false
+        }
+    }
+
     static func validate(_ target: OutboundNodeTarget) throws {
         guard supports(target) else {
             throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
@@ -279,7 +299,8 @@ enum NativeConnectorRegistry {
     }
 
     static func capability(for target: OutboundNodeTarget) -> NativeConnectorCapability {
-        supports(target) ? .native : .unsupported
+        if supportsNativeTCP(target) { return .native }
+        return supports(target) ? .legacyFallback : .unsupported
     }
 
     static func kind(for target: OutboundNodeTarget) -> NativeConnectorKind? {
@@ -298,8 +319,16 @@ enum NativeConnectorRegistry {
             throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
         }
         switch kind {
-        case .socks5, .vless, .trojan, .hysteria2:
+        case .socks5:
             break
+        case .vless, .trojan:
+            guard supportsNativeTCP(target) else {
+                throw NativeConnectorRegistryError.unsupportedProtocol(
+                    "\(target.protocolName) transport is not implemented"
+                )
+            }
+        case .hysteria2:
+            throw NativeConnectorRegistryError.unsupportedProtocol("hysteria2 requires QUIC session")
         }
     }
 }

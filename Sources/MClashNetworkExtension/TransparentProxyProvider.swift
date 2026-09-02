@@ -97,13 +97,21 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 AppProxyFlowCompatibility.open(tcpFlow, completion: completion)
                 return true
             case .mihomo:
-                guard (plan.proxy != nil || plan.nativeConnector != nil),
-                      let destination = plan.mihomoDestination
-                else {
-                    return handleUnavailableMihomoTCPRoute(
-                        tcpFlow,
-                        plan: plan
-                    )
+                // Native node connectors are independent from the legacy
+                // loopback Mihomo SOCKS listener. Use the original endpoint
+                // for their protocol handshake and allow a nil proxy.
+                let destination: SOCKS5Endpoint
+                if plan.nativeConnector != nil {
+                    guard let nativeDestination = plan.destination else {
+                        return handleUnavailableMihomoTCPRoute(tcpFlow, plan: plan)
+                    }
+                    destination = nativeDestination
+                } else {
+                    guard let legacyDestination = plan.mihomoDestination,
+                          plan.proxy != nil else {
+                        return handleUnavailableMihomoTCPRoute(tcpFlow, plan: plan)
+                    }
+                    destination = legacyDestination
                 }
                 markRelayConnecting(plan.activity.flowIdentifier)
                 tcpRelays.startProxy(
