@@ -10,7 +10,7 @@ import MClashNetworkShared
 /// with a native connector later without changing the routing layer.
 protocol OutboundConnector: Sendable {
     func makeConnection(
-        to proxy: ProviderSOCKSConfiguration
+        to proxy: ProviderSOCKSConfiguration?
     ) -> NWConnection
 }
 
@@ -18,8 +18,10 @@ protocol OutboundConnector: Sendable {
 /// listener.  This is deliberately an adapter, rather than a routing API:
 /// Mihomo receives an already-resolved route and destination from MClash.
 struct MihomoSOCKSOutboundConnector: OutboundConnector {
-    func makeConnection(to proxy: ProviderSOCKSConfiguration) -> NWConnection {
-        NWConnection(host: proxy.networkHost, port: proxy.networkPort, using: .tcp)
+    func makeConnection(to proxy: ProviderSOCKSConfiguration?) -> NWConnection {
+        precondition(proxy != nil, "Mihomo connector requires a SOCKS endpoint")
+        let proxy = proxy!
+        return NWConnection(host: proxy.networkHost, port: proxy.networkPort, using: .tcp)
     }
 }
 
@@ -49,7 +51,7 @@ struct NativeSOCKS5OutboundConnector: Sendable {
 struct NativeSOCKS5RelayConnector: OutboundConnector {
     let target: OutboundNodeTarget
 
-    func makeConnection(to _: ProviderSOCKSConfiguration) -> NWConnection {
+    func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
         NativeSOCKS5OutboundConnector(target: target).makeConnection()
     }
 }
@@ -152,14 +154,14 @@ struct NativeTrojanOutboundConnector: Sendable {
 
 struct NativeVLESSRelayConnector: OutboundConnector {
     let target: OutboundNodeTarget
-    func makeConnection(to _: ProviderSOCKSConfiguration) -> NWConnection {
+    func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
         NativeVLESSOutboundConnector(target: target).makeConnection()
     }
 }
 
 struct NativeTrojanRelayConnector: OutboundConnector {
     let target: OutboundNodeTarget
-    func makeConnection(to _: ProviderSOCKSConfiguration) -> NWConnection {
+    func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
         NativeTrojanOutboundConnector(target: target).makeConnection()
     }
 }

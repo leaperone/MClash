@@ -68,7 +68,7 @@ final class TCPFlowRelay: @unchecked Sendable {
     let id = UUID()
 
     private let flow: NEAppProxyTCPFlow
-    private let proxy: ProviderSOCKSConfiguration
+    private let proxy: ProviderSOCKSConfiguration?
     private let outboundConnector: any OutboundConnector
     private let initialPayload: Data?
     private let usesSOCKS5Handshake: Bool
@@ -93,7 +93,7 @@ final class TCPFlowRelay: @unchecked Sendable {
 
     init(
         flow: NEAppProxyTCPFlow,
-        proxy: ProviderSOCKSConfiguration,
+        proxy: ProviderSOCKSConfiguration?,
         destination: SOCKS5Endpoint,
         unavailableFallback: UnavailableFallback,
         outboundConnector: any OutboundConnector = MihomoSOCKSOutboundConnector(),
@@ -176,6 +176,10 @@ final class TCPFlowRelay: @unchecked Sendable {
     }
 
     private func beginSOCKSHandshake() {
+        guard let proxy else {
+            finish(error: TCPFlowRelayError.upstreamFailed("SOCKS5 connector endpoint is unavailable"))
+            return
+        }
         do {
             let negotiator = SOCKS5ClientAuthenticationNegotiator(
                 credentials: proxy.credentials
@@ -545,7 +549,7 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
 
     func startProxy(
         flow: NEAppProxyTCPFlow,
-        proxy: ProviderSOCKSConfiguration,
+        proxy: ProviderSOCKSConfiguration?,
         destination: SOCKS5Endpoint,
         directFallbackDestination: SOCKS5Endpoint? = nil,
         unavailableFallback: UnavailableFallback,

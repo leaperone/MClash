@@ -97,7 +97,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 AppProxyFlowCompatibility.open(tcpFlow, completion: completion)
                 return true
             case .mihomo:
-                guard let proxy = plan.proxy,
+                guard (plan.proxy != nil || plan.nativeConnector != nil),
                       let destination = plan.mihomoDestination
                 else {
                     return handleUnavailableMihomoTCPRoute(
@@ -108,7 +108,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 markRelayConnecting(plan.activity.flowIdentifier)
                 tcpRelays.startProxy(
                     flow: tcpFlow,
-                    proxy: proxy,
+                    proxy: plan.proxy,
                     destination: destination,
                     directFallbackDestination: plan.destination,
                     unavailableFallback: plan.unavailableFallback,
