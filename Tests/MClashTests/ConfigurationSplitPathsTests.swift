@@ -264,7 +264,7 @@ struct ConfigurationSplitPathsTests {
             ]
         )
         document.proxyGroups.append(preset)
-        if var workspace = document.currentWorkspace,
+        if let workspace = document.currentWorkspace,
            let index = document.workspaces.firstIndex(where: { $0.id == workspace.id }) {
             document.workspaces[index].proxyGroupIDs.append(preset.id)
         }
