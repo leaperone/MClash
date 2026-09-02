@@ -25,6 +25,8 @@ struct MenuBarContent: View {
             MenuBarWindowVisibilityView { isVisible in
                 if contentIsVisible, !isVisible {
                     retainedPopoverHeight = popoverHeight
+                    profileMenuPresented = false
+                    pickerGroupName = nil
                 }
                 contentIsVisible = isVisible
                 model.setMenuBarContentVisible(isVisible)
@@ -32,6 +34,8 @@ struct MenuBarContent: View {
         }
         .onDisappear {
             contentIsVisible = false
+            profileMenuPresented = false
+            pickerGroupName = nil
             model.setMenuBarContentVisible(false)
         }
     }
@@ -338,35 +342,40 @@ struct MenuBarContent: View {
                         .foregroundStyle(.secondary)
                         .padding(12)
                 } else {
-                    ForEach(model.profiles) { profile in
-                        Button {
-                            profileMenuPresented = false
-                            Task {
-                                do {
-                                    try await model.activateProfile(profile.id)
-                                } catch {
-                                    model.errorMessage = error.localizedDescription
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(model.profiles) { profile in
+                                Button {
+                                    profileMenuPresented = false
+                                    Task {
+                                        do {
+                                            try await model.activateProfile(profile.id)
+                                        } catch {
+                                            model.errorMessage = error.localizedDescription
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: MClashLayout.compactSpacing) {
+                                        Image(systemName: "checkmark")
+                                            .opacity(profile.id == model.activeProfileID ? 1 : 0)
+                                            .accessibilityHidden(profile.id != model.activeProfileID)
+                                        Text(profile.name)
+                                            .lineLimit(1)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .mclashFullWidthRowHitTarget()
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 10)
                                 }
+                                .buttonStyle(MClashRowButtonStyle())
+                                .disabled(
+                                    profile.id == model.activeProfileID
+                                        || !model.canPerform(.activateProfile(profile.id))
+                                )
                             }
-                        } label: {
-                            HStack(spacing: MClashLayout.compactSpacing) {
-                                Image(systemName: "checkmark")
-                                    .opacity(profile.id == model.activeProfileID ? 1 : 0)
-                                    .accessibilityHidden(profile.id != model.activeProfileID)
-                                Text(profile.name)
-                                    .lineLimit(1)
-                                Spacer(minLength: 0)
-                            }
-                            .mclashFullWidthRowHitTarget()
-                            .padding(.vertical, 6)
-                            .padding(.horizontal, 10)
                         }
-                        .buttonStyle(MClashRowButtonStyle())
-                        .disabled(
-                            profile.id == model.activeProfileID
-                                || !model.canPerform(.activateProfile(profile.id))
-                        )
                     }
+                    .frame(maxHeight: 320)
                 }
 
                 Divider()
