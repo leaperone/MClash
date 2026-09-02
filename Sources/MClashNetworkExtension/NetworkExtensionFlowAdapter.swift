@@ -187,6 +187,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     destination: nil,
                     mihomoDestination: nil,
                     proxy: nil,
+                    nativeConnector: nil,
                     unavailableFallback: .direct,
                     activity: fallbackActivity(
                         flow: flow,
@@ -204,6 +205,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     destination: nil,
                     mihomoDestination: nil,
                     proxy: nil,
+                    nativeConnector: nil,
                     unavailableFallback: .direct,
                     activity: fallbackActivity(
                         flow: flow,
@@ -228,11 +230,18 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             preferredHostname: outcome.destinationHostname,
             routeCatalog: currentState.mihomoSOCKSConfigurations
         )
+        let nativeConnector: (any OutboundConnector)? = {
+            guard case let .mihomo(route) = outcome.decision.disposition,
+                  let target = currentState.outboundNodeTargets?.target(for: route),
+                  target.protocolName == "socks5" else { return nil }
+            return NativeSOCKS5RelayConnector(target: target)
+        }()
         return TCPFlowInterceptionPlan(
             decision: outcome.decision,
             destination: routePlan?.destinations.original,
             mihomoDestination: routePlan?.destinations.mihomo,
             proxy: routePlan?.proxy,
+            nativeConnector: nativeConnector,
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
                 rulesByIdentifier: currentState.rulesByIdentifier
@@ -718,6 +727,7 @@ struct TCPFlowInterceptionPlan: Sendable {
     /// Hostname-preserving SOCKS target used only for Mihomo relay.
     let mihomoDestination: SOCKS5Endpoint?
     let proxy: ProviderSOCKSConfiguration?
+    let nativeConnector: (any OutboundConnector)?
     let unavailableFallback: UnavailableFallback
     let activity: AppRoutingActivity
 }

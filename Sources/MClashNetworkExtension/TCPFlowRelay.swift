@@ -533,6 +533,7 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
         destination: SOCKS5Endpoint,
         directFallbackDestination: SOCKS5Endpoint? = nil,
         unavailableFallback: UnavailableFallback,
+        outboundConnector: (any OutboundConnector)? = nil,
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
     ) {
         let fallbackDestination = directFallbackDestination ?? destination
@@ -561,6 +562,7 @@ final class TCPFlowRelayRegistry: @unchecked Sendable {
             proxy: proxy,
             destination: destination,
             unavailableFallback: unavailableFallback,
+            outboundConnector: outboundConnector ?? MihomoSOCKSOutboundConnector(),
             activityObserver: activityObserver
         ) { [weak self] identifier, exit in
             self?.finishMihomo(

@@ -112,6 +112,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                     destination: destination,
                     directFallbackDestination: plan.destination,
                     unavailableFallback: plan.unavailableFallback,
+                    outboundConnector: plan.nativeConnector,
                     activityObserver: relayObserver(for: plan.activity.flowIdentifier)
                 )
                 return true

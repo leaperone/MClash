@@ -42,6 +42,18 @@ struct NativeSOCKS5OutboundConnector: Sendable {
     }
 }
 
+/// Adapter used by the existing TCP relay while its route plan migrates from
+/// Mihomo endpoints to native node targets. The relay still performs the
+/// standards-compliant SOCKS5 destination handshake after this connection is
+/// ready, so no Mihomo listener is involved.
+struct NativeSOCKS5RelayConnector: OutboundConnector {
+    let target: OutboundNodeTarget
+
+    func makeConnection(to _: ProviderSOCKSConfiguration) -> NWConnection {
+        NativeSOCKS5OutboundConnector(target: target).makeConnection()
+    }
+}
+
 /// Pure policy used by relays and tests to enforce the ownership boundary.
 /// Direct and Reject are terminal MClash decisions and therefore do not
 /// require (or permit) an outbound connector invocation.
