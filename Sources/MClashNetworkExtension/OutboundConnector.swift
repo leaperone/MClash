@@ -23,6 +23,25 @@ struct MihomoSOCKSOutboundConnector: OutboundConnector {
     }
 }
 
+/// Native SOCKS5 node connector. A SOCKS5 subscription node is itself an
+/// outbound endpoint, so the relay can reuse the same standards-compliant
+/// handshake without involving Mihomo.
+struct NativeSOCKS5OutboundConnector: Sendable {
+    let target: OutboundNodeTarget
+
+    init(target: OutboundNodeTarget) {
+        self.target = target
+    }
+
+    func makeConnection() -> NWConnection {
+        NWConnection(
+            host: NWEndpoint.Host(target.host),
+            port: NWEndpoint.Port(rawValue: target.port)!,
+            using: .tcp
+        )
+    }
+}
+
 /// Pure policy used by relays and tests to enforce the ownership boundary.
 /// Direct and Reject are terminal MClash decisions and therefore do not
 /// require (or permit) an outbound connector invocation.
