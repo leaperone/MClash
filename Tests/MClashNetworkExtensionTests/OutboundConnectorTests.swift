@@ -32,4 +32,25 @@ struct OutboundConnectorTests {
         #expect(target.protocolName == "socks5")
         #expect(target.port == 19080)
     }
+
+    @Test("Native VLESS connector emits a destination handshake")
+    func nativeVLESSConnectorHandshake() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "vless",
+            host: "node.example.com",
+            port: 443,
+            parameters: [
+                "uuid": "00000000-0000-0000-0000-000000000001",
+                "tls": "true",
+            ]
+        )
+        let connector = NativeVLESSOutboundConnector(target: target)
+        let destination = try SOCKS5Endpoint(
+            address: SOCKS5Address(domain: "example.com"),
+            port: 443
+        )
+        let handshake = try connector.handshake(for: destination)
+        #expect(handshake.first == 0x01)
+        #expect(handshake.contains(0x02))
+    }
 }

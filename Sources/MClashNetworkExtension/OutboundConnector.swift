@@ -54,6 +54,43 @@ struct NativeSOCKS5RelayConnector: OutboundConnector {
     }
 }
 
+/// Native VLESS TCP connector. The relay writes `handshake()` immediately
+/// after the transport reaches ready, then forwards payload bytes unchanged.
+/// TLS/WS transport options are represented in the target parameters; the
+/// initial implementation uses Network.framework TLS for `tls=true` and keeps
+/// the wire framing in the shared VLESS codec.
+struct NativeVLESSOutboundConnector: Sendable {
+    let target: OutboundNodeTarget
+
+    func makeConnection() -> NWConnection {
+        let parameters: NWParameters
+        if target.parameters["tls"]?.lowercased() == "true" {
+            parameters = .tls
+        } else {
+            parameters = .tcp
+        }
+        return NWConnection(
+            host: NWEndpoint.Host(target.host),
+            port: NWEndpoint.Port(rawValue: target.port)!,
+            using: parameters
+        )
+    }
+
+    func handshake(for destination: SOCKS5Endpoint) throws -> Data {
+        guard let uuid = target.parameters["uuid"] else {
+            throw VLESSCodecError.invalidUUID
+        }
+        let host = destination.address.domain
+            ?? destination.address.ipAddress?.presentation
+            ?? ""
+        return try VLESSCodec.encodeTCPRequest(
+            uuid: uuid,
+            host: host,
+            port: destination.port
+        )
+    }
+}
+
 /// Pure policy used by relays and tests to enforce the ownership boundary.
 /// Direct and Reject are terminal MClash decisions and therefore do not
 /// require (or permit) an outbound connector invocation.
