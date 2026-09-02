@@ -1,0 +1,37 @@
+name: Runner smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-26-arm64:
+    name: macOS 26 arm64 compatibility
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify runner
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcodebuild -version
+      - name: Typecheck and link all products
+        shell: zsh {0}
+        run: ./scripts/typecheck.sh
+      - name: Run unit tests
+        shell: zsh {0}
+        run: ./scripts/test-direct.sh
+      - name: Run integration tests
+        shell: zsh {0}
+        run: ./scripts/integration-test.sh
