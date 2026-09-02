@@ -176,6 +176,47 @@ struct NativeHysteria2OutboundConnector: Sendable {
             using: NWParameters(quic: quic)
         )
     }
+
+    func authHeaders(receiveRate: UInt64 = 0, padding: String = "") throws -> [(String, String)] {
+        guard let password = target.parameters["password"]
+            ?? target.parameters["auth"] else {
+            throw Hysteria2CodecError.invalidAuth
+        }
+        return try Hysteria2Codec.authHeaders(
+            password: password,
+            receiveRate: receiveRate,
+            padding: padding
+        )
+    }
+
+    func tcpRequest(for destination: SOCKS5Endpoint, padding: Data = Data()) throws -> Data {
+        let host = destination.address.domain
+            ?? destination.address.ipAddress?.presentation
+            ?? ""
+        return try Hysteria2Codec.encodeTCPRequest(
+            host: host,
+            port: destination.port,
+            padding: padding
+        )
+    }
+
+    func udpMessage(
+        sessionID: UInt32,
+        packetID: UInt16,
+        destination: SOCKS5Endpoint,
+        payload: Data
+    ) throws -> Data {
+        let host = destination.address.domain
+            ?? destination.address.ipAddress?.presentation
+            ?? ""
+        return try Hysteria2Codec.encodeUDPMessage(
+            sessionID: sessionID,
+            packetID: packetID,
+            host: host,
+            port: destination.port,
+            payload: payload
+        )
+    }
 }
 
 /// Pure policy used by relays and tests to enforce the ownership boundary.

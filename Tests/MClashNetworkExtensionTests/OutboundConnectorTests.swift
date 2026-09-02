@@ -108,6 +108,21 @@ struct OutboundConnectorTests {
         #expect(target.protocolName == "hysteria2")
     }
 
+    @Test("Hysteria2 connector maps node auth and flow payloads")
+    func nativeHysteria2ConnectorPayloads() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "hysteria2",
+            host: "node.example.com",
+            port: 443,
+            parameters: ["password": "secret"]
+        )
+        let connector = NativeHysteria2OutboundConnector(target: target)
+        #expect(try connector.authHeaders().contains { $0.0 == "Hysteria-Auth" && $0.1 == "secret" })
+        let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
+        #expect(try connector.tcpRequest(for: destination).count > 3)
+        #expect(try connector.udpMessage(sessionID: 1, packetID: 1, destination: destination, payload: Data([1])).count > 10)
+    }
+
     @Test("Native connector registry rejects unknown subscription protocols")
     func registryRejectsUnknownProtocol() throws {
         let target = try OutboundNodeTarget(protocolName: "quic", host: "node.example.com", port: 443)
