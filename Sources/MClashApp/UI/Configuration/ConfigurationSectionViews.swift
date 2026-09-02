@@ -7,9 +7,9 @@ struct ConfigurationView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: MClashLayout.sectionSpacing) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label(AppLocalization.string("Configuration"), systemImage: "slider.horizontal.3")
+                    Label(AppLocalization.string("Routing Mode"), systemImage: "slider.horizontal.3")
                         .font(.title.weight(.semibold))
-                    Text(AppLocalization.string("MClash combines imported nodes with rules, groups, DNS and entrances managed here."))
+                    Text(AppLocalization.string("Choose whether traffic follows rules, always uses a proxy, or stays direct."))
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -96,8 +96,8 @@ struct ConfigurationView: View {
 
                 let document = model.configurationDocument
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: MClashLayout.controlSpacing)], spacing: MClashLayout.controlSpacing) {
-                    configurationMetric(AppLocalization.string("Nodes"), value: document.nodes.count, symbol: "point.3.connected.trianglepath.dotted")
-                    configurationMetric(AppLocalization.string("Node Groups"), value: document.proxyGroups.count, symbol: "square.3.layers.3d")
+                    configurationMetric(AppLocalization.string("Node List"), value: document.nodes.count, symbol: "point.3.connected.trianglepath.dotted")
+                    configurationMetric(AppLocalization.string("Nodes"), value: document.proxyGroups.count, symbol: "square.3.layers.3d")
                     configurationMetric(AppLocalization.string("Rules"), value: document.rules.count, symbol: "list.bullet.indent")
                     configurationMetric(AppLocalization.string("Entrances"), value: document.entrances.count, symbol: "arrow.triangle.branch")
                     configurationMetric(AppLocalization.string("DNS"), value: document.dnsPolicies.count, symbol: "network")
@@ -110,8 +110,8 @@ struct ConfigurationView: View {
                         spacing: MClashLayout.compactSpacing
                     ) {
                         configurationLink(AppLocalization.string("Rules"), symbol: "list.bullet.indent", destination: .rules)
-                        configurationLink(AppLocalization.string("Node Groups"), symbol: "square.3.layers.3d", destination: .proxyGroups)
-                        configurationLink(AppLocalization.string("Nodes"), symbol: "point.3.connected.trianglepath.dotted", destination: .nodes)
+                        configurationLink(AppLocalization.string("Nodes"), symbol: "square.3.layers.3d", destination: .proxyGroups)
+                        configurationLink(AppLocalization.string("Node List"), symbol: "point.3.connected.trianglepath.dotted", destination: .nodes)
                         configurationLink(AppLocalization.string("Entrances"), symbol: "arrow.triangle.branch", destination: .entrances)
                         configurationLink(AppLocalization.string("DNS"), symbol: "network", destination: .dns)
                     }
@@ -128,7 +128,7 @@ struct ConfigurationView: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .mclashPageSurface()
-        .navigationTitle(AppLocalization.string("Configuration"))
+        .navigationTitle(AppLocalization.string("Routing Mode"))
     }
 
     private func configurationMetric(_ title: String, value: Int, symbol: String) -> some View {
@@ -245,7 +245,7 @@ struct ConfigurationSourcesView: View {
     @State private var editRequest: ConfigurationEditRequest?
     var body: some View {
         ConfigurationWorkbench(
-            title: AppLocalization.string("Sources"),
+            title: AppLocalization.string("Subscriptions"),
             sections: [.sources],
             items: model.configurationWorkbenchItems,
             onAdd: { _ in Task { await model.importConfigurationSource() } },
@@ -270,7 +270,7 @@ struct ConfigurationNodesView: View {
             .padding(.vertical, MClashLayout.compactSpacing)
             Divider()
             ConfigurationWorkbench(
-                title: AppLocalization.string("Nodes"),
+                title: AppLocalization.string("Node List"),
                 sections: [.nodes],
                 items: model.configurationWorkbenchItems,
                 statusMessage: model.configurationStatusMessage,
@@ -300,7 +300,7 @@ struct ConfigurationProxyGroupsView: View {
                 .padding(.vertical, MClashLayout.compactPagePadding)
             Divider()
             ConfigurationWorkbench(
-                title: AppLocalization.string("Node Groups"),
+                title: AppLocalization.string("Nodes"),
                 sections: [.proxyGroups],
                 items: model.configurationWorkbenchItems,
                 onAdd: { _ in
@@ -497,9 +497,9 @@ struct ConfigurationEntrancesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: MClashLayout.controlSpacing) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(AppLocalization.string("Traffic paths"))
+                        Text(AppLocalization.string("How to Connect"))
                             .font(.title3.weight(.semibold))
-                        Text(AppLocalization.string("Use one local port for a browser extension, and App Routing for selected Mac apps. Both share this MClash configuration."))
+                        Text(AppLocalization.string("Choose a browser extension address, selected Mac apps, or the macOS system proxy."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -538,7 +538,7 @@ struct ConfigurationEntrancesView: View {
             if advancedExpanded {
                 Divider()
                 ConfigurationWorkbench(
-                    title: AppLocalization.string("Entrances"),
+                    title: AppLocalization.string("Advanced listeners"),
                     sections: [.entrances],
                     items: entranceWorkbenchItems,
                     onAdd: { _ in
@@ -576,7 +576,7 @@ struct ConfigurationEntrancesView: View {
                 )
             }
         }
-        .navigationTitle(AppLocalization.string("Entrances"))
+        .navigationTitle(AppLocalization.string("How to Connect"))
         .mclashPageSurface()
         .sheet(item: $editRequest) { request in
             ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)

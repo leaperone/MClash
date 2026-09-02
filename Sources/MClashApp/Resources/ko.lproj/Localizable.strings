@@ -1,4 +1,20 @@
 /* MClash 한국어 현지화 */
+
+"Everyday" = "일상";
+"Status" = "상태";
+"Subscriptions" = "구독";
+"How to Connect" = "접속 방법";
+"Connection Log" = "연결 기록";
+"Needs Attention" = "확인 필요";
+"Routing Mode" = "라우팅 모드";
+"Node List" = "노드 목록";
+"Config Files" = "구성 파일";
+"Rule Sets" = "규칙 세트";
+"Add Subscription?" = "구독을 추가할까요?";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "%@에서 구독을 추가할까요? 노드만 가져옵니다. 그룹, 규칙, DNS, TUN은 사용하지 않습니다.";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "브라우저 확장용 로컬 주소, 선택한 Mac 앱, 또는 시스템 프록시를 고르세요.";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "규칙대로, 항상 프록시, 또는 직접 연결을 고르세요.";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "접속 방법 스위치는 「접속 방법」 페이지에서 함께 관리합니다.";
 "Alias (Optional)" = "별칭(선택 사항)";
 "App Routing using legacy profile rules" = "기존 프로필 규칙을 사용하는 App Routing";
 "App Routing using unified MClash rules" = "MClash 통합 규칙을 사용하는 App Routing";
@@ -376,7 +392,6 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "트래픽 결정과 Mihomo 연결이 관찰되면 경로가 표시됩니다.";
 "Routing" = "라우팅";
 "Routing & macOS Proxy" = "라우팅 및 macOS 프록시";
-"Routing Mode" = "라우팅 모드";
 "Routing mode" = "라우팅 모드";
 "Rule" = "규칙";
 "Rule Overrides" = "규칙 재정의";
@@ -410,7 +425,6 @@
 "Starting local proxy listeners…" = "로컬 프록시 리스너 시작 중…";
 "Startup" = "시작";
 "State" = "상태";
-"Status" = "상태";
 "Strict" = "엄격";
 "Subscription URL" = "구독 URL";
 "System Proxy Settings" = "시스템 프록시 설정";
@@ -1267,7 +1281,6 @@
 "Mixed port off · %@ reserved" = "Mixed 포트 꺼짐 · %@ 예약됨";
 "Mixed: %@" = "Mixed: %@";
 "More actions for %@" = "%@의 추가 동작";
-"Needs Attention" = "확인 필요";
 "Needs Restoration" = "복원 필요";
 "Needs attention" = "확인 필요";
 "Network Extension state transition" = "네트워크 확장 프로그램 상태 전환";
@@ -1879,7 +1892,6 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "활성화된 HTTP 및 SOCKS 진입점은 하나의 Mihomo 바인드 주소를 공유해야 합니다.";
 "Enabled entrances cannot share a listening port." = "활성화된 진입점은 수신 포트를 공유할 수 없습니다.";
 "Entrance port must be between 1 and 65535." = "진입점 포트는 1에서 65535 사이여야 합니다.";
-"Everyday" = "일상";
 "Fallback" = "대체";
 "Fingerprint" = "지문";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "가져온 소스입니다. MClash는 노드 데이터만 사용하며 소스의 전략 섹션은 무시합니다.";
@@ -2330,7 +2342,6 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
-"Rule Sets" = "Rule Sets";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "Rule set path must be a relative path without line breaks or parent-directory segments.";
 "Rule set source must be an HTTP or HTTPS URL." = "Rule set source must be an HTTP or HTTPS URL.";
 "Rules surface" = "Rules surface";

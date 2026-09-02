@@ -1,4 +1,20 @@
 /* MClash German localization. */
+
+"Everyday" = "Alltag";
+"Status" = "Status";
+"Subscriptions" = "Abos";
+"How to Connect" = "Verbindung";
+"Connection Log" = "Verbindungsprotokoll";
+"Needs Attention" = "Aufmerksamkeit";
+"Routing Mode" = "Routing-Modus";
+"Node List" = "Knotenliste";
+"Config Files" = "Konfigurationsdateien";
+"Rule Sets" = "Regelsätze";
+"Add Subscription?" = "Abo hinzufügen?";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "Abo von %@ hinzufügen? Es werden nur Knoten importiert. Gruppen, Regeln, DNS und TUN aus dem Abo werden ignoriert.";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "Wähle eine lokale Adresse für eine Browsererweiterung, ausgewählte Mac-Apps oder den System-Proxy.";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "Wähle Regeln, immer Proxy oder direkt.";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "Die Verbindungswege werden auf der Seite „Verbindung“ gesteuert.";
 "Alias (Optional)" = "Alias (optional)";
 "App Routing using legacy profile rules" = "App Routing mit alten Profilregeln";
 "App Routing using unified MClash rules" = "App Routing mit einheitlichen MClash-Regeln";
@@ -378,7 +394,6 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "Routen werden als Verkehrsentscheidungen angezeigt und Mihomo-Verbindungen werden beobachtet.";
 "Routing" = "Routing";
 "Routing & macOS Proxy" = "Routing und macOS-Proxy";
-"Routing Mode" = "Routing-Modus";
 "Routing mode" = "Routing-Modus";
 "Rule" = "Regel";
 "Rule Overrides" = "Regelüberschreibungen";
@@ -412,7 +427,6 @@
 "Starting local proxy listeners…" = "Lokale Proxy-Listener starten…";
 "Startup" = "Start";
 "State" = "Zustand";
-"Status" = "Status";
 "Strict" = "Streng";
 "Subscription URL" = "Abonnement-URL";
 "System Proxy Settings" = "System-Proxy-Einstellungen";
@@ -1268,7 +1282,6 @@
 "Mixed port off · %@ reserved" = "Mixed-Port aus · %@ reserviert";
 "Mixed: %@" = "Mixed: %@";
 "More actions for %@" = "Weitere Aktionen für %@";
-"Needs Attention" = "Aufmerksamkeit erforderlich";
 "Needs Restoration" = "Wiederherstellung erforderlich";
 "Needs attention" = "Aufmerksamkeit erforderlich";
 "Network Extension state transition" = "Statusübergang der Netzwerkerweiterung";
@@ -1880,7 +1893,6 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "Aktivierte HTTP- und SOCKS-Eingänge müssen dieselbe Mihomo-Bindungsadresse verwenden.";
 "Enabled entrances cannot share a listening port." = "Aktivierte Eingänge dürfen nicht denselben Port verwenden.";
 "Entrance port must be between 1 and 65535." = "Der Eingangsport muss zwischen 1 und 65535 liegen.";
-"Everyday" = "Alltag";
 "Fallback" = "Ausweichroute";
 "Fingerprint" = "Fingerabdruck";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "Importierte Quelle. MClash verwendet daraus nur Knotendaten; Strategiebereiche der Quelle werden ignoriert.";
@@ -2331,7 +2343,6 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
-"Rule Sets" = "Rule Sets";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "Rule set path must be a relative path without line breaks or parent-directory segments.";
 "Rule set source must be an HTTP or HTTPS URL." = "Rule set source must be an HTTP or HTTPS URL.";
 "Rules surface" = "Rules surface";

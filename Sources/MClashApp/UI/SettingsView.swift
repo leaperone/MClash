@@ -72,11 +72,11 @@ struct SettingsView: View {
             }
 
             Section("Advanced connection behavior") {
-                Text(AppLocalization.string("Traffic entrances and their on/off controls are managed together on the Entrances page."))
+                Text(AppLocalization.string("Connection paths and their on/off controls are managed together on the How to Connect page."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button(AppLocalization.string("Open Entrances…")) {
+                Button(AppLocalization.string("How to Connect") + "…") {
                     model.selection = .entrances
                 }
                 DisclosureGroup("Connection Behavior") {

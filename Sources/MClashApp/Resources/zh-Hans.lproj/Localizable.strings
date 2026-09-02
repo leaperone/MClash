@@ -1,7 +1,23 @@
 /* MClash 简体中文本地化。 */
 
+"Everyday" = "日常";
+"Status" = "状态";
+"Subscriptions" = "订阅";
+"How to Connect" = "接入方式";
+"Connection Log" = "连接记录";
+"Needs Attention" = "需要处理";
+"Routing Mode" = "代理模式";
+"Node List" = "节点列表";
+"Config Files" = "配置文件";
+"Rule Sets" = "规则集";
+"Add Subscription?" = "添加订阅？";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "要从 %@ 添加订阅吗？只会导入节点。订阅里的策略组、规则、DNS 和 TUN 不会采用。";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "给浏览器扩展一个本地地址，或只让指定的 Mac 应用走代理，也可以打开系统代理。";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "选择按规则分流、全部走代理，还是全部直连。";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "接入方式的开关都在「接入方式」页。";
+
 "Configuration" = "配置";
-"Entrances" = "入口";
+"Entrances" = "接入方式";
 "Workspaces" = "工作方案";
 "Nodes" = "节点";
 "Proxy Groups" = "代理组";
@@ -74,7 +90,7 @@
 "Approve MClash in System Settings → General → Login Items & Extensions → Network Extensions." = "请在“系统设置”→“通用”→“登录项与扩展”→“网络扩展”中批准 MClash。";
 "Apps may reconnect automatically. This affects every active connection, not only the current search results." = "应用可能会自动重新连接。这会影响所有活跃连接，不仅是当前搜索结果。";
 "Assigned when connecting" = "连接时分配";
-"Attention" = "注意";
+"Attention" = "需要处理";
 "Automatic selection is pinned" = "自动选择已固定";
 "Automatically check for MClash updates" = "自动检查 MClash 更新";
 "Automatically download updates" = "自动下载更新";
@@ -303,7 +319,7 @@
 "Opening private local traffic history…" = "正在打开私密的本地流量历史记录…";
 "Override network, DNS, routing rules, process lookup, interface, concurrency, and core logging without modifying the subscription file." = "无需修改订阅文件，即可覆盖网络、DNS、路由规则、进程查询、接口、并发和内核日志设置。";
 "Override the profile DNS section" = "覆盖配置中的 DNS 部分";
-"Overview" = "概览";
+"Overview" = "状态";
 "Paste several executable names, signing IDs, bundle IDs, or wildcard patterns separated by semicolons, commas, or new lines." = "粘贴多个可执行文件名、签名 ID、Bundle ID 或通配符模式，并用分号、逗号或换行分隔。";
 "Path" = "路径";
 "Paths now" = "当前路径";
@@ -326,7 +342,7 @@
 "Process" = "进程";
 "Process lookup" = "进程查询";
 "Profile" = "配置";
-"Profiles" = "配置";
+"Profiles" = "配置文件";
 "Profiles & Backup" = "配置与备份";
 "Profiles unavailable" = "配置不可用";
 "Protocol / Ports" = "协议 / 端口";
@@ -334,7 +350,7 @@
 "Provider inactive" = "提供方未启用";
 "Provider reconnecting…" = "提供方正在重新连接…";
 "Provider revision verified" = "提供方版本已验证";
-"Providers" = "提供方";
+"Providers" = "规则集";
 "Providers unavailable" = "提供方不可用";
 "Proxies" = "代理";
 "Proxifier Profile…" = "Proxifier 配置…";
@@ -377,7 +393,6 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "观测到流量决策和 Mihomo 连接后，路由会显示在这里。";
 "Routing" = "路由";
 "Routing & macOS Proxy" = "路由与 macOS 代理";
-"Routing Mode" = "路由模式";
 "Routing mode" = "路由模式";
 "Rule" = "规则";
 "Rule Overrides" = "规则覆盖";
@@ -411,7 +426,6 @@
 "Starting local proxy listeners…" = "正在启动本地代理监听器…";
 "Startup" = "启动";
 "State" = "状态";
-"Status" = "状态";
 "Strict" = "严格";
 "Subscription URL" = "订阅 URL";
 "System Proxy Settings" = "系统代理设置";
@@ -434,7 +448,7 @@
 "Today" = "今天";
 "Topology" = "拓扑";
 "Topology zoom" = "拓扑缩放";
-"Traffic" = "流量";
+"Traffic" = "连接记录";
 "Traffic Workspace" = "流量工作区";
 "Transferred" = "已传输";
 "Transparent Proxy Ports" = "透明代理端口";
@@ -784,7 +798,7 @@
 "Routing Options" = "路由选项";
 "Rules %@ · %@" = "规则 %@ · %@";
 "Session Started" = "会话已开始";
-"Sources" = "来源";
+"Sources" = "订阅";
 "Start with the first item. Technical details are available when needed." = "请先处理第一项，需要时可查看技术详情。";
 "Starting" = "正在启动";
 "Stopped" = "已停止";
@@ -1266,7 +1280,6 @@
 "Mixed port off · %@ reserved" = "Mixed 端口已关闭 · 保留 %@";
 "Mixed: %@" = "Mixed：%@";
 "More actions for %@" = "%@ 的更多操作";
-"Needs Attention" = "需要处理";
 "Needs Restoration" = "需要恢复";
 "Needs attention" = "需要处理";
 "Network Extension state transition" = "网络扩展状态转换";
@@ -1878,7 +1891,6 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "已启用的 HTTP 和 SOCKS 入口必须共用同一个 Mihomo 绑定地址。";
 "Enabled entrances cannot share a listening port." = "已启用的入口不能共用监听端口。";
 "Entrance port must be between 1 and 65535." = "入口端口必须介于 1 和 65535 之间。";
-"Everyday" = "日常使用";
 "Fallback" = "故障转移";
 "Fingerprint" = "指纹";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "已导入的来源。MClash 仅使用其中的节点数据；来源中的策略部分会被忽略。";
@@ -2329,7 +2341,6 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "可复用的 MClash Mihomo 规则集合，可明确设置来源和格式。";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "让选定应用通过此配置路由；规则仍在“规则”页面管理，此开关只控制入口。";
 "Rule Set" = "规则集";
-"Rule Sets" = "规则集";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "规则集路径必须是相对路径，不能包含换行或父目录片段。";
 "Rule set source must be an HTTP or HTTPS URL." = "规则集来源必须是 HTTP 或 HTTPS URL。";
 "Rules surface" = "规则视图";

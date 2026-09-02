@@ -1,5 +1,21 @@
 /* MClash English localization — source language. */
 
+"Everyday" = "Everyday";
+"Status" = "Status";
+"Subscriptions" = "Subscriptions";
+"How to Connect" = "How to Connect";
+"Connection Log" = "Connection Log";
+"Needs Attention" = "Needs Attention";
+"Routing Mode" = "Routing Mode";
+"Node List" = "Node List";
+"Config Files" = "Config Files";
+"Rule Sets" = "Rule Sets";
+"Add Subscription?" = "Add Subscription?";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored.";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "Choose a browser extension address, selected Mac apps, or the macOS system proxy.";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "Choose whether traffic follows rules, always uses a proxy, or stays direct.";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "Connection paths and their on/off controls are managed together on the How to Connect page.";
+
 "Configuration" = "Configuration";
 "Entrances" = "Entrances";
 "Workspaces" = "Workspaces";
@@ -377,7 +393,6 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "Routes appear as traffic decisions and Mihomo connections are observed.";
 "Routing" = "Routing";
 "Routing & macOS Proxy" = "Routing & macOS Proxy";
-"Routing Mode" = "Routing Mode";
 "Routing mode" = "Routing mode";
 "Rule" = "Rule";
 "Rule Overrides" = "Rule Overrides";
@@ -411,7 +426,6 @@
 "Starting local proxy listeners…" = "Starting local proxy listeners…";
 "Startup" = "Startup";
 "State" = "State";
-"Status" = "Status";
 "Strict" = "Strict";
 "Subscription URL" = "Subscription URL";
 "System Proxy Settings" = "System Proxy Settings";
@@ -1267,7 +1281,6 @@
 "Mixed port off · %@ reserved" = "Mixed port off · %@ reserved";
 "Mixed: %@" = "Mixed: %@";
 "More actions for %@" = "More actions for %@";
-"Needs Attention" = "Needs Attention";
 "Needs Restoration" = "Needs Restoration";
 "Needs attention" = "Needs attention";
 "Network Extension state transition" = "Network Extension state transition";
@@ -1879,7 +1892,6 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "Enabled HTTP and SOCKS entrances must share one Mihomo bind address.";
 "Enabled entrances cannot share a listening port." = "Enabled entrances cannot share a listening port.";
 "Entrance port must be between 1 and 65535." = "Entrance port must be between 1 and 65535.";
-"Everyday" = "Everyday";
 "Fallback" = "Fallback";
 "Fingerprint" = "Fingerprint";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "Imported source. MClash uses it for node data only; source strategy sections are ignored.";
@@ -2330,7 +2342,6 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
-"Rule Sets" = "Rule Sets";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "Rule set path must be a relative path without line breaks or parent-directory segments.";
 "Rule set source must be an HTTP or HTTPS URL." = "Rule set source must be an HTTP or HTTPS URL.";
 "Rules surface" = "Rules surface";

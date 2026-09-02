@@ -73,14 +73,13 @@ struct MClashApp: App {
             }
 
             CommandMenu("Navigate") {
-                navigationCommand("Overview", destination: .overview, key: "1")
-                navigationCommand("Configuration", destination: .workspaces, key: "2")
-                navigationCommand("Rules", destination: .rules, key: "3")
-                navigationCommand("Nodes", destination: .nodes, key: "4")
-                navigationCommand("Sources", destination: .sources, key: "5")
-                navigationCommand("Entrances", destination: .entrances, key: "6")
-                navigationCommand("Node Groups", destination: .proxyGroups, key: "7")
-                navigationCommand("Traffic", destination: .connections, key: "8")
+                navigationCommand("Status", destination: .overview, key: "1")
+                navigationCommand("Subscriptions", destination: .sources, key: "2")
+                navigationCommand("Nodes", destination: .proxyGroups, key: "3")
+                navigationCommand("How to Connect", destination: .entrances, key: "4")
+                navigationCommand("Connection Log", destination: .connections, key: "5")
+                navigationCommand("Needs Attention", destination: .attention, key: "6")
+                navigationCommand("Rules", destination: .rules, key: "7")
             }
 
             CommandMenu("Routing") {

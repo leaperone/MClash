@@ -48,7 +48,7 @@ struct AttentionView: View {
                 }
             }
         }
-        .navigationTitle("Attention")
+        .navigationTitle(AppLocalization.string("Needs Attention"))
         .mclashPageSurface()
         .toolbar {
             ToolbarItem {

@@ -1,4 +1,20 @@
 /* MClash 日本語ローカライズ */
+
+"Everyday" = "日常";
+"Status" = "状態";
+"Subscriptions" = "購読";
+"How to Connect" = "接続方法";
+"Connection Log" = "接続履歴";
+"Needs Attention" = "要確認";
+"Routing Mode" = "ルーティング";
+"Node List" = "ノード一覧";
+"Config Files" = "設定ファイル";
+"Rule Sets" = "ルールセット";
+"Add Subscription?" = "購読を追加しますか？";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "%@ から購読を追加しますか？ノードだけを取り込みます。グループ、ルール、DNS、TUN は使いません。";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "ブラウザ拡張用のローカルアドレス、選択した Mac アプリ、またはシステムプロキシを選びます。";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "ルールに従う、常にプロキシ、または直通を選びます。";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "接続方法のオン／オフは「接続方法」ページでまとめて操作します。";
 "Alias (Optional)" = "エイリアス（任意）";
 "App Routing using legacy profile rules" = "従来のプロファイルルールを使う App Routing";
 "App Routing using unified MClash rules" = "MClash 統合ルールを使う App Routing";
@@ -375,7 +391,6 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "トラフィックの判定と Mihomo の接続が観測されると、経路が表示されます。";
 "Routing" = "ルーティング";
 "Routing & macOS Proxy" = "ルーティングと macOS プロキシ";
-"Routing Mode" = "ルーティングモード";
 "Routing mode" = "ルーティングモード";
 "Rule" = "ルール";
 "Rule Overrides" = "ルールの上書き";
@@ -409,7 +424,6 @@
 "Starting local proxy listeners…" = "ローカルプロキシリスナーを開始中…";
 "Startup" = "起動";
 "State" = "状態";
-"Status" = "状態";
 "Strict" = "厳格";
 "Subscription URL" = "サブスクリプション URL";
 "System Proxy Settings" = "システムプロキシ設定";
@@ -1268,7 +1282,6 @@
 "Mixed port off · %@ reserved" = "Mixed ポートはオフ · %@ を予約";
 "Mixed: %@" = "Mixed：%@";
 "More actions for %@" = "%@ のその他の操作";
-"Needs Attention" = "要確認";
 "Needs Restoration" = "復元が必要";
 "Needs attention" = "要確認";
 "Network Extension state transition" = "ネットワーク機能拡張の状態遷移";
@@ -1880,7 +1893,6 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "有効な HTTP 入口と SOCKS 入口は、同じ Mihomo バインドアドレスを共有する必要があります。";
 "Enabled entrances cannot share a listening port." = "有効な入口で同じリスニングポートを共有することはできません。";
 "Entrance port must be between 1 and 65535." = "入口ポートは 1〜65535 の範囲で指定してください。";
-"Everyday" = "日常用";
 "Fallback" = "フォールバック";
 "Fingerprint" = "フィンガープリント";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "読み込まれたソースです。MClash はノードデータのみを使用し、ソースの戦略セクションは無視します。";
@@ -2331,7 +2343,6 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
-"Rule Sets" = "Rule Sets";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "Rule set path must be a relative path without line breaks or parent-directory segments.";
 "Rule set source must be an HTTP or HTTPS URL." = "Rule set source must be an HTTP or HTTPS URL.";
 "Rules surface" = "Rules surface";

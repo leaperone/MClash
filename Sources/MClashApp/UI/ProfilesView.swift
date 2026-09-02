@@ -87,7 +87,7 @@ struct ProfilesView: View {
                 .mclashListSurface()
             }
         }
-        .navigationTitle("Profiles")
+        .navigationTitle(AppLocalization.string("Config Files"))
         .mclashPageSurface()
         .background {
             GeometryReader { geometry in

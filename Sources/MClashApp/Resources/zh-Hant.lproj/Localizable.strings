@@ -1,4 +1,20 @@
 /* MClash 繁體中文在地化。 */
+
+"Everyday" = "日常";
+"Status" = "狀態";
+"Subscriptions" = "訂閱";
+"How to Connect" = "接入方式";
+"Connection Log" = "連線紀錄";
+"Needs Attention" = "需要處理";
+"Routing Mode" = "代理模式";
+"Node List" = "節點列表";
+"Config Files" = "設定檔";
+"Rule Sets" = "規則集";
+"Add Subscription?" = "新增訂閱？";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "要從 %@ 新增訂閱嗎？只會匯入節點。訂閱裡的策略組、規則、DNS 和 TUN 不會套用。";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "給瀏覽器擴充功能一個本機位址，或只讓指定的 Mac App 走代理，也可以開啟系統代理。";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "選擇依規則分流、全部走代理，或全部直連。";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "接入方式的開關都在「接入方式」頁。";
 "Alias (Optional)" = "別名（選填）";
 "App Routing using legacy profile rules" = "使用舊設定規則的 App Routing";
 "App Routing using unified MClash rules" = "使用 MClash 統一規則的 App Routing";
@@ -17,7 +33,7 @@
 "Sources are refreshed from the original profile and provide node data only." = "來源從原始設定重新整理，僅提供節點資料。";
 
 "Configuration" = "設定";
-"Entrances" = "入口";
+"Entrances" = "接入方式";
 "Workspaces" = "工作方案";
 "Nodes" = "節點";
 "Proxy Groups" = "代理群組";
@@ -74,7 +90,7 @@
 "Approve MClash in System Settings → General → Login Items & Extensions → Network Extensions." = "請在「系統設定」→「一般」→「登入項目與延伸功能」→「網路延伸功能」中允許 MClash。";
 "Apps may reconnect automatically. This affects every active connection, not only the current search results." = "App 可能會自動重新連線。這會影響所有作用中連線，不僅是目前搜尋結果。";
 "Assigned when connecting" = "連線時指派";
-"Attention" = "注意";
+"Attention" = "需要處理";
 "Automatic selection is pinned" = "自動選擇已固定";
 "Automatically check for MClash updates" = "自動檢查 MClash 更新";
 "Automatically download updates" = "自動下載更新";
@@ -303,7 +319,7 @@
 "Opening private local traffic history…" = "正在開啟私密的本機流量歷史記錄…";
 "Override network, DNS, routing rules, process lookup, interface, concurrency, and core logging without modifying the subscription file." = "無需修改訂閱檔案，即可覆蓋網路、DNS、路由規則、程序查詢、介面、並行處理和核心日誌設定。";
 "Override the profile DNS section" = "覆蓋設定檔中的 DNS 部分";
-"Overview" = "概覽";
+"Overview" = "狀態";
 "Paste several executable names, signing IDs, bundle IDs, or wildcard patterns separated by semicolons, commas, or new lines." = "貼上多個可執行檔案名稱、簽署 ID、Bundle ID 或萬用字元模式，並用分號、逗號或換行分隔。";
 "Path" = "路徑";
 "Paths now" = "目前路徑";
@@ -334,7 +350,7 @@
 "Provider inactive" = "提供者未啟用";
 "Provider reconnecting…" = "提供者正在重新連線…";
 "Provider revision verified" = "提供者版本已驗證";
-"Providers" = "提供者";
+"Providers" = "規則集";
 "Providers unavailable" = "提供者不可用";
 "Proxies" = "代理";
 "Proxifier Profile…" = "Proxifier 設定檔…";
@@ -377,7 +393,6 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "觀測到流量決策和 Mihomo 連線後，路由會顯示在這裡。";
 "Routing" = "路由";
 "Routing & macOS Proxy" = "路由與 macOS 代理";
-"Routing Mode" = "路由模式";
 "Routing mode" = "路由模式";
 "Rule" = "規則";
 "Rule Overrides" = "規則覆蓋";
@@ -411,7 +426,6 @@
 "Starting local proxy listeners…" = "正在啟動本機代理監聽器…";
 "Startup" = "啟動";
 "State" = "狀態";
-"Status" = "狀態";
 "Strict" = "嚴格";
 "Subscription URL" = "訂閱 URL";
 "System Proxy Settings" = "系統代理設定";
@@ -434,7 +448,7 @@
 "Today" = "今天";
 "Topology" = "拓撲";
 "Topology zoom" = "拓撲縮放";
-"Traffic" = "流量";
+"Traffic" = "連線紀錄";
 "Traffic Workspace" = "流量工作區";
 "Transferred" = "已傳輸";
 "Transparent Proxy Ports" = "透明代理連接埠";
@@ -784,7 +798,7 @@
 "Routing Options" = "路由選項";
 "Rules %@ · %@" = "規則 %@ · %@";
 "Session Started" = "工作階段已開始";
-"Sources" = "來源";
+"Sources" = "訂閱";
 "Start with the first item. Technical details are available when needed." = "請先處理第一項，需要時可查看技術詳細資訊。";
 "Starting" = "正在啟動";
 "Stopped" = "已停止";
@@ -1268,7 +1282,6 @@
 "Mixed port off · %@ reserved" = "Mixed 連接埠已關閉 · 保留 %@";
 "Mixed: %@" = "Mixed：%@";
 "More actions for %@" = "%@ 的更多操作";
-"Needs Attention" = "需要注意";
 "Needs Restoration" = "需要還原";
 "Needs attention" = "需要注意";
 "Network Extension state transition" = "網路延伸功能狀態轉換";
@@ -1880,7 +1893,6 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "已啟用的 HTTP 與 SOCKS 入口必須共用同一個 Mihomo 繫結位址。";
 "Enabled entrances cannot share a listening port." = "已啟用的入口不能共用監聽連接埠。";
 "Entrance port must be between 1 and 65535." = "入口連接埠必須介於 1 到 65535 之間。";
-"Everyday" = "日常使用";
 "Fallback" = "容錯移轉";
 "Fingerprint" = "指紋";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "已匯入的來源。MClash 僅使用其中的節點資料；來源內的策略區段會被忽略。";
@@ -2331,7 +2343,6 @@
 "Reusable Mihomo rule collections with an explicit source and format." = "可重複使用的 MClash Mihomo 規則集合，可明確設定來源和格式。";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "讓選定應用程式透過此設定路由；規則仍在「規則」頁管理，此開關只控制入口。";
 "Rule Set" = "規則集";
-"Rule Sets" = "規則集";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "規則集路徑必須是相對路徑，不能包含換行或父目錄片段。";
 "Rule set source must be an HTTP or HTTPS URL." = "規則集來源必須是 HTTP 或 HTTPS URL。";
 "Rules surface" = "規則視圖";
