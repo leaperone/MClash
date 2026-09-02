@@ -104,7 +104,12 @@ struct ConfigurationSplitPathsTests {
         #expect(yaml.contains("listen: \"127.0.0.1\""))
         #expect(yaml.contains("port: 1080"))
         #expect(yaml.contains("proxy: \"Browser · Smart Proxy\""))
-        #expect(yaml.contains("MATCH,Apps · API line") || yaml.contains("MATCH,\"Apps · API line\""))
+        #expect(yaml.contains("MATCH,DIRECT") || yaml.contains("MATCH,\"DIRECT\""))
+        #expect(!yaml.contains("MATCH,Apps · API line"))
+        #expect(!yaml.contains("MATCH,\"Apps · API line\""))
+        #expect(
+            document.entrances.first { $0.kind == .appRouting }?.defaultAction == .direct
+        )
 
         document = try ConfigurationSplitPaths.applyAppPath(
             to: document,
@@ -122,6 +127,83 @@ struct ConfigurationSplitPathsTests {
         #expect(ConfigurationSplitPaths.isBrowserApplication("com.google.chrome"))
         #expect(ConfigurationSplitPaths.isBrowserApplication("com.apple.Safari"))
         #expect(!ConfigurationSplitPaths.isBrowserApplication("com.todesktop.230313mzl4w4u92"))
+    }
+
+    @Test("Disabling the browser path does not snap onto a sibling SOCKS listener")
+    func browserPathStaysOnFirstListenerWhenDisabled() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        let source = Source(kind: .subscription, displayName: "Smart Proxy")
+        document.sources = [source]
+        document.nodes = [
+            try Node(
+                displayName: "US 01",
+                protocol: .vless,
+                host: "us.example.com",
+                port: 443,
+                sourceLinks: [source.id]
+            )
+        ]
+
+        document = try ConfigurationSplitPaths.applyBrowserPath(
+            to: document,
+            sourceID: source.id,
+            kind: .http,
+            port: 7890,
+            enabled: true
+        )
+        document = try ConfigurationSplitPaths.applyBrowserPath(
+            to: document,
+            sourceID: source.id,
+            kind: .http,
+            port: 7890,
+            enabled: false
+        )
+        let path = ConfigurationSplitPaths.browserPath(from: document)
+        let yaml = String(
+            decoding: try ConfigurationCompiler().compile(document: document).yaml,
+            as: UTF8.self
+        )
+
+        #expect(!path.enabled)
+        #expect(path.kind == .http)
+        #expect(path.port == 7890)
+        #expect(path.sourceID == source.id)
+        #expect(document.entrances.contains { $0.kind == .socks5 && $0.port == 7891 && $0.enabled })
+        #expect(!yaml.contains("port: 7890"))
+        #expect(yaml.contains("port: 7891"))
+    }
+
+    @Test("An app source remains selected even before any app is listed")
+    func appPathRemembersSourceWithoutRules() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        let appSource = Source(kind: .subscription, displayName: "API line")
+        document.sources = [appSource]
+        document.nodes = [
+            try Node(
+                displayName: "Agent node",
+                protocol: .vless,
+                host: "agent.example.com",
+                port: 443,
+                sourceLinks: [appSource.id]
+            )
+        ]
+
+        document = try ConfigurationSplitPaths.applyAppPath(
+            to: document,
+            sourceID: appSource.id,
+            applicationPatterns: [],
+            enabled: true
+        )
+        let path = ConfigurationSplitPaths.appPath(from: document)
+        let yaml = String(
+            decoding: try ConfigurationCompiler().compile(document: document).yaml,
+            as: UTF8.self
+        )
+
+        #expect(path.enabled)
+        #expect(path.sourceID == appSource.id)
+        #expect(path.applicationPatterns.isEmpty)
+        #expect(yaml.contains("MATCH,DIRECT") || yaml.contains("MATCH,\"DIRECT\""))
     }
 
     @Test("Invalid browser ports are rejected")

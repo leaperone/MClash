@@ -62,7 +62,7 @@ enum ConfigurationSplitPaths {
         let entrance = document.entrances.first { $0.kind == .appRouting }
         let managed = managedAppRules(in: document)
         let source = managed.compactMap { sourceID(for: $0.action, in: document) }.first
-            ?? sourceID(for: entrance?.defaultAction, in: document)
+            ?? selectedAppSourceID(in: document)
         return AppPath(
             enabled: entrance?.enabled ?? false,
             sourceID: source,
@@ -141,15 +141,28 @@ enum ConfigurationSplitPaths {
                 sourceID: sourceID,
                 role: .apps
             )
+            unlinkOtherAppSourceGroups(
+                keeping: groupID,
+                workspaceIndex: workspaceIndex,
+                in: &document
+            )
             action = .proxyGroup(groupID)
         } else {
+            unlinkOtherAppSourceGroups(
+                keeping: nil,
+                workspaceIndex: workspaceIndex,
+                in: &document
+            )
             action = .direct
         }
 
+        // App Routing's entrance defaultAction becomes MATCH for captured
+        // traffic. Keep it Direct so unlisted apps stay Direct; only the
+        // managed application rules point at the source group.
         let entranceID = upsertAppRoutingEntrance(
             in: &document,
             enabled: enabled,
-            defaultAction: action
+            defaultAction: .direct
         )
         workspace = document.workspaces[workspaceIndex]
         if !workspace.entranceIDs.contains(entranceID) {
@@ -246,8 +259,7 @@ enum ConfigurationSplitPaths {
     ]
 
     private static func browserEntrance(in document: ConfigurationDocument) -> Entrance? {
-        let portEntrances = document.entrances.filter { $0.kind == .http || $0.kind == .socks5 }
-        return portEntrances.first(where: \.enabled) ?? portEntrances.first
+        document.entrances.first { $0.kind == .http || $0.kind == .socks5 }
     }
 
     private static func upsertPortEntrance(
@@ -326,6 +338,34 @@ enum ConfigurationSplitPaths {
     ) {
         if !document.workspaces[workspaceIndex].proxyGroupIDs.contains(groupID) {
             document.workspaces[workspaceIndex].proxyGroupIDs.append(groupID)
+        }
+    }
+
+    private static func selectedAppSourceID(in document: ConfigurationDocument) -> SourceID? {
+        guard let linked = document.currentWorkspace?.proxyGroupIDs else { return nil }
+        let linkedSet = Set(linked)
+        if let source = document.sources.first(where: { source in
+            linkedSet.contains(groupID(for: source.id, role: .apps))
+        }) {
+            return source.id
+        }
+        for id in linked {
+            guard let group = document.proxyGroups.first(where: { $0.id == id }) else { continue }
+            if let source = document.sources.first(where: { isSourceOnlyGroup(group, sourceID: $0.id) }) {
+                return source.id
+            }
+        }
+        return nil
+    }
+
+    private static func unlinkOtherAppSourceGroups(
+        keeping keepID: ProxyGroupID?,
+        workspaceIndex: Int,
+        in document: inout ConfigurationDocument
+    ) {
+        let splitPathIDs = Set(document.sources.map { groupID(for: $0.id, role: .apps) })
+        document.workspaces[workspaceIndex].proxyGroupIDs.removeAll { id in
+            splitPathIDs.contains(id) && id != keepID
         }
     }
 

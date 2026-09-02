@@ -802,14 +802,14 @@ struct ConfigurationEntrancesView: View {
     private var browserSourceBinding: Binding<SourceID?> {
         Binding(
             get: { browserPath.sourceID },
-            set: { applyBrowser(sourceID: $0) }
+            set: { applyBrowser(sourceID: .some($0)) }
         )
     }
 
     private var appSourceBinding: Binding<SourceID?> {
         Binding(
             get: { appPath.sourceID },
-            set: { applyApps(sourceID: $0) }
+            set: { applyApps(sourceID: .some($0)) }
         )
     }
 
@@ -903,7 +903,7 @@ struct ConfigurationEntrancesView: View {
     }
 
     private func applyBrowser(
-        sourceID: SourceID? = nil,
+        sourceID sourceChange: SourceID?? = nil,
         kind: EntranceKind? = nil,
         port: Int? = nil,
         enabled: Bool? = nil
@@ -913,7 +913,7 @@ struct ConfigurationEntrancesView: View {
             do {
                 let document = try ConfigurationSplitPaths.applyBrowserPath(
                     to: model.configurationDocument,
-                    sourceID: sourceID ?? current.sourceID,
+                    sourceID: sourceChange ?? current.sourceID,
                     kind: kind ?? current.kind,
                     port: port ?? current.port,
                     enabled: enabled ?? current.enabled
@@ -926,7 +926,7 @@ struct ConfigurationEntrancesView: View {
     }
 
     private func applyApps(
-        sourceID: SourceID? = nil,
+        sourceID sourceChange: SourceID?? = nil,
         patterns: [String]? = nil,
         enabled: Bool? = nil
     ) {
@@ -935,7 +935,7 @@ struct ConfigurationEntrancesView: View {
             do {
                 let document = try ConfigurationSplitPaths.applyAppPath(
                     to: model.configurationDocument,
-                    sourceID: sourceID ?? current.sourceID,
+                    sourceID: sourceChange ?? current.sourceID,
                     applicationPatterns: patterns ?? current.applicationPatterns,
                     enabled: enabled ?? current.enabled
                 )
