@@ -12,7 +12,7 @@ final class Hysteria2QUICSession: @unchecked Sendable {
     private var state = Hysteria2Session()
     private var frameDecoder = HTTP3FrameDecoder()
     private var fragmentReassembler = Hysteria2FragmentReassembler()
-    private var tcpResponseBuffer = Data()
+    private var tcpResponseDecoder = Hysteria2TCPResponseDecoder()
 
     init(connector: NativeHysteria2OutboundConnector, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.hysteria2-quic")) {
         self.connector = connector
@@ -238,8 +238,10 @@ final class Hysteria2QUICSession: @unchecked Sendable {
                         self.readTCPResponse(completion: completion)
                         return
                     }
-                    self.tcpResponseBuffer.append(data)
-                    let response = try Hysteria2Codec.decodeTCPResponse(self.tcpResponseBuffer)
+                    guard let response = try self.tcpResponseDecoder.append(data) else {
+                        self.readTCPResponse(completion: completion)
+                        return
+                    }
                     guard response.accepted else {
                         throw Hysteria2CodecError.serverRejected(response.message)
                     }
