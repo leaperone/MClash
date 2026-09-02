@@ -94,6 +94,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private var proxy: ProviderSOCKSConfiguration?
     private var proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration] = [:]
     private var dnsUpstreamMode: DNSUpstreamMode = .mihomo
+    private var nativeDNSRelays: [UUID: NativeDNSFlowRelay] = [:]
     private let backendProbeQueue = DispatchQueue(
         label: "one.leaper.mclash.dns-backend-probe"
     )
@@ -326,6 +327,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         proxy = nil
         proxyCatalog = [:]
         dnsUpstreamMode = .mihomo
+        let nativeDNSRelays = self.nativeDNSRelays.values
+        self.nativeDNSRelays = [:]
         flowDecisionCoordinator.quiesce()
         if let liveUpdaterToken {
             DNSProxyRuntimeRegistry.shared.unregisterLiveUpdater(liveUpdaterToken)
@@ -335,6 +338,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         timer?.cancel()
         cancelBackendProbeConfirmationTimer(confirmationTimer)
         probe?.cancel()
+        nativeDNSRelays.forEach { $0.cancel() }
         backendProbeQueue.async { [self] in
             pendingStartCompletion?.call(DNSProxyBootstrapError.cancelledDuringStartup)
             tcpRelays.cancelAll()
@@ -378,7 +382,16 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             transportProtocol: .tcp,
             proxyCatalog: runtimeState.proxyCatalog
         )
-        if route.bypassesMihomo {
+        if case let .native(endpoint) = route {
+            let relay = NativeDNSFlowRelay.startTCP(
+                flow: tcpFlow,
+                endpoint: endpoint,
+                completion: { [weak self] in self?.releaseNativeDNSRelay(identifier) }
+            )
+            backendProbeLock.lock()
+            nativeDNSRelays[identifier] = relay
+            backendProbeLock.unlock()
+        } else if route.bypassesMihomo {
             // Mihomo's own DNS egress must not be sent back through Mihomo's
             // SOCKS listener. Relay it from the provider process, whose own
             // sockets are outside the DNS interception path, to break the
@@ -623,6 +636,17 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             transportProtocol: .udp,
             proxyCatalog: runtimeState.proxyCatalog
         )
+        if case let .native(endpoint) = initialRoute {
+            let relay = NativeDNSFlowRelay.startUDP(
+                flow: flow,
+                endpoint: endpoint,
+                completion: { [weak self] in self?.releaseNativeDNSRelay(parentIdentifier) }
+            )
+            backendProbeLock.lock()
+            nativeDNSRelays[parentIdentifier] = relay
+            backendProbeLock.unlock()
+            return true
+        }
         let initialProxy = proxy(
             for: initialRoute,
             in: runtimeState.proxyCatalog
@@ -823,6 +847,12 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let snapshot = (reporter, proxy, proxyCatalog, dnsUpstreamMode)
         backendProbeLock.unlock()
         return snapshot
+    }
+
+    private func releaseNativeDNSRelay(_ identifier: UUID) {
+        backendProbeLock.lock()
+        nativeDNSRelays.removeValue(forKey: identifier)
+        backendProbeLock.unlock()
     }
 
     private func applyLiveBootstrap(
