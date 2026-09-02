@@ -192,6 +192,12 @@ enum NativeConnectorRegistryError: Error, Equatable, Sendable {
     case unsupportedProtocol(String)
 }
 
+enum NativeConnectorCapability: String, Equatable, Sendable {
+    case native
+    case legacyFallback
+    case unsupported
+}
+
 /// Central protocol dispatch for the native connector rollout. Keeping this
 /// table explicit prevents an unknown subscription protocol from silently
 /// being treated as a Mihomo route.
@@ -206,5 +212,9 @@ enum NativeConnectorRegistry {
         guard supports(target) else {
             throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
         }
+    }
+
+    static func capability(for target: OutboundNodeTarget) -> NativeConnectorCapability {
+        supports(target) ? .native : .unsupported
     }
 }

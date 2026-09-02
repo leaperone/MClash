@@ -115,5 +115,6 @@ struct OutboundConnectorTests {
         #expect(throws: NativeConnectorRegistryError.unsupportedProtocol("quic")) {
             try NativeConnectorRegistry.validate(target)
         }
+        #expect(NativeConnectorRegistry.capability(for: target) == .unsupported)
     }
 }
