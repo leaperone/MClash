@@ -329,27 +329,27 @@ public enum DestinationMatcher: Codable, Hashable, Sendable {
 }
 
 /// The routing mode requested within one explicitly identified profile.
-public enum MihomoProfileRoute: Codable, Hashable, Sendable {
+public enum OutboundProfileRoute: Codable, Hashable, Sendable {
     case rules
     case global
     case group(String)
 }
 
-public enum MihomoRoute: Codable, Hashable, Sendable {
+public enum OutboundRoute: Codable, Hashable, Sendable {
     /// Legacy targets resolve against the app's active/default profile.
     case profileRules
     case global
     case group(String)
     /// A complete multi-profile target. Both the profile and its routing mode
     /// participate in equality and hashing, so listener lookup is exact.
-    case profile(RoutingProfileID, target: MihomoProfileRoute)
+    case profile(RoutingProfileID, target: OutboundProfileRoute)
 
     public var routingProfileID: RoutingProfileID? {
         guard case let .profile(profileID, _) = self else { return nil }
         return profileID
     }
 
-    public var profileRoute: MihomoProfileRoute {
+    public var profileRoute: OutboundProfileRoute {
         switch self {
         case .profileRules:
             .rules
@@ -377,6 +377,11 @@ public enum MihomoRoute: Codable, Hashable, Sendable {
         }
     }
 }
+
+/// Compatibility aliases retained while older persisted snapshots and helper
+/// clients migrate to the connector-neutral route vocabulary.
+public typealias MihomoRoute = OutboundRoute
+public typealias MihomoProfileRoute = OutboundProfileRoute
 
 private extension MihomoProfileRoute {
     var stableSortKey: String {
