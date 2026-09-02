@@ -28,6 +28,29 @@ enum MClashInboundRoute: Equatable, Sendable {
 /// future native connector.
 protocol MClashInboundOutboundConnector: Sendable {
     func connect(to destination: MClashInboundDestination, route: MClashInboundRoute) -> NWConnection
+
+    /// Completes any protocol handshake required by the selected outbound
+    /// transport. The completion must only succeed once the upstream is ready
+    /// to carry application bytes. The default is used by DIRECT and test
+    /// connectors which have no transport preamble.
+    func establish(
+        _ connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute,
+        completion: @escaping @Sendable (Error?) -> Void
+    )
+}
+
+extension MClashInboundOutboundConnector {
+    func establish(
+        _ connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        _ = connection; _ = destination; _ = route
+        completion(nil)
+    }
 }
 
 /// Minimal HTTP CONNECT/SOCKS5 TCP server owned by MClash.  It deliberately
@@ -150,10 +173,17 @@ final class MClashInboundListener: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
-                client.send(content: response, completion: .contentProcessed { error in
+                self.connector.establish(
+                    upstream,
+                    to: destination,
+                    route: decision
+                ) { error in
                     guard error == nil else { client.cancel(); upstream.cancel(); return }
-                    self.bridge(client, upstream)
-                })
+                    client.send(content: response, completion: .contentProcessed { error in
+                        guard error == nil else { client.cancel(); upstream.cancel(); return }
+                        self.bridge(client, upstream)
+                    })
+                }
             case .failed, .cancelled:
                 client.cancel()
             default:

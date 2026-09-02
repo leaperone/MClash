@@ -84,17 +84,16 @@ final class NativeInboundListenerManager: @unchecked Sendable {
                         protocolName: target.protocolName
                     )
                 }
-                // Native inbound listeners need a connector that owns the
-                // complete protocol handshake. The current catalog adapter
-                // only resolves endpoint material; it must not open a raw
-                // TCP socket for SOCKS5/HTTP/VLESS/Trojan/SS (that would send
-                // application bytes in the wrong protocol and look like a
-                // successful Direct fallback). Keep this entrance disabled
-                // until an inbound-aware connector is wired for the target.
-                throw NativeInboundListenerConfigurationError.unsupportedOutboundTransport(
-                    route: route,
-                    protocolName: target.protocolName
-                )
+                // This listener currently has an inbound-aware handshake only
+                // for SOCKS5 node targets. Every other protocol remains
+                // fail-closed: opening a raw endpoint would leak application
+                // bytes in the wrong wire format and look like Direct.
+                guard target.protocolName == "socks5" else {
+                    throw NativeInboundListenerConfigurationError.unsupportedOutboundTransport(
+                        route: route,
+                        protocolName: target.protocolName
+                    )
+                }
             }
             let kind: MClashInboundListener.Kind?
             switch spec.kind {
@@ -215,4 +214,142 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
             using: .tcp
         )
     }
+
+    func establish(
+        _ connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        guard case let .proxy(routeKey) = route,
+              let entry = catalog.entries.first(where: { $0.route.stableSortKey == routeKey }),
+              entry.target.protocolName == "socks5"
+        else {
+            completion(NativeInboundSOCKS5HandshakeError.invalidRoute)
+            connection.cancel()
+            return
+        }
+
+        let target = entry.target
+        let username = target.parameters["username"] ?? target.parameters["user"]
+        let password = target.parameters["password"] ?? target.parameters["pass"]
+        let needsCredentials = username != nil || password != nil
+
+        do {
+            let methods: [SOCKS5AuthenticationMethod] = needsCredentials
+                ? [.usernamePassword]
+                : [.noAuthenticationRequired]
+            try send(Data(try SOCKS5Codec.encodeGreeting(methods: methods)), on: connection) { error in
+                guard error == nil else { completion(error); return }
+                self.receiveExact(2, from: connection, buffer: Data()) { methodData, error in
+                    if let error { completion(error); return }
+                    do {
+                        let selected = try SOCKS5Codec.decodeMethodSelection(methodData)
+                        guard selected.method == (needsCredentials ? .usernamePassword : .noAuthenticationRequired) else {
+                            throw NativeInboundSOCKS5HandshakeError.serverSelectedUnexpectedMethod(selected.method.rawValue)
+                        }
+                        if needsCredentials {
+                            guard let username, let password else { throw NativeInboundSOCKS5HandshakeError.missingCredentials }
+                            let credentials = try SOCKS5UsernamePasswordCredentials(username: username, password: password)
+                            try self.send(
+                                SOCKS5Codec.encodeUsernamePasswordRequest(credentials: credentials),
+                                on: connection
+                            ) { error in
+                                guard error == nil else { completion(error); return }
+                                self.receiveExact(2, from: connection, buffer: Data()) { authData, error in
+                                    do {
+                                        if let error { throw error }
+                                        try SOCKS5Codec.decodeUsernamePasswordResponse(authData).requireSuccess()
+                                        try self.sendCommand(destination, on: connection, completion: completion)
+                                    } catch { completion(error); connection.cancel() }
+                                }
+                            }
+                        } else {
+                            try self.sendCommand(destination, on: connection, completion: completion)
+                        }
+                    } catch { completion(error); connection.cancel() }
+                }
+            }
+        } catch { completion(error); connection.cancel() }
+    }
+
+    private func send(
+        _ data: Data,
+        on connection: NWConnection,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) throws {
+        connection.send(content: data, completion: .contentProcessed(completion))
+    }
+
+    private func sendCommand(
+        _ destination: MClashInboundDestination,
+        on connection: NWConnection,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) throws {
+        let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
+        let request = try SOCKS5CommandRequest(command: .connect, endpoint: endpoint)
+        try send(SOCKS5Codec.encodeCommandRequest(request), on: connection) { [weak self, weak connection] error in
+            guard let self, let connection else { completion(error); return }
+            guard error == nil else { completion(error); return }
+            self.receiveReply(from: connection, buffer: Data(), completion: completion)
+        }
+    }
+
+    private func receiveExact(
+        _ count: Int,
+        from connection: NWConnection?,
+        buffer: Data,
+        completion: @escaping @Sendable (Data, Error?) -> Void
+    ) {
+        guard let connection else {
+            completion(buffer, NativeInboundSOCKS5HandshakeError.connectionUnavailable)
+            return
+        }
+        connection.receive(minimumIncompleteLength: max(1, count - buffer.count), maximumLength: count - buffer.count) { [weak self, weak connection] data, _, complete, error in
+            var next = buffer
+            if let data { next.append(data) }
+            if let error { completion(next, error); return }
+            if next.count >= count { completion(Data(next.prefix(count)), nil); return }
+            if complete { completion(next, NativeInboundSOCKS5HandshakeError.truncatedResponse); return }
+            self?.receiveExact(count, from: connection, buffer: next, completion: completion)
+        }
+    }
+
+    private func receiveReply(
+        from connection: NWConnection,
+        buffer: Data,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: SOCKS5Limits.maximumStreamInputBytes) { [weak self, weak connection] data, _, complete, error in
+            var next = buffer
+            if let data { next.append(data) }
+            do {
+                guard let length = try SOCKS5Codec.commandReplyFrameLength(Array(next)) else {
+                    if complete { throw NativeInboundSOCKS5HandshakeError.truncatedResponse }
+                    guard let self, let connection else { throw NativeInboundSOCKS5HandshakeError.connectionUnavailable }
+                    self.receiveReply(from: connection, buffer: next, completion: completion)
+                    return
+                }
+                guard next.count >= length else {
+                    if complete { throw NativeInboundSOCKS5HandshakeError.truncatedResponse }
+                    guard let self, let connection else { throw NativeInboundSOCKS5HandshakeError.connectionUnavailable }
+                    self.receiveReply(from: connection, buffer: next, completion: completion)
+                    return
+                }
+                try SOCKS5Codec.decodeCommandReply(Data(next.prefix(length))).requireSuccess()
+                completion(nil)
+            } catch {
+                completion(error)
+                connection?.cancel()
+            }
+        }
+    }
+}
+
+enum NativeInboundSOCKS5HandshakeError: Error, Equatable, Sendable {
+    case invalidRoute
+    case missingCredentials
+    case serverSelectedUnexpectedMethod(UInt8)
+    case truncatedResponse
+    case connectionUnavailable
 }
