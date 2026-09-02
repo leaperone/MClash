@@ -141,4 +141,12 @@ struct OutboundConnectorTests {
             #expect(NativeConnectorRegistry.kind(for: target)?.rawValue == name)
         }
     }
+
+    @Test("Factory descriptors preserve native protocol and target material")
+    func registryDescriptor() throws {
+        let target = try OutboundNodeTarget(protocolName: "vless", host: "node.example.com", port: 443)
+        let descriptor = try NativeConnectorRegistry.descriptor(for: target)
+        #expect(descriptor.kind == .vless)
+        #expect(descriptor.target == target)
+    }
 }

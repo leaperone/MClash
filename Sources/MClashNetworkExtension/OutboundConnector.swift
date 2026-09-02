@@ -270,6 +270,13 @@ enum NativeConnectorRegistry {
         NativeConnectorKind(rawValue: target.protocolName)
     }
 
+    static func descriptor(for target: OutboundNodeTarget) throws -> NativeConnectorDescriptor {
+        guard let kind = kind(for: target) else {
+            throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
+        }
+        return NativeConnectorDescriptor(kind: kind, target: target)
+    }
+
     static func validateForProduction(_ target: OutboundNodeTarget) throws {
         guard let kind = kind(for: target) else {
             throw NativeConnectorRegistryError.unsupportedProtocol(target.protocolName)
@@ -279,4 +286,9 @@ enum NativeConnectorRegistry {
             break
         }
     }
+}
+
+struct NativeConnectorDescriptor: Equatable, Sendable {
+    let kind: NativeConnectorKind
+    let target: OutboundNodeTarget
 }
