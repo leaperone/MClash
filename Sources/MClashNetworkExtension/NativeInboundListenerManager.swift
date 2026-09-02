@@ -94,7 +94,9 @@ final class NativeInboundListenerManager: @unchecked Sendable {
                         protocolName: target.protocolName
                     )
                 }
+                resolvedRoute = .proxy(route.stableSortKey)
             }
+            let routeForListener = resolvedRoute
             let kind: MClashInboundListener.Kind?
             switch spec.kind {
             case .http: kind = .httpConnect
@@ -105,16 +107,16 @@ final class NativeInboundListenerManager: @unchecked Sendable {
             let listener = try MClashInboundListener(
                 kind: kind,
                 port: port,
-                route: { [routeResolver] destination in
+                route: { [routeResolver, routeForListener] destination in
                     // The catalog check above is performed transactionally
                     // during configure. The resolver still owns destination
                     // policy (for example future domain restrictions), but a
                     // proxy route can only be the exact selected route.
-                    switch resolvedRoute {
+                    switch routeForListener {
                     case .direct, .reject:
                         return routeResolver(spec, destination)
                     case .proxy:
-                        return resolvedRoute
+                        return routeForListener
                     }
                 },
                 connector: activeConnector,
@@ -288,8 +290,8 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
     ) throws {
         let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
         let request = try SOCKS5CommandRequest(command: .connect, endpoint: endpoint)
-        try send(SOCKS5Codec.encodeCommandRequest(request), on: connection) { [weak self, weak connection] error in
-            guard let self, let connection else { completion(error); return }
+        try send(SOCKS5Codec.encodeCommandRequest(request), on: connection) { [weak connection] error in
+            guard let connection else { completion(error); return }
             guard error == nil else { completion(error); return }
             self.receiveReply(from: connection, buffer: Data(), completion: completion)
         }
@@ -305,13 +307,13 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
             completion(buffer, NativeInboundSOCKS5HandshakeError.connectionUnavailable)
             return
         }
-        connection.receive(minimumIncompleteLength: max(1, count - buffer.count), maximumLength: count - buffer.count) { [weak self, weak connection] data, _, complete, error in
+        connection.receive(minimumIncompleteLength: max(1, count - buffer.count), maximumLength: count - buffer.count) { [weak connection] data, _, complete, error in
             var next = buffer
             if let data { next.append(data) }
             if let error { completion(next, error); return }
             if next.count >= count { completion(Data(next.prefix(count)), nil); return }
             if complete { completion(next, NativeInboundSOCKS5HandshakeError.truncatedResponse); return }
-            self?.receiveExact(count, from: connection, buffer: next, completion: completion)
+            self.receiveExact(count, from: connection, buffer: next, completion: completion)
         }
     }
 
@@ -320,19 +322,21 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
         buffer: Data,
         completion: @escaping @Sendable (Error?) -> Void
     ) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: SOCKS5Limits.maximumStreamInputBytes) { [weak self, weak connection] data, _, complete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: SOCKS5Limits.maximumStreamInputBytes) { [weak connection] data, _, complete, error in
+            guard let connection else {
+                completion(NativeInboundSOCKS5HandshakeError.connectionUnavailable)
+                return
+            }
             var next = buffer
             if let data { next.append(data) }
             do {
                 guard let length = try SOCKS5Codec.commandReplyFrameLength(Array(next)) else {
                     if complete { throw NativeInboundSOCKS5HandshakeError.truncatedResponse }
-                    guard let self, let connection else { throw NativeInboundSOCKS5HandshakeError.connectionUnavailable }
                     self.receiveReply(from: connection, buffer: next, completion: completion)
                     return
                 }
                 guard next.count >= length else {
                     if complete { throw NativeInboundSOCKS5HandshakeError.truncatedResponse }
-                    guard let self, let connection else { throw NativeInboundSOCKS5HandshakeError.connectionUnavailable }
                     self.receiveReply(from: connection, buffer: next, completion: completion)
                     return
                 }
@@ -340,7 +344,7 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
                 completion(nil)
             } catch {
                 completion(error)
-                connection?.cancel()
+                connection.cancel()
             }
         }
     }

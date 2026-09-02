@@ -421,7 +421,7 @@ public enum SOCKS5Codec: Sendable {
         return SOCKS5UsernamePasswordResponse(status: bytes[1])
     }
 
-    static func commandReplyFrameLength(_ bytes: [UInt8]) throws -> Int? {
+    public static func commandReplyFrameLength(_ bytes: [UInt8]) throws -> Int? {
         if let first = bytes.first, first != version {
             throw SOCKS5CodecError.invalidVersion(first)
         }
