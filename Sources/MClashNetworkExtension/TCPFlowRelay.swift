@@ -160,6 +160,8 @@ final class TCPFlowRelay: @unchecked Sendable {
             relayLocalPort = Self.localPort(of: connection)
             if usesSOCKS5Handshake {
                 beginSOCKSHandshake()
+            } else if let responseHandshake = outboundConnector as? any OutboundResponseHandshake {
+                beginResponseHandshake(responseHandshake)
             } else if let streamCodec {
                 do {
                     let destinationPayload = try streamCodec.encodeDestination()
@@ -325,6 +327,71 @@ final class TCPFlowRelay: @unchecked Sendable {
                 self.finish(error: TCPFlowRelayError.upstreamClosedDuringHandshake)
             } else {
                 self.receiveHandshakeChunk(consume)
+            }
+        }
+    }
+
+    /// Sends a connector's initial request and gates flow opening on a
+    /// complete, bounded response. HTTP CONNECT is the first user of this
+    /// path: successful send completion only means bytes reached the socket.
+    private func beginResponseHandshake(_ handshake: any OutboundResponseHandshake) {
+        do {
+            let request = try handshake.responseHandshake(for: destination)
+            try send(request) { [weak self] in
+                self?.receiveResponseHandshake(handshake, buffer: Data())
+            }
+        } catch {
+            finish(error: error)
+        }
+    }
+
+    private func receiveResponseHandshake(
+        _ handshake: any OutboundResponseHandshake,
+        buffer: Data
+    ) {
+        guard let connection else {
+            finish(error: TCPFlowRelayError.upstreamClosedDuringHandshake)
+            return
+        }
+        connection.receive(
+            minimumIncompleteLength: 1,
+            maximumLength: max(1, HTTPProxyCodec.maximumHeaderBytes - buffer.count)
+        ) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            self.queue.async {
+                if let error {
+                    self.finish(error: TCPFlowRelayError.upstreamFailed(
+                        error.localizedDescription
+                    ))
+                    return
+                }
+                var nextBuffer = buffer
+                if let data, !data.isEmpty { nextBuffer.append(data) }
+                guard nextBuffer.count <= HTTPProxyCodec.maximumHeaderBytes else {
+                    self.finish(error: TCPFlowRelayError.upstreamFailed(
+                        "The outbound proxy response exceeded the 16 KiB header limit."
+                    ))
+                    return
+                }
+                let terminator = Data("\r\n\r\n".utf8)
+                if let end = nextBuffer.range(of: terminator) {
+                    do {
+                        // Validate only the response header. Bytes after it
+                        // are tunnel data and must reach the app flow.
+                        try handshake.validateResponse(Data(nextBuffer[..<end.upperBound]))
+                        self.handshakeTimeout?.cancel()
+                        self.handshakeTimeout = nil
+                        self.openFlow(initialUpstreamPayload: Data(nextBuffer[end.upperBound...]))
+                    } catch {
+                        self.finish(error: error)
+                    }
+                    return
+                }
+                if isComplete {
+                    self.finish(error: TCPFlowRelayError.upstreamClosedDuringHandshake)
+                } else {
+                    self.receiveResponseHandshake(handshake, buffer: nextBuffer)
+                }
             }
         }
     }

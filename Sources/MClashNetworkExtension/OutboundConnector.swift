@@ -16,6 +16,16 @@ protocol OutboundConnector: Sendable {
     func makeStreamCodec(for destination: SOCKS5Endpoint) throws -> (any NativeStreamCodec)?
 }
 
+/// A connector whose initial request is not self-authenticating from the
+/// client's point of view.  The relay must validate the peer's response
+/// before opening the intercepted application flow.  Keeping this separate
+/// from `OutboundConnector` makes the response gate explicit and prevents a
+/// future connector from accidentally opening on `send` completion alone.
+protocol OutboundResponseHandshake: Sendable {
+    func responseHandshake(for destination: SOCKS5Endpoint) throws -> Data
+    func validateResponse(_ response: Data) throws
+}
+
 extension OutboundConnector {
     func makeStreamCodec(for _: SOCKS5Endpoint) throws -> (any NativeStreamCodec)? { nil }
 }
@@ -129,10 +139,14 @@ struct NativeVLESSOutboundConnector: Sendable {
         if target.parameters["network"]?.lowercased() == "ws" {
             let websocket = NWProtocolWebSocket.Options()
             websocket.autoReplyPing = true
-            var headers: [(name: String, value: String)] = []
-            if let rawHost = target.parameters["ws-host"] {
-                headers.append((name: "Host", value: rawHost))
-            }
+            // NWProtocolWebSocket exposes additional handshake headers, but
+            // does not expose the HTTP upgrade path.  Keep this constructor
+            // useful for diagnostics/tests while the registry continues to
+            // report WS as legacyFallback; otherwise a /path node could be
+            // silently connected to the wrong endpoint (usually "/").
+            let options = target.vlessWebSocketOptions
+            let headers = options?.headers.map { (name: $0.key, value: $0.value) }
+                ?? (target.parameters["ws-host"].map { [(name: "Host", value: $0)] } ?? [])
             if !headers.isEmpty { websocket.setAdditionalHeaders(headers) }
             parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
         }
@@ -265,11 +279,19 @@ struct NativeHTTPConnectOutboundConnector: Sendable {
     }
 }
 
-struct NativeHTTPConnectRelayConnector: OutboundConnector {
+struct NativeHTTPConnectRelayConnector: OutboundConnector, OutboundResponseHandshake {
     let target: OutboundNodeTarget
 
     func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
         NativeHTTPConnectOutboundConnector(target: target).makeConnection()
+    }
+
+    func responseHandshake(for destination: SOCKS5Endpoint) throws -> Data {
+        try NativeHTTPConnectOutboundConnector(target: target).handshake(for: destination)
+    }
+
+    func validateResponse(_ response: Data) throws {
+        _ = try NativeHTTPConnectOutboundConnector(target: target).validate(response: response)
     }
 }
 
@@ -388,9 +410,9 @@ enum NativeConnectorRegistry {
         guard supports(target) else { return false }
         switch target.protocolName {
         case "http":
-            // Requires a response-aware handshake gate in TCPFlowRelay.
-            // Keep this on compatibility fallback until that is integrated.
-            return false
+            // CONNECT is native only when TCPFlowRelay consumes and validates
+            // the complete 2xx response before opening the app flow.
+            return true
         case "socks5":
             return true
         case "shadowsocks":
@@ -491,9 +513,7 @@ enum NativeConnectorRegistry {
         }
         switch kind {
         case .http:
-            throw NativeConnectorRegistryError.unsupportedProtocol(
-                "http CONNECT response validation is not integrated"
-            )
+            break
         case .socks5, .shadowsocks:
             break
         case .vless, .trojan:
@@ -527,8 +547,11 @@ enum NativeConnectorFactory {
         try NativeConnectorRegistry.validateForProduction(target)
         switch NativeConnectorRegistry.kind(for: target) {
         case .http:
-            throw NativeConnectorRegistryError.unsupportedProtocol(
-                "http CONNECT response validation is not integrated"
+            let connector = NativeHTTPConnectOutboundConnector(target: target)
+            return NativeTCPConnectionPlan(
+                connection: connector.makeConnection(),
+                initialPayload: try connector.handshake(for: destination),
+                usesSOCKS5Handshake: false
             )
         case .socks5:
             return NativeTCPConnectionPlan(

@@ -165,13 +165,17 @@ struct OutboundConnectorTests {
         ) == 200)
     }
 
-    @Test("HTTP CONNECT remains compatibility fallback until response gate is wired")
-    func httpConnectIsNotMisclassifiedAsNative() throws {
+    @Test("HTTP CONNECT is native only through the response-aware relay gate")
+    func httpConnectUsesNativeResponseGate() throws {
         let target = try OutboundNodeTarget(protocolName: "http", host: "proxy.example.com", port: 8080)
         #expect(NativeConnectorRegistry.supports(target))
         #expect(NativeConnectorRegistry.kind(for: target) == .http)
-        #expect(!NativeConnectorRegistry.supportsNativeTCP(target))
-        #expect(NativeConnectorRegistry.capability(for: target) == .legacyFallback)
+        #expect(NativeConnectorRegistry.supportsNativeTCP(target))
+        #expect(NativeConnectorRegistry.capability(for: target) == .native)
+        let connector = NativeHTTPConnectRelayConnector(target: target)
+        let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
+        try connector.validateResponse(Data("HTTP/1.1 204 No Content\r\n\r\n".utf8))
+        #expect(try connector.responseHandshake(for: destination).starts(with: Data("CONNECT ".utf8)))
     }
 
     @Test("Native connector registry rejects unknown subscription protocols")
