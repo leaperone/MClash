@@ -282,14 +282,64 @@ enum NativeConnectorRegistry {
             return true
         case "vless":
             let network = target.parameters["network"]?.lowercased() ?? "tcp"
-            let reality = target.parameters["reality"]?.lowercased() == "true"
-            return network == "tcp" && !reality
+            return network == "tcp" && !hasUnsupportedRealityOrXTLSParameters(target.parameters)
         case "trojan":
             let network = target.parameters["network"]?.lowercased() ?? "tcp"
             return network == "tcp"
         default:
             return false
         }
+    }
+
+    /// Native VLESS currently implements plain TCP only. Reality and XTLS
+    /// material is commonly flattened into the imported node's string
+    /// parameters (rather than represented by a single `reality: true`
+    /// switch), so checking only that switch can incorrectly route these
+    /// nodes through the incomplete native connector. Keep every such node
+    /// on the compatibility path until the corresponding handshake is
+    /// implemented and verified.
+    private static func hasUnsupportedRealityOrXTLSParameters(
+        _ parameters: [String: String]
+    ) -> Bool {
+        let normalized = Dictionary(
+            parameters.map { key, value in
+                (key.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                    .replacingOccurrences(of: "_", with: "-"), value)
+            }, uniquingKeysWith: { first, _ in first }
+        )
+
+        // The importer preserves reality-opts as a JSON string. Presence of
+        // the field is enough—even `{}` is an explicit transport selection.
+        if normalized.keys.contains(where: { $0 == "reality-opts" || $0 == "reality-options" }) {
+            return true
+        }
+
+        if let reality = normalized["reality"],
+           ["true", "yes", "1", "on"].contains(reality.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
+            return true
+        }
+
+        if let xtls = normalized["xtls"],
+           ["true", "yes", "1", "on"].contains(xtls.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
+            return true
+        }
+
+        // XTLS flow values are not supported by the native TCP connector.
+        // Treat any non-empty flow as unsupported: this is safer for future
+        // XTLS variants than allow-listing one spelling.
+        if let flow = normalized["flow"], !flow.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+
+        // Some importers expose Reality's fields individually. Requiring the
+        // characteristic pair avoids classifying an unrelated public-key
+        // parameter as Reality while still covering flattened subscriptions.
+        let security = normalized["security"]?.lowercased()
+        let hasRealityKeyMaterial = normalized["public-key"] != nil
+            || normalized["short-id"] != nil
+            || normalized["server-name"] != nil && security == "reality"
+        return security == "reality" || hasRealityKeyMaterial
     }
 
     static func validate(_ target: OutboundNodeTarget) throws {

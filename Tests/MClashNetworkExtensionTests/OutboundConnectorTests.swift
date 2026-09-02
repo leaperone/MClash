@@ -165,6 +165,39 @@ struct OutboundConnectorTests {
         #expect(NativeConnectorRegistry.capability(for: reality) == .legacyFallback)
     }
 
+    @Test("Native VLESS excludes imported Reality and XTLS parameter shapes")
+    func nativeVLESSRejectsImportedRealityAndXTLSShapes() throws {
+        let importedReality = try OutboundNodeTarget(
+            protocolName: "vless", host: "reality.example.com", port: 443,
+            parameters: [
+                "uuid": "00000000-0000-0000-0000-000000000001",
+                "network": "tcp",
+                "reality-opts": #"{"public-key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short-id":"01234567"}"#,
+            ]
+        )
+        let importedVision = try OutboundNodeTarget(
+            protocolName: "vless", host: "vision.example.com", port: 443,
+            parameters: [
+                "uuid": "00000000-0000-0000-0000-000000000001",
+                "flow": "xtls-rprx-vision",
+            ]
+        )
+        let flattenedReality = try OutboundNodeTarget(
+            protocolName: "vless", host: "flattened.example.com", port: 443,
+            parameters: [
+                "uuid": "00000000-0000-0000-0000-000000000001",
+                "security": "reality",
+                "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "short_id": "01234567",
+            ]
+        )
+
+        for target in [importedReality, importedVision, flattenedReality] {
+            #expect(!NativeConnectorRegistry.supportsNativeTCP(target))
+            #expect(NativeConnectorRegistry.capability(for: target) == .legacyFallback)
+        }
+    }
+
     @Test("Factory descriptors preserve native protocol and target material")
     func registryDescriptor() throws {
         let target = try OutboundNodeTarget(protocolName: "vless", host: "node.example.com", port: 443)
