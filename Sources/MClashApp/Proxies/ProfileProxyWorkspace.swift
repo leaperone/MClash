@@ -124,10 +124,46 @@ struct ProfileProxyWorkspaceSnapshotBuilder: Sendable {
     }
 }
 
+/// Connector-neutral read/write seam for a profile's controller-backed
+/// workspace. The UI and workspace orchestration depend on this contract
+/// rather than a particular core implementation. Mihomo is currently the
+/// adapter behind it; a native controller can implement the same contract
+/// without changing the presentation layer.
+protocol ProfileProxyControllerClient: Sendable {
+    func fetchConfig() async throws -> MihomoConfig
+    func fetchProxies() async throws -> MihomoProxyCollection
+    func selectProxy(group: String, proxy: String) async throws
+    func clearProxyOverride(group: String) async throws
+    func patchConfig(_ patch: MihomoConfigPatch) async throws
+    func closeAllConnections() async throws
+    func measureDelay(
+        proxy: String,
+        targetURL: URL,
+        timeoutMilliseconds: Int,
+        expectedStatus: String?
+    ) async throws -> Int
+}
+
+extension ProfileProxyControllerClient {
+    func measureDelay(
+        proxy: String,
+        targetURL: URL,
+        timeoutMilliseconds: Int = 5_000,
+        expectedStatus: String? = nil
+    ) async throws -> Int {
+        try await measureDelay(
+            proxy: proxy,
+            targetURL: targetURL,
+            timeoutMilliseconds: timeoutMilliseconds,
+            expectedStatus: expectedStatus
+        )
+    }
+}
+
 /// Internal seam used by model tests. Production resolution always inspects
 /// the existing primary controller or the already-running auxiliary fleet.
 enum ProfileProxyControllerResolution: Sendable {
-    case available(MihomoAPIClient)
+    case available(any ProfileProxyControllerClient)
     case unavailable(ProfileProxyWorkspaceUnavailability)
 }
 

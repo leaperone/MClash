@@ -6391,6 +6391,7 @@ final class AppModel {
             let delay = try await client.measureDelay(
                 proxy: proxy,
                 targetURL: target,
+                timeoutMilliseconds: 5_000,
                 expectedStatus: expectedDelayStatus(
                     forProxy: proxy,
                     group: group,
@@ -6455,6 +6456,7 @@ final class AppModel {
                         let delay = try? await client.measureDelay(
                             proxy: proxy,
                             targetURL: target,
+                            timeoutMilliseconds: 5_000,
                             expectedStatus: expectedStatus
                         )
                         return (proxy, delay)
@@ -9380,7 +9382,7 @@ final class AppModel {
     private func profileProxyOperationContext(
         for profileID: ProfileID
     ) async -> (
-        client: MihomoAPIClient,
+        client: any ProfileProxyControllerClient,
         snapshot: ProfileProxyWorkspaceSnapshot
     )? {
         var snapshot = profileProxyWorkspaceState(for: profileID).snapshot
@@ -9514,7 +9516,7 @@ final class AppModel {
     }
 
     private func closeProfileConnectionsAfterRoutingChange(
-        using client: MihomoAPIClient,
+        using client: any ProfileProxyControllerClient,
         profileID: ProfileID
     ) async {
         guard closeConnectionsOnRoutingChange else { return }
