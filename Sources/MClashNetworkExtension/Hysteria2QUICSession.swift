@@ -131,11 +131,44 @@ final class Hysteria2QUICSession: @unchecked Sendable {
             do {
                 let request = try self.connector.tcpRequest(for: destination, padding: padding)
                 connection.send(content: request, completion: .contentProcessed { error in
-                    if let error { completion(.failure(error)) }
-                    else { completion(.success(())) }
+                    if let error {
+                        completion(.failure(error))
+                    } else {
+                        self.readTCPResponse(completion: completion)
+                    }
                 })
             } catch {
                 completion(.failure(error))
+            }
+        }
+    }
+
+    private func readTCPResponse(
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+    ) {
+        guard let connection else { return }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            self.queue.async {
+                if let error {
+                    completion(.failure(error))
+                    return
+                }
+                do {
+                    guard let data, !data.isEmpty else {
+                        if isComplete { throw Hysteria2CodecError.invalidResponse }
+                        self.readTCPResponse(completion: completion)
+                        return
+                    }
+                    let response = try Hysteria2Codec.decodeTCPResponse(data)
+                    guard response.accepted else {
+                        throw Hysteria2CodecError.serverRejected(response.message)
+                    }
+                    completion(.success(()))
+                } catch {
+                    self.state.fail(error.localizedDescription)
+                    completion(.failure(error))
+                }
             }
         }
     }
