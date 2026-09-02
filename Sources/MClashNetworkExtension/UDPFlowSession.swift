@@ -18,6 +18,8 @@ enum UDPFlowSessionError: Error, LocalizedError, Sendable {
     case directConnectionFailed(String)
     case mihomoSetupFailed(String)
     case mihomoRelayFailed(String)
+    case nativeSOCKS5SetupFailed(String)
+    case nativeSOCKS5RelayFailed(String)
     case incompleteDatagram
 
     var errorDescription: String? {
@@ -50,6 +52,10 @@ enum UDPFlowSessionError: Error, LocalizedError, Sendable {
             "The local Mihomo SOCKS5 UDP association failed before payload forwarding: \(message)"
         case let .mihomoRelayFailed(message):
             "The Mihomo UDP relay failed: \(message)"
+        case let .nativeSOCKS5SetupFailed(message):
+            "The native SOCKS5 UDP association failed: \(message)"
+        case let .nativeSOCKS5RelayFailed(message):
+            "The native SOCKS5 UDP relay failed: \(message)"
         case .incompleteDatagram:
             "An upstream UDP connection returned an incomplete datagram."
         }
@@ -328,6 +334,25 @@ final class UDPFlowSession: @unchecked Sendable {
                 "UDP destination \(Self.description(record.key.destination)) was rejected by App Routing."
             )
         case .mihomo:
+            if let target = record.plan.nativeTarget {
+                guard let destination = record.plan.initialDestination else {
+                    throw UDPFlowSessionError.unsupportedDestination
+                }
+                let conversation = SOCKS5UDPConversation(
+                    queue: queue,
+                    activityIdentifier: activity.flowIdentifier,
+                    endpoint: destination,
+                    upstream: .native(target),
+                    observer: observerFactory(activity.flowIdentifier),
+                    ready: conversationReady,
+                    response: conversationResponse,
+                    failure: conversationFailed
+                )
+                record.conversation = conversation
+                recordKeyByConversationID[conversation.id] = record.key
+                conversation.start()
+                return
+            }
             guard let proxy = record.plan.proxy else {
                 switch record.plan.unavailableFallback {
                 case .direct:
@@ -349,11 +374,11 @@ final class UDPFlowSession: @unchecked Sendable {
             guard let mihomoDestination = record.plan.mihomoDestination else {
                 throw UDPFlowSessionError.unsupportedDestination
             }
-            let conversation = MihomoUDPConversation(
+            let conversation = SOCKS5UDPConversation(
                 queue: queue,
                 activityIdentifier: activity.flowIdentifier,
                 endpoint: mihomoDestination,
-                proxy: proxy,
+                upstream: .mihomo(proxy),
                 observer: observerFactory(activity.flowIdentifier),
                 ready: conversationReady,
                 response: conversationResponse,
@@ -447,7 +472,7 @@ final class UDPFlowSession: @unchecked Sendable {
                     self.finish(error: error)
                     return
                 }
-                if record.conversation is MihomoUDPConversation {
+                if record.conversation is SOCKS5UDPConversation {
                     record.mihomoPayloadForwarded = true
                 }
                 record.pendingPayloads[record.pendingPayloads.startIndex] = nil
@@ -508,7 +533,8 @@ final class UDPFlowSession: @unchecked Sendable {
     ) {
         guard let record = record(forConversation: identifier) else { return }
         if stage == .setup,
-           record.conversation is MihomoUDPConversation,
+           record.conversation is SOCKS5UDPConversation,
+           record.plan.nativeTarget == nil,
            !record.mihomoPayloadForwarded,
            record.plan.unavailableFallback == .direct {
             record.conversation?.stop(error: nil, reportTerminal: false)
@@ -816,16 +842,47 @@ private final class DirectUDPConversation: UDPConversation, @unchecked Sendable 
     }
 }
 
-/// One SOCKS5 UDP association per destination. This prevents Mihomo's UDP NAT
+private enum SOCKS5UDPUpstream: Sendable {
+    case mihomo(ProviderSOCKSConfiguration)
+    case native(OutboundNodeTarget)
+
+    var host: NWEndpoint.Host {
+        switch self {
+        case let .mihomo(proxy): proxy.networkHost
+        case let .native(target): NWEndpoint.Host(target.host)
+        }
+    }
+
+    var port: NWEndpoint.Port {
+        switch self {
+        case let .mihomo(proxy): proxy.networkPort
+        case let .native(target): NWEndpoint.Port(rawValue: target.port)!
+        }
+    }
+
+    var credentials: SOCKS5UsernamePasswordCredentials? {
+        if case let .mihomo(proxy) = self { return proxy.credentials }
+        return nil
+    }
+
+    var errorPrefix: String {
+        switch self {
+        case .mihomo: "Mihomo"
+        case .native: "Native SOCKS5"
+        }
+    }
+}
+
+/// One SOCKS5 UDP association per destination. This prevents an upstream's UDP NAT
 /// mapping and route evidence from conflating several destinations that came
 /// from the same application socket.
-private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable {
+private final class SOCKS5UDPConversation: UDPConversation, @unchecked Sendable {
     let id = UUID()
     let activityIdentifier: UUID
     let endpoint: SOCKS5Endpoint
 
     private let queue: DispatchQueue
-    private let proxy: ProviderSOCKSConfiguration
+    private let upstream: SOCKS5UDPUpstream
     private let reporter: AppRoutingRelayActivityReporter
     private let readyCallback: @Sendable (UUID) -> Void
     private let responseCallback: @Sendable (UUID, UDPFlowDatagram) -> Void
@@ -851,7 +908,7 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         queue: DispatchQueue,
         activityIdentifier: UUID,
         endpoint: SOCKS5Endpoint,
-        proxy: ProviderSOCKSConfiguration,
+        upstream: SOCKS5UDPUpstream,
         observer: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
         ready: @escaping @Sendable (UUID) -> Void,
         response: @escaping @Sendable (UUID, UDPFlowDatagram) -> Void,
@@ -860,7 +917,7 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         self.queue = queue
         self.activityIdentifier = activityIdentifier
         self.endpoint = endpoint
-        self.proxy = proxy
+        self.upstream = upstream
         readyCallback = ready
         responseCallback = response
         failureCallback = failure
@@ -871,8 +928,8 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         guard !finished else { return }
         report(.connecting)
         let connection = NWConnection(
-            host: proxy.networkHost,
-            port: proxy.networkPort,
+            host: upstream.host,
+            port: upstream.port,
             using: .tcp
         )
         controlConnection = connection
@@ -881,8 +938,9 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
             self.handleControlState(state)
         }
         let timeout = DispatchWorkItem { [weak self] in
+            let prefix = self?.upstream.errorPrefix ?? "SOCKS5"
             self?.fail(
-                UDPFlowSessionError.mihomoSetupFailed("The association timed out."),
+                self?.setupFailure(prefix + " association timed out.") ?? UDPFlowSessionError.nativeSOCKS5SetupFailed("SOCKS5 association timed out."),
                 stage: .setup
             )
         }
@@ -896,7 +954,7 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         completion: @escaping @Sendable (Error?) -> Void
     ) {
         guard !finished, ready, let udpConnection else {
-            completion(UDPFlowSessionError.mihomoRelayFailed("The UDP relay is not ready."))
+            completion(relayFailure("The UDP relay is not ready."))
             return
         }
         do {
@@ -910,7 +968,7 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
                 completion: .contentProcessed { [weak self] error in
                     guard let self else { return }
                     if let error {
-                        let failure = UDPFlowSessionError.mihomoRelayFailed(
+                        let failure = self.relayFailure(
                             error.localizedDescription
                         )
                         completion(failure)
@@ -967,15 +1025,15 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         case let .failed(error):
             fail(
                 ready
-                    ? UDPFlowSessionError.mihomoRelayFailed(error.localizedDescription)
-                    : UDPFlowSessionError.mihomoSetupFailed(error.localizedDescription),
+                    ? self.relayFailure(error.localizedDescription)
+                    : self.setupFailure(error.localizedDescription),
                 stage: ready ? .relaying : .setup
             )
         case .cancelled:
             fail(
                 ready
-                    ? UDPFlowSessionError.mihomoRelayFailed("The control connection closed.")
-                    : UDPFlowSessionError.mihomoSetupFailed("The control connection closed."),
+                    ? self.relayFailure("The control connection closed.")
+                    : self.setupFailure("The control connection closed."),
                 stage: ready ? .relaying : .setup
             )
         default:
@@ -983,10 +1041,24 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
         }
     }
 
+    private func setupFailure(_ message: String) -> UDPFlowSessionError {
+        switch upstream {
+        case .mihomo: .mihomoSetupFailed(message)
+        case .native: .nativeSOCKS5SetupFailed(message)
+        }
+    }
+
+    private func relayFailure(_ message: String) -> UDPFlowSessionError {
+        switch upstream {
+        case .mihomo: .mihomoRelayFailed(message)
+        case .native: .nativeSOCKS5RelayFailed(message)
+        }
+    }
+
     private func beginHandshake() {
         do {
             let negotiator = SOCKS5ClientAuthenticationNegotiator(
-                credentials: proxy.credentials
+                credentials: upstream.credentials
             )
             try sendControl(negotiator.greeting()) { [weak self] in
                 self?.receiveMethodSelection(negotiator: negotiator)
@@ -1080,14 +1152,14 @@ private final class MihomoUDPConversation: UDPConversation, @unchecked Sendable 
     ) throws -> SOCKS5Endpoint {
         guard endpoint.port > 0 else { throw UDPFlowRelayError.invalidRelayEndpoint }
         guard endpoint.address.ipAddress?.isUnspecified == true else { return endpoint }
-        if let address = try? IPAddress(proxy.host) {
+        if let address = try? IPAddress(upstream.host.debugDescription) {
             return SOCKS5Endpoint(
                 address: SOCKS5Address(ipAddress: address),
                 port: endpoint.port
             )
         }
         return SOCKS5Endpoint(
-            address: try SOCKS5Address(domain: proxy.host),
+            address: try SOCKS5Address(domain: upstream.host.debugDescription),
             port: endpoint.port
         )
     }
@@ -1367,7 +1439,7 @@ final class UDPFlowSessionRegistry: @unchecked Sendable {
 /// no DNS destination or payload is sent by the probe.
 final class MihomoUDPAssociationProbe: @unchecked Sendable {
     private let queue = DispatchQueue(label: "one.leaper.mclash.socks-udp-probe")
-    private var conversation: MihomoUDPConversation?
+    private var conversation: SOCKS5UDPConversation?
     private var completion: (@Sendable (Error?) -> Void)?
     private var cancelled = false
 
@@ -1387,11 +1459,11 @@ final class MihomoUDPAssociationProbe: @unchecked Sendable {
                     address: SOCKS5Address(ipAddress: try IPAddress("127.0.0.1")),
                     port: 53
                 )
-                let conversation = MihomoUDPConversation(
+                let conversation = SOCKS5UDPConversation(
                     queue: queue,
                     activityIdentifier: UUID(),
                     endpoint: endpoint,
-                    proxy: proxy,
+                    upstream: .mihomo(proxy),
                     observer: { _ in },
                     ready: { [weak self] _ in self?.finish(nil) },
                     response: { _, _ in },
