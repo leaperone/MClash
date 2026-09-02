@@ -10,6 +10,16 @@ public struct OutboundNodeTarget: Codable, Equatable, Hashable, Sendable {
     public let port: UInt16
     public let parameters: [String: String]
 
+    /// Parsed VLESS WebSocket transport options, when this target declares a
+    /// WebSocket network. Keeping parsing at the target boundary prevents the
+    /// native connector and compatibility compiler from drifting apart.
+    public var vlessWebSocketOptions: VLESSWebSocketOptions? {
+        guard protocolName == "vless",
+              parameters["network"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ws"
+        else { return nil }
+        return VLESSWebSocketOptions.parse(parameters: parameters)
+    }
+
     public init(protocolName: String, host: String, port: UInt16, parameters: [String: String] = [:]) throws {
         let normalizedProtocol = protocolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
