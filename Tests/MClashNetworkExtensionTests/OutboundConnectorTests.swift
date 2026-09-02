@@ -97,6 +97,22 @@ struct OutboundConnectorTests {
         let connection = NativeVLESSOutboundConnector(target: target).makeConnection()
         connection.cancel()
         #expect(target.parameters["network"] == "ws")
+        #expect(NativeConnectorRegistry.capability(for: target) == .legacyFallback)
+    }
+
+    @Test("VLESS WebSocket framing masks client payload and decodes server binary frames")
+    func vlessWebSocketFrameFixture() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "vless", host: "node.example.com", port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "network": "ws", "ws-path": "/vless"]
+        )
+        let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
+        let codec = try VLESSWebSocketStreamCodec(target: target, destination: destination)
+        let encoded = try codec.encode(Data("hello".utf8))
+        #expect(encoded[0] == 0x82)
+        #expect(encoded[1] & 0x80 == 0x80)
+        let serverFrame = Data([0x82, 0x05]) + Data("world".utf8)
+        #expect(try codec.decode(serverFrame) == [Data("world".utf8)])
     }
 
     @Test("Native Trojan connector emits TLS-backed authenticated handshake")

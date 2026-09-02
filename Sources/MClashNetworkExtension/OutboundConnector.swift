@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @preconcurrency import Network
 import MClashNetworkShared
@@ -170,6 +171,162 @@ struct NativeVLESSOutboundConnector: Sendable {
             port: destination.port
         )
     }
+}
+
+/// Minimal RFC 6455 binary framing used by VLESS over WebSocket.  VLESS WS
+/// is a byte tunnel: client frames must be masked, server frames must not be
+/// masked.  We intentionally reject fragmented/control frames here rather
+/// than silently delivering malformed data to the VLESS codec.
+final class VLESSWebSocketStreamCodec: NativeStreamCodec, @unchecked Sendable {
+    private var receiveBuffer = Data()
+    private let destination: Data
+
+    init(target: OutboundNodeTarget, destination: SOCKS5Endpoint) throws {
+        let uuid = target.parameters["uuid"] ?? ""
+        let host = destination.address.domain
+            ?? destination.address.ipAddress?.presentation
+            ?? ""
+        self.destination = try VLESSCodec.encodeTCPRequest(
+            uuid: uuid, host: host, port: destination.port
+        )
+    }
+
+    func encodeDestination() throws -> Data { try Self.frame(destination, mask: true) }
+    func encode(_ payload: Data) throws -> Data { try Self.frame(payload, mask: true) }
+
+    func decode(_ input: Data) throws -> [Data] {
+        receiveBuffer.append(input)
+        var output: [Data] = []
+        while true {
+            guard receiveBuffer.count >= 2 else { break }
+            let first = receiveBuffer[receiveBuffer.startIndex]
+            let second = receiveBuffer[receiveBuffer.startIndex + 1]
+            let fin = first & 0x80 != 0
+            let opcode = first & 0x0f
+            let masked = second & 0x80 != 0
+            var length = Int(second & 0x7f)
+            var headerLength = 2
+            if !fin || opcode != 0x2 || masked { throw VLESSWebSocketCodecError.invalidFrame }
+            if length == 126 {
+                guard receiveBuffer.count >= 4 else { break }
+                length = Int(receiveBuffer[receiveBuffer.startIndex + 2]) << 8
+                    | Int(receiveBuffer[receiveBuffer.startIndex + 3])
+                headerLength = 4
+            } else if length == 127 {
+                guard receiveBuffer.count >= 10 else { break }
+                var value = 0
+                for offset in 0..<8 { value = (value << 8) | Int(receiveBuffer[receiveBuffer.startIndex + 2 + offset]) }
+                guard value <= 16 * 1024 * 1024 else { throw VLESSWebSocketCodecError.messageTooLarge }
+                length = value
+                headerLength = 10
+            }
+            guard length <= 16 * 1024 * 1024 else { throw VLESSWebSocketCodecError.messageTooLarge }
+            guard receiveBuffer.count >= headerLength + length else { break }
+            let bodyStart = receiveBuffer.startIndex + headerLength
+            output.append(Data(receiveBuffer[bodyStart..<(bodyStart + length)]))
+            receiveBuffer.removeFirst(headerLength + length)
+        }
+        return output
+    }
+
+    private static func frame(_ payload: Data, mask: Bool) throws -> Data {
+        guard payload.count <= 16 * 1024 * 1024 else { throw VLESSWebSocketCodecError.messageTooLarge }
+        var result = Data([0x82])
+        let flag: UInt8 = mask ? 0x80 : 0
+        if payload.count < 126 {
+            result.append(flag | UInt8(payload.count))
+        } else if payload.count <= 65_535 {
+            result.append(flag | 126)
+            result.append(UInt8(payload.count >> 8)); result.append(UInt8(payload.count & 0xff))
+        } else {
+            result.append(flag | 127)
+            for shift in stride(from: 56, through: 0, by: -8) { result.append(UInt8((UInt64(payload.count) >> UInt64(shift)) & 0xff)) }
+        }
+        if mask {
+            var generator = SystemRandomNumberGenerator()
+            let key = (0..<4).map { _ in UInt8.random(in: 0...UInt8.max, using: &generator) }
+            result.append(contentsOf: key)
+            for (index, byte) in payload.enumerated() { result.append(byte ^ key[index % 4]) }
+        } else { result.append(payload) }
+        return result
+    }
+}
+
+enum VLESSWebSocketCodecError: Error, Equatable, Sendable {
+    case invalidFrame
+    case messageTooLarge
+}
+
+/// VLESS over WebSocket connector. The HTTP upgrade and VLESS request are
+/// sent together so the existing response gate can open the app flow only
+/// after a verified 101 response. A native capability is advertised only for
+/// explicit WS transport with a valid parsed path and UUID.
+struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHandshake {
+    let target: OutboundNodeTarget
+    private let handshakeState = VLESSWebSocketHandshakeState()
+
+    private var options: VLESSWebSocketOptions {
+        target.vlessWebSocketOptions ?? VLESSWebSocketOptions()
+    }
+
+    func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
+        let tlsEnabled = ["true", "1", "yes", "on"].contains(target.parameters["tls"]?.lowercased() ?? "false")
+        let parameters: NWParameters
+        if tlsEnabled {
+            let tls = NWProtocolTLS.Options()
+            let name = target.parameters["sni"] ?? target.parameters["servername"] ?? target.host
+            name.withCString { sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, $0) }
+            parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+        } else { parameters = .tcp }
+        return NWConnection(host: NWEndpoint.Host(target.host), port: NWEndpoint.Port(rawValue: target.port)!, using: parameters)
+    }
+
+    func makeStreamCodec(for destination: SOCKS5Endpoint) throws -> (any NativeStreamCodec)? {
+        try VLESSWebSocketStreamCodec(target: target, destination: destination)
+    }
+
+    func responseHandshake(for destination: SOCKS5Endpoint) throws -> Data {
+        guard target.parameters["uuid"] != nil else { throw VLESSCodecError.invalidUUID }
+        let codec = try VLESSWebSocketStreamCodec(target: target, destination: destination)
+        let keyData = (0..<16).map { _ in UInt8.random(in: 0...255) }
+        let key = Data(keyData).base64EncodedString()
+        handshakeState.expectedAccept = Data(Insecure.SHA1.hash(
+            data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8)
+        )).base64EncodedString()
+        var headers: [(String, String)] = [
+            ("Host", target.parameters["ws-host"] ?? target.host),
+            ("Upgrade", "websocket"), ("Connection", "Upgrade"),
+            ("Sec-WebSocket-Version", "13"), ("Sec-WebSocket-Key", key)
+        ]
+        let reserved = Set(headers.map { $0.0.lowercased() })
+        headers.append(contentsOf: options.headers.filter { !reserved.contains($0.key.lowercased()) }.map { ($0.key, $0.value) })
+        var request = "GET \(options.path) HTTP/1.1\r\n"
+        request += headers.map { "\($0.0): \($0.1)\r\n" }.joined()
+        request += "\r\n"
+        var result = Data(request.utf8)
+        result.append(try codec.encodeDestination())
+        return result
+    }
+
+    func validateResponse(_ response: Data) throws {
+        guard let text = String(data: response, encoding: .utf8),
+              let firstLine = text.split(separator: "\r\n", omittingEmptySubsequences: false).first,
+              firstLine.hasPrefix("HTTP/1.1 101 ") || firstLine.hasPrefix("HTTP/2 101 ") else {
+            throw VLESSWebSocketCodecError.invalidFrame
+        }
+        var values: [String: String] = [:]
+        for line in text.split(separator: "\r\n").dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            values[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        guard values["upgrade"]?.lowercased() == "websocket",
+              values["connection"]?.lowercased().contains("upgrade") == true,
+              values["sec-websocket-accept"]?.lowercased() == handshakeState.expectedAccept else { throw VLESSWebSocketCodecError.invalidFrame }
+    }
+}
+
+private final class VLESSWebSocketHandshakeState: @unchecked Sendable {
+    var expectedAccept: String?
 }
 
 /// Native Trojan TCP connector. Trojan authenticates with a SHA-224 password
@@ -425,6 +582,11 @@ enum NativeConnectorRegistry {
             return !password.isEmpty && ShadowsocksAEADMethod(rawValue: method.lowercased()) != nil
         case "vless":
             let network = target.parameters["network"]?.lowercased() ?? "tcp"
+            // WebSocket requires a two-phase upgrade: the VLESS binary frame
+            // must be sent only after HTTP 101. The current relay response
+            // gate has no post-upgrade write hook, so keep WS on the explicit
+            // compatibility path rather than advertising a false native
+            // capability.
             return network == "tcp" && !hasUnsupportedRealityOrXTLSParameters(target.parameters)
         case "trojan":
             let network = target.parameters["network"]?.lowercased() ?? "tcp"
