@@ -15,7 +15,7 @@ private let appRoutingFlowLogger = Logger(
 /// original kernel-managed network path. Only reject and Mihomo routes are
 /// owned; an already-owned Mihomo flow may still use the Direct relay as a
 /// fail-open fallback because returning it to macOS is no longer possible.
-final class TransparentProxyProvider: NETransparentProxyProvider {
+final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sendable {
     private let runtime = ProviderRuntimeState(providerName: "transparent-proxy")
     private let flowDecisionCoordinator = NetworkExtensionFlowDecisionCoordinator()
     private let tcpRelays = TCPFlowRelayRegistry()
