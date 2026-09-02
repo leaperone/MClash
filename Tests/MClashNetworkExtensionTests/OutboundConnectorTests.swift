@@ -53,4 +53,22 @@ struct OutboundConnectorTests {
         #expect(handshake.first == 0x01)
         #expect(handshake.contains(0x02))
     }
+
+    @Test("Native VLESS connector accepts WebSocket transport parameters")
+    func nativeVLESSWebSocketConnectorBuilds() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "vless",
+            host: "node.example.com",
+            port: 443,
+            parameters: [
+                "uuid": "00000000-0000-0000-0000-000000000001",
+                "tls": "true",
+                "network": "ws",
+                "ws-host": "cdn.example.com",
+            ]
+        )
+        let connection = NativeVLESSOutboundConnector(target: target).makeConnection()
+        connection.cancel()
+        #expect(target.parameters["network"] == "ws")
+    }
 }

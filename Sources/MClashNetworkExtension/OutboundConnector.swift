@@ -79,6 +79,16 @@ struct NativeVLESSOutboundConnector: Sendable {
         } else {
             parameters = .tcp
         }
+        if target.parameters["network"]?.lowercased() == "ws" {
+            let websocket = NWProtocolWebSocket.Options()
+            websocket.autoReplyPing = true
+            var headers: [(name: String, value: String)] = []
+            if let rawHost = target.parameters["ws-host"] {
+                headers.append((name: "Host", value: rawHost))
+            }
+            if !headers.isEmpty { websocket.setAdditionalHeaders(headers) }
+            parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
+        }
         return NWConnection(
             host: NWEndpoint.Host(target.host),
             port: NWEndpoint.Port(rawValue: target.port)!,
