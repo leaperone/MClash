@@ -4,6 +4,23 @@ import Testing
 
 @Suite("SOCKS5 wire codec")
 struct SOCKS5CodecTests {
+    @Test("Decodes complete client CONNECT requests")
+    func decodesCommandRequest() throws {
+        let request = try SOCKS5CommandRequest(
+            command: .connect,
+            endpoint: SOCKS5Endpoint(address: try SOCKS5Address(domain: "example.com"), port: 443)
+        )
+        let wire = try SOCKS5Codec.encodeCommandRequest(request)
+        #expect(try SOCKS5Codec.commandRequestFrameLength(Array(wire)) == wire.count)
+        #expect(try SOCKS5Codec.decodeCommandRequest(wire) == request)
+    }
+
+    @Test("Rejects malformed client command requests")
+    func rejectsMalformedCommandRequest() throws {
+        #expect(throws: SOCKS5CodecError.invalidReservedByte(1)) {
+            try SOCKS5Codec.decodeCommandRequest(Data([5, 1, 1, 1, 0, 0, 0, 0, 0, 80]))
+        }
+    }
     @Test
     func greetingAndAuthenticationNegotiation() throws {
         let credentials = try SOCKS5UsernamePasswordCredentials(username: "mclash", password: "secret")

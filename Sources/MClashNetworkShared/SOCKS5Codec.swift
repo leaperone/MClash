@@ -314,6 +314,34 @@ public enum SOCKS5Codec: Sendable {
         return result
     }
 
+    /// Decodes one complete client CONNECT/BIND/UDP ASSOCIATE request.
+    /// Kept public so transport listeners do not duplicate wire parsing.
+    public static func decodeCommandRequest(_ data: Data) throws -> SOCKS5CommandRequest {
+        try enforceStreamLimit(data.count)
+        let bytes = Array(data)
+        guard bytes.count >= 4 else {
+            throw SOCKS5CodecError.truncatedFrame(minimumExpected: 4, actual: bytes.count)
+        }
+        guard bytes[0] == version else { throw SOCKS5CodecError.invalidVersion(bytes[0]) }
+        guard bytes[2] == 0 else { throw SOCKS5CodecError.invalidReservedByte(bytes[2]) }
+        guard let frameLength = try commandRequestFrameLength(bytes) else {
+            throw SOCKS5CodecError.truncatedFrame(minimumExpected: 10, actual: bytes.count)
+        }
+        guard bytes.count == frameLength else { throw SOCKS5CodecError.trailingData(bytes.count - frameLength) }
+        guard let command = SOCKS5Command(rawValue: bytes[1]) else { throw SOCKS5CodecError.invalidReplyCode(bytes[1]) }
+        let endpoint = try parseEndpoint(bytes, addressTypeOffset: 3).endpoint
+        return try SOCKS5CommandRequest(command: command, endpoint: endpoint)
+    }
+
+    /// Returns the wire size once enough bytes have arrived to identify the
+    /// address type, or nil when more bytes are needed.
+    public static func commandRequestFrameLength(_ bytes: [UInt8]) throws -> Int? {
+        guard bytes.count >= 4 else { return nil }
+        guard bytes[0] == version else { throw SOCKS5CodecError.invalidVersion(bytes[0]) }
+        guard bytes[2] == 0 else { throw SOCKS5CodecError.invalidReservedByte(bytes[2]) }
+        return try endpointWireLength(bytes, addressTypeOffset: 3).map { 3 + $0 }
+    }
+
     public static func decodeCommandReply(_ data: Data) throws -> SOCKS5CommandReply {
         try enforceStreamLimit(data.count)
         let bytes = Array(data)
