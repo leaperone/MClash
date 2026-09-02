@@ -137,6 +137,7 @@ compiler_sources=(
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationAutomationModels.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationCaptureAdapter.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationCompiler.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/CompiledRuntimePlan.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationDefaults.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationModels.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationStore.swift"
