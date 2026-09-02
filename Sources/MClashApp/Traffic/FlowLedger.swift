@@ -648,13 +648,15 @@ struct FlowLedger: Sendable {
         }
         let upload: FlowLedgerByteMeasurement = switch observation.route {
         case .rejected: .notApplicable
-        case .direct, .failOpen where observation.state == .active:
+        case .direct where observation.state == .active,
+             .failOpen where observation.state == .active:
             .notMeasuredAfterHandoff
         default: .exact(observation.uploadBytes)
         }
         let download: FlowLedgerByteMeasurement = switch observation.route {
         case .rejected: .notApplicable
-        case .direct, .failOpen where observation.state == .active:
+        case .direct where observation.state == .active,
+             .failOpen where observation.state == .active:
             .notMeasuredAfterHandoff
         default: .exact(observation.downloadBytes)
         }
