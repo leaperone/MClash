@@ -44,6 +44,31 @@ public enum Hysteria2Codec: Sendable {
         return result
     }
 
+    public static func encodeUDPMessage(
+        sessionID: UInt32,
+        packetID: UInt16,
+        fragmentID: UInt8 = 0,
+        fragmentCount: UInt8 = 1,
+        host: String,
+        port: UInt16,
+        payload: Data
+    ) throws -> Data {
+        let address = "\(host):\(port)"
+        guard !host.isEmpty, port > 0, address.utf8.count <= 1024,
+              fragmentCount > 0, fragmentID < fragmentCount else {
+            throw Hysteria2CodecError.invalidAddress
+        }
+        guard payload.count <= 65_535 else { throw Hysteria2CodecError.oversized }
+        var result = Data([
+            UInt8(sessionID >> 24), UInt8(sessionID >> 16), UInt8(sessionID >> 8), UInt8(sessionID),
+            UInt8(packetID >> 8), UInt8(packetID), fragmentID, fragmentCount,
+        ])
+        result.append(encodeVarint(UInt64(address.utf8.count)))
+        result.append(contentsOf: address.utf8)
+        result.append(payload)
+        return result
+    }
+
     private static func encodeVarint(_ value: UInt64) -> Data {
         if value < (1 << 6) { return Data([UInt8(value)]) }
         if value < (1 << 14) { let v = UInt16(value) | 0x4000; return Data([UInt8(v >> 8), UInt8(v)]) }

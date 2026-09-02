@@ -26,6 +26,23 @@ struct Hysteria2CodecTests {
         #expect(data[18] == 0x00)
     }
 
+    @Test("Encodes UDP session and fragmentation fields")
+    func udpMessage() throws {
+        let data = try Hysteria2Codec.encodeUDPMessage(
+            sessionID: 0x01020304,
+            packetID: 0x0506,
+            fragmentID: 1,
+            fragmentCount: 2,
+            host: "example.com",
+            port: 53,
+            payload: Data([0xde, 0xad])
+        )
+        #expect(Array(data.prefix(8)) == [1, 2, 3, 4, 5, 6, 1, 2])
+        #expect(data[8] == 0x0f)
+        #expect(String(decoding: data[9..<24], as: UTF8.self) == "example.com:53")
+        #expect(Array(data.suffix(2)) == [0xde, 0xad])
+    }
+
     @Test("Rejects empty credentials, targets, and oversized padding")
     func rejectsInvalidInput() {
         #expect(throws: Hysteria2CodecError.invalidAuth) {
