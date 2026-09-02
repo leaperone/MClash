@@ -96,7 +96,7 @@ struct ProvidersView: View {
                 .mclashListSurface()
             }
         }
-        .navigationTitle("Providers")
+        .navigationTitle(AppLocalization.string("Rule Sets"))
         .mclashPageSurface()
         .background {
             GeometryReader { geometry in

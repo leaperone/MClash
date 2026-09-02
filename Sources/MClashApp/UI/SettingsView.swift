@@ -76,7 +76,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button(AppLocalization.string("Open Entrances…")) {
+                Button(AppLocalization.string("How to Connect") + "…") {
                     model.selection = .entrances
                 }
                 DisclosureGroup("Connection Behavior") {

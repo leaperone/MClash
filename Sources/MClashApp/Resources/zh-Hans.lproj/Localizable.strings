@@ -393,7 +393,7 @@
 "Routes appear as traffic decisions and Mihomo connections are observed." = "观测到流量决策和 Mihomo 连接后，路由会显示在这里。";
 "Routing" = "路由";
 "Routing & macOS Proxy" = "路由与 macOS 代理";
-"Routing Mode" = "路由模式";
+"Routing Mode" = "代理模式";
 "Routing mode" = "路由模式";
 "Rule" = "规则";
 "Rule Overrides" = "规则覆盖";

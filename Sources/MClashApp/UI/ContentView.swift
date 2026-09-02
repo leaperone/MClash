@@ -155,6 +155,9 @@ struct ContentView: View {
             default: currentDestination
             }
             restoredDestinationRawValue = normalizedDestination.rawValue
+            if advancedDestinations.contains(normalizedDestination) {
+                advancedExpanded = true
+            }
             if normalizedDestination != currentDestination {
                 model.selection = normalizedDestination
             }

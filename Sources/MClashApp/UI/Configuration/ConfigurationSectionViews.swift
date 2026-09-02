@@ -128,7 +128,7 @@ struct ConfigurationView: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .mclashPageSurface()
-        .navigationTitle(AppLocalization.string("Configuration"))
+        .navigationTitle(AppLocalization.string("Routing Mode"))
     }
 
     private func configurationMetric(_ title: String, value: Int, symbol: String) -> some View {
@@ -538,7 +538,7 @@ struct ConfigurationEntrancesView: View {
             if advancedExpanded {
                 Divider()
                 ConfigurationWorkbench(
-                    title: AppLocalization.string("Entrances"),
+                    title: AppLocalization.string("Advanced listeners"),
                     sections: [.entrances],
                     items: entranceWorkbenchItems,
                     onAdd: { _ in
@@ -576,7 +576,7 @@ struct ConfigurationEntrancesView: View {
                 )
             }
         }
-        .navigationTitle(AppLocalization.string("Entrances"))
+        .navigationTitle(AppLocalization.string("How to Connect"))
         .mclashPageSurface()
         .sheet(item: $editRequest) { request in
             ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)
