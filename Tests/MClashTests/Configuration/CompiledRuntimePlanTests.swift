@@ -26,6 +26,20 @@ struct CompiledRuntimePlanTests {
         #expect(!JSONEncoder().encode(plan).isEmpty)
     }
 
+    @Test func MihomoRenderingIsAnExplicitCompatibilityBoundary() throws {
+        let document = ConfigurationDocument.mclashDefault()
+        let compiler = ConfigurationCompiler()
+        let plan = try compiler.compileRuntimePlan(document: document)
+        let rendered = try MihomoCompatibilityRenderer().render(plan)
+        let legacyResult = try compiler.compile(document: document)
+
+        // Rendering from the authoritative plan must preserve the established
+        // compatibility output byte-for-byte. The plan compiler itself does
+        // not need to carry or decode a Mihomo document.
+        #expect(rendered == legacyResult.mihomoYAML)
+        #expect(legacyResult.runtimePlan == plan)
+    }
+
     @Test func planValidationRejectsDanglingGroupMembers() throws {
         let node = try Node(displayName: "node", protocol: .socks5, host: "127.0.0.1", port: 1080)
         let missingGroup = ProxyGroupID()

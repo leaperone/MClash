@@ -2,12 +2,22 @@ import CryptoKit
 import Foundation
 import MClashNetworkShared
 
-public struct CompiledConfiguration: Equatable, Sendable {
-    /// Connector-neutral plan that produced this compatibility YAML.
+/// The complete result of compiling an MClash workspace.
+///
+/// `runtimePlan` is the authoritative, connector-neutral artifact. `yaml` is
+/// retained only as a compatibility payload for the legacy Mihomo runtime;
+/// new runtimes should consume `runtimePlan` directly (or use
+/// `MihomoCompatibilityRenderer` explicitly when bridging to Mihomo).
+public struct CompiledRuntimeConfiguration: Equatable, Sendable {
+    /// Connector-neutral plan produced from MClash-owned policy.
     public let runtimePlan: CompiledRuntimePlan
     public let workspaceID: WorkspaceID
     public let workspaceRevision: Int
-    public let yaml: Data
+    /// Rendered Mihomo document, present only for the compatibility backend.
+    public let mihomoYAML: Data
+    /// Source-compatible alias for callers that still consume the legacy
+    /// runtime payload. Prefer `mihomoYAML` or `runtimePlan` in new code.
+    public var yaml: Data { mihomoYAML }
     public let networkExtensionRules: [RoutingRule]
     public let captureRules: [CaptureRule]
     public let captureEnabled: Bool
@@ -19,7 +29,7 @@ public struct CompiledConfiguration: Equatable, Sendable {
         runtimePlan: CompiledRuntimePlan,
         workspaceID: WorkspaceID,
         workspaceRevision: Int,
-        yaml: Data,
+        mihomoYAML: Data,
         networkExtensionRules: [RoutingRule],
         captureRules: [CaptureRule],
         captureEnabled: Bool,
@@ -29,15 +39,46 @@ public struct CompiledConfiguration: Equatable, Sendable {
         self.runtimePlan = runtimePlan
         self.workspaceID = workspaceID
         self.workspaceRevision = workspaceRevision
-        self.yaml = yaml
+        self.mihomoYAML = mihomoYAML
         self.networkExtensionRules = networkExtensionRules
         self.captureRules = captureRules
         self.captureEnabled = captureEnabled
         self.captureDNSEnabled = captureDNSEnabled
         self.diagnostics = diagnostics
-        self.configHash = SHA256.hash(data: yaml).map { String(format: "%02x", $0) }.joined()
+        self.configHash = SHA256.hash(data: mihomoYAML).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Compatibility initializer for source clients that still label the
+    /// rendered payload `yaml`.
+    public init(
+        runtimePlan: CompiledRuntimePlan,
+        workspaceID: WorkspaceID,
+        workspaceRevision: Int,
+        yaml: Data,
+        networkExtensionRules: [RoutingRule],
+        captureRules: [CaptureRule],
+        captureEnabled: Bool,
+        captureDNSEnabled: Bool,
+        diagnostics: [ConfigurationDiagnostic]
+    ) {
+        self.init(
+            runtimePlan: runtimePlan,
+            workspaceID: workspaceID,
+            workspaceRevision: workspaceRevision,
+            mihomoYAML: yaml,
+            networkExtensionRules: networkExtensionRules,
+            captureRules: captureRules,
+            captureEnabled: captureEnabled,
+            captureDNSEnabled: captureDNSEnabled,
+            diagnostics: diagnostics
+        )
     }
 }
+
+/// Source compatibility for integrations compiled against the pre-boundary
+/// name. Keep this alias temporary while callers migrate to the explicit
+/// `CompiledRuntimeConfiguration` name.
+public typealias CompiledConfiguration = CompiledRuntimeConfiguration
 
 public enum ConfigurationCompilationError: Error, Equatable, Sendable {
     case invalid([ConfigurationDiagnostic])
@@ -57,9 +98,9 @@ extension ConfigurationCompilationError: LocalizedError {
     }
 }
 
-/// Deterministically renders the strategy-owned model into a minimal Mihomo
-/// document. It intentionally starts from a blank document, so source YAML
-/// sections can never leak into runtime configuration.
+/// Compiles the strategy-owned model into a connector-neutral runtime plan.
+/// Mihomo YAML is an explicit compatibility rendering performed by
+/// `MihomoCompatibilityRenderer`, never an input to policy compilation.
 public struct ConfigurationCompiler: Sendable {
     public static let version = "mclash-config-1"
     /// The fallback is deliberately a domestic resolver.  Cloudflare's
@@ -84,7 +125,12 @@ public struct ConfigurationCompiler: Sendable {
         document: ConfigurationDocument,
         workspaceID: WorkspaceID? = nil
     ) throws -> CompiledRuntimePlan {
-        let plan = try compile(document: document, workspaceID: workspaceID).runtimePlan
+        let plan = try compile(
+            document: document,
+            workspaceID: workspaceID,
+            validatedDiagnostics: nil,
+            renderCompatibilityYAML: false
+        ).runtimePlan
         try plan.validate()
         return plan
     }
@@ -96,15 +142,17 @@ public struct ConfigurationCompiler: Sendable {
         try compile(
             document: document,
             workspaceID: workspaceID,
-            validatedDiagnostics: nil
+            validatedDiagnostics: nil,
+            renderCompatibilityYAML: true
         )
     }
 
     func compile(
         document: ConfigurationDocument,
         workspaceID: WorkspaceID?,
-        validatedDiagnostics: [ConfigurationDiagnostic]?
-    ) throws -> CompiledConfiguration {
+        validatedDiagnostics: [ConfigurationDiagnostic]?,
+        renderCompatibilityYAML: Bool = true
+    ) throws -> CompiledRuntimeConfiguration {
         guard let workspace = workspaceID.flatMap({ id in document.workspaces.first(where: { $0.id == id }) }) ?? document.currentWorkspace else {
             throw ConfigurationCompilationError.invalidText(
                 AppLocalization.string("No MClash workspace is configured.")
@@ -191,7 +239,7 @@ public struct ConfigurationCompiler: Sendable {
         }
         let errors = diagnostics.filter { $0.severity == .error }
         guard errors.isEmpty else { throw ConfigurationCompilationError.invalid(errors) }
-        let yaml = render(
+        let yaml = renderCompatibilityYAML ? renderMihomoDocument(
             nodes: workspaceNodes,
             nodeNames: runtimeNodeNames,
             groups: resolvedGroups,
@@ -202,7 +250,7 @@ public struct ConfigurationCompiler: Sendable {
             routingMode: workspace.routingMode,
             globalProxyGroupID: workspace.globalProxyGroupID ?? workspaceGroups.first?.id,
             emitsMihomoListeners: emitsMihomoListeners
-        )
+        ) : ""
         let yamlData = Data(yaml.utf8)
         guard yamlData.count <= ConfigurationAutomationLimits.compiledYAMLBytes else {
             throw ConfigurationCompilationError.invalidText(
@@ -247,11 +295,11 @@ public struct ConfigurationCompiler: Sendable {
             globalProxyGroupID: workspace.globalProxyGroupID ?? workspaceGroups.first?.id,
             diagnostics: diagnostics
         )
-        return CompiledConfiguration(
+        return CompiledRuntimeConfiguration(
             runtimePlan: runtimePlan,
             workspaceID: workspace.id,
             workspaceRevision: workspace.revision,
-            yaml: yamlData,
+            mihomoYAML: yamlData,
             networkExtensionRules: appRules,
             captureRules: capture.rules + [catchAll],
             captureEnabled: workspaceEntrances.contains {
@@ -262,7 +310,37 @@ public struct ConfigurationCompiler: Sendable {
         )
     }
 
-    private func render(
+    /// Render a validated connector-neutral plan for the legacy Mihomo
+    /// backend. This is deliberately an explicit API so native callers do
+    /// not accidentally acquire a YAML dependency.
+    public func renderMihomoYAML(for plan: CompiledRuntimePlan) throws -> Data {
+        try plan.validate()
+        let names = makeRuntimeNodeNames(
+            plan.nodes,
+            reserving: Set(plan.proxyGroups.map { $0.name.lowercased() })
+        )
+        let text = renderMihomoDocument(
+            nodes: plan.nodes,
+            nodeNames: names,
+            groups: plan.proxyGroups,
+            rules: plan.rules,
+            ruleSets: plan.ruleSets,
+            dns: plan.dnsPolicy,
+            entrances: plan.entrances,
+            routingMode: plan.routingMode,
+            globalProxyGroupID: plan.globalProxyGroupID,
+            emitsMihomoListeners: emitsMihomoListeners
+        )
+        let data = Data(text.utf8)
+        guard data.count <= ConfigurationAutomationLimits.compiledYAMLBytes else {
+            throw ConfigurationCompilationError.invalidText(
+                AppLocalization.string("Compiled configuration exceeds the supported size limit.")
+            )
+        }
+        return data
+    }
+
+    private func renderMihomoDocument(
         nodes: [Node],
         nodeNames: [NodeID: String],
         groups: [ProxyGroup],
