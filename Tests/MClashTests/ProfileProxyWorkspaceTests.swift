@@ -5,6 +5,25 @@ import Testing
 @Suite("Profile-scoped proxy workspaces", .serialized)
 struct ProfileProxyWorkspaceTests {
     @Test
+    func projectionExposesConnectorNeutralNodeHealthAndSelection() throws {
+        let collection = try Self.decodeCollection(
+            group: "Auto",
+            nodes: ["Healthy", "Offline"],
+            selected: "Healthy",
+            nodeDelay: 37
+        )
+        let projection = ProxyWorkspaceProjection(collection: collection)
+
+        #expect(projection.nodes["Healthy"]?.isAlive == true)
+        #expect(projection.nodes["Healthy"]?.latencyMilliseconds == 37)
+        #expect(projection.nodes["Healthy"]?.id == "Healthy")
+        #expect(projection.group(named: "Auto")?.memberIDs == ["Healthy", "Offline"])
+        #expect(projection.group(named: "Auto")?.selectedMemberID == "Healthy")
+        #expect(projection.group(named: "Auto")?.strategy == .selector)
+        #expect(projection.group(named: "Auto")?.isAutomaticSelection == true)
+    }
+
+    @Test
     func snapshotBuildsProfileOrderedGroupsTopologyPathsAndDelays() throws {
         let profileID = ProfileID()
         let collection = try Self.decodeCollection(

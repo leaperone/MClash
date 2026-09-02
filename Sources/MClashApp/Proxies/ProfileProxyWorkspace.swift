@@ -14,6 +14,7 @@ struct ProfileProxyWorkspaceSnapshot: Equatable, Sendable {
     let topology: ProxyTopology
     let selectionPaths: [String: ProxySelectionPath]
     let delays: [String: Int]
+    let projection: ProxyWorkspaceProjection
 
     func proxyGroups(forRoutingMode rawMode: String) -> [MihomoProxy] {
         switch rawMode.lowercased() {
@@ -119,7 +120,8 @@ struct ProfileProxyWorkspaceSnapshotBuilder: Sendable {
             profileStructure: profileStructure,
             topology: topology,
             selectionPaths: selectionPaths,
-            delays: delays
+            delays: delays,
+            projection: ProxyWorkspaceProjection(collection: collection)
         )
     }
 }
@@ -129,7 +131,7 @@ struct ProfileProxyWorkspaceSnapshotBuilder: Sendable {
 /// rather than a particular core implementation. Mihomo is currently the
 /// adapter behind it; a native controller can implement the same contract
 /// without changing the presentation layer.
-protocol ProfileProxyControllerClient: Sendable {
+protocol ProfileProxyControllerClient: ProfileProxyWorkspaceClient {
     func fetchConfig() async throws -> MihomoConfig
     func fetchProxies() async throws -> MihomoProxyCollection
     func selectProxy(group: String, proxy: String) async throws
@@ -142,6 +144,20 @@ protocol ProfileProxyControllerClient: Sendable {
         timeoutMilliseconds: Int,
         expectedStatus: String?
     ) async throws -> Int
+}
+
+extension ProfileProxyControllerClient {
+    func fetchWorkspaceProjection() async throws -> ProxyWorkspaceProjection {
+        ProxyWorkspaceProjection(collection: try await fetchProxies())
+    }
+
+    func selectWorkspaceRoute(group: String, member: String) async throws {
+        try await selectProxy(group: group, proxy: member)
+    }
+
+    func clearWorkspaceRoute(group: String) async throws {
+        try await clearProxyOverride(group: group)
+    }
 }
 
 /// Keeps the legacy controller implementation behind the connector-neutral
