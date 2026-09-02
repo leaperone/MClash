@@ -102,12 +102,14 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
                             let output = try DNSWireMessage.tcpFrame(for: response)
                             self.queue.async {
                                 guard !self.stopped else { return }
-                                flow.write(output) { [weak self] error in
-                                    self?.queue.async {
-                                        guard error == nil else { self?.finish(); return }
-                                        self?.readTCP()
+                                    flow.write(output) { [weak self] error in
+                                        guard let self else { return }
+                                        self.queue.async { [weak self] in
+                                            guard let self else { return }
+                                            guard error == nil else { self.finish(); return }
+                                            self.readTCP()
+                                        }
                                     }
-                                }
                             }
                         } catch { self.queue.async { self.finish() } }
                     }
@@ -154,9 +156,11 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
                         UDPFlowDatagram(payload: response, endpoint: datagram.endpoint),
                         to: flow
                     ) { [weak self] error in
-                        self?.queue.async {
-                            guard error == nil else { self?.finish(); return }
-                            self?.processUDP(datagrams, at: index + 1)
+                        guard let self else { return }
+                        self.queue.async { [weak self] in
+                            guard let self else { return }
+                            guard error == nil else { self.finish(); return }
+                            self.processUDP(datagrams, at: index + 1)
                         }
                     }
                 }

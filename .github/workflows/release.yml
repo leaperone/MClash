@@ -94,7 +94,7 @@ jobs:
   verify-unit:
     name: Verify unit and release metadata tests
     needs: prepare
-    runs-on: macos-15-xlarge
+    runs-on: macos-26
     timeout-minutes: 25
     steps:
       - name: Check out source
@@ -112,7 +112,7 @@ jobs:
   verify-integration:
     name: Verify Mihomo integration smoke
     needs: prepare
-    runs-on: macos-15-xlarge
+    runs-on: macos-26
     timeout-minutes: 35
     env:
       GH_TOKEN: ${{ github.token }}
@@ -134,7 +134,7 @@ jobs:
     # gate. A separate typecheck job duplicated that work and added ~18 minutes
     # to each release, so typecheck remains a developer/PR check only.
     needs: [prepare, verify-unit, verify-integration]
-    runs-on: macos-15-xlarge
+    runs-on: macos-26
     timeout-minutes: 60
     environment:
       name: release
