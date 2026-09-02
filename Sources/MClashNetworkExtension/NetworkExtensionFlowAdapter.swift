@@ -88,6 +88,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         )
         var mihomoSOCKSConfigurations: [MihomoRoute: ProviderSOCKSConfiguration] = [:]
         var availableMihomoRoutes: Set<MihomoRoute> = []
+        var outboundNodeTargets: OutboundNodeTargetCatalog?
         var rulesByIdentifier: [String: CaptureRule] = [:]
         var dnsRulesByIdentifier: [String: CaptureRule] = [:]
     }
@@ -137,8 +138,11 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let routeCatalog = ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
         ) ?? [:]
+        let nativeCatalog = (configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data)
+            .flatMap { try? OutboundNodeTargetCatalog.decode($0) }
         state.mihomoSOCKSConfigurations = routeCatalog
         state.availableMihomoRoutes = Set(routeCatalog.keys)
+        state.outboundNodeTargets = nativeCatalog
         state.rulesByIdentifier = Dictionary(
             uniqueKeysWithValues: loadResult.snapshot?.rules.map { ($0.id, $0) } ?? []
         )
@@ -152,6 +156,12 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         lock.lock()
         state.captureEnabled = false
         lock.unlock()
+    }
+
+    func outboundNodeTarget(for route: OutboundRoute) -> OutboundNodeTarget? {
+        lock.lock()
+        defer { lock.unlock() }
+        return state.outboundNodeTargets?.target(for: route)
     }
 
     func validates(configuration: [String: Any]) -> Bool {
