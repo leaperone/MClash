@@ -71,4 +71,27 @@ struct OutboundConnectorTests {
         connection.cancel()
         #expect(target.parameters["network"] == "ws")
     }
+
+    @Test("Native Trojan connector emits TLS-backed authenticated handshake")
+    func nativeTrojanConnectorHandshake() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "trojan",
+            host: "node.example.com",
+            port: 443,
+            parameters: [
+                "password": "password",
+                "sni": "cdn.example.com",
+            ]
+        )
+        let connector = NativeTrojanOutboundConnector(target: target)
+        let destination = try SOCKS5Endpoint(
+            address: SOCKS5Address(domain: "example.com"),
+            port: 443
+        )
+        let handshake = try connector.handshake(for: destination)
+        #expect(handshake.count > 58)
+        #expect(String(decoding: handshake.prefix(58), as: UTF8.self)
+            .hasSuffix("\r\n"))
+        connector.makeConnection().cancel()
+    }
 }

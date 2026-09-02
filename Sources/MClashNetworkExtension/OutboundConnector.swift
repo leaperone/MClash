@@ -111,6 +111,45 @@ struct NativeVLESSOutboundConnector: Sendable {
     }
 }
 
+/// Native Trojan TCP connector. Trojan authenticates with a SHA-224 password
+/// prefix over a TLS stream and then reuses the SOCKS5 CONNECT framing.
+struct NativeTrojanOutboundConnector: Sendable {
+    let target: OutboundNodeTarget
+
+    func makeConnection() -> NWConnection {
+        let tls = NWProtocolTLS.Options()
+        let serverName = target.parameters["sni"]
+            ?? target.parameters["servername"]
+            ?? target.host
+        serverName.withCString {
+            sec_protocol_options_set_tls_server_name(
+                tls.securityProtocolOptions,
+                $0
+            )
+        }
+        return NWConnection(
+            host: NWEndpoint.Host(target.host),
+            port: NWEndpoint.Port(rawValue: target.port)!,
+            using: NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+        )
+    }
+
+    func handshake(for destination: SOCKS5Endpoint) throws -> Data {
+        guard let password = target.parameters["password"]
+            ?? target.parameters["passwd"] else {
+            throw TrojanCodecError.invalidPassword
+        }
+        let host = destination.address.domain
+            ?? destination.address.ipAddress?.presentation
+            ?? ""
+        return try TrojanCodec.encodeTCPRequest(
+            password: password,
+            host: host,
+            port: destination.port
+        )
+    }
+}
+
 /// Pure policy used by relays and tests to enforce the ownership boundary.
 /// Direct and Reject are terminal MClash decisions and therefore do not
 /// require (or permit) an outbound connector invocation.
