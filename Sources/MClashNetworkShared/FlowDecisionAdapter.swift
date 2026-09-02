@@ -366,6 +366,57 @@ public enum FlowTrafficDisposition: Codable, Hashable, Sendable {
     case reject
     case mihomo(MihomoRoute)
     case failOpen
+
+    /// Connector-neutral spelling for a routed outbound disposition.
+    /// New code can use `FlowTrafficDisposition.outbound(route)` while old
+    /// in-memory clients and persisted snapshots continue to work.
+    public static func outbound(_ route: OutboundRoute) -> Self {
+        .mihomo(route)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case direct
+        case reject
+        case outbound
+        case mihomo
+        case failOpen
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let key = container.allKeys.first else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Traffic disposition must contain one disposition"
+            ))
+        }
+        switch key {
+        case .direct:
+            self = .direct
+        case .reject:
+            self = .reject
+        case .failOpen:
+            self = .failOpen
+        case .outbound, .mihomo:
+            self = .mihomo(try container.decode(OutboundRoute.self, forKey: key))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .direct:
+            try container.encodeNil(forKey: .direct)
+        case .reject:
+            try container.encodeNil(forKey: .reject)
+        case .failOpen:
+            try container.encodeNil(forKey: .failOpen)
+        case let .mihomo(route):
+            // Persist the connector-neutral spelling from now on. Decoding
+            // remains backwards compatible with `mihomo` snapshots.
+            try container.encode(route, forKey: .outbound)
+        }
+    }
 }
 
 public enum FlowTrafficDecisionReason: Codable, Hashable, Sendable {

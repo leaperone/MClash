@@ -400,6 +400,54 @@ public enum CaptureAction: Codable, Hashable, Sendable {
     case direct
     case reject
     case mihomo(MihomoRoute)
+
+    /// Connector-neutral spelling for a routed outbound action.
+    ///
+    /// The stored case remains available while persisted snapshots migrate;
+    /// new callers should use this factory so they do not couple themselves
+    /// to the historical Mihomo name.
+    public static func outbound(_ route: OutboundRoute) -> Self {
+        .mihomo(route)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case direct
+        case reject
+        case outbound
+        case mihomo
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let key = container.allKeys.first else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Capture action must contain one action"
+            ))
+        }
+        switch key {
+        case .direct:
+            self = .direct
+        case .reject:
+            self = .reject
+        case .outbound, .mihomo:
+            self = .mihomo(try container.decode(OutboundRoute.self, forKey: key))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .direct:
+            try container.encodeNil(forKey: .direct)
+        case .reject:
+            try container.encodeNil(forKey: .reject)
+        case let .mihomo(route):
+            // Always write the connector-neutral key. The decoder above still
+            // accepts the historical `mihomo` key from existing snapshots.
+            try container.encode(route, forKey: .outbound)
+        }
+    }
 }
 
 public enum UnavailableFallback: String, Codable, Hashable, Sendable {
