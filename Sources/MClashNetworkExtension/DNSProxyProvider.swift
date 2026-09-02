@@ -408,7 +408,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 reject(flow, category: .backendUnavailable)
                 return true
             }
-            tcpRelays.startMihomo(
+            tcpRelays.startProxy(
                 flow: tcpFlow,
                 proxy: proxy,
                 destination: destination,

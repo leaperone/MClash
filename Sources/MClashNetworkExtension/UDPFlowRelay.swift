@@ -866,7 +866,7 @@ final class UDPFlowRelayRegistry: @unchecked Sendable {
     private var directRelays: [UUID: DirectUDPFlowRelay] = [:]
     private var generation = UUID()
 
-    func startMihomo(
+    func startProxy(
         flow: NEAppProxyUDPFlow,
         proxy: ProviderSOCKSConfiguration,
         expectedDestination: SOCKS5Endpoint,
@@ -900,6 +900,23 @@ final class UDPFlowRelayRegistry: @unchecked Sendable {
         mihomoRelays[relay.id] = relay
         lock.unlock()
         relay.start()
+    }
+
+    @available(*, deprecated, renamed: "startProxy")
+    func startMihomo(
+        flow: NEAppProxyUDPFlow,
+        proxy: ProviderSOCKSConfiguration,
+        expectedDestination: SOCKS5Endpoint,
+        unavailableFallback: UnavailableFallback,
+        activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void
+    ) {
+        startProxy(
+            flow: flow,
+            proxy: proxy,
+            expectedDestination: expectedDestination,
+            unavailableFallback: unavailableFallback,
+            activityObserver: activityObserver
+        )
     }
 
     func startDirect(

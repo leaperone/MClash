@@ -106,7 +106,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                     )
                 }
                 markRelayConnecting(plan.activity.flowIdentifier)
-                tcpRelays.startMihomo(
+                tcpRelays.startProxy(
                     flow: tcpFlow,
                     proxy: proxy,
                     destination: destination,
