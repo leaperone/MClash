@@ -11,6 +11,7 @@ final class Hysteria2QUICSession: @unchecked Sendable {
     private var connection: NWConnection?
     private var state = Hysteria2Session()
     private var frameDecoder = HTTP3FrameDecoder()
+    private var fragmentReassembler = Hysteria2FragmentReassembler()
 
     init(connector: NativeHysteria2OutboundConnector, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.hysteria2-quic")) {
         self.connector = connector
@@ -184,6 +185,35 @@ final class Hysteria2QUICSession: @unchecked Sendable {
                         } catch {
                             completion(.failure(error))
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    func receiveReassembledUDPMessage(
+        completion: @escaping @Sendable (Result<Hysteria2Codec.UDPMessage, Error>) -> Void
+    ) {
+        receiveUDPMessage { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case let .failure(error):
+                completion(.failure(error))
+            case let .success(message):
+                self.queue.async { [weak self] in
+                    guard let self else { return }
+                    if let payload = self.fragmentReassembler.append(message) {
+                        completion(.success(Hysteria2Codec.UDPMessage(
+                            sessionID: message.sessionID,
+                            packetID: message.packetID,
+                            fragmentID: 0,
+                            fragmentCount: 1,
+                            host: message.host,
+                            port: message.port,
+                            payload: payload
+                        )))
+                    } else {
+                        self.receiveReassembledUDPMessage(completion: completion)
                     }
                 }
             }

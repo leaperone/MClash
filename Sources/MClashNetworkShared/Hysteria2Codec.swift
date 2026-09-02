@@ -25,6 +25,16 @@ public enum Hysteria2Codec: Sendable {
         public let host: String
         public let port: UInt16
         public let payload: Data
+
+        public init(sessionID: UInt32, packetID: UInt16, fragmentID: UInt8, fragmentCount: UInt8, host: String, port: UInt16, payload: Data) {
+            self.sessionID = sessionID
+            self.packetID = packetID
+            self.fragmentID = fragmentID
+            self.fragmentCount = fragmentCount
+            self.host = host
+            self.port = port
+            self.payload = payload
+        }
     }
     public static func authHeaders(
         password: String,
