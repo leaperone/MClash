@@ -488,7 +488,7 @@ struct ConnectionsView: View {
                 updateWorkspaceWidth(width)
             }
         }
-        .navigationTitle("Traffic")
+        .navigationTitle(AppLocalization.string("Connection Log"))
         .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
         .inspector(isPresented: attachedInspectorBinding) {

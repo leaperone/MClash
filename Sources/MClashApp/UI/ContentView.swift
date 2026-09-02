@@ -5,42 +5,33 @@ struct ContentView: View {
     @Bindable var model: AppModel
     @Bindable var applicationUpdater: ApplicationUpdater
     @AppStorage("mclash.navigation.destination") private var restoredDestinationRawValue =
-        AppModel.Destination.entrances.rawValue
+        AppModel.Destination.overview.rawValue
     @AppStorage("mclash.navigation.advancedExpanded") private var advancedExpanded = false
     @State private var hasRestoredDestination = false
 
     var body: some View {
         NavigationSplitView {
             List(selection: $model.selection) {
-                Section {
-                    // Traffic enters MClash here. Keep capture surfaces at the
-                    // top of the sidebar so the navigation follows the actual
-                    // path of a request (entrance → mode → rules → exit).
-                    destinationRow(.entrances)
-                }
-
-                Section(AppLocalization.string("Configuration")) {
-                    destinationRow(.workspaces, title: "Configuration & Mode")
-                    destinationRow(.dns)
-                    destinationRow(.rules, title: "Rules & Rule Sets")
-                    destinationRow(.proxyGroups, title: "Node Groups")
-                    destinationRow(.nodes)
-                    destinationRow(.sources)
+                Section(AppLocalization.string("Everyday")) {
+                    destinationRow(.overview, title: "Status")
+                    destinationRow(.sources, title: "Subscriptions")
+                    destinationRow(.proxyGroups, title: "Nodes")
+                    destinationRow(.entrances, title: "How to Connect")
                 }
 
                 Section {
-                    destinationRow(.overview)
-                }
-
-                Section(AppLocalization.string("Monitor")) {
-                    destinationRow(.connections)
-                    destinationRow(.attention, title: "Diagnostics")
+                    destinationRow(.connections, title: "Connection Log")
+                    destinationRow(.attention, title: "Needs Attention")
+                    destinationRow(.rules, title: "Rules")
                 }
 
                 Section {
                     DisclosureGroup(AppLocalization.string("Advanced"), isExpanded: $advancedExpanded) {
-                        destinationRow(.profiles)
-                        destinationRow(.providers)
+                        destinationRow(.workspaces, title: "Routing Mode")
+                        destinationRow(.dns)
+                        destinationRow(.nodes, title: "Node List")
+                        destinationRow(.profiles, title: "Config Files")
+                        destinationRow(.providers, title: "Rule Sets")
                         destinationRow(.logs)
                     }
                 }
@@ -107,20 +98,20 @@ struct ContentView: View {
             }
         }
         .alert(
-            AppLocalization.string("Add Source?"),
+            AppLocalization.string("Add Subscription?"),
             isPresented: pendingSubscriptionImportIsPresented,
             presenting: model.pendingSubscriptionImport
         ) { request in
             Button("Cancel", role: .cancel) {
                 model.cancelPendingSubscriptionImport()
             }
-            Button(AppLocalization.string("Import Source")) {
+            Button(AppLocalization.string("Add Subscription")) {
                 Task { await model.confirmPendingSubscriptionImport(request) }
             }
         } message: { request in
             Text(
                 AppLocalization.format(
-                    "Download a source from %@? Only node connection data is imported. Source proxy groups, rules, DNS and TUN settings are ignored.",
+                    "Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored.",
                     request.displayHost
                 )
             )
@@ -170,7 +161,7 @@ struct ContentView: View {
             return
         }
 
-        var destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .entrances
+        var destination = AppModel.Destination(rawValue: restoredDestinationRawValue) ?? .overview
         if destination == .appRouting {
             destination = .entrances
             restoredDestinationRawValue = destination.rawValue
@@ -190,7 +181,7 @@ struct ContentView: View {
     }
 
     private var advancedDestinations: Set<AppModel.Destination> {
-        [.profiles, .providers, .logs]
+        [.workspaces, .dns, .nodes, .profiles, .providers, .logs]
     }
 
     @ViewBuilder

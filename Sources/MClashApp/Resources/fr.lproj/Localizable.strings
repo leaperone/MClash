@@ -1,4 +1,20 @@
 /* MClash French localization. */
+
+"Everyday" = "Quotidien";
+"Status" = "État";
+"Subscriptions" = "Abonnements";
+"How to Connect" = "Connexion";
+"Connection Log" = "Journal des connexions";
+"Needs Attention" = "À traiter";
+"Routing Mode" = "Mode de routage";
+"Node List" = "Liste des nœuds";
+"Config Files" = "Fichiers de config";
+"Rule Sets" = "Jeux de règles";
+"Add Subscription?" = "Ajouter un abonnement ?";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "Ajouter un abonnement depuis %@ ? Seuls les nœuds sont importés. Groupes, règles, DNS et TUN sont ignorés.";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "Choisissez une adresse locale pour une extension, des apps Mac, ou le proxy système.";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "Choisissez règles, toujours proxy, ou direct.";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "Les chemins de connexion se gèrent sur la page « Connexion ».";
 "Alias (Optional)" = "Alias (facultatif)";
 "App Routing using legacy profile rules" = "App Routing avec les règles de profil héritées";
 "App Routing using unified MClash rules" = "App Routing avec les règles MClash unifiées";

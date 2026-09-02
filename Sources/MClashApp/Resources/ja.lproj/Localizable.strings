@@ -1,4 +1,20 @@
 /* MClash 日本語ローカライズ */
+
+"Everyday" = "日常";
+"Status" = "状態";
+"Subscriptions" = "購読";
+"How to Connect" = "接続方法";
+"Connection Log" = "接続履歴";
+"Needs Attention" = "要確認";
+"Routing Mode" = "ルーティング";
+"Node List" = "ノード一覧";
+"Config Files" = "設定ファイル";
+"Rule Sets" = "ルールセット";
+"Add Subscription?" = "購読を追加しますか？";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "%@ から購読を追加しますか？ノードだけを取り込みます。グループ、ルール、DNS、TUN は使いません。";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "ブラウザ拡張用のローカルアドレス、選択した Mac アプリ、またはシステムプロキシを選びます。";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "ルールに従う、常にプロキシ、または直通を選びます。";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "接続方法のオン／オフは「接続方法」ページでまとめて操作します。";
 "Alias (Optional)" = "エイリアス（任意）";
 "App Routing using legacy profile rules" = "従来のプロファイルルールを使う App Routing";
 "App Routing using unified MClash rules" = "MClash 統合ルールを使う App Routing";

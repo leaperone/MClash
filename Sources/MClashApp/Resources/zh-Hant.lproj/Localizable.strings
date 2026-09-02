@@ -1,4 +1,20 @@
 /* MClash 繁體中文在地化。 */
+
+"Everyday" = "日常";
+"Status" = "狀態";
+"Subscriptions" = "訂閱";
+"How to Connect" = "接入方式";
+"Connection Log" = "連線紀錄";
+"Needs Attention" = "需要處理";
+"Routing Mode" = "代理模式";
+"Node List" = "節點列表";
+"Config Files" = "設定檔";
+"Rule Sets" = "規則集";
+"Add Subscription?" = "新增訂閱？";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "要從 %@ 新增訂閱嗎？只會匯入節點。訂閱裡的策略組、規則、DNS 和 TUN 不會套用。";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "給瀏覽器擴充功能一個本機位址，或只讓指定的 Mac App 走代理，也可以開啟系統代理。";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "選擇依規則分流、全部走代理，或全部直連。";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "接入方式的開關都在「接入方式」頁。";
 "Alias (Optional)" = "別名（選填）";
 "App Routing using legacy profile rules" = "使用舊設定規則的 App Routing";
 "App Routing using unified MClash rules" = "使用 MClash 統一規則的 App Routing";
@@ -17,7 +33,7 @@
 "Sources are refreshed from the original profile and provide node data only." = "來源從原始設定重新整理，僅提供節點資料。";
 
 "Configuration" = "設定";
-"Entrances" = "入口";
+"Entrances" = "接入方式";
 "Workspaces" = "工作方案";
 "Nodes" = "節點";
 "Proxy Groups" = "代理群組";
@@ -74,7 +90,7 @@
 "Approve MClash in System Settings → General → Login Items & Extensions → Network Extensions." = "請在「系統設定」→「一般」→「登入項目與延伸功能」→「網路延伸功能」中允許 MClash。";
 "Apps may reconnect automatically. This affects every active connection, not only the current search results." = "App 可能會自動重新連線。這會影響所有作用中連線，不僅是目前搜尋結果。";
 "Assigned when connecting" = "連線時指派";
-"Attention" = "注意";
+"Attention" = "需要處理";
 "Automatic selection is pinned" = "自動選擇已固定";
 "Automatically check for MClash updates" = "自動檢查 MClash 更新";
 "Automatically download updates" = "自動下載更新";
@@ -303,7 +319,7 @@
 "Opening private local traffic history…" = "正在開啟私密的本機流量歷史記錄…";
 "Override network, DNS, routing rules, process lookup, interface, concurrency, and core logging without modifying the subscription file." = "無需修改訂閱檔案，即可覆蓋網路、DNS、路由規則、程序查詢、介面、並行處理和核心日誌設定。";
 "Override the profile DNS section" = "覆蓋設定檔中的 DNS 部分";
-"Overview" = "概覽";
+"Overview" = "狀態";
 "Paste several executable names, signing IDs, bundle IDs, or wildcard patterns separated by semicolons, commas, or new lines." = "貼上多個可執行檔案名稱、簽署 ID、Bundle ID 或萬用字元模式，並用分號、逗號或換行分隔。";
 "Path" = "路徑";
 "Paths now" = "目前路徑";
@@ -334,7 +350,7 @@
 "Provider inactive" = "提供者未啟用";
 "Provider reconnecting…" = "提供者正在重新連線…";
 "Provider revision verified" = "提供者版本已驗證";
-"Providers" = "提供者";
+"Providers" = "規則集";
 "Providers unavailable" = "提供者不可用";
 "Proxies" = "代理";
 "Proxifier Profile…" = "Proxifier 設定檔…";
@@ -434,7 +450,7 @@
 "Today" = "今天";
 "Topology" = "拓撲";
 "Topology zoom" = "拓撲縮放";
-"Traffic" = "流量";
+"Traffic" = "連線紀錄";
 "Traffic Workspace" = "流量工作區";
 "Transferred" = "已傳輸";
 "Transparent Proxy Ports" = "透明代理連接埠";
@@ -784,7 +800,7 @@
 "Routing Options" = "路由選項";
 "Rules %@ · %@" = "規則 %@ · %@";
 "Session Started" = "工作階段已開始";
-"Sources" = "來源";
+"Sources" = "訂閱";
 "Start with the first item. Technical details are available when needed." = "請先處理第一項，需要時可查看技術詳細資訊。";
 "Starting" = "正在啟動";
 "Stopped" = "已停止";

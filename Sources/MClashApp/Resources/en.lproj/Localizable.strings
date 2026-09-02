@@ -1,5 +1,21 @@
 /* MClash English localization — source language. */
 
+"Everyday" = "Everyday";
+"Status" = "Status";
+"Subscriptions" = "Subscriptions";
+"How to Connect" = "How to Connect";
+"Connection Log" = "Connection Log";
+"Needs Attention" = "Needs Attention";
+"Routing Mode" = "Routing Mode";
+"Node List" = "Node List";
+"Config Files" = "Config Files";
+"Rule Sets" = "Rule Sets";
+"Add Subscription?" = "Add Subscription?";
+"Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored." = "Add a subscription from %@? Node addresses are imported. Groups, rules, DNS, and TUN from the subscription are ignored.";
+"Choose a browser extension address, selected Mac apps, or the macOS system proxy." = "Choose a browser extension address, selected Mac apps, or the macOS system proxy.";
+"Choose whether traffic follows rules, always uses a proxy, or stays direct." = "Choose whether traffic follows rules, always uses a proxy, or stays direct.";
+"Connection paths and their on/off controls are managed together on the How to Connect page." = "Connection paths and their on/off controls are managed together on the How to Connect page.";
+
 "Configuration" = "Configuration";
 "Entrances" = "Entrances";
 "Workspaces" = "Workspaces";

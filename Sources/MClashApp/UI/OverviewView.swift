@@ -47,7 +47,7 @@ struct OverviewView: View {
                 }
             }
         }
-        .navigationTitle("Overview")
+        .navigationTitle(AppLocalization.string("Status"))
         .mclashPageSurface()
     }
 
@@ -67,7 +67,7 @@ private struct OverviewRoutingModeCard: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(AppLocalization.string("Routing mode"))
                             .font(.headline)
-                        Text(AppLocalization.string("Choose how every entrance starts routing traffic."))
+                        Text(AppLocalization.string("Choose whether traffic follows rules, always uses a proxy, or stays direct."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
