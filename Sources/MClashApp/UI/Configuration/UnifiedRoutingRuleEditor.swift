@@ -10,8 +10,8 @@ import UniformTypeIdentifiers
 /// proxy groups and receive a `RoutingRule` owned by the configuration layer.
 ///
 /// This view is intentionally independent from `AppModel`, so it can be used
-/// by `ConfigurationEditorSheet`, a workbench inspector, or a quick-create
-/// command without coupling those surfaces to draft state.
+/// by `ConfigurationEditorSheet` or a quick-create command without coupling
+/// those surfaces to draft state.
 struct UnifiedRoutingRuleEditor: View {
     let proxyGroups: [ProxyGroup]
     let applicationCandidates: [ApplicationCaptureCandidate]
