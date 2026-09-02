@@ -3,6 +3,8 @@ import Foundation
 import MClashNetworkShared
 
 public struct CompiledConfiguration: Equatable, Sendable {
+    /// Connector-neutral plan that produced this compatibility YAML.
+    public let runtimePlan: CompiledRuntimePlan
     public let workspaceID: WorkspaceID
     public let workspaceRevision: Int
     public let yaml: Data
@@ -14,6 +16,7 @@ public struct CompiledConfiguration: Equatable, Sendable {
     public let configHash: String
 
     public init(
+        runtimePlan: CompiledRuntimePlan,
         workspaceID: WorkspaceID,
         workspaceRevision: Int,
         yaml: Data,
@@ -23,6 +26,7 @@ public struct CompiledConfiguration: Equatable, Sendable {
         captureDNSEnabled: Bool,
         diagnostics: [ConfigurationDiagnostic]
     ) {
+        self.runtimePlan = runtimePlan
         self.workspaceID = workspaceID
         self.workspaceRevision = workspaceRevision
         self.yaml = yaml
@@ -71,6 +75,18 @@ public struct ConfigurationCompiler: Sendable {
 
     public init(emitsMihomoListeners: Bool = true) {
         self.emitsMihomoListeners = emitsMihomoListeners
+    }
+
+    /// Compiles only MClash-owned policy into a runtime-neutral snapshot.
+    /// The current `compile(document:)` API remains the compatibility path
+    /// that additionally renders Mihomo YAML from this same snapshot.
+    public func compileRuntimePlan(
+        document: ConfigurationDocument,
+        workspaceID: WorkspaceID? = nil
+    ) throws -> CompiledRuntimePlan {
+        let plan = try compile(document: document, workspaceID: workspaceID).runtimePlan
+        try plan.validate()
+        return plan
     }
 
     public func compile(
@@ -218,7 +234,21 @@ public struct ConfigurationCompiler: Sendable {
             unavailableFallback: .reject
         )
         let workspaceEntrances = workspace.entranceIDs.compactMap { entrancesByID[$0] }
+        let runtimePlan = CompiledRuntimePlan(
+            workspaceID: workspace.id,
+            workspaceRevision: workspace.revision,
+            nodes: workspaceNodes,
+            proxyGroups: resolvedGroups,
+            rules: workspaceRules,
+            ruleSets: workspaceRuleSets,
+            dnsPolicy: dns,
+            entrances: workspaceEntrances,
+            routingMode: workspace.routingMode,
+            globalProxyGroupID: workspace.globalProxyGroupID ?? workspaceGroups.first?.id,
+            diagnostics: diagnostics
+        )
         return CompiledConfiguration(
+            runtimePlan: runtimePlan,
             workspaceID: workspace.id,
             workspaceRevision: workspace.revision,
             yaml: yamlData,
