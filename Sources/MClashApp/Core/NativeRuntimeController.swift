@@ -33,13 +33,14 @@ extension CoreSupervisor {
     }
 
     func diagnostics() async -> NativeRuntimeDiagnostics {
-        NativeRuntimeDiagnostics(
-            state: currentState,
+        let current = state()
+        return NativeRuntimeDiagnostics(
+            state: current,
             capabilities: runtimeCapabilities,
             backend: "mihomo",
-            controlPlaneAvailable: currentState.isRunning,
+            controlPlaneAvailable: current.isRunning,
             lastError: nil,
-            startedAt: currentState.session?.startedAt
+            startedAt: current.session?.startedAt
         )
     }
 }
