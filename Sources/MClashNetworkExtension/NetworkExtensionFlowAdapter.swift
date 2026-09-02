@@ -188,6 +188,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     mihomoDestination: nil,
                     proxy: nil,
                     nativeConnector: nil,
+                    connectorCapability: .native,
                     unavailableFallback: .direct,
                     activity: fallbackActivity(
                         flow: flow,
@@ -206,6 +207,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                     mihomoDestination: nil,
                     proxy: nil,
                     nativeConnector: nil,
+                    connectorCapability: .native,
                     unavailableFallback: .direct,
                     activity: fallbackActivity(
                         flow: flow,
@@ -236,12 +238,20 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                   target.protocolName == "socks5" else { return nil }
             return NativeSOCKS5RelayConnector(target: target)
         }()
+        let capability: NativeConnectorCapability = if nativeConnector != nil {
+            .native
+        } else if routePlan?.proxy != nil {
+            .legacyFallback
+        } else {
+            .unsupported
+        }
         return TCPFlowInterceptionPlan(
             decision: outcome.decision,
             destination: routePlan?.destinations.original,
             mihomoDestination: routePlan?.destinations.mihomo,
             proxy: routePlan?.proxy,
             nativeConnector: nativeConnector,
+            connectorCapability: capability,
             unavailableFallback: unavailableFallbackRequested(
                 by: outcome.decision,
                 rulesByIdentifier: currentState.rulesByIdentifier
@@ -728,6 +738,7 @@ struct TCPFlowInterceptionPlan: Sendable {
     let mihomoDestination: SOCKS5Endpoint?
     let proxy: ProviderSOCKSConfiguration?
     let nativeConnector: (any OutboundConnector)?
+    let connectorCapability: NativeConnectorCapability
     let unavailableFallback: UnavailableFallback
     let activity: AppRoutingActivity
 }
