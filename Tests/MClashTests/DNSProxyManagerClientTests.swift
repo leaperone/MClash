@@ -32,7 +32,7 @@ struct DNSProxyManagerClientTests {
         let savedBootstrap = try DNSProxyBootstrapConfiguration.decode(savedBootstrapData)
         #expect(savedBootstrap.revision == 41)
         #expect(savedBootstrap.activationIdentifier == configuration.activationIdentifier)
-        #expect(savedBootstrap.profileRulesProxy.route == .profileRules)
+        #expect(savedBootstrap.profileRulesProxy?.route == .profileRules)
         #expect(await preferences.preparedBeforeFirstEnableSave())
         #expect(await preferences.loadCount() == 2)
         #expect(await preferences.saveCount() == 1)

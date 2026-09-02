@@ -16,7 +16,8 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public let revision: UInt64
     public let activationIdentifier: UUID
-    public let profileRulesProxy: MihomoRouteProxyEndpoint
+    /// Legacy Mihomo route endpoint. Nil for a native-only DNS bootstrap.
+    public let profileRulesProxy: MihomoRouteProxyEndpoint?
     public let routeProxyEndpoints: [MihomoRouteProxyEndpoint]?
     public let encodedCaptureSnapshot: Data?
     /// Kept opt-in for wire compatibility. Older host payloads decode as
@@ -46,6 +47,25 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         try validate()
     }
 
+    /// Creates a DNS bootstrap that contains no Mihomo route or listener.
+    /// Native mode consumes only the connector-neutral upstream payload.
+    public init(
+        revision: UInt64,
+        activationIdentifier: UUID,
+        encodedCaptureSnapshot: Data? = nil,
+        nativeUpstreamBootstrap: DNSUpstreamBootstrap
+    ) throws {
+        schemaVersion = Self.currentSchemaVersion
+        self.revision = revision
+        self.activationIdentifier = activationIdentifier
+        profileRulesProxy = nil
+        routeProxyEndpoints = nil
+        self.encodedCaptureSnapshot = encodedCaptureSnapshot
+        dnsUpstreamMode = .native
+        self.nativeUpstreamBootstrap = nativeUpstreamBootstrap
+        try validate()
+    }
+
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, revision, activationIdentifier, profileRulesProxy
         case routeProxyEndpoints, encodedCaptureSnapshot, dnsUpstreamMode,
@@ -57,7 +77,7 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
         revision = try container.decode(UInt64.self, forKey: .revision)
         activationIdentifier = try container.decode(UUID.self, forKey: .activationIdentifier)
-        profileRulesProxy = try container.decode(MihomoRouteProxyEndpoint.self, forKey: .profileRulesProxy)
+        profileRulesProxy = try container.decodeIfPresent(MihomoRouteProxyEndpoint.self, forKey: .profileRulesProxy)
         routeProxyEndpoints = try container.decodeIfPresent([MihomoRouteProxyEndpoint].self, forKey: .routeProxyEndpoints)
         encodedCaptureSnapshot = try container.decodeIfPresent(Data.self, forKey: .encodedCaptureSnapshot)
         dnsUpstreamMode = try container.decodeIfPresent(DNSUpstreamMode.self, forKey: .dnsUpstreamMode) ?? .mihomo
@@ -76,6 +96,27 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         guard revision > 0 else {
             throw DNSProxyBootstrapConfigurationError.invalidRevision(revision)
         }
+        if dnsUpstreamMode == .native {
+            guard nativeUpstreamBootstrap != nil else {
+                throw DNSProxyBootstrapConfigurationError.missingNativeUpstreamBootstrap
+            }
+            if let profileRulesProxy {
+                guard profileRulesProxy.route == .profileRules else {
+                    throw DNSProxyBootstrapConfigurationError.invalidProfileRulesRoute
+                }
+                do {
+                    try MihomoRouteProxyCatalog.validate(
+                        routeProxyEndpoints ?? [profileRulesProxy]
+                    )
+                } catch {
+                    throw DNSProxyBootstrapConfigurationError.invalidProfileRulesProxy
+                }
+            }
+            return
+        }
+        guard let profileRulesProxy else {
+            throw DNSProxyBootstrapConfigurationError.invalidProfileRulesProxy
+        }
         guard profileRulesProxy.route == .profileRules else {
             throw DNSProxyBootstrapConfigurationError.invalidProfileRulesRoute
         }
@@ -85,9 +126,6 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
             )
         } catch {
             throw DNSProxyBootstrapConfigurationError.invalidProfileRulesProxy
-        }
-        if dnsUpstreamMode == .native, nativeUpstreamBootstrap == nil {
-            throw DNSProxyBootstrapConfigurationError.missingNativeUpstreamBootstrap
         }
     }
 

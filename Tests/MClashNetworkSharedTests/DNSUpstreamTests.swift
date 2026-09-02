@@ -34,6 +34,23 @@ struct DNSUpstreamTests {
         }
     }
 
+    @Test("Native DNS bootstrap does not require a Mihomo route endpoint")
+    func nativeBootstrapIsMihomoIndependent() throws {
+        let upstream = try DNSUpstreamEndpoint(
+            address: IPAddress("223.5.5.5"),
+            transport: .udp
+        )
+        let bootstrap = try DNSProxyBootstrapConfiguration(
+            revision: 1,
+            activationIdentifier: UUID(),
+            nativeUpstreamBootstrap: DNSUpstreamBootstrap(endpoints: [upstream])
+        )
+        #expect(bootstrap.profileRulesProxy == nil)
+        let decoded = try DNSProxyBootstrapConfiguration.decode(bootstrap.encoded())
+        #expect(decoded.profileRulesProxy == nil)
+        #expect(decoded.dnsUpstreamMode == .native)
+    }
+
     private let query = Data([
         0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x07, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d,

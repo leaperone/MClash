@@ -1003,11 +1003,14 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private static func dataPlaneConfiguration(
         for bootstrap: DNSProxyBootstrapConfiguration
     ) -> DataPlaneConfiguration? {
-        let proxy = ProviderSOCKSConfiguration(routeEndpoint: bootstrap.profileRulesProxy)
         let isNative = bootstrap.dnsUpstreamMode == .native
         guard !isNative || bootstrap.nativeUpstreamBootstrap != nil else { return nil }
+        let proxy = bootstrap.profileRulesProxy.flatMap {
+            ProviderSOCKSConfiguration(routeEndpoint: $0)
+        }
         let routeEndpoints = bootstrap.routeProxyEndpoints
-            ?? [bootstrap.profileRulesProxy]
+            ?? bootstrap.profileRulesProxy.map { [$0] }
+            ?? []
         var proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration] = [:]
         for endpoint in routeEndpoints {
             guard let configuration = ProviderSOCKSConfiguration(
