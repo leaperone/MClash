@@ -14,6 +14,26 @@ struct Hysteria2TCPResponseDecoderTests {
         #expect(decoder.isComplete)
     }
 
+    @Test("Handles every possible transport split without completing early")
+    func everySplitPoint() throws {
+        let response = Data([0x00, 0x02, 0x6f, 0x6b, 0x00])
+        for split in 0..<response.count {
+            var decoder = Hysteria2TCPResponseDecoder()
+            #expect(try decoder.append(response.prefix(split)) == nil)
+            #expect(try decoder.append(response.dropFirst(split))?.message == "ok")
+            #expect(decoder.isComplete)
+        }
+    }
+
+    @Test("Rejects bytes after a complete response")
+    func rejectsAfterCompletion() throws {
+        var decoder = Hysteria2TCPResponseDecoder()
+        #expect(try decoder.append(Data([0x00, 0x00, 0x00]))?.accepted == true)
+        #expect(throws: Hysteria2CodecError.invalidResponse) {
+            try decoder.append(Data([0x00]))
+        }
+    }
+
     @Test("Rejects non-zero status and oversized message")
     func rejects() {
         var rejected = Hysteria2TCPResponseDecoder()

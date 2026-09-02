@@ -47,4 +47,44 @@ struct Hysteria2SessionTests {
         #expect(handled)
         #expect(session.state == .ready(udpEnabled: true))
     }
+
+    @Test("Does not allow authentication or ready transitions out of order")
+    func rejectsOutOfOrderEvents() {
+        var session = Hysteria2Session()
+        #expect(!session.beginAuthentication())
+        #expect(!session.authenticationSucceeded(udpEnabled: true))
+        #expect(session.state == .idle)
+
+        #expect(session.beginConnect())
+        #expect(session.beginAuthentication())
+        #expect(!session.beginConnect())
+        #expect(session.authenticationSucceeded(udpEnabled: false))
+        #expect(session.state == .ready(udpEnabled: false))
+        // A second response cannot move an already-ready session again.
+        #expect(!session.authenticationSucceeded(udpEnabled: true))
+        #expect(!session.beginAuthentication())
+    }
+
+    @Test("Invalid authentication response fails closed and can be retried")
+    func invalidAuthenticationFailsClosed() {
+        var session = Hysteria2Session()
+        #expect(session.beginConnect())
+        #expect(session.beginAuthentication())
+        #expect(!session.handleAuthenticationResponse(
+            statusCode: 233,
+            headers: ["Hysteria-UDP": "not-a-boolean"]
+        ))
+        if case .failed = session.state {
+            // Expected: malformed capability headers never produce ready.
+        } else {
+            Issue.record("malformed authentication response must fail the session")
+        }
+        #expect(session.beginConnect())
+        #expect(session.beginAuthentication())
+        #expect(session.handleAuthenticationResponse(
+            statusCode: 233,
+            headers: ["Hysteria-UDP": "false", "Hysteria-CC-RX": "auto"]
+        ))
+        #expect(session.state == .ready(udpEnabled: false))
+    }
 }

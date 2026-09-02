@@ -23,4 +23,29 @@ struct HTTP3FrameDecoderTests {
             try decoder.append(Data(repeating: 0, count: 5))
         }
     }
+
+    @Test("Preserves frame order when one transport read contains multiple frames")
+    func multipleFrames() throws {
+        let first = try HTTP3FrameCodec.encode(
+            HTTP3Frame(type: .headers, payload: Data([0x01]))
+        )
+        let second = try HTTP3FrameCodec.encode(
+            HTTP3Frame(type: .data, payload: Data("body".utf8))
+        )
+        var decoder = HTTP3FrameDecoder()
+        #expect(try decoder.append(first + second) == [
+            HTTP3Frame(type: .headers, payload: Data([0x01])),
+            HTTP3Frame(type: .data, payload: Data("body".utf8)),
+        ])
+    }
+
+    @Test("Rejects an unsupported frame type only once its complete frame arrives")
+    func unsupportedFrameAfterSegmentation() throws {
+        // Type 0x02 is not part of the deliberately bounded subset.
+        var decoder = HTTP3FrameDecoder()
+        #expect(try decoder.append(Data([0x02])).isEmpty)
+        #expect(throws: HTTP3FrameCodecError.unsupportedType(0x02)) {
+            try decoder.append(Data([0x00]))
+        }
+    }
 }

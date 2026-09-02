@@ -19,6 +19,25 @@ struct Hysteria2CodecTests {
         #expect(try HTTP3FrameCodec.decode(frame).type == .headers)
     }
 
+    @Test("Authentication frame round-trips the complete ordered field section")
+    func authFrameRoundTrip() throws {
+        let frame = try Hysteria2Codec.encodeAuthHeadersFrame(
+            password: "secret",
+            receiveRate: 42,
+            padding: "p"
+        )
+        let decoded = try HTTP3FrameCodec.decode(frame)
+        #expect(decoded.type == .headers)
+        let fields = try QPACKDecoder.decodeLiteralFields(decoded.payload)
+        #expect(fields.map(\.0) == [
+            ":method", ":path", ":authority", "Hysteria-Auth",
+            "Hysteria-CC-RX", "Hysteria-Padding",
+        ])
+        #expect(fields.map(\.1) == [
+            "POST", "/auth", "hysteria", "secret", "42", "p",
+        ])
+    }
+
     @Test("Encodes TCP request ID and address length as QUIC varints")
     func tcpRequest() throws {
         let data = try Hysteria2Codec.encodeTCPRequest(host: "example.com", port: 443)
@@ -69,6 +88,23 @@ struct Hysteria2CodecTests {
         #expect(throws: Hysteria2CodecError.serverRejected("denied")) {
             try Hysteria2Codec.decodeTCPResponse(Data([0x01, 0x06]) + Data("denied".utf8) + Data([0x00]))
         }
+    }
+
+    @Test("TCP response rejects trailing bytes and accepts large varint fields")
+    func tcpResponseBoundaries() throws {
+        // The response framing is status, varint message length, message,
+        // varint padding length, padding. Trailing bytes are not another
+        // response and must not be silently accepted.
+        #expect(throws: Hysteria2CodecError.invalidVarint) {
+            try Hysteria2Codec.decodeTCPResponse(Data([0x00, 0x00, 0x00, 0x01]))
+        }
+
+        let message = Data(repeating: 0x61, count: 128)
+        // QUIC varint 128 is encoded as 0x40 0x80.
+        let encoded = Data([0x00, 0x40, 0x80]) + message + Data([0x00])
+        let response = try Hysteria2Codec.decodeTCPResponse(encoded)
+        #expect(response.accepted)
+        #expect(response.message.utf8.count == message.count)
     }
 
     @Test("Validates Hysteria2 authentication response status and capabilities")
