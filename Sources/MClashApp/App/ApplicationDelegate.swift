@@ -118,6 +118,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         startApplicationPreparationIfReady()
     }
 
+    /// Scene-graph registration, not Window content. Quiet login and
+    /// `--mclash-background` never instantiate the main window view tree.
     func registerApplicationPreparation(
         _ handler: @escaping @MainActor () async -> Void
     ) {
