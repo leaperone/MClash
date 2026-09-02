@@ -162,6 +162,34 @@ final class Hysteria2QUICSession: @unchecked Sendable {
         }
     }
 
+    func receiveUDPMessage(
+        completion: @escaping @Sendable (Result<Hysteria2Codec.UDPMessage, Error>) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, case .ready(udpEnabled: true) = self.state.state,
+                  let connection = self.connection else {
+                completion(.failure(Hysteria2CodecError.invalidResponse))
+                return
+            }
+            connection.receiveMessage { [weak self] data, _, isComplete, error in
+                guard let self else { return }
+                self.queue.async {
+                    if let error {
+                        completion(.failure(error))
+                    } else if isComplete, (data ?? Data()).isEmpty {
+                        completion(.failure(Hysteria2CodecError.invalidResponse))
+                    } else {
+                        do {
+                            completion(.success(try Hysteria2Codec.decodeUDPMessage(data ?? Data())))
+                        } catch {
+                            completion(.failure(error))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private func readTCPResponse(
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) {
