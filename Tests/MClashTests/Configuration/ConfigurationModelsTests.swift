@@ -17,6 +17,19 @@ struct ConfigurationModelsTests {
         #expect(NodeID.stable(for: old.fingerprint) == NodeID.stable(for: refreshed.fingerprint))
     }
 
+    @Test func nodeProjectsToConnectorNeutralOutboundTarget() throws {
+        let node = try Node(
+            displayName: "SOCKS node",
+            protocol: .socks5,
+            host: "proxy.example.com",
+            port: 1080,
+            parameters: ["username": "user", "password": "secret"]
+        )
+        #expect(node.outboundTarget?.protocolName == "socks5")
+        #expect(node.outboundTarget?.host == "proxy.example.com")
+        #expect(node.outboundTarget?.port == 1080)
+    }
+
     @Test func selectorCombinesPinsAndDynamicIncludeExcludeDeterministically() throws {
         let source = SourceID()
         let us = try Node(displayName: "US 02", protocol: .vless, host: "us-2.example.com", port: 443, sourceLinks: [source])

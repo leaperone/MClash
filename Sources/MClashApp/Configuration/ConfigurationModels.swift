@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import MClashNetworkShared
 
 // MARK: - Stable identifiers
 
@@ -77,6 +78,18 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
     /// rotate during a refresh.
     public var connectionFingerprint: String {
         Self.makeConnectionFingerprint(protocol: proto, host: host, port: port, parameters: parameters)
+    }
+
+    /// Connector-neutral projection used by native outbound implementations.
+    /// The projection preserves transport parameters but does not expose the
+    /// node's stable identity or source metadata to the connector layer.
+    public var outboundTarget: OutboundNodeTarget? {
+        try? OutboundNodeTarget(
+            protocolName: proto.rawValue,
+            host: host,
+            port: UInt16(port),
+            parameters: parameters
+        )
     }
 
     public init(id: NodeID = NodeID(), displayName: String, protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String] = [:], sourceLinks: [SourceID] = [], tags: Set<String> = [], region: String? = nil, enabled: Bool = true, health: NodeHealthSnapshot = NodeHealthSnapshot(), userAlias: String? = nil, lastSeenAt: Date? = nil) throws {
