@@ -468,14 +468,6 @@ public actor MihomoAPIClient {
     }
 }
 
-// MARK: - Profile workspace adapter
-
-/// Keeps the legacy controller implementation behind the connector-neutral
-/// profile workspace contract. Consumers should use
-/// `ProfileProxyControllerClient` and not couple their topology/status views
-/// to the Mihomo API type.
-extension MihomoAPIClient: ProfileProxyControllerClient {}
-
 private struct ProxySelectionRequest: Encodable {
     let name: String
 }

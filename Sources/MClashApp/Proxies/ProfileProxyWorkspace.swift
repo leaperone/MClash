@@ -144,6 +144,11 @@ protocol ProfileProxyControllerClient: Sendable {
     ) async throws -> Int
 }
 
+/// Keeps the legacy controller implementation behind the connector-neutral
+/// profile workspace contract. The conformance lives beside the protocol so
+/// minimal Mihomo API smoke builds do not need to compile the entire app UI.
+extension MihomoAPIClient: ProfileProxyControllerClient {}
+
 extension ProfileProxyControllerClient {
     func measureDelay(
         proxy: String,
