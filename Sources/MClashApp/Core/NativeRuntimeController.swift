@@ -40,7 +40,12 @@ extension CoreSupervisor {
             backend: "mihomo",
             controlPlaneAvailable: current.isRunning,
             lastError: nil,
-            startedAt: current.session?.startedAt
+            startedAt: current.session?.startedAt,
+            hasCompiledRuntimePlan: false,
+            workspaceRevision: nil,
+            listenerCount: 0,
+            enabledListenerCount: 0,
+            sessionValidationError: nil
         )
     }
 }

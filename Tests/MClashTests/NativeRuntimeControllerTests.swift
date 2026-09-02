@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import MClashNetworkShared
 @testable import MClashApp
 
 @Suite("Native runtime controller seam")
@@ -71,6 +72,75 @@ struct NativeRuntimeControllerTests {
         #expect(FileManager.default.fileExists(atPath: configuration.homeDirectory.path))
         #expect(!FileManager.default.fileExists(atPath: configuration.binaryURL.path))
         #expect(await engine.stop())
+    }
+
+    @Test("Native session owns compiled policy and listeners without YAML")
+    func nativeSessionOwnsPolicyAndListeners() async throws {
+        let document = ConfigurationDocument.mclashDefault()
+        let plan = try ConfigurationCompiler().compileRuntimePlan(document: document)
+        let listener = try MClashListenerSpec(
+            name: "Local HTTP",
+            kind: .http,
+            enabled: true,
+            port: 18_080
+        )
+        let registry = try MClashListenerRegistry(listeners: [listener])
+        let engine = try NativeRuntimeEngine(plan: plan, listeners: registry)
+
+        let state = await engine.nativeSessionState()
+        #expect(state?.plan == plan)
+        #expect(state?.listeners == registry)
+
+        let diagnostics = await engine.diagnostics()
+        #expect(diagnostics.hasCompiledRuntimePlan)
+        #expect(diagnostics.workspaceRevision == plan.workspaceRevision)
+        #expect(diagnostics.listenerCount == 1)
+        #expect(diagnostics.enabledListenerCount == 1)
+
+        // A missing legacy YAML is intentional: native policy is complete
+        // without rendering or reading Mihomo configuration.
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "mclash-native-policy-\\(UUID().uuidString)",
+                       directoryHint: .isDirectory)
+        let configuration = CoreLaunchConfiguration(
+            binaryURL: root.appending(path: "mihomo-must-not-launch"),
+            homeDirectory: root.appending(path: "home", directoryHint: .isDirectory),
+            configURL: root.appending(path: "missing.yaml"),
+            controllerPort: 19_101,
+            secret: "native-policy-secret"
+        )
+        try await engine.start(configuration)
+        #expect(await engine.nativeSessionState()?.plan == plan)
+        #expect(await engine.diagnostics().listenerCount == 1)
+        #expect(await engine.stop())
+    }
+
+    @Test("Native session rejects invalid policy before storing it")
+    func nativeSessionRejectsInvalidPlan() throws {
+        let valid = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let missingGroup = ProxyGroupID()
+        let invalid = CompiledRuntimePlan(
+            workspaceID: valid.workspaceID,
+            workspaceRevision: valid.workspaceRevision,
+            nodes: valid.nodes,
+            proxyGroups: valid.proxyGroups,
+            rules: valid.rules,
+            ruleSets: valid.ruleSets,
+            dnsPolicy: valid.dnsPolicy,
+            entrances: valid.entrances,
+            routingMode: valid.routingMode,
+            globalProxyGroupID: missingGroup,
+            diagnostics: valid.diagnostics
+        )
+        let registry = try MClashListenerRegistry()
+
+        #expect(throws: NativeRuntimeSessionValidationError.invalidPlan(
+            .missingGlobalProxyGroup(missingGroup)
+        )) {
+            _ = try NativeRuntimeEngine(plan: invalid, listeners: registry)
+        }
     }
 
     @Test("Mihomo adapter preserves the stopped initial state")
