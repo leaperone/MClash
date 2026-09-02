@@ -1473,6 +1473,7 @@ private struct ProxyNodeListRow: View {
     var body: some View {
         HStack(spacing: 9) {
             selectionButton
+                .accessibilityHidden(supportsSelection && onOpenGroup == nil)
             rowActionButton
         }
         .padding(.vertical, 4)
@@ -1505,13 +1506,21 @@ private struct ProxyNodeListRow: View {
             .help(AppLocalization.format("Open nested group %@", nodeName))
             .accessibilityLabel(AppLocalization.format("Open nested group %@", nodeName))
         } else if supportsSelection {
-            Button(action: onSelect) {
+            Button {
+                guard !isSelected else { return }
+                onSelect()
+            } label: {
                 rowContent
             }
             .buttonStyle(MClashRowButtonStyle())
-            .disabled(!canSelect || selectionInProgress || isSelected)
+            .disabled(!canSelect || selectionInProgress)
             .help(selectionHelp)
-            .accessibilityHidden(true)
+            .accessibilityLabel("\(nodeName), \(statusText), \(delayText)")
+            .accessibilityValue(
+                isSelected
+                    ? AppLocalization.string("Currently selected")
+                    : AppLocalization.string("Not selected")
+            )
         } else {
             rowContent
         }

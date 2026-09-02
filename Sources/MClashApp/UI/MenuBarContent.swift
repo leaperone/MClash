@@ -5,6 +5,7 @@ struct MenuBarContent: View {
     @Bindable var model: AppModel
     let presentMainWindow: @MainActor (AppModel.Destination) -> Void
     @State private var pickerGroupName: String?
+    @State private var profileMenuPresented = false
     @State private var contentIsVisible = false
     @State private var retainedPopoverHeight: CGFloat = 410
 
@@ -319,38 +320,8 @@ struct MenuBarContent: View {
     }
 
     private var legacyProfileControl: some View {
-        Menu {
-            if model.profiles.isEmpty {
-                Text("No profiles")
-            } else {
-                ForEach(model.profiles) { profile in
-                    Button {
-                        Task {
-                            do {
-                                try await model.activateProfile(profile.id)
-                            } catch {
-                                model.errorMessage = error.localizedDescription
-                            }
-                        }
-                    } label: {
-                        if profile.id == model.activeProfileID {
-                            Label(profile.name, systemImage: "checkmark")
-                        } else {
-                            Text(profile.name)
-                        }
-                    }
-                    .disabled(
-                        profile.id == model.activeProfileID
-                            || !model.canPerform(.activateProfile(profile.id))
-                    )
-                }
-            }
-
-            Divider()
-
-            Button("Manage Profiles…") {
-                showMainWindow(destination: .profiles)
-            }
+        Button {
+            profileMenuPresented = true
         } label: {
             MClashInteractiveRowLabel(
                 title: AppLocalization.string("Profile"),
@@ -358,9 +329,60 @@ struct MenuBarContent: View {
                 indicator: .menu
             )
         }
-        .menuIndicator(.hidden)
         .buttonStyle(MClashRowButtonStyle())
         .frame(maxWidth: .infinity, alignment: .leading)
+        .popover(isPresented: $profileMenuPresented, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 0) {
+                if model.profiles.isEmpty {
+                    Text("No profiles")
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                } else {
+                    ForEach(model.profiles) { profile in
+                        Button {
+                            profileMenuPresented = false
+                            Task {
+                                do {
+                                    try await model.activateProfile(profile.id)
+                                } catch {
+                                    model.errorMessage = error.localizedDescription
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: MClashLayout.compactSpacing) {
+                                Image(systemName: "checkmark")
+                                    .opacity(profile.id == model.activeProfileID ? 1 : 0)
+                                    .accessibilityHidden(profile.id != model.activeProfileID)
+                                Text(profile.name)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .mclashFullWidthRowHitTarget()
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                        }
+                        .buttonStyle(MClashRowButtonStyle())
+                        .disabled(
+                            profile.id == model.activeProfileID
+                                || !model.canPerform(.activateProfile(profile.id))
+                        )
+                    }
+                }
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                Button("Manage Profiles…") {
+                    profileMenuPresented = false
+                    showMainWindow(destination: .profiles)
+                }
+                .buttonStyle(MClashRowButtonStyle())
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+            }
+            .frame(minWidth: 220)
+            .padding(.vertical, 6)
+        }
     }
 
     private var connectedControls: some View {
@@ -573,7 +595,7 @@ struct MenuBarContent: View {
             } label: {
                 Label("Customize Quick Routes", systemImage: "pin")
             }
-            .buttonStyle(.bordered)
+            .menuStyle(.button)
             .controlSize(.small)
             .help("Pin up to three policy groups; unfilled slots follow profile order.")
 
