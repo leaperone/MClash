@@ -1152,7 +1152,7 @@ private actor InertNetworkExtensionControl: NetworkExtensionControlling {
     }
 
     func routeEndpoint(_ route: MihomoRoute) -> MihomoRouteProxyEndpoint? {
-        guard let data = latestConfiguration?.encodedMihomoRouteProxyCatalog,
+        guard let data = latestConfiguration?.encodedOutboundConnectorCatalog,
               let endpoints = try? MihomoRouteProxyCatalog.decode(data)
         else { return nil }
         return MihomoRouteProxyCatalog.endpoint(for: route, in: endpoints)
