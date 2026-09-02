@@ -402,8 +402,7 @@ final class AutomationSocketServer: @unchecked Sendable {
                 throw ServerError.insecurePath(destination.path)
             }
             if let existing = try? AutomationDiscovery.load(from: destination),
-               existing.processIdentifier != getpid(),
-               kill(existing.processIdentifier, 0) == 0 {
+               Self.isLiveConflictingServer(existing) {
                 throw ServerError.serverAlreadyRunning(existing.processIdentifier)
             }
         } else if errno != ENOENT {
@@ -431,6 +430,37 @@ final class AutomationSocketServer: @unchecked Sendable {
         guard chmod(destination.path, 0o600) == 0 else {
             throw ServerError.systemCall("chmod", errno)
         }
+    }
+
+    /// A crashed host leaves `endpoint.json` behind. `kill(pid, 0)` is not enough:
+    /// the PID may have been reused, and the Unix socket is often already gone.
+    private static func isLiveConflictingServer(
+        _ existing: AutomationEndpointDiscovery
+    ) -> Bool {
+        guard existing.processIdentifier > 0,
+              existing.processIdentifier != getpid(),
+              kill(existing.processIdentifier, 0) == 0 else {
+            return false
+        }
+        var socketMetadata = stat()
+        guard lstat(existing.socketPath, &socketMetadata) == 0,
+              (socketMetadata.st_mode & S_IFMT) == S_IFSOCK,
+              socketMetadata.st_uid == getuid() else {
+            return false
+        }
+        var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        let pathLength = proc_pidpath(
+            existing.processIdentifier,
+            &pathBuffer,
+            UInt32(pathBuffer.count)
+        )
+        guard pathLength > 0 else { return false }
+        let pathBytes = pathBuffer.prefix(Int(pathLength)).prefix { $0 != 0 }
+        let executablePath = String(
+            decoding: pathBytes.map { UInt8(bitPattern: $0) },
+            as: UTF8.self
+        )
+        return URL(fileURLWithPath: executablePath).lastPathComponent == "MClash"
     }
 
     private static func createPrivateDirectory(_ url: URL) throws {

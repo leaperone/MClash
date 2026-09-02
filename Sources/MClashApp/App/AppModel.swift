@@ -1638,15 +1638,35 @@ final class AppModel {
     }
 
     private func connectActiveProfileAtLaunchIfAvailable() async {
-        guard autoConnectOnLaunch,
-              connectionDesiredOnLaunch,
-              let activeProfileID,
+        guard autoConnectOnLaunch else {
+            appendSupervisorLog(
+                "Startup skipped automatic connect because restoring the last session is disabled."
+            )
+            return
+        }
+        guard connectionDesiredOnLaunch else {
+            appendSupervisorLog(
+                "Startup skipped automatic connect because the last session was left disconnected."
+            )
+            return
+        }
+        guard !systemProxyRecoveryRequired else {
+            appendSupervisorLog(
+                "Startup skipped automatic connect because macOS System Proxy restoration still needs attention."
+            )
+            return
+        }
+        guard let activeProfileID,
               profiles.contains(where: { $0.id == activeProfileID }),
               (usesNativeRuntime || (activeConfigURL.map {
                   FileManager.default.fileExists(atPath: $0.path)
-              } == true)),
-              !systemProxyRecoveryRequired,
-              !shutdownInProgress,
+              } == true)) else {
+            appendSupervisorLog(
+                "Startup skipped automatic connect because no usable active profile is available."
+            )
+            return
+        }
+        guard !shutdownInProgress,
               !Task.isCancelled,
               !isConnected,
               !isBusy else {
