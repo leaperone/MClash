@@ -31,6 +31,41 @@ struct DNSRelayRoutingPolicyTests {
         )
     }
 
+    @Test("Native mode selects the connector-neutral socket upstream")
+    func publicResolverUsesNativeUpstreamWhenOptedIn() throws {
+        let route = DNSRelayRoutingPolicy.route(
+            destination: try endpoint("1.1.1.1"),
+            isTrustedMClashComponent: false,
+            upstreamMode: .native,
+            transport: .tcp
+        )
+        #expect(route == .native(try DNSUpstreamEndpoint(
+            address: IPAddress("1.1.1.1"), port: 53, transport: .tcp
+        )))
+        #expect(route.bypassesMihomo)
+    }
+
+    @Test("Native mode never captures local resolvers")
+    func nativeModePreservesLocalResolverProtection() throws {
+        #expect(DNSRelayRoutingPolicy.route(
+            destination: try endpoint("192.168.1.1"),
+            isTrustedMClashComponent: false,
+            upstreamMode: .native
+        ) == .directLocalResolver)
+    }
+
+    @Test("Native mode falls back to Mihomo for hostname-only endpoints")
+    func nativeModeFallsBackForHostname() throws {
+        let destination = SOCKS5Endpoint(
+            address: SOCKS5Address(domain: "resolver.example"), port: 53
+        )
+        #expect(DNSRelayRoutingPolicy.route(
+            destination: destination,
+            isTrustedMClashComponent: false,
+            upstreamMode: .native
+        ) == .proxy(.profileRules))
+    }
+
     @Test("Trusted MClash DNS egress remains direct")
     func trustedComponentIsDirect() throws {
         #expect(

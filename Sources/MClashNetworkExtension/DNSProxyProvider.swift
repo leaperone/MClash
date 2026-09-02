@@ -39,6 +39,7 @@ enum DNSRelayRoute: Equatable, Sendable {
     case directTrustedComponent
     case directLocalResolver
     case proxy(OutboundRoute)
+    case native(DNSUpstreamEndpoint)
 
     var bypassesMihomo: Bool {
         switch self {
@@ -46,6 +47,8 @@ enum DNSRelayRoute: Equatable, Sendable {
             true
         case .proxy:
             false
+        case .native:
+            true
         }
     }
 }
@@ -53,13 +56,24 @@ enum DNSRelayRoute: Equatable, Sendable {
 enum DNSRelayRoutingPolicy {
     static func route(
         destination: SOCKS5Endpoint,
-        isTrustedMClashComponent: Bool
+        isTrustedMClashComponent: Bool,
+        upstreamMode: DNSUpstreamMode = .mihomo,
+        transport: DNSUpstreamTransport = .udp
     ) -> DNSRelayRoute {
         if isTrustedMClashComponent {
             return .directTrustedComponent
         }
         if destination.address.ipAddress?.isLocalNetwork == true {
             return .directLocalResolver
+        }
+        if upstreamMode == .native,
+           let address = destination.address.ipAddress,
+           let endpoint = try? DNSUpstreamEndpoint(
+               address: address,
+               port: destination.port,
+               transport: transport
+           ) {
+            return .native(endpoint)
         }
         return .proxy(.profileRules)
     }
@@ -79,6 +93,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private var reporter: DNSProxyRuntimeReporter?
     private var proxy: ProviderSOCKSConfiguration?
     private var proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration] = [:]
+    private var dnsUpstreamMode: DNSUpstreamMode = .mihomo
     private let backendProbeQueue = DispatchQueue(
         label: "one.leaper.mclash.dns-backend-probe"
     )
@@ -163,6 +178,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             self.reporter = reporter
             self.proxy = dataPlane.proxy
             self.proxyCatalog = dataPlane.proxyCatalog
+            self.dnsUpstreamMode = dataPlane.dnsUpstreamMode
             consecutiveBackendProbeFailures = 0
             activeBackendProbe = probe
             pendingStartCompletion = startCompletion
@@ -309,6 +325,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         self.liveUpdaterToken = nil
         proxy = nil
         proxyCatalog = [:]
+        dnsUpstreamMode = .mihomo
         flowDecisionCoordinator.quiesce()
         if let liveUpdaterToken {
             DNSProxyRuntimeRegistry.shared.unregisterLiveUpdater(liveUpdaterToken)
@@ -350,7 +367,9 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let sourceIsTrusted = flowDecisionCoordinator.isTrustedMClashComponent(tcpFlow)
         let baseRoute = DNSRelayRoutingPolicy.route(
             destination: destination,
-            isTrustedMClashComponent: sourceIsTrusted
+            isTrustedMClashComponent: sourceIsTrusted,
+            upstreamMode: runtimeState.dnsUpstreamMode,
+            transport: .tcp
         )
         let route = resolvedProxyRoute(
             baseRoute,
@@ -595,7 +614,9 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let initialRoute = resolvedProxyRoute(
             DNSRelayRoutingPolicy.route(
                 destination: initialDestination,
-                isTrustedMClashComponent: sourceIsTrusted
+                isTrustedMClashComponent: sourceIsTrusted,
+                upstreamMode: runtimeState.dnsUpstreamMode,
+                transport: .udp
             ),
             flow: flow,
             destination: initialDestination,
@@ -626,7 +647,9 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 let route = self.resolvedProxyRoute(
                     DNSRelayRoutingPolicy.route(
                         destination: destination,
-                        isTrustedMClashComponent: sourceIsTrusted
+                        isTrustedMClashComponent: sourceIsTrusted,
+                        upstreamMode: currentState.dnsUpstreamMode,
+                        transport: .udp
                     ),
                     flow: flow,
                     destination: destination,
@@ -793,10 +816,11 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private func runtimeDataPlaneSnapshot() -> (
         reporter: DNSProxyRuntimeReporter?,
         proxy: ProviderSOCKSConfiguration?,
-        proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration]
+        proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration],
+        dnsUpstreamMode: DNSUpstreamMode
     ) {
         backendProbeLock.lock()
-        let snapshot = (reporter, proxy, proxyCatalog)
+        let snapshot = (reporter, proxy, proxyCatalog, dnsUpstreamMode)
         backendProbeLock.unlock()
         return snapshot
     }
@@ -847,6 +871,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         reporter = newReporter
         proxy = dataPlane.proxy
         proxyCatalog = dataPlane.proxyCatalog
+        dnsUpstreamMode = dataPlane.dnsUpstreamMode
         runtime.replace(
             revision: bootstrap.revision,
             captureEnabled: true,
@@ -871,6 +896,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let proxy: ProviderSOCKSConfiguration
         let proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration]
         let routingConfiguration: [String: Any]
+        let dnsUpstreamMode: DNSUpstreamMode
     }
 
     private static func dataPlaneConfiguration(
@@ -903,7 +929,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         return DataPlaneConfiguration(
             proxy: proxy,
             proxyCatalog: proxyCatalog,
-            routingConfiguration: routingConfiguration
+            routingConfiguration: routingConfiguration,
+            dnsUpstreamMode: bootstrap.dnsUpstreamMode
         )
     }
 

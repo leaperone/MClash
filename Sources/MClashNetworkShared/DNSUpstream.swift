@@ -25,6 +25,13 @@ public enum DNSUpstreamTransport: Sendable, Equatable {
     case tcp
 }
 
+/// Selects who owns public DNS transport.  Mihomo remains the compatibility
+/// default until the native resolver path has been validated on a release.
+public enum DNSUpstreamMode: String, Codable, Sendable, Equatable {
+    case mihomo
+    case native
+}
+
 public struct DNSUpstreamEndpoint: Sendable, Hashable, Equatable {
     public let address: IPAddress
     public let port: UInt16

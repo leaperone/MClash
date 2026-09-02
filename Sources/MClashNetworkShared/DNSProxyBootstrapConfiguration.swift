@@ -19,13 +19,17 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
     public let profileRulesProxy: MihomoRouteProxyEndpoint
     public let routeProxyEndpoints: [MihomoRouteProxyEndpoint]?
     public let encodedCaptureSnapshot: Data?
+    /// Kept opt-in for wire compatibility. Older host payloads decode as
+    /// `.mihomo`, so an upgrade cannot unexpectedly change DNS ownership.
+    public let dnsUpstreamMode: DNSUpstreamMode
 
     public init(
         revision: UInt64,
         activationIdentifier: UUID,
         profileRulesProxy: MihomoRouteProxyEndpoint,
         routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
-        encodedCaptureSnapshot: Data? = nil
+        encodedCaptureSnapshot: Data? = nil,
+        dnsUpstreamMode: DNSUpstreamMode = .mihomo
     ) throws {
         schemaVersion = Self.currentSchemaVersion
         self.revision = revision
@@ -33,7 +37,24 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         self.profileRulesProxy = profileRulesProxy
         self.routeProxyEndpoints = routeProxyEndpoints
         self.encodedCaptureSnapshot = encodedCaptureSnapshot
+        self.dnsUpstreamMode = dnsUpstreamMode
         try validate()
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, revision, activationIdentifier, profileRulesProxy
+        case routeProxyEndpoints, encodedCaptureSnapshot, dnsUpstreamMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        revision = try container.decode(UInt64.self, forKey: .revision)
+        activationIdentifier = try container.decode(UUID.self, forKey: .activationIdentifier)
+        profileRulesProxy = try container.decode(MihomoRouteProxyEndpoint.self, forKey: .profileRulesProxy)
+        routeProxyEndpoints = try container.decodeIfPresent([MihomoRouteProxyEndpoint].self, forKey: .routeProxyEndpoints)
+        encodedCaptureSnapshot = try container.decodeIfPresent(Data.self, forKey: .encodedCaptureSnapshot)
+        dnsUpstreamMode = try container.decodeIfPresent(DNSUpstreamMode.self, forKey: .dnsUpstreamMode) ?? .mihomo
     }
 
     public func validate() throws {
