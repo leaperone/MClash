@@ -6,12 +6,17 @@ public enum Hysteria2CodecError: Error, Equatable, Sendable {
     case invalidVarint
     case oversized
     case serverRejected(String)
+    case invalidResponse
 }
 
 /// Hysteria2 HTTP/3 authentication and proxy request wire helpers. HTTP/3 and
 /// QUIC transport are supplied by the connector; this type only emits the
 /// protocol payloads defined by PROTOCOL.md.
 public enum Hysteria2Codec: Sendable {
+    public struct AuthResponse: Equatable, Sendable {
+        public let udpEnabled: Bool
+        public let receiveRate: UInt64?
+    }
     public struct UDPMessage: Equatable, Sendable {
         public let sessionID: UInt32
         public let packetID: UInt16
@@ -152,6 +157,28 @@ public enum Hysteria2Codec: Sendable {
         let message = String(decoding: messageData, as: UTF8.self)
         guard status == 0 else { throw Hysteria2CodecError.serverRejected(message) }
         return (true, message)
+    }
+
+    public static func decodeAuthResponse(
+        statusCode: Int,
+        headers: [String: String]
+    ) throws -> AuthResponse {
+        guard statusCode == 233 else {
+            throw Hysteria2CodecError.serverRejected("HTTP status \(statusCode)")
+        }
+        guard let udpValue = headers.first(where: { $0.key.caseInsensitiveCompare("Hysteria-UDP") == .orderedSame })?.value,
+              let udpEnabled = Bool(udpValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) else {
+            throw Hysteria2CodecError.invalidResponse
+        }
+        let rateValue = headers.first(where: { $0.key.caseInsensitiveCompare("Hysteria-CC-RX") == .orderedSame })?.value
+        let receiveRate: UInt64?
+        if let rateValue, rateValue.lowercased() != "auto" {
+            guard let parsed = UInt64(rateValue), parsed > 0 else { throw Hysteria2CodecError.invalidResponse }
+            receiveRate = parsed
+        } else {
+            receiveRate = nil
+        }
+        return AuthResponse(udpEnabled: udpEnabled, receiveRate: receiveRate)
     }
 
     private static func encodeVarint(_ value: UInt64) -> Data {

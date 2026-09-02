@@ -71,6 +71,22 @@ struct Hysteria2CodecTests {
         }
     }
 
+    @Test("Validates Hysteria2 authentication response status and capabilities")
+    func authResponse() throws {
+        let response = try Hysteria2Codec.decodeAuthResponse(
+            statusCode: 233,
+            headers: ["Hysteria-UDP": "true", "Hysteria-CC-RX": "1000"]
+        )
+        #expect(response.udpEnabled)
+        #expect(response.receiveRate == 1000)
+        #expect(throws: Hysteria2CodecError.serverRejected("HTTP status 200")) {
+            try Hysteria2Codec.decodeAuthResponse(
+                statusCode: 200,
+                headers: ["Hysteria-UDP": "true"]
+            )
+        }
+    }
+
     @Test("Rejects empty credentials, targets, and oversized padding")
     func rejectsInvalidInput() {
         #expect(throws: Hysteria2CodecError.invalidAuth) {
