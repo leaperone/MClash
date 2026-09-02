@@ -486,14 +486,13 @@ private struct OverviewConnectionDetails: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: MClashLayout.controlSpacing) {
             detailRow(
                 title: "Connection",
                 value: connectionStatus,
                 symbol: connectionSymbol,
                 color: connectionColor
             )
-            Divider().padding(.leading, 36)
             detailRow(
                 title: "Traffic Routing",
                 value: model.operationalSnapshot.captureSummary,
@@ -501,7 +500,6 @@ private struct OverviewConnectionDetails: View {
                 color: routingColor
             )
             if let warning = model.systemProxyOwnershipWarning {
-                Divider().padding(.leading, 36)
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -517,34 +515,28 @@ private struct OverviewConnectionDetails: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 10)
                 .accessibilityElement(children: .combine)
             }
-            Divider().padding(.leading, 36)
             valueRow(
                 "Runtime",
                 value: model.unifiedConfigurationEnabled
                     ? AppLocalization.string("MClash unified runtime")
                     : AppLocalization.string("Imported source runtime")
             )
-            Divider().padding(.leading, 36)
             valueRow(
                 "Configuration",
                 value: model.configurationDocument.currentWorkspace.map {
                     configurationDisplayName($0.name)
                 } ?? AppLocalization.string("Not selected")
             )
-            Divider().padding(.leading, 36)
             valueRow(
                 "Node source",
                 value: model.activeProfile?.name ?? AppLocalization.string("Not selected")
             )
-            Divider().padding(.leading, 36)
             valueRow("Routing Mode", value: routingMode)
 
             if let address = model.localMixedListenerAddress,
                !model.unifiedConfigurationEnabled || model.managedMixedFallbackIsActive {
-                Divider().padding(.leading, 36)
                 HStack(spacing: 12) {
                     Text(model.managedMixedFallbackIsActive
                         ? AppLocalization.string("Recovery listener")
@@ -556,7 +548,6 @@ private struct OverviewConnectionDetails: View {
                         accessibilityName: "Mixed proxy address"
                     )
                 }
-                .padding(.vertical, 10)
                 Text(model.managedMixedFallbackIsActive
                     ? AppLocalization.string("MClash is temporarily using this internal endpoint because the configured entrances were unavailable.")
                     : AppLocalization.string("This is MClash's managed local fallback listener; it is not an imported Profile setting."))
@@ -567,9 +558,7 @@ private struct OverviewConnectionDetails: View {
             }
 
             if let session = model.runningSession {
-                Divider().padding(.leading, 36)
                 valueRow("Core Version", value: session.version, monospaced: true)
-                Divider().padding(.leading, 36)
                 valueRow(
                     "Session Started",
                     value: AppLocalization.date(session.startedAt)
@@ -597,7 +586,6 @@ private struct OverviewConnectionDetails: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
         }
-        .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
     }
 
@@ -618,7 +606,6 @@ private struct OverviewConnectionDetails: View {
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
         }
-        .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
     }
 

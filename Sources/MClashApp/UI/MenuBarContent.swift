@@ -5,6 +5,7 @@ struct MenuBarContent: View {
     @Bindable var model: AppModel
     let presentMainWindow: @MainActor (AppModel.Destination) -> Void
     @State private var pickerGroupName: String?
+    @State private var profileMenuPresented = false
     @State private var contentIsVisible = false
     @State private var retainedPopoverHeight: CGFloat = 410
 
@@ -24,6 +25,8 @@ struct MenuBarContent: View {
             MenuBarWindowVisibilityView { isVisible in
                 if contentIsVisible, !isVisible {
                     retainedPopoverHeight = popoverHeight
+                    profileMenuPresented = false
+                    pickerGroupName = nil
                 }
                 contentIsVisible = isVisible
                 model.setMenuBarContentVisible(isVisible)
@@ -31,6 +34,8 @@ struct MenuBarContent: View {
         }
         .onDisappear {
             contentIsVisible = false
+            profileMenuPresented = false
+            pickerGroupName = nil
             model.setMenuBarContentVisible(false)
         }
     }
@@ -38,15 +43,17 @@ struct MenuBarContent: View {
     private var fullContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: MClashLayout.panelSpacing) {
                     statusHeader
 
                     if !model.operationalIssues.isEmpty {
                         operationalEvidence
                     }
 
-                    profileControl
-                    primaryAction
+                    VStack(alignment: .leading, spacing: MClashLayout.compactSpacing) {
+                        profileControl
+                        primaryAction
+                    }
 
                     if model.isConnected {
                         liveMetrics
@@ -64,15 +71,15 @@ struct MenuBarContent: View {
                         inlineError(issueMessage)
                     }
                 }
-                .padding(12)
+                .padding(MClashLayout.compactPagePadding)
             }
             .frame(maxHeight: .infinity)
 
             Divider()
 
             footer
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, MClashLayout.compactPagePadding)
+                .padding(.vertical, MClashLayout.compactSpacing)
         }
         .onChange(of: issueMessage, initial: true) { _, message in
             guard let message,
@@ -200,12 +207,13 @@ struct MenuBarContent: View {
                     .lineLimit(1)
 
                 Image(systemName: "chevron.right")
-                    .font(.caption2)
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
-            .contentShape(Rectangle())
+            .mclashFullWidthRowHitTarget()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MClashRowButtonStyle())
         .help(appRoutingStatusHelp)
         .accessibilityLabel(
             AppLocalization.format(
@@ -236,12 +244,13 @@ struct MenuBarContent: View {
                     }
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.right")
-                        .font(.caption2)
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
                 }
-                .contentShape(Rectangle())
+                .mclashFullWidthRowHitTarget()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MClashRowButtonStyle())
             .accessibilityLabel(
                 AppLocalization.format(
                     "%@, %@",
@@ -299,76 +308,94 @@ struct MenuBarContent: View {
     }
 
     private var configurationControl: some View {
-        LabeledContent(AppLocalization.string("Configuration")) {
-            Button {
-                showMainWindow(destination: .workspaces)
-            } label: {
-                HStack(spacing: 5) {
-                    Text(
-                        model.configurationDocument.currentWorkspace.map {
-                            configurationDisplayName($0.name)
-                        } ?? AppLocalization.string("No Configuration")
-                    )
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.borderless)
-            .lineLimit(1)
+        Button {
+            showMainWindow(destination: .workspaces)
+        } label: {
+            MClashInteractiveRowLabel(
+                title: AppLocalization.string("Configuration"),
+                value: model.configurationDocument.currentWorkspace.map {
+                    configurationDisplayName($0.name)
+                } ?? AppLocalization.string("No Configuration"),
+                indicator: .navigation
+            )
         }
+        .buttonStyle(MClashRowButtonStyle())
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var legacyProfileControl: some View {
-        LabeledContent("Profile") {
-            Menu {
+        Button {
+            profileMenuPresented = true
+        } label: {
+            MClashInteractiveRowLabel(
+                title: AppLocalization.string("Profile"),
+                value: model.activeProfile?.name ?? AppLocalization.string("None"),
+                indicator: .menu
+            )
+        }
+        .buttonStyle(MClashRowButtonStyle())
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .popover(isPresented: $profileMenuPresented, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 0) {
                 if model.profiles.isEmpty {
                     Text("No profiles")
+                        .foregroundStyle(.secondary)
+                        .padding(12)
                 } else {
-                    ForEach(model.profiles) { profile in
-                        Button {
-                            Task {
-                                do {
-                                    try await model.activateProfile(profile.id)
-                                } catch {
-                                    model.errorMessage = error.localizedDescription
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(model.profiles) { profile in
+                                Button {
+                                    profileMenuPresented = false
+                                    Task {
+                                        do {
+                                            try await model.activateProfile(profile.id)
+                                        } catch {
+                                            model.errorMessage = error.localizedDescription
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: MClashLayout.compactSpacing) {
+                                        Image(systemName: "checkmark")
+                                            .opacity(profile.id == model.activeProfileID ? 1 : 0)
+                                            .accessibilityHidden(profile.id != model.activeProfileID)
+                                        Text(profile.name)
+                                            .lineLimit(1)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .mclashFullWidthRowHitTarget()
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 10)
                                 }
-                            }
-                        } label: {
-                            if profile.id == model.activeProfileID {
-                                Label(profile.name, systemImage: "checkmark")
-                            } else {
-                                Text(profile.name)
+                                .buttonStyle(MClashRowButtonStyle())
+                                .disabled(
+                                    profile.id == model.activeProfileID
+                                        || !model.canPerform(.activateProfile(profile.id))
+                                )
                             }
                         }
-                        .disabled(
-                            profile.id == model.activeProfileID
-                                || !model.canPerform(.activateProfile(profile.id))
-                        )
                     }
+                    .frame(maxHeight: 320)
                 }
 
                 Divider()
+                    .padding(.vertical, 4)
 
                 Button("Manage Profiles…") {
+                    profileMenuPresented = false
                     showMainWindow(destination: .profiles)
                 }
-            } label: {
-                HStack(spacing: 5) {
-                    Text(model.activeProfile?.name ?? AppLocalization.string("None"))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                .buttonStyle(MClashRowButtonStyle())
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(minWidth: 220)
+            .padding(.vertical, 6)
         }
     }
 
     private var connectedControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: MClashLayout.controlSpacing) {
             Toggle(
                 "macOS System Proxy",
                 isOn: Binding(
@@ -430,9 +457,9 @@ struct MenuBarContent: View {
             Button(AppLocalization.string("Node Groups")) {
                 showMainWindow(destination: .proxyGroups)
             }
+            .buttonStyle(.bordered)
             .controlSize(.small)
         }
-        .padding(.top, 8)
         .font(.callout)
     }
 
@@ -508,7 +535,7 @@ struct MenuBarContent: View {
     }
 
     private var quickRoutes: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: MClashLayout.compactSpacing) {
             Text("Quick Routes")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -517,10 +544,10 @@ struct MenuBarContent: View {
                 Button {
                     pickerGroupName = group.name
                 } label: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: MClashLayout.compactSpacing) {
                         Text(group.name)
                             .lineLimit(1)
-                        Spacer(minLength: 8)
+                        Spacer(minLength: MClashLayout.compactSpacing)
                         if model.pendingProxySelections[group.name] != nil {
                             ProgressView()
                                 .controlSize(.small)
@@ -534,12 +561,13 @@ struct MenuBarContent: View {
                                 .lineLimit(1)
                         }
                         Image(systemName: "chevron.right")
-                            .font(.caption2)
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
                     }
-                    .contentShape(Rectangle())
+                    .mclashFullWidthRowHitTarget()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(MClashRowButtonStyle())
                 .popover(isPresented: pickerBinding(for: group.name), arrowEdge: .trailing) {
                     ProxyNodePicker(
                         model: model,
@@ -576,7 +604,7 @@ struct MenuBarContent: View {
             } label: {
                 Label("Customize Quick Routes", systemImage: "pin")
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
             .controlSize(.small)
             .help("Pin up to three policy groups; unfilled slots follow profile order.")
 

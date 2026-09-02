@@ -886,7 +886,7 @@
 "%@ · v%@ · %@" = "%@ · v%@ · %@";
 "%@ — Mixed %@" = "%@ — Mixed %@";
 "%@ — Mixed port off" = "%@ — Mixed port off";
-"%@ — click the card to inspect or the chevron to open the group" = "%@ — click the card to inspect or the chevron to open the group";
+"%@ — click the card to open the group" = "%@ — click the card to open the group";
 "%@ → %@ → %@" = "%@ → %@ → %@";
 "%@, %@, %@" = "%@, %@, %@";
 "%@, %@, %@, %@ members, %@" = "%@, %@, %@, %@ members, %@";

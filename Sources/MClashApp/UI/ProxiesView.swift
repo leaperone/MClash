@@ -511,6 +511,7 @@ struct ProxiesView: View {
                     .foregroundStyle(.tertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.bordered)
         .controlSize(.regular)
@@ -1472,10 +1473,8 @@ private struct ProxyNodeListRow: View {
     var body: some View {
         HStack(spacing: 9) {
             selectionButton
-            nodeInformation
-                .layoutPriority(1)
-            delayIndicator
-            openGroupButton
+                .accessibilityHidden(supportsSelection && onOpenGroup == nil)
+            rowActionButton
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 4)
@@ -1495,6 +1494,51 @@ private struct ProxyNodeListRow: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var rowActionButton: some View {
+        if let onOpenGroup {
+            Button(action: onOpenGroup) {
+                rowContent
+            }
+            .buttonStyle(MClashRowButtonStyle())
+            .help(AppLocalization.format("Open nested group %@", nodeName))
+            .accessibilityLabel(AppLocalization.format("Open nested group %@", nodeName))
+        } else if supportsSelection {
+            Button {
+                guard !isSelected else { return }
+                onSelect()
+            } label: {
+                rowContent
+            }
+            .buttonStyle(MClashRowButtonStyle())
+            .disabled(!canSelect || selectionInProgress)
+            .help(selectionHelp)
+            .accessibilityLabel("\(nodeName), \(statusText), \(delayText)")
+            .accessibilityValue(
+                isSelected
+                    ? AppLocalization.string("Currently selected")
+                    : AppLocalization.string("Not selected")
+            )
+        } else {
+            rowContent
+        }
+    }
+
+    private var rowContent: some View {
+        HStack(spacing: 9) {
+            nodeInformation
+                .layoutPriority(1)
+            delayIndicator
+            if onOpenGroup != nil {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .mclashFullWidthRowHitTarget()
     }
 
     @ViewBuilder
@@ -1553,7 +1597,6 @@ private struct ProxyNodeListRow: View {
             .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
         .help(nodeName)
         .accessibilityLabel("\(nodeName), \(statusText), \(delayText)")
     }
@@ -1570,18 +1613,6 @@ private struct ProxyNodeListRow: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(minWidth: 68, alignment: .trailing)
-        }
-    }
-
-    @ViewBuilder
-    private var openGroupButton: some View {
-        if let onOpenGroup {
-            Button(action: onOpenGroup) {
-                Image(systemName: "chevron.right")
-            }
-            .buttonStyle(.borderless)
-            .help(AppLocalization.format("Open nested group %@", nodeName))
-            .accessibilityLabel(AppLocalization.format("Open nested group %@", nodeName))
         }
     }
 
