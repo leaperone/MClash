@@ -819,9 +819,13 @@ final class AppModel {
     /// switch only for rollback during migration; it is never inferred from
     /// missing configuration so a fresh install stays on the MClash path.
     private var configuredDNSUpstreamMode: DNSUpstreamMode {
-        ProcessInfo.processInfo.environment["MCLASH_LEGACY_DNS"] == "1"
-            ? .mihomo
-            : .native
+        if ProcessInfo.processInfo.environment["MCLASH_LEGACY_DNS"] == "1" {
+            return .mihomo
+        }
+        // Native POSIX DNS currently accepts literal IP upstreams. If the
+        // selected policy contains only hostname/DoH entries, keep the
+        // proven Mihomo resolver instead of failing activation outright.
+        return configuredNativeDNSUpstreamBootstrap == nil ? .mihomo : .native
     }
 
     /// Builds the connector-neutral DNS payload used by the native DNS
@@ -829,7 +833,7 @@ final class AppModel {
     /// resolver today; hostname/DoH entries remain on the legacy path until a
     /// dedicated native resolver supports them.
     private var configuredNativeDNSUpstreamBootstrap: DNSUpstreamBootstrap? {
-        guard configuredDNSUpstreamMode == .native,
+        guard ProcessInfo.processInfo.environment["MCLASH_LEGACY_DNS"] != "1",
               let workspace = configurationDocument.currentWorkspace,
               let policy = configurationDocument.dnsPolicies.first(where: {
                   $0.id == workspace.dnsPolicyID && $0.takeoverEnabled
