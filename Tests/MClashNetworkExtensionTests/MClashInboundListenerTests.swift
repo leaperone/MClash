@@ -78,8 +78,8 @@ struct MClashInboundListenerTests {
         manager.stop()
     }
 
-    @Test("Outbound listener routes are rejected until an inbound handshake connector exists")
-    func outboundRouteRequiresHandshakeConnector() throws {
+    @Test("SOCKS5 outbound listener routes are accepted with an inbound handshake connector")
+    func outboundSOCKS5RouteUsesHandshakeConnector() throws {
         let route: OutboundRoute = .group("CUNOE")
         let target = try OutboundNodeTarget(
             protocolName: "socks5",
@@ -100,15 +100,11 @@ struct MClashInboundListenerTests {
             routeResolver: { _, _ in .direct },
             connector: Connector()
         )
-        #expect(throws: NativeInboundListenerConfigurationError.unsupportedOutboundTransport(
-            route: route,
-            protocolName: "socks5"
-        )) {
-            try manager.configure(
-                try MClashListenerRegistry(listeners: [spec]),
-                outboundCatalog: catalog
-            )
-        }
+        try manager.configure(
+            try MClashListenerRegistry(listeners: [spec]),
+            outboundCatalog: catalog
+        )
+        #expect(manager.lifecycleStates()[spec.id] == .stopped)
     }
 
     @Test("Unsupported native outbound protocols fail closed at configure time")
