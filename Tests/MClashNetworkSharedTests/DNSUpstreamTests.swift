@@ -4,6 +4,36 @@ import Testing
 
 @Suite("Connector-neutral DNS upstream")
 struct DNSUpstreamTests {
+    @Test("Native DNS bootstrap is connector-neutral and round-trips independently")
+    func nativeBootstrapDoesNotNeedMihomoEndpoint() throws {
+        let udp = try DNSUpstreamEndpoint(
+            address: IPAddress("223.5.5.5"),
+            transport: .udp
+        )
+        let tcp = try DNSUpstreamEndpoint(
+            address: IPAddress("1.1.1.1"),
+            port: 853,
+            transport: .tcp,
+            timeoutMilliseconds: 3_000
+        )
+        let bootstrap = try DNSUpstreamBootstrap(endpoints: [udp, tcp])
+        let decoded = try DNSUpstreamBootstrap.decode(bootstrap.encoded())
+        #expect(decoded == bootstrap)
+        #expect(decoded.primary == udp)
+        #expect(decoded.endpoints.allSatisfy { $0.transport == .udp || $0.transport == .tcp })
+    }
+
+    @Test("Native DNS bootstrap rejects duplicate upstreams")
+    func nativeBootstrapRejectsDuplicates() throws {
+        let endpoint = try DNSUpstreamEndpoint(
+            address: IPAddress("223.5.5.5"),
+            transport: .udp
+        )
+        #expect(throws: DNSUpstreamBootstrapError.duplicateEndpoint) {
+            _ = try DNSUpstreamBootstrap(endpoints: [endpoint, endpoint])
+        }
+    }
+
     private let query = Data([
         0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x07, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d,

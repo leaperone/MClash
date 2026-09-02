@@ -53,6 +53,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         mihomoListener: NetworkExtensionMihomoListenerConfiguration,
         routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
         dnsUpstreamMode: DNSUpstreamMode = .mihomo,
+        nativeUpstreamBootstrap: DNSUpstreamBootstrap? = nil,
         outboundNodeTargetCatalog: OutboundNodeTargetCatalog? = nil,
         activationIdentifier: UUID = UUID()
     ) throws {
@@ -92,7 +93,8 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
             profileRulesProxy: profileRulesProxy,
             routeProxyEndpoints: endpoints,
             encodedCaptureSnapshot: encodedSnapshot,
-            dnsUpstreamMode: dnsUpstreamMode
+            dnsUpstreamMode: dnsUpstreamMode,
+            nativeUpstreamBootstrap: nativeUpstreamBootstrap
         ).encoded()
         self.mihomoListener = mihomoListener
     }

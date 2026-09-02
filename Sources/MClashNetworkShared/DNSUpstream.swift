@@ -20,7 +20,7 @@ public enum DNSUpstreamError: Error, Equatable, Sendable {
     case mismatchedTransactionID
 }
 
-public enum DNSUpstreamTransport: Sendable, Equatable {
+public enum DNSUpstreamTransport: String, Codable, Sendable, Equatable {
     case udp
     case tcp
 }
@@ -32,11 +32,15 @@ public enum DNSUpstreamMode: String, Codable, Sendable, Equatable {
     case native
 }
 
-public struct DNSUpstreamEndpoint: Sendable, Hashable, Equatable {
+public struct DNSUpstreamEndpoint: Codable, Sendable, Hashable, Equatable {
     public let address: IPAddress
     public let port: UInt16
     public let transport: DNSUpstreamTransport
     public let timeoutMilliseconds: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case address, port, transport, timeoutMilliseconds
+    }
 
     public init(address: IPAddress, port: UInt16 = 53, transport: DNSUpstreamTransport,
                 timeoutMilliseconds: Int = 2_000) throws {
@@ -48,6 +52,91 @@ public struct DNSUpstreamEndpoint: Sendable, Hashable, Equatable {
         self.transport = transport
         self.timeoutMilliseconds = timeoutMilliseconds
     }
+
+    /// Keep the wire representation stable and human-readable.  IPAddress is
+    /// intentionally not Codable because it is also used by packet parsers;
+    /// DNS bootstrap payloads carry its canonical presentation instead.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let address = try IPAddress(container.decode(String.self, forKey: .address))
+        try self.init(
+            address: address,
+            port: container.decode(UInt16.self, forKey: .port),
+            transport: container.decode(DNSUpstreamTransport.self, forKey: .transport),
+            timeoutMilliseconds: container.decode(Int.self, forKey: .timeoutMilliseconds)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(address.presentation, forKey: .address)
+        try container.encode(port, forKey: .port)
+        try container.encode(transport, forKey: .transport)
+        try container.encode(timeoutMilliseconds, forKey: .timeoutMilliseconds)
+    }
+}
+
+/// Connector-neutral native DNS upstreams supplied by MClash.  This payload
+/// describes DNS transport only; it deliberately contains no Mihomo listener,
+/// SOCKS port, or route endpoint.  Native DNS can therefore be bootstrapped
+/// even after the Mihomo control/data plane has been removed.
+public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 1
+    public static let maximumEntries = 16
+    public static let maximumEncodedBytes = 16 * 1_024
+
+    public let schemaVersion: Int
+    public let endpoints: [DNSUpstreamEndpoint]
+
+    public init(endpoints: [DNSUpstreamEndpoint]) throws {
+        guard !endpoints.isEmpty, endpoints.count <= Self.maximumEntries else {
+            throw DNSUpstreamBootstrapError.invalidEndpointCount
+        }
+        var seen = Set<DNSUpstreamEndpoint>()
+        guard endpoints.allSatisfy({ seen.insert($0).inserted }) else {
+            throw DNSUpstreamBootstrapError.duplicateEndpoint
+        }
+        schemaVersion = Self.currentSchemaVersion
+        self.endpoints = endpoints
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try container.decode(Int.self, forKey: .schemaVersion)
+        guard version == Self.currentSchemaVersion else {
+            throw DNSUpstreamBootstrapError.unsupportedSchemaVersion(version)
+        }
+        try self.init(endpoints: container.decode([DNSUpstreamEndpoint].self, forKey: .endpoints))
+    }
+
+    private enum CodingKeys: String, CodingKey { case schemaVersion, endpoints }
+
+    public func encoded() throws -> Data {
+        let data = try JSONEncoder().encode(self)
+        guard data.count <= Self.maximumEncodedBytes else {
+            throw DNSUpstreamBootstrapError.encodedPayloadTooLarge
+        }
+        return data
+    }
+
+    public static func decode(_ data: Data) throws -> Self {
+        guard data.count <= maximumEncodedBytes else {
+            throw DNSUpstreamBootstrapError.encodedPayloadTooLarge
+        }
+        return try JSONDecoder().decode(Self.self, from: data)
+    }
+
+    /// The first endpoint is the deterministic bootstrap choice.  Failover
+    /// policy belongs to the resolver and can be added without changing the
+    /// connector-neutral wire contract.
+    public var primary: DNSUpstreamEndpoint { endpoints[0] }
+}
+
+public enum DNSUpstreamBootstrapError: Error, Equatable, Sendable {
+    case invalidEndpointCount
+    case duplicateEndpoint
+    case unsupportedSchemaVersion(Int)
+    case encodedPayloadTooLarge
 }
 
 /// The small, connector-neutral contract used by MClash's DNS router.

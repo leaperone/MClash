@@ -22,6 +22,9 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
     /// Kept opt-in for wire compatibility. Older host payloads decode as
     /// `.mihomo`, so an upgrade cannot unexpectedly change DNS ownership.
     public let dnsUpstreamMode: DNSUpstreamMode
+    /// Native DNS transport material.  This is independent from the legacy
+    /// Mihomo route endpoint and is populated when native DNS is selected.
+    public let nativeUpstreamBootstrap: DNSUpstreamBootstrap?
 
     public init(
         revision: UInt64,
@@ -29,7 +32,8 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         profileRulesProxy: MihomoRouteProxyEndpoint,
         routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
         encodedCaptureSnapshot: Data? = nil,
-        dnsUpstreamMode: DNSUpstreamMode = .mihomo
+        dnsUpstreamMode: DNSUpstreamMode = .mihomo,
+        nativeUpstreamBootstrap: DNSUpstreamBootstrap? = nil
     ) throws {
         schemaVersion = Self.currentSchemaVersion
         self.revision = revision
@@ -38,12 +42,14 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         self.routeProxyEndpoints = routeProxyEndpoints
         self.encodedCaptureSnapshot = encodedCaptureSnapshot
         self.dnsUpstreamMode = dnsUpstreamMode
+        self.nativeUpstreamBootstrap = nativeUpstreamBootstrap
         try validate()
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, revision, activationIdentifier, profileRulesProxy
-        case routeProxyEndpoints, encodedCaptureSnapshot, dnsUpstreamMode
+        case routeProxyEndpoints, encodedCaptureSnapshot, dnsUpstreamMode,
+             nativeUpstreamBootstrap
     }
 
     public init(from decoder: Decoder) throws {
@@ -55,6 +61,10 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         routeProxyEndpoints = try container.decodeIfPresent([MihomoRouteProxyEndpoint].self, forKey: .routeProxyEndpoints)
         encodedCaptureSnapshot = try container.decodeIfPresent(Data.self, forKey: .encodedCaptureSnapshot)
         dnsUpstreamMode = try container.decodeIfPresent(DNSUpstreamMode.self, forKey: .dnsUpstreamMode) ?? .mihomo
+        nativeUpstreamBootstrap = try container.decodeIfPresent(
+            DNSUpstreamBootstrap.self,
+            forKey: .nativeUpstreamBootstrap
+        )
     }
 
     public func validate() throws {
