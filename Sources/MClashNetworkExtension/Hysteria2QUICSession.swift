@@ -117,4 +117,26 @@ final class Hysteria2QUICSession: @unchecked Sendable {
             _ = self.state.finishClose()
         }
     }
+
+    func openTCPStream(
+        to destination: SOCKS5Endpoint,
+        padding: Data = Data(),
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, case .ready = self.state.state, let connection = self.connection else {
+                completion(.failure(Hysteria2CodecError.invalidResponse))
+                return
+            }
+            do {
+                let request = try self.connector.tcpRequest(for: destination, padding: padding)
+                connection.send(content: request, completion: .contentProcessed { error in
+                    if let error { completion(.failure(error)) }
+                    else { completion(.success(())) }
+                })
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
 }
