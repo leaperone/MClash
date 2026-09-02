@@ -239,6 +239,60 @@ struct ConfigurationSplitPathsTests {
         #expect(yaml.contains("MATCH,DIRECT") || yaml.contains("MATCH,\"DIRECT\""))
     }
 
+    @Test("Existing source-only groups are not reused as split-path exits")
+    func splitPathsDoNotReusePresetGroups() throws {
+        var document = ConfigurationDocument.mclashDefault()
+        let source = Source(kind: .subscription, displayName: "Shared")
+        document.sources = [source]
+        document.nodes = [
+            try Node(
+                displayName: "Node",
+                protocol: .vless,
+                host: "node.example.com",
+                port: 443,
+                sourceLinks: [source.id]
+            )
+        ]
+        let preset = ProxyGroup(
+            name: "☑️ 手动切换",
+            type: .select,
+            memberSelectors: [
+                NodeSelector(
+                    name: source.displayName,
+                    include: [.source(source.id)]
+                )
+            ]
+        )
+        document.proxyGroups.append(preset)
+        if var workspace = document.currentWorkspace,
+           let index = document.workspaces.firstIndex(where: { $0.id == workspace.id }) {
+            document.workspaces[index].proxyGroupIDs.append(preset.id)
+        }
+
+        document = try ConfigurationSplitPaths.applyBrowserPath(
+            to: document,
+            sourceID: source.id,
+            kind: .http,
+            port: 7890,
+            enabled: true
+        )
+        document = try ConfigurationSplitPaths.applyAppPath(
+            to: document,
+            sourceID: source.id,
+            applicationPatterns: ["com.todesktop.230313mzl4w4u92"],
+            enabled: true
+        )
+
+        let browserGroupID = ConfigurationSplitPaths.groupID(for: source.id, role: .browser)
+        let appsGroupID = ConfigurationSplitPaths.groupID(for: source.id, role: .apps)
+        #expect(browserGroupID != appsGroupID)
+        #expect(browserGroupID != preset.id)
+        #expect(appsGroupID != preset.id)
+        #expect(document.entrances.first { $0.kind == .http }?.defaultAction == .proxyGroup(browserGroupID))
+        #expect(document.rules.contains { $0.action == .proxyGroup(appsGroupID) })
+        #expect(ConfigurationSplitPaths.appPath(from: document).sourceID == source.id)
+    }
+
     @Test("Invalid browser ports are rejected")
     func invalidPort() {
         let document = ConfigurationDocument.mclashDefault()

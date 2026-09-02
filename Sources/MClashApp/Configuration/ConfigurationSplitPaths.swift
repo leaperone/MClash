@@ -316,19 +316,7 @@ enum ConfigurationSplitPaths {
         role: Role
     ) -> ProxyGroupID? {
         let stable = groupID(for: sourceID, role: role)
-        if document.proxyGroups.contains(where: { $0.id == stable }) {
-            return stable
-        }
-        return document.proxyGroups.first { group in
-            group.enabled && isSourceOnlyGroup(group, sourceID: sourceID)
-        }?.id
-    }
-
-    private static func isSourceOnlyGroup(_ group: ProxyGroup, sourceID: SourceID) -> Bool {
-        group.members.isEmpty
-            && group.memberSelectors.count == 1
-            && group.memberSelectors[0].exclude.isEmpty
-            && group.memberSelectors[0].include == [.source(sourceID)]
+        return document.proxyGroups.contains(where: { $0.id == stable }) ? stable : nil
     }
 
     private static func linkGroup(
