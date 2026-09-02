@@ -69,6 +69,7 @@ final class TCPFlowRelay: @unchecked Sendable {
 
     private let flow: NEAppProxyTCPFlow
     private let proxy: ProviderSOCKSConfiguration
+    private let outboundConnector: any OutboundConnector
     private let destination: SOCKS5Endpoint
     private let queue: DispatchQueue
     private let completion: @Sendable (UUID, TCPFlowRelayExit) -> Void
@@ -93,12 +94,14 @@ final class TCPFlowRelay: @unchecked Sendable {
         proxy: ProviderSOCKSConfiguration,
         destination: SOCKS5Endpoint,
         unavailableFallback: UnavailableFallback,
+        outboundConnector: any OutboundConnector = MihomoSOCKSOutboundConnector(),
         activityObserver: @escaping @Sendable (AppRoutingRelaySnapshot) -> Void,
         completion: @escaping @Sendable (UUID, TCPFlowRelayExit) -> Void
     ) {
         self.flow = flow
         self.proxy = proxy
         self.destination = destination
+        self.outboundConnector = outboundConnector
         failoverState = TCPRelayFailoverState(
             unavailableFallback: unavailableFallback
         )
@@ -114,11 +117,7 @@ final class TCPFlowRelay: @unchecked Sendable {
     func start() {
         queue.async { [self] in
             guard !finished else { return }
-            let connection = NWConnection(
-                host: proxy.networkHost,
-                port: proxy.networkPort,
-                using: .tcp
-            )
+            let connection = outboundConnector.makeConnection(to: proxy)
             self.connection = connection
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
