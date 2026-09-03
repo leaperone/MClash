@@ -5,6 +5,39 @@ import MClashNetworkShared
 
 @Suite("Native runtime controller seam")
 struct NativeRuntimeControllerTests {
+    @Test("Native capture refuses legacy DNS when takeover is enabled")
+    @MainActor
+    func nativeCaptureRequiresNativeDNSOnlyForDNSTakeover() {
+        #expect(
+            AppModel.nativeCaptureRequiresNativeDNS(
+                usingNativeRuntime: true,
+                dnsEnabled: true,
+                upstreamMode: .mihomo
+            )
+        )
+        #expect(
+            !AppModel.nativeCaptureRequiresNativeDNS(
+                usingNativeRuntime: true,
+                dnsEnabled: false,
+                upstreamMode: .mihomo
+            )
+        )
+        #expect(
+            !AppModel.nativeCaptureRequiresNativeDNS(
+                usingNativeRuntime: true,
+                dnsEnabled: true,
+                upstreamMode: .native
+            )
+        )
+        #expect(
+            !AppModel.nativeCaptureRequiresNativeDNS(
+                usingNativeRuntime: false,
+                dnsEnabled: true,
+                upstreamMode: .mihomo
+            )
+        )
+    }
+
     @Test("Native workspace activation never materializes legacy configuration")
     @MainActor
     func nativeWorkspaceActivationBypassesLegacyMaterialization() {

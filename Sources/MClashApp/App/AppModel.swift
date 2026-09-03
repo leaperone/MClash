@@ -877,6 +877,19 @@ final class AppModel {
         !usingNativeRuntime
     }
 
+    /// Native capture must not silently fall back to a legacy DNS/provider
+    /// path.  When DNS takeover is requested, a native runtime needs a native
+    /// literal-IP bootstrap; otherwise activation would publish a legacy
+    /// Mihomo listener while the selected runtime has no controller to serve
+    /// it.  DNS-disabled capture remains valid without a DNS upstream.
+    static func nativeCaptureRequiresNativeDNS(
+        usingNativeRuntime: Bool,
+        dnsEnabled: Bool,
+        upstreamMode: DNSUpstreamMode
+    ) -> Bool {
+        usingNativeRuntime && dnsEnabled && upstreamMode != .native
+    }
+
     /// Returns the connector-neutral runtime state used by read-only
     /// automation diagnostics. Keep this narrow so automation never reaches
     /// into the runtime implementation or exposes a controller secret.
@@ -7734,6 +7747,18 @@ final class AppModel {
             networkCaptureState = .off
             return
         }
+        if Self.nativeCaptureRequiresNativeDNS(
+            usingNativeRuntime: usesNativeRuntime,
+            dnsEnabled: networkCapturePreferences.dnsEnabled,
+            upstreamMode: configuredDNSUpstreamMode
+        ) {
+            reportNetworkCaptureFailure(
+                AppLocalization.string(
+                    "Native runtime requires a native DNS policy with a literal IP upstream."
+                )
+            )
+            return
+        }
         let listener = activeNetworkExtensionMihomoListener
         guard configuredDNSUpstreamMode == .native || listener != nil else {
             reportNetworkCaptureFailure(
@@ -7787,7 +7812,9 @@ final class AppModel {
                 dnsProxyRuntimeFailureCount = 0
                 startAppRoutingActivityMonitor()
                 appendSupervisorLog(
-                    "Network Extension is routing selected flows through mihomo."
+                    usesNativeRuntime
+                        ? "MClash native Network Extension is routing selected flows."
+                        : "Network Extension is routing selected flows through mihomo."
                 )
             case .requiresReboot:
                 networkCaptureState = .requiresReboot
