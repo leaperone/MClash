@@ -150,10 +150,10 @@ struct NativeVLESSOutboundConnector: Sendable {
             let websocket = NWProtocolWebSocket.Options()
             websocket.autoReplyPing = true
             // NWProtocolWebSocket exposes additional handshake headers, but
-            // does not expose the HTTP upgrade path.  Keep this constructor
-            // useful for diagnostics/tests while the registry continues to
-            // report WS as legacyFallback; otherwise a /path node could be
-            // silently connected to the wrong endpoint (usually "/").
+            // does not expose the HTTP upgrade path. The response-aware
+            // NativeVLESSWebSocketRelayConnector owns the production WS
+            // handshake; keep this constructor useful for diagnostics/tests
+            // without silently connecting a /path node to the wrong endpoint.
             let options = target.vlessWebSocketOptions
             let headers = options?.headers.map { (name: $0.key, value: $0.value) }
                 ?? (target.parameters["ws-host"].map { [(name: "Host", value: $0)] } ?? [])
