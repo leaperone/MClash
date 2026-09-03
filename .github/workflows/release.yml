@@ -505,6 +505,15 @@ jobs:
           set -euo pipefail
           ./scripts/release-app.sh
 
+      - name: Smoke test isolated native CLI
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          # Exercise the packaged host without reusing the production bundle
+          # identifier, Application Support tree, lock or system extension.
+          MCLASH_APP_PATH="${GITHUB_WORKSPACE}/.build/release/MClash.app" \
+            ./scripts/smoke-test-native-runtime-cli.sh
+
       - name: Publish GitHub Release
         id: publish
         env:
