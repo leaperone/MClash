@@ -347,6 +347,9 @@ and can be tested without producing a Mihomo YAML document.
   native payload boundary change and again reached `state=running` with
   `startedAt`, `workspaceRevision=28`, four running listener handles and
   `controlPlaneAvailable=false`.
+- The subsequent full integration smoke after native payload changes passed
+  GEO verification, dual-profile/listener/crash-recovery checks, system proxy
+  read-only checks and API smoke; no production service was restarted.
 - `0be3930` adds a real loopback HTTP entrance test: MClash accepts a client
   CONNECT only after the native HTTP upstream returns 200, then bridges
   `ping`/`pong` payloads in both directions.
