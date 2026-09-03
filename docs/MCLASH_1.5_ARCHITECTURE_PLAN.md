@@ -401,6 +401,10 @@ and can be tested without producing a Mihomo YAML document.
   飞鸟云 or kaze groups may opt into secondary sources. Nested groups apply
   the policy independently, preventing unrelated AWS nodes from flattening
   into every regional group.
+- The latest direct application test binary executes the CUNOE resolver suite
+  and reports `500 tests in 72 suites passed` before the known
+  CommandLineTools shared-test runtime abort; the resolver tests themselves
+  pass.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
