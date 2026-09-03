@@ -5,6 +5,7 @@ repo_root="${0:A:h:h}"
 
 run_release_script_tests() {
   python3 "${repo_root}/scripts/test-attach-appcast-deltas.py"
+  "${repo_root}/scripts/test-release-preflight.sh"
 }
 
 # GitHub-hosted runners provide a complete Xcode toolchain, where SwiftPM is

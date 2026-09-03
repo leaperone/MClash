@@ -9,7 +9,12 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.3.5"
+        default: "1.5.0"
+        type: string
+      native_evidence_file:
+        description: "Committed native validation report for 1.5.x"
+        required: false
+        default: ""
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -128,12 +133,38 @@ jobs:
         shell: zsh {0}
         run: ./scripts/integration-test.sh
 
+  native-release-readiness:
+    name: Verify native 1.5.x release evidence
+    needs: prepare
+    if: startsWith(needs.prepare.outputs.version, '1.5.')
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify native capability evidence
+        env:
+          MCLASH_NATIVE_EVIDENCE_FILE: ${{ inputs.native_evidence_file }}
+          MCLASH_VERSION: ${{ needs.prepare.outputs.version }}
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          evidence_file="${MCLASH_NATIVE_EVIDENCE_FILE:-ReleaseEvidence/${MCLASH_VERSION}.json}"
+          ./scripts/release-preflight.sh \
+            "${{ needs.prepare.outputs.version }}" \
+            "${evidence_file}" \
+            "ReleaseNotes/${{ needs.prepare.outputs.version }}.md"
+
   release:
     name: Sign, notarize, and publish
     # The signed release build is the authoritative full-product compile/link
     # gate. A separate typecheck job duplicated that work and added ~18 minutes
     # to each release, so typecheck remains a developer/PR check only.
-    needs: [prepare, verify-unit, verify-integration]
+    needs: [prepare, verify-unit, verify-integration, native-release-readiness]
     runs-on: macos-26
     timeout-minutes: 60
     environment:
