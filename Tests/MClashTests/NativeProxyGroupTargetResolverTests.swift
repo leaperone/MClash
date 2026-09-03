@@ -114,8 +114,7 @@ struct NativeProxyGroupTargetResolverTests {
         let result = NativeProxyGroupTargetResolver.resolve(
             groupID: group.id,
             groups: [group],
-            nodes: [compatibilityOnly, native],
-            preferNativeTargets: true
+            nodes: [compatibilityOnly, native]
         )
 
         #expect(result.nodeID == native.id)

@@ -31,8 +31,7 @@ public enum NativeProxyGroupTargetResolver {
         groupID: ProxyGroupID,
         groups: [ProxyGroup],
         nodes: [Node],
-        preferredSourceIDs: Set<SourceID> = [],
-        preferNativeTargets: Bool = false
+        preferredSourceIDs: Set<SourceID> = []
     ) -> NativeProxyGroupTargetResolution {
         let groupsByID = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let nodesByID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -84,14 +83,12 @@ public enum NativeProxyGroupTargetResolver {
             return .init(groupID: groupID, nodeID: nil, target: nil, reason: "Proxy group has no usable node members.")
         }
 
-        if preferNativeTargets {
-            let nativeIDs = ids.filter { id in
-                guard let target = nodesByID[id]?.outboundTarget else { return false }
-                return OutboundConnectorCapabilityMatrix.support(for: target) == .native
-            }
-            if !nativeIDs.isEmpty {
-                ids = nativeIDs
-            }
+        let nativeIDs = ids.filter { id in
+            guard let target = nodesByID[id]?.outboundTarget else { return false }
+            return OutboundConnectorCapabilityMatrix.support(for: target) == .native
+        }
+        if !nativeIDs.isEmpty {
+            ids = nativeIDs
         }
 
         // URL-test groups select the best known healthy endpoint. Unknown

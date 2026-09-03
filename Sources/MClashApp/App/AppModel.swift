@@ -1872,8 +1872,7 @@ final class AppModel {
                 groupID: groupID,
                 groups: configurationDocument.proxyGroups,
                 nodes: configurationDocument.nodes,
-                preferredSourceIDs: preferredSourceIDs,
-                preferNativeTargets: usesNativeRuntime
+                preferredSourceIDs: preferredSourceIDs
             ).target
         }
         let primaryGroup = workspace.globalProxyGroupID
