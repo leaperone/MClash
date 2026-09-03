@@ -417,6 +417,12 @@ and can be tested without producing a Mihomo YAML document.
 - `5d62f74` makes the Network Extension inbound suite independently
   compilable on Swift 6 and executes all 10 loopback tests successfully,
   including the native HTTP upstream 2xx gate and payload bridge.
+- `79b2803` repairs the standalone connector loopback fixtures (HTTP request
+  preambles, SOCKS greeting assertions and Swift 6 test setup); the complete
+  Network Extension target now compiles and all loopback tests reach their
+  assertions before the host Swift runtime abort.
+- `4da7dfe` fixes VLESS WebSocket `Sec-WebSocket-Accept` comparison to remain
+  case-sensitive as required by RFC 6455; the focused WebSocket test passes.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
