@@ -325,6 +325,9 @@ and can be tested without producing a Mihomo YAML document.
   disposable-bundle staging, proving the native diagnostics endpoint can be
   queried without auto-connecting a source or reusing the production bundle
   identity.
+- `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
+  Trojan targets; protocol-specific handshake tests remain part of the real
+  endpoint/interoperability gate.
 
 ### Definition of done
 
