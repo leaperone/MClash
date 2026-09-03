@@ -18,7 +18,7 @@ enum InitialFlowOwnershipPolicy {
         switch disposition {
         case .direct, .failOpen:
             false
-        case .reject, .mihomo:
+        case .reject, .outbound:
             true
         }
     }
@@ -33,7 +33,7 @@ enum MihomoRouteAvailabilityPolicy {
         availableRoutes: Set<MihomoRoute>,
         rulesByIdentifier: [String: CaptureRule]
     ) -> FlowTrafficDecision {
-        guard case let .mihomo(route) = decision.disposition,
+        guard case let .outbound(route) = decision.disposition,
               !availableRoutes.contains(route),
               case let .rule(cause) = decision.reason else {
             return decision
@@ -68,7 +68,7 @@ enum DNSProfileRoutingRulePolicy {
               !rule.sources.isEmpty,
               rule.destinations.isEmpty,
               rule.portRanges.isEmpty,
-              case let .mihomo(route) = rule.action,
+              case let .outbound(route) = rule.action,
               route.routingProfileID != nil else {
             return false
         }
@@ -261,7 +261,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         // Native connectors use the node-only catalog directly. A missing
         // loopback Mihomo route endpoint must not make this target unusable.
         let nativeTarget: OutboundNodeTarget? = {
-            guard case let .mihomo(route) = outcome.decision.disposition else {
+            guard case let .outbound(route) = outcome.decision.disposition else {
                 return nil
             }
             return currentState.outboundNodeTargets?.target(for: route)
@@ -595,7 +595,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         // target independent from the loopback Mihomo route catalog; the
         // legacy catalog remains available as a fallback below.
         let nativeTarget: OutboundNodeTarget? = {
-            guard case let .mihomo(route) = outcome.decision.disposition,
+            guard case let .outbound(route) = outcome.decision.disposition,
                   let target = currentState.outboundNodeTargets?.target(for: route),
                   NativeConnectorRegistry.supportsNativeUDP(target) else { return nil }
             return target
@@ -643,7 +643,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             rulesByIdentifier: state.rulesByIdentifier
         )
         let terminal: Bool = switch decision.disposition {
-        case .mihomo: false
+        case .outbound: false
         case .direct, .reject, .failOpen: true
         }
 
@@ -726,7 +726,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         }
         return switch decision.disposition {
         case .reject: .reject
-        case let .mihomo(route): .mihomo(route)
+        case let .outbound(route): .outbound(route)
         case .direct, .failOpen: .direct
         }
     }

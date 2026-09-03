@@ -537,7 +537,7 @@ struct NativeHysteria2OutboundConnector: Sendable {
 /// require (or permit) an outbound connector invocation.
 enum OutboundConnectorRoutingPolicy {
     static func requiresConnector(_ disposition: FlowTrafficDisposition) -> Bool {
-        if case .mihomo = disposition { return true }
+        if case .outbound = disposition { return true }
         return false
     }
 }

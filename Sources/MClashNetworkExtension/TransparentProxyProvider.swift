@@ -118,7 +118,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
                 }
                 AppProxyFlowCompatibility.open(tcpFlow, completion: completion)
                 return true
-            case .mihomo:
+            case .outbound:
                 // Native node connectors are independent from the legacy
                 // loopback Mihomo SOCKS listener. Use the original endpoint
                 // for their protocol handshake and allow a nil proxy.
@@ -404,7 +404,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
         switch disposition {
         case .direct: "direct"
         case .reject: "reject"
-        case .mihomo: "mihomo"
+        case .outbound: "outbound"
         case .failOpen: "fail-open"
         }
     }

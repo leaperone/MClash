@@ -487,13 +487,13 @@ struct ConfigurationOrchestrationTests {
             destinations: [.host(host)],
             protocols: [.tcp],
             portRanges: [try PortRange(lowerBound: 8000, upperBound: 8100)],
-            action: .mihomo(.profileRules),
+            action: .outbound(.profileRules),
             unavailableFallback: .reject
         )
         let profileTargetRule = try CaptureRule(
             id: "legacy-source-target",
             priority: 20,
-            action: .mihomo(
+            action: .outbound(
                 .profile(
                     RoutingProfileID(sourceID.rawValue),
                     target: .rules
@@ -649,7 +649,7 @@ struct ConfigurationOrchestrationTests {
             priority: 10,
             sources: [.applicationIdentifierPattern(legacyMatcher)],
             protocols: [.tcp],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let captureStore = try NetworkCaptureConfigurationStore(profileLayout: layout)
         _ = try await captureStore.replaceRules(

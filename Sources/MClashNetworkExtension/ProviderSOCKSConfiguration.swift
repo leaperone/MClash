@@ -116,7 +116,7 @@ struct ProviderSOCKSConfiguration: Equatable, Sendable {
         switch decision.disposition {
         case .direct, .reject, .failOpen:
             return nil
-        case let .mihomo(route):
+        case let .outbound(route):
             return ProviderSOCKSFlowPlan(
                 destinations: try destinations(
                     for: endpoint,

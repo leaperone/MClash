@@ -158,7 +158,7 @@ struct ProviderSOCKSConfigurationTests {
 
     private func decision(_ route: MihomoRoute) -> FlowTrafficDecision {
         FlowTrafficDecision(
-            disposition: .mihomo(route),
+            disposition: .outbound(route),
             reason: .rule(.matchedRule("test"))
         )
     }

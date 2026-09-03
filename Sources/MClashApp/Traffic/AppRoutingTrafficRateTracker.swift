@@ -186,7 +186,7 @@ struct AppRoutingTrafficRateTracker: Sendable {
 
     private static func path(_ disposition: FlowTrafficDisposition) -> AppRoutingTrafficPath {
         switch disposition {
-        case let .mihomo(route): .mihomo(route)
+        case let .outbound(route): .mihomo(route)
         case .direct: .direct
         case .failOpen: .failOpen
         case .reject: .rejected

@@ -24,7 +24,7 @@ struct CaptureRuleEngineTests {
             ],
             protocols: [.tcp],
             portRanges: [try PortRange(443)],
-            action: .mihomo(.group("HK")),
+            action: .outbound(.group("HK")),
             unavailableFallback: .reject
         )
         let engine = try engine([rule])
@@ -37,7 +37,7 @@ struct CaptureRuleEngineTests {
             transport: .tcp
         )
         let matchingDecision = engine.evaluate(matching)
-        #expect(matchingDecision.action == .mihomo(.group("HK")))
+        #expect(matchingDecision.action == .outbound(.group("HK")))
         #expect(matchingDecision.unavailableFallback == .reject)
         #expect(matchingDecision.evidence == CaptureRuleDecisionEvidence(
             outcome: .matchedRule,
@@ -69,7 +69,7 @@ struct CaptureRuleEngineTests {
                 .host(try HostMatcher(kind: .suffix, value: "openai.com")),
                 .host(try HostMatcher(kind: .suffix, value: "oaistatic.com")),
             ],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let engine = try engine([rule])
         let matchingApplication = source(
@@ -81,11 +81,11 @@ struct CaptureRuleEngineTests {
         #expect(engine.evaluate(try context(
             source: matchingApplication,
             hostname: "api.openai.com"
-        )).action == .mihomo(.profileRules))
+        )).action == .outbound(.profileRules))
         #expect(engine.evaluate(try context(
             source: matchingApplication,
             hostname: "cdn.oaistatic.com"
-        )).action == .mihomo(.profileRules))
+        )).action == .outbound(.profileRules))
         #expect(engine.evaluate(try context(
             source: matchingApplication,
             hostname: "example.com"
@@ -129,7 +129,7 @@ struct CaptureRuleEngineTests {
                 try ApplicationIdentifierPatternMatcher(pattern: "one.leaper.mclash")
             )],
             destinations: [.host(try HostMatcher(kind: .suffix, value: "github.com"))],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let engine = try engine([rule])
         let host = source(
@@ -141,7 +141,7 @@ struct CaptureRuleEngineTests {
             source: host,
             hostname: "api.github.com"
         ))
-        #expect(hostDecision.action == .mihomo(.profileRules))
+        #expect(hostDecision.action == .outbound(.profileRules))
         #expect(hostDecision.cause == .matchedRule("mclash-github"))
 
         let dataPlaneDecision = engine.evaluate(try context(
@@ -195,12 +195,12 @@ struct CaptureRuleEngineTests {
             id: "google-apps",
             priority: 1,
             sources: [.applicationIdentifierPattern(matcher)],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let engine = try engine([rule])
 
         let matchingBundle = source(bundleIdentifier: "com.google.Chrome")
-        #expect(engine.evaluate(try context(source: matchingBundle)).action == .mihomo(.profileRules))
+        #expect(engine.evaluate(try context(source: matchingBundle)).action == .outbound(.profileRules))
 
         let unrelated = source(
             executablePath: "/Applications/Safari.app/Contents/MacOS/Safari",
@@ -224,7 +224,7 @@ struct CaptureRuleEngineTests {
                 designatedRequirement: "REQ",
                 sha256: "AABB"
             ))],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let processRule = try CaptureRule(
             id: "instance",
@@ -240,7 +240,7 @@ struct CaptureRuleEngineTests {
             executableSHA256: "aabb",
             designatedRequirement: "REQ"
         )
-        #expect(engine.evaluate(try context(source: executable)).action == .mihomo(.profileRules))
+        #expect(engine.evaluate(try context(source: executable)).action == .outbound(.profileRules))
 
         let process = source(processIdentifier: 42)
         #expect(engine.evaluate(try context(source: process)).action == .reject)
@@ -292,19 +292,19 @@ struct CaptureRuleEngineTests {
     @Test
     func testLowestPriorityValueWinsAndEqualPriorityIsStable() throws {
         let later = try CaptureRule(id: "later", priority: 20, action: .reject)
-        let firstSamePriority = try CaptureRule(id: "first-same", priority: 10, action: .mihomo(.global))
+        let firstSamePriority = try CaptureRule(id: "first-same", priority: 10, action: .outbound(.global))
         let secondSamePriority = try CaptureRule(id: "second-same", priority: 10, action: .direct)
         let engine = try engine([later, firstSamePriority, secondSamePriority])
 
         let decision = engine.evaluate(try context())
-        #expect(decision.action == .mihomo(.global))
+        #expect(decision.action == .outbound(.global))
         #expect(decision.cause == .matchedRule("first-same"))
     }
 
     @Test
     func testDisabledRulesAreSkipped() throws {
         let disabled = try CaptureRule(id: "disabled", enabled: false, priority: 0, action: .reject)
-        let enabled = try CaptureRule(id: "enabled", priority: 1, action: .mihomo(.profileRules))
+        let enabled = try CaptureRule(id: "enabled", priority: 1, action: .outbound(.profileRules))
         let decision = try engine([disabled, enabled]).evaluate(context())
         #expect(decision.cause == .matchedRule("enabled"))
     }
@@ -337,7 +337,7 @@ struct CaptureRuleEngineTests {
             id: "domain",
             priority: 1,
             destinations: [.host(try HostMatcher(kind: .suffix, value: "example.com"))],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let destination = try FlowDestination(hostname: "api.example.com", port: 443)
         let flow = FlowContext(source: source(), destination: destination, transportProtocol: .tcp)
@@ -389,7 +389,7 @@ struct CaptureRuleEngineTests {
             id: "large-import",
             priority: 1,
             destinations: masks,
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let target = try FlowContext(
             source: source(),

@@ -30,7 +30,7 @@ struct InitialFlowOwnershipPolicyTests {
     @Test("Reject and Mihomo decisions are intercepted")
     func interceptedDispositions() {
         #expect(InitialFlowOwnershipPolicy.owns(.reject))
-        #expect(InitialFlowOwnershipPolicy.owns(.mihomo(.profileRules)))
+        #expect(InitialFlowOwnershipPolicy.owns(.outbound(.profileRules)))
     }
 
     @Test("Unavailable route applies its rule-specific fallback before ownership")
@@ -38,13 +38,13 @@ struct InitialFlowOwnershipPolicyTests {
         let directRule = try CaptureRule(
             id: "direct-fallback",
             priority: 0,
-            action: .mihomo(.group("Streaming")),
+            action: .outbound(.group("Streaming")),
             unavailableFallback: .direct
         )
         let rejectRule = try CaptureRule(
             id: "reject-fallback",
             priority: 1,
-            action: .mihomo(.global),
+            action: .outbound(.global),
             unavailableFallback: .reject
         )
         let rules = [directRule.id: directRule, rejectRule.id: rejectRule]
@@ -71,7 +71,7 @@ struct InitialFlowOwnershipPolicyTests {
         let rule = try CaptureRule(
             id: "available",
             priority: 0,
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let original = decision(rule: rule, route: .profileRules)
 
@@ -96,7 +96,7 @@ struct InitialFlowOwnershipPolicyTests {
         let rule = try CaptureRule(
             id: "profile-a",
             priority: 0,
-            action: .mihomo(requested),
+            action: .outbound(requested),
             unavailableFallback: .reject
         )
 
@@ -118,7 +118,7 @@ struct InitialFlowOwnershipPolicyTests {
         route: MihomoRoute
     ) -> FlowTrafficDecision {
         FlowTrafficDecision(
-            disposition: .mihomo(route),
+            disposition: .outbound(route),
             reason: .rule(.matchedRule(rule.id))
         )
     }

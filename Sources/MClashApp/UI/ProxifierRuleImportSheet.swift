@@ -205,7 +205,7 @@ struct ProxifierRuleImportSheet: View {
         return switch action {
         case .direct: AppLocalization.string("Direct")
         case .reject: AppLocalization.string("Reject")
-        case .mihomo: AppLocalization.string("Mihomo Rules")
+        case .outbound: AppLocalization.string("Proxy")
         }
     }
 }

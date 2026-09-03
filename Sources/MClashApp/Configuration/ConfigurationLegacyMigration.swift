@@ -227,7 +227,7 @@ enum ConfigurationLegacyMigration {
             converted = .direct
         case .reject:
             converted = .reject
-        case let .mihomo(route):
+        case let .outbound(route):
             switch route {
             case .profileRules, .global:
                 converted = .proxyGroup(defaultGroupID)

@@ -122,7 +122,7 @@ public enum ConfigurationCaptureAdapter {
                     ))
                     continue
                 }
-                action = .mihomo(.group(name))
+                action = .outbound(.group(name))
             }
             do {
                 let chunks: [[DestinationMatcher]]

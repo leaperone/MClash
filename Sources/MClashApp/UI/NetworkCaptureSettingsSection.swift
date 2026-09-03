@@ -56,7 +56,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         case .direct: AppLocalization.string("direct pass-through")
         case .reject: AppLocalization.string("rejected")
         case .failOpen: AppLocalization.string("fail-open")
-        case .mihomo: AppLocalization.string("mihomo proxy")
+        case .outbound: AppLocalization.string("mihomo proxy")
         }
         let route = entry?.mihomoRoute
         return [
@@ -126,7 +126,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         case .direct: AppLocalization.string("Direct pass-through")
         case .reject: AppLocalization.string("Rejected")
         case .failOpen: AppLocalization.string("Fail-open")
-        case .mihomo:
+        case .outbound:
             if FlowLedgerAssociationPresentation.isConfirmed(entry?.association) {
                 AppLocalization.string("Route confirmed")
             } else if FlowLedgerAssociationPresentation.isProbable(entry?.association) {
@@ -146,7 +146,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         _ activity: AppRoutingActivity,
         entry: FlowLedgerEntry?
     ) -> String {
-        guard case .mihomo = activity.effectiveAction else { return "" }
+        guard case .outbound = activity.effectiveAction else { return "" }
         guard let route = entry?.mihomoRoute else {
             if activity.relayState == .failed {
                 return AppLocalization.string("Relay failed")
@@ -1241,7 +1241,7 @@ struct AppRoutingView: View {
             return AppLocalization.string("Rejected")
         case .failOpen:
             return AppLocalization.string("Fail-open")
-        case let .mihomo(route):
+        case let .outbound(route):
             let target = switch route.profileRoute {
             case .rules: AppLocalization.string("Rules")
             case .global: AppLocalization.string("Global")
@@ -1272,7 +1272,7 @@ struct AppRoutingView: View {
         case .direct: AppLocalization.string("Direct pass-through")
         case .reject: AppLocalization.string("Rejected")
         case .failOpen: AppLocalization.string("Fail-open")
-        case .mihomo: switch activity.relayState {
+        case .outbound: switch activity.relayState {
             case .pending, .connecting: AppLocalization.string("Connecting")
             case .ready: AppLocalization.string("Mihomo ready")
             case .relaying:
@@ -1305,7 +1305,7 @@ struct AppRoutingView: View {
         case .direct: "arrow.right"
         case .reject: "xmark.octagon.fill"
         case .failOpen: "arrow.uturn.right"
-        case .mihomo: "point.3.connected.trianglepath.dotted"
+        case .outbound: "point.3.connected.trianglepath.dotted"
         }
     }
 
@@ -1315,7 +1315,7 @@ struct AppRoutingView: View {
         case .direct: .secondary
         case .reject: .red
         case .failOpen: .orange
-        case .mihomo: .accentColor
+        case .outbound: .accentColor
         }
     }
 
@@ -1773,10 +1773,10 @@ struct AppRoutingView: View {
         switch action {
         case .direct: AppLocalization.string("Direct")
         case .reject: AppLocalization.string("Reject")
-        case .mihomo(.profileRules): AppLocalization.string("Mihomo Rules")
-        case .mihomo(.global): AppLocalization.string("Mihomo Global")
-        case let .mihomo(.group(group)): group
-        case let .mihomo(.profile(profileID, target)):
+        case .outbound(.profileRules): AppLocalization.string("Mihomo Rules")
+        case .outbound(.global): AppLocalization.string("Mihomo Global")
+        case let .outbound(.group(group)): group
+        case let .outbound(.profile(profileID, target)):
             AppLocalization.format(
                 "%@ · %@",
                 routingProfileName(profileID),
@@ -1803,7 +1803,7 @@ struct AppRoutingView: View {
         switch action {
         case .direct: .secondary
         case .reject: .red
-        case .mihomo: .accentColor
+        case .outbound: .accentColor
         }
     }
 }
@@ -1872,7 +1872,7 @@ private struct AppRoutingFlowInspector: View {
                                     : route.chain.joined(separator: " → "),
                                 symbol: "point.3.connected.trianglepath.dotted"
                             )
-                        } else if case .mihomo = activity.effectiveAction {
+                        } else if case .outbound = activity.effectiveAction {
                             pipelineStage(
                                 "Mihomo Metadata",
                                 value: mihomoEvidenceTitle,
@@ -2101,7 +2101,7 @@ private struct AppRoutingFlowInspector: View {
             case .direct: AppLocalization.string("Direct")
             case .reject: AppLocalization.string("Rejected")
             case .failOpen: AppLocalization.string("Fail-open")
-            case .mihomo: mihomoEvidenceTitle
+            case .outbound: mihomoEvidenceTitle
             }
         }
     }
@@ -2168,7 +2168,7 @@ private struct AppRoutingFlowInspector: View {
             .exact(bytes)
         case .direct, .failOpen: .notMeasuredAfterHandoff
         case .reject: .notApplicable
-        case .mihomo: .exact(bytes)
+        case .outbound: .exact(bytes)
         }
     }
 

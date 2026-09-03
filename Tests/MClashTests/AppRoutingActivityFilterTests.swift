@@ -12,7 +12,7 @@ struct AppRoutingActivityFilterTests {
             effective: .direct
         )))
         #expect(AppRoutingActivityFilter.focused.includes(activity(
-            configured: .mihomo(.profileRules),
+            configured: .outbound(.profileRules),
             effective: .direct
         )))
         #expect(AppRoutingActivityFilter.focused.includes(activity(
@@ -21,8 +21,8 @@ struct AppRoutingActivityFilterTests {
             relayState: .failed
         )))
         #expect(AppRoutingActivityFilter.focused.includes(activity(
-            configured: .mihomo(.profileRules),
-            effective: .mihomo(.profileRules)
+            configured: .outbound(.profileRules),
+            effective: .outbound(.profileRules)
         )))
         #expect(AppRoutingActivityFilter.focused.includes(activity(
             configured: .reject,
@@ -51,8 +51,8 @@ struct AppRoutingActivityFilterTests {
             .relaying,
         ] {
             #expect(activity(
-                configured: .mihomo(.profileRules),
-                effective: .mihomo(.profileRules),
+                configured: .outbound(.profileRules),
+                effective: .outbound(.profileRules),
                 relayState: state
             ).isLiveManagedFlow)
         }
@@ -62,8 +62,8 @@ struct AppRoutingActivityFilterTests {
             .failed,
         ] {
             #expect(!activity(
-                configured: .mihomo(.profileRules),
-                effective: .mihomo(.profileRules),
+                configured: .outbound(.profileRules),
+                effective: .outbound(.profileRules),
                 relayState: state
             ).isLiveManagedFlow)
         }

@@ -454,7 +454,7 @@ struct FlowLedger: Sendable {
         excluding claimedConnectionIDs: Set<String>,
         associationWindow: TimeInterval
     ) -> ConnectionMatch? {
-        guard case .mihomo = activity.effectiveAction else { return nil }
+        guard case .outbound = activity.effectiveAction else { return nil }
 
         func preferredCandidate(
             relaySourcePort: UInt16? = nil
@@ -829,7 +829,7 @@ struct FlowLedger: Sendable {
         case .direct: .direct
         case .reject: .rejected
         case .failOpen: .failOpen
-        case .mihomo: .viaMihomo
+        case .outbound: .viaMihomo
         }
     }
 
@@ -858,7 +858,7 @@ struct FlowLedger: Sendable {
             (.notMeasuredAfterHandoff, .notMeasuredAfterHandoff)
         case .reject:
             (.notApplicable, .notApplicable)
-        case .mihomo:
+        case .outbound:
             (.exact(activity.uploadBytes), .exact(activity.downloadBytes))
         }
     }

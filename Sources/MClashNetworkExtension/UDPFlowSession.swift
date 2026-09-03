@@ -333,7 +333,7 @@ final class UDPFlowSession: @unchecked Sendable {
             throw UDPFlowSessionError.rejected(
                 "UDP destination \(Self.description(record.key.destination)) was rejected by App Routing."
             )
-        case .mihomo:
+        case .outbound:
             if let target = record.plan.nativeTarget {
                 guard let destination = record.plan.initialDestination else {
                     throw UDPFlowSessionError.unsupportedDestination

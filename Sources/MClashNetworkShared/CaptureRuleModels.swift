@@ -399,16 +399,7 @@ private extension MihomoProfileRoute {
 public enum CaptureAction: Codable, Hashable, Sendable {
     case direct
     case reject
-    case mihomo(MihomoRoute)
-
-    /// Connector-neutral spelling for a routed outbound action.
-    ///
-    /// The stored case remains available while persisted snapshots migrate;
-    /// new callers should use this factory so they do not couple themselves
-    /// to the historical Mihomo name.
-    public static func outbound(_ route: OutboundRoute) -> Self {
-        .mihomo(route)
-    }
+    case outbound(OutboundRoute)
 
     private enum CodingKeys: String, CodingKey {
         case direct
@@ -431,7 +422,7 @@ public enum CaptureAction: Codable, Hashable, Sendable {
         case .reject:
             self = .reject
         case .outbound, .mihomo:
-            self = .mihomo(try container.decode(OutboundRoute.self, forKey: key))
+            self = .outbound(try container.decode(OutboundRoute.self, forKey: key))
         }
     }
 
@@ -442,7 +433,7 @@ public enum CaptureAction: Codable, Hashable, Sendable {
             try container.encodeNil(forKey: .direct)
         case .reject:
             try container.encodeNil(forKey: .reject)
-        case let .mihomo(route):
+        case let .outbound(route):
             // Always write the connector-neutral key. The decoder above still
             // accepts the historical `mihomo` key from existing snapshots.
             try container.encode(route, forKey: .outbound)
@@ -532,7 +523,7 @@ public struct CaptureRule: Codable, Hashable, Identifiable, Sendable {
                 break
             }
         }
-        if case let .mihomo(route) = action {
+        if case let .outbound(route) = action {
             let group: String? = switch route {
             case let .group(value):
                 value

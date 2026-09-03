@@ -44,7 +44,7 @@ struct CaptureRuleDraftTests {
         #expect(rule.priority == 10)
         #expect(rule.protocols == [.tcp])
         #expect(rule.portRanges == [try PortRange(443)])
-        #expect(rule.action == .mihomo(.profileRules))
+        #expect(rule.action == .outbound(.profileRules))
         #expect(rule.unavailableFallback == .reject)
         #expect(rule.destinations == [.ip(try IPAddress("203.0.113.8"))])
         #expect(rule.sources.count == 3)
@@ -109,7 +109,7 @@ struct CaptureRuleDraftTests {
                 .hostPattern(try HostPatternMatcher(pattern: "*example.com")),
             ],
             protocols: [.tcp],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
 
         let draft = try CaptureRuleDraft(rule: rule)
@@ -161,7 +161,7 @@ struct CaptureRuleDraftTests {
             matchesUDP: false,
             action: .mihomoGlobal
         )
-        #expect(try draft.makeRule().action == .mihomo(.global))
+        #expect(try draft.makeRule().action == .outbound(.global))
 
         draft.identifier = "group-route"
         draft.action = .mihomoGroup
@@ -170,7 +170,7 @@ struct CaptureRuleDraftTests {
         }
         draft.mihomoGroup = " Auto "
         let groupRule = try draft.makeRule()
-        #expect(groupRule.action == .mihomo(.group("Auto")))
+        #expect(groupRule.action == .outbound(.group("Auto")))
         #expect(try CaptureRuleDraft(rule: groupRule).makeRule() == groupRule)
     }
 
@@ -195,7 +195,7 @@ struct CaptureRuleDraftTests {
         )
 
         let rule = try draft.makeRule()
-        #expect(rule.action == .mihomo(route))
+        #expect(rule.action == .outbound(route))
 
         let roundTrip = try CaptureRuleDraft(rule: rule)
         #expect(roundTrip.routingProfileID == profileID)
@@ -416,7 +416,7 @@ struct CaptureRuleDraftTests {
             destinations: [.network(try IPNetwork("2001:db8::/32"))],
             protocols: [.tcp, .udp],
             portRanges: [try PortRange(lowerBound: 443, upperBound: 8_443)],
-            action: .mihomo(.profileRules),
+            action: .outbound(.profileRules),
             unavailableFallback: .reject
         )
 

@@ -20,7 +20,7 @@ enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
         case .active:
             return activity.isLiveManagedFlow
         case .viaMihomo:
-            if case .mihomo = activity.effectiveAction {
+            if case .outbound = activity.effectiveAction {
                 return activity.relayState != .failed
             }
             return false
@@ -38,7 +38,7 @@ enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
         if activity.relayState == .failed { return true }
 
         switch activity.effectiveAction {
-        case .mihomo, .reject, .failOpen:
+        case .outbound, .reject, .failOpen:
             return true
         case .direct:
             // A Mihomo route that fell back to Direct is important diagnostic
@@ -46,7 +46,7 @@ enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
             switch activity.configuredAction {
             case .direct:
                 return false
-            case .mihomo, .reject:
+            case .outbound, .reject:
                 return true
             }
         }

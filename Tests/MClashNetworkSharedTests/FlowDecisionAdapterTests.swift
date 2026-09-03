@@ -172,7 +172,7 @@ struct FlowDecisionAdapterTests {
             destinations: [.host(try HostMatcher(kind: .exact, value: "chatgpt.com"))],
             protocols: [.tcp],
             portRanges: [try PortRange(lowerBound: 443, upperBound: 443)],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let configuration = CaptureConfigurationLoadResult.loaded(
             try CaptureConfigurationSnapshot(revision: 1, rules: [strictRule, identifierRule])
@@ -184,7 +184,7 @@ struct FlowDecisionAdapterTests {
             mihomoAvailable: true
         )
 
-        #expect(decision.disposition == .mihomo(.profileRules))
+        #expect(decision.disposition == .outbound(.profileRules))
         #expect(decision.reason == .rule(.matchedRule("kernel-app-identifier")))
         #expect(decision.ruleEvidence?.source == .applicationIdentifierPattern(
             RuleApplicationPatternEvidence(pattern: "codex", matchedField: .signingIdentifier)
@@ -214,7 +214,7 @@ struct FlowDecisionAdapterTests {
             destinations: [.host(try HostMatcher(kind: .suffix, value: "chatgpt.com"))],
             protocols: [.tcp],
             portRanges: [try PortRange(lowerBound: 443, upperBound: 443)],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
         let decision = FlowTrafficDecisionAdapter().decide(
             configuration: .loaded(try CaptureConfigurationSnapshot(
@@ -226,7 +226,7 @@ struct FlowDecisionAdapterTests {
             mihomoAvailable: true
         )
 
-        #expect(decision.disposition == .mihomo(.profileRules))
+        #expect(decision.disposition == .outbound(.profileRules))
         #expect(decision.reason == .rule(.matchedRule("domain-only")))
         #expect(decision.ruleEvidence?.source == .unconstrained)
         #expect(decision.ruleEvidence?.destination == .host(
@@ -255,7 +255,7 @@ struct FlowDecisionAdapterTests {
                 signingIdentifier: "codex"
             ))],
             destinations: [.host(try HostMatcher(kind: .suffix, value: "chatgpt.com"))],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
 
         let decision = FlowTrafficDecisionAdapter().decide(
@@ -268,7 +268,7 @@ struct FlowDecisionAdapterTests {
             mihomoAvailable: true
         )
 
-        #expect(decision.disposition == .mihomo(.profileRules))
+        #expect(decision.disposition == .outbound(.profileRules))
         #expect(decision.reason == .rule(.matchedRule("existing-codex-application")))
         #expect(decision.ruleEvidence?.source == .applicationIdentifierPattern(
             RuleApplicationPatternEvidence(pattern: "codex", matchedField: .signingIdentifier)
@@ -323,16 +323,16 @@ struct FlowDecisionAdapterTests {
         #expect(reject.disposition == .reject)
 
         let mihomo = adapter.decide(
-            configuration: try loaded(action: .mihomo(.group("HK"))),
+            configuration: try loaded(action: .outbound(.group("HK"))),
             context: context,
             captureEnabled: true,
             mihomoAvailable: true
         )
-        #expect(mihomo.disposition == .mihomo(.group("HK")))
+        #expect(mihomo.disposition == .outbound(.group("HK")))
 
         let unavailable = adapter.decide(
             configuration: try loaded(
-                action: .mihomo(.profileRules),
+                action: .outbound(.profileRules),
                 unavailableFallback: .reject
             ),
             context: context,
@@ -352,7 +352,7 @@ struct FlowDecisionAdapterTests {
     @Test("A prepared configuration reuses its compiled engine across flow decisions")
     func preparedConfigurationIsReusable() throws {
         let prepared = PreparedCaptureConfiguration(
-            try loaded(action: .mihomo(.profileRules), unavailableFallback: .reject)
+            try loaded(action: .outbound(.profileRules), unavailableFallback: .reject)
         )
         #expect(prepared.containsCompiledRuleEngine)
 

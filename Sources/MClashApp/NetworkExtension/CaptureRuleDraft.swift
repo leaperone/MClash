@@ -188,7 +188,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
             action: try Self.draftAction(rule.action),
             unavailableFallback: rule.unavailableFallback
         )
-        if case let .mihomo(route) = rule.action {
+        if case let .outbound(route) = rule.action {
             if let routingProfileID = route.routingProfileID {
                 self.routingProfileID = ProfileID(rawValue: routingProfileID.uuid)
             }
@@ -449,7 +449,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         }
 
         if let routingProfileID {
-            return .mihomo(.profile(
+            return .outbound(.profile(
                 RoutingProfileID(routingProfileID.rawValue),
                 target: profileRoute
             ))
@@ -460,7 +460,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
         case .global: legacyRoute = .global
         case let .group(group): legacyRoute = .group(group)
         }
-        return .mihomo(legacyRoute)
+        return .outbound(legacyRoute)
     }
 
     private static func draftAction(_ action: CaptureAction) throws -> CaptureRuleDraftAction {
@@ -469,7 +469,7 @@ struct CaptureRuleDraft: Equatable, Sendable {
             .direct
         case .reject:
             .reject
-        case let .mihomo(route):
+        case let .outbound(route):
             switch route.profileRoute {
             case .rules: .mihomoProfileRules
             case .global: .mihomoGlobal

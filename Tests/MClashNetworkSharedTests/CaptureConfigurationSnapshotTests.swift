@@ -15,7 +15,7 @@ struct CaptureConfigurationSnapshotTests {
             destinations: [.network(try IPNetwork("2001:db8::/32"))],
             protocols: [.tcp, .udp],
             portRanges: [try PortRange(lowerBound: 443, upperBound: 8443)],
-            action: .mihomo(.group("Auto")),
+            action: .outbound(.group("Auto")),
             unavailableFallback: .reject
         )
         let snapshot = try CaptureConfigurationSnapshot(
@@ -57,7 +57,7 @@ struct CaptureConfigurationSnapshotTests {
             try CaptureRule(id: "  ", priority: 1, action: .direct)
         }
         #expect(throws: NetworkRuleValidationError.invalidMihomoGroup("  ")) {
-            try CaptureRule(id: "group", priority: 1, action: .mihomo(.group("  ")))
+            try CaptureRule(id: "group", priority: 1, action: .outbound(.group("  ")))
         }
     }
 

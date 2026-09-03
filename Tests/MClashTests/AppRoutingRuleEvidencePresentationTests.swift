@@ -23,7 +23,7 @@ struct AppRoutingRuleEvidencePresentationTests {
         )
         let presentation = AppRoutingRuleEvidencePresentation.make(for: activity(
             decision: FlowTrafficDecision(
-                disposition: .mihomo(.profileRules),
+                disposition: .outbound(.profileRules),
                 reason: .rule(.matchedRule("Browser")),
                 ruleEvidence: evidence
             )

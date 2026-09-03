@@ -278,7 +278,7 @@ public struct ConfigurationCompiler: Sendable {
         let catchAll = try CaptureRule(
             id: "mclash-compiled-workspace-catch-all",
             priority: .max,
-            action: .mihomo(.profileRules),
+            action: .outbound(.profileRules),
             unavailableFallback: .reject
         )
         let workspaceEntrances = workspace.entranceIDs.compactMap { entrancesByID[$0] }

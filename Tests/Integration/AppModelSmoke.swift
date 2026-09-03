@@ -312,7 +312,7 @@ struct AppModelSmoke {
             let baselineRule = try CaptureRule(
                 id: "continuity-baseline",
                 priority: 10,
-                action: .mihomo(.profileRules)
+                action: .outbound(.profileRules)
             )
             try await model.applyNetworkCaptureRules(
                 [baselineRule],
@@ -345,7 +345,7 @@ struct AppModelSmoke {
             let groupRule = try CaptureRule(
                 id: "continuity-first-node-group",
                 priority: 20,
-                action: .mihomo(.group("Pinned Node"))
+                action: .outbound(.group("Pinned Node"))
             )
             let beforeFirstGroup = coreContinuitySnapshot(
                 model: model,
@@ -430,7 +430,7 @@ struct AppModelSmoke {
             let failedLiveRule = try CaptureRule(
                 id: "continuity-failed-live-route",
                 priority: 25,
-                action: .mihomo(.global)
+                action: .outbound(.global)
             )
             let rulesBeforeFailedLiveUpdate = model.networkCapturePreferences
                 .snapshot.rules
@@ -475,7 +475,7 @@ struct AppModelSmoke {
             let auxiliaryProfileRule = try CaptureRule(
                 id: "continuity-first-profile-route",
                 priority: 30,
-                action: .mihomo(auxiliaryRoute)
+                action: .outbound(auxiliaryRoute)
             )
             let beforeFirstProfileRoute = coreContinuitySnapshot(
                 model: model,

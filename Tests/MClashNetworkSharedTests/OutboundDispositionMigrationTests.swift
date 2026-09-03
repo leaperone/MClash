@@ -28,8 +28,8 @@ struct OutboundDispositionMigrationTests {
 
         let action = try JSONDecoder().decode(CaptureAction.self, from: actionLegacy)
         let disposition = try JSONDecoder().decode(FlowTrafficDisposition.self, from: dispositionLegacy)
-        #expect(action == .mihomo(.group("Pinned")))
-        #expect(disposition == .mihomo(.profileRules))
+        #expect(action == .outbound(.group("Pinned")))
+        #expect(disposition == .outbound(.profileRules))
     }
 
     @Test

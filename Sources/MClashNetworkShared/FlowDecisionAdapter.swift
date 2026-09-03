@@ -364,15 +364,8 @@ public struct CaptureConfigurationSnapshotLoader: Sendable {
 public enum FlowTrafficDisposition: Codable, Hashable, Sendable {
     case direct
     case reject
-    case mihomo(MihomoRoute)
+    case outbound(OutboundRoute)
     case failOpen
-
-    /// Connector-neutral spelling for a routed outbound disposition.
-    /// New code can use `FlowTrafficDisposition.outbound(route)` while old
-    /// in-memory clients and persisted snapshots continue to work.
-    public static func outbound(_ route: OutboundRoute) -> Self {
-        .mihomo(route)
-    }
 
     private enum CodingKeys: String, CodingKey {
         case direct
@@ -398,7 +391,7 @@ public enum FlowTrafficDisposition: Codable, Hashable, Sendable {
         case .failOpen:
             self = .failOpen
         case .outbound, .mihomo:
-            self = .mihomo(try container.decode(OutboundRoute.self, forKey: key))
+            self = .outbound(try container.decode(OutboundRoute.self, forKey: key))
         }
     }
 
@@ -411,7 +404,7 @@ public enum FlowTrafficDisposition: Codable, Hashable, Sendable {
             try container.encodeNil(forKey: .reject)
         case .failOpen:
             try container.encodeNil(forKey: .failOpen)
-        case let .mihomo(route):
+        case let .outbound(route):
             // Persist the connector-neutral spelling from now on. Decoding
             // remains backwards compatible with `mihomo` snapshots.
             try container.encode(route, forKey: .outbound)
@@ -521,10 +514,10 @@ public struct FlowTrafficDecisionAdapter: Sendable {
                 reason: .rule(ruleDecision.cause),
                 ruleEvidence: ruleDecision.evidence
             )
-        case let .mihomo(route):
+        case let .outbound(route):
             if mihomoAvailable {
                 return FlowTrafficDecision(
-                    disposition: .mihomo(route),
+                    disposition: .outbound(route),
                     reason: .rule(ruleDecision.cause),
                     ruleEvidence: ruleDecision.evidence
                 )

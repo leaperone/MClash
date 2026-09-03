@@ -27,7 +27,7 @@ extension MihomoRoute {
 
 extension CaptureAction {
     var mclashTrafficTarget: ProfileTrafficTarget {
-        guard case let .mihomo(route) = self else { return .system }
+        guard case let .outbound(route) = self else { return .system }
         return route.mclashTrafficTarget
     }
 
@@ -42,10 +42,10 @@ extension CaptureAction {
 
 extension AppRoutingActivity {
     var mclashTrafficTarget: ProfileTrafficTarget {
-        if case .mihomo = configuredAction {
+        if case .outbound = configuredAction {
             return configuredAction.mclashTrafficTarget
         }
-        guard case let .mihomo(route) = effectiveAction else { return .system }
+        guard case let .outbound(route) = effectiveAction else { return .system }
         return route.mclashTrafficTarget
     }
 

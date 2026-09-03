@@ -15,9 +15,9 @@ struct OutboundConnectorTests {
 
     @Test("A proxy decision is the only decision that uses a connector")
     func proxyDecisionUsesConnector() {
-        #expect(OutboundConnectorRoutingPolicy.requiresConnector(.mihomo(.profileRules)))
-        #expect(OutboundConnectorRoutingPolicy.requiresConnector(.mihomo(.global)))
-        #expect(OutboundConnectorRoutingPolicy.requiresConnector(.mihomo(.group("AI"))))
+        #expect(OutboundConnectorRoutingPolicy.requiresConnector(.outbound(.profileRules)))
+        #expect(OutboundConnectorRoutingPolicy.requiresConnector(.outbound(.global)))
+        #expect(OutboundConnectorRoutingPolicy.requiresConnector(.outbound(.group("AI"))))
     }
 
     @Test("Native SOCKS5 connector targets the node endpoint directly")

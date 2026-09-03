@@ -21,7 +21,7 @@ struct AppRoutingActivityTests {
             flowIdentifier: UUID(uuidString: "D54CF072-2153-4CD8-BB79-B467628B66FA")!,
             ruleIdentifier: "Browser Proxy",
             decision: FlowTrafficDecision(
-                disposition: .mihomo(.profileRules),
+                disposition: .outbound(.profileRules),
                 reason: .rule(.matchedRule("Browser Proxy")),
                 ruleEvidence: evidence
             )
@@ -72,7 +72,7 @@ struct AppRoutingActivityTests {
             destinationPort: .unconstrained
         )
         let activity = makeActivity(decision: FlowTrafficDecision(
-            disposition: .mihomo(.profileRules),
+            disposition: .outbound(.profileRules),
             reason: .rule(.matchedRule("Proxy Browser")),
             ruleEvidence: evidence
         ))
@@ -86,7 +86,7 @@ struct AppRoutingActivityTests {
         let decoded = try JSONDecoder().decode(AppRoutingActivity.self, from: legacyData)
         #expect(decoded.ruleEvidence == nil)
         #expect(decoded.matchedRuleIdentifier == "Proxy Browser")
-        #expect(decoded.effectiveAction == .mihomo(.profileRules))
+        #expect(decoded.effectiveAction == .outbound(.profileRules))
     }
 
     @Test("Matched rule is derived from regular and unavailable decisions")
@@ -100,11 +100,11 @@ struct AppRoutingActivityTests {
         )
         let activity = makeActivity(
             decision: unavailable,
-            configuredAction: .mihomo(.profileRules),
+            configuredAction: .outbound(.profileRules),
             effectiveAction: .direct
         )
         #expect(activity.matchedRuleIdentifier == "Fallback Rule")
-        #expect(activity.configuredAction == .mihomo(.profileRules))
+        #expect(activity.configuredAction == .outbound(.profileRules))
         #expect(activity.effectiveAction == .direct)
 
         let defaultDirect = makeActivity(
@@ -450,8 +450,8 @@ struct AppRoutingActivityTests {
         flowIdentifier: UUID = UUID(),
         ruleIdentifier: String = "Proxy Browser",
         decision: FlowTrafficDecision? = nil,
-        configuredAction: CaptureAction = .mihomo(.profileRules),
-        effectiveAction: FlowTrafficDisposition = .mihomo(.profileRules)
+        configuredAction: CaptureAction = .outbound(.profileRules),
+        effectiveAction: FlowTrafficDisposition = .outbound(.profileRules)
     ) -> AppRoutingActivity {
         let decision = decision ?? FlowTrafficDecision(
             disposition: effectiveAction,

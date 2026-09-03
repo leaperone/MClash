@@ -104,7 +104,7 @@ struct AppRoutingTrafficRateTrackerTests {
         )
         var first = activity(
             id: UUID(uuidString: "aaaaaaaa-0000-0000-0000-000000000001")!,
-            action: .mihomo(
+            action: .outbound(
                 .profile(RoutingProfileID(firstID.rawValue), target: .rules)
             ),
             upload: 100,
@@ -112,7 +112,7 @@ struct AppRoutingTrafficRateTrackerTests {
         )
         var second = activity(
             id: UUID(uuidString: "bbbbbbbb-0000-0000-0000-000000000002")!,
-            action: .mihomo(
+            action: .outbound(
                 .profile(RoutingProfileID(secondID.rawValue), target: .global)
             ),
             upload: 500,
@@ -147,7 +147,7 @@ struct AppRoutingTrafficRateTrackerTests {
 
     private func activity(
         id: UUID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
-        action: FlowTrafficDisposition = .mihomo(.profileRules),
+        action: FlowTrafficDisposition = .outbound(.profileRules),
         rule: String? = "Rule",
         measured: Bool = true,
         upload: UInt64,
@@ -183,7 +183,7 @@ private extension FlowTrafficDisposition {
         switch self {
         case .direct, .failOpen: .direct
         case .reject: .reject
-        case let .mihomo(route): .mihomo(route)
+        case let .outbound(route): .outbound(route)
         }
     }
 }

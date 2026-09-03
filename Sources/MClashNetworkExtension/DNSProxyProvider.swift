@@ -57,7 +57,7 @@ enum DNSRelayRoutingPolicy {
     static func route(
         destination: SOCKS5Endpoint,
         isTrustedMClashComponent: Bool,
-        upstreamMode: DNSUpstreamMode = .mihomo,
+        upstreamMode: DNSUpstreamMode = .legacyConnector,
         transport: DNSUpstreamTransport = .udp,
         nativeBootstrap: DNSUpstreamBootstrap? = nil
     ) -> DNSRelayRoute {
@@ -104,7 +104,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private var reporter: DNSProxyRuntimeReporter?
     private var proxy: ProviderSOCKSConfiguration?
     private var proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration] = [:]
-    private var dnsUpstreamMode: DNSUpstreamMode = .mihomo
+    private var dnsUpstreamMode: DNSUpstreamMode = .legacyConnector
     private var nativeUpstreamBootstrap: DNSUpstreamBootstrap?
     private var nativeDNSRelays: [UUID: NativeDNSFlowRelay] = [:]
     private let backendProbeQueue = DispatchQueue(
@@ -375,7 +375,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         self.liveUpdaterToken = nil
         proxy = nil
         proxyCatalog = [:]
-        dnsUpstreamMode = .mihomo
+        dnsUpstreamMode = .legacyConnector
         nativeUpstreamBootstrap = nil
         let nativeDNSRelays = self.nativeDNSRelays.values
         self.nativeDNSRelays = [:]
@@ -789,7 +789,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             return value
         }()
         let decision = FlowTrafficDecision(
-            disposition: bypassMihomo ? .direct : .mihomo(outboundRoute),
+            disposition: bypassMihomo ? .direct : .outbound(outboundRoute),
             reason: route == .directTrustedComponent
                 ? .rule(.builtInBypass(.trustedMClashComponent))
                 : .rule(.defaultDirect)
@@ -813,8 +813,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             ),
             transportProtocol: .udp,
             decision: decision,
-            configuredAction: bypassMihomo ? .direct : .mihomo(outboundRoute),
-            effectiveAction: bypassMihomo ? .direct : .mihomo(outboundRoute),
+            configuredAction: bypassMihomo ? .direct : .outbound(outboundRoute),
+            effectiveAction: bypassMihomo ? .direct : .outbound(outboundRoute),
             relayState: .pending,
             payloadBytesAreMeasured: true,
             uploadDatagrams: 0,
@@ -858,7 +858,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             destination: destination,
             transportProtocol: transportProtocol
         )
-        if case let .mihomo(route) = decision.disposition,
+        if case let .outbound(route) = decision.disposition,
            proxyCatalog[route] != nil {
             return .proxy(route)
         }

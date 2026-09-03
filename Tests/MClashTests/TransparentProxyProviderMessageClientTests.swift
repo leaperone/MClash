@@ -211,7 +211,7 @@ struct TransparentProxyProviderMessageClientTests {
             rules: [try CaptureRule(
                 id: "all",
                 priority: 1,
-                action: .mihomo(.profileRules)
+                action: .outbound(.profileRules)
             )]
         )
         let preferences = try NetworkCapturePreferences(

@@ -36,7 +36,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         revision: UInt64,
         dnsEnabled: Bool = true,
         failOpen: Bool = true,
-        dnsUpstreamMode: DNSUpstreamMode = .mihomo,
+        dnsUpstreamMode: DNSUpstreamMode = .legacyConnector,
         activationIdentifier: UUID = UUID()
     ) {
         self.revision = revision
@@ -58,7 +58,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         preferences: NetworkCapturePreferences,
         mihomoListener: NetworkExtensionMihomoListenerConfiguration? = nil,
         routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
-        dnsUpstreamMode: DNSUpstreamMode = .mihomo,
+        dnsUpstreamMode: DNSUpstreamMode = .legacyConnector,
         nativeUpstreamBootstrap: DNSUpstreamBootstrap? = nil,
         outboundNodeTargetCatalog: OutboundNodeTargetCatalog? = nil,
         inboundListenerRegistry: MClashListenerRegistry? = nil,

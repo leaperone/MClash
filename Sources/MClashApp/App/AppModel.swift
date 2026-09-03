@@ -5708,7 +5708,7 @@ final class AppModel {
         }
         if networkCapturePreferences.snapshot.rules.contains(where: { rule in
             guard rule.enabled,
-                  case let .mihomo(route) = rule.action,
+                  case let .outbound(route) = rule.action,
                   let target = route.routingProfileID else { return false }
             return target.uuid == profileID.rawValue
         }) {
@@ -11680,7 +11680,7 @@ final class AppModel {
             )
 
             let isMeasured: Bool = switch activity.effectiveAction {
-            case .mihomo: true
+            case .outbound: true
             case .direct: activity.payloadBytesAreMeasured == true
             case .reject: true
             case .failOpen: false
@@ -12763,7 +12763,7 @@ final class AppModel {
         }
         if !enabled, networkCapturePreferences.snapshot.rules.contains(where: { rule in
             guard rule.enabled,
-                  case let .mihomo(route) = rule.action,
+                  case let .outbound(route) = rule.action,
                   let target = route.routingProfileID else { return false }
             return target.uuid == profileID.rawValue
         }) {
@@ -13002,7 +13002,7 @@ final class AppModel {
         var routesByProfile: [ProfileID: Set<MihomoRoute>] = [:]
         if shouldConfigureCapture {
             for rule in effectiveRules where rule.enabled {
-                guard case let .mihomo(route) = rule.action else { continue }
+                guard case let .outbound(route) = rule.action else { continue }
                 if let target = route.routingProfileID {
                     let profileID = ProfileID(rawValue: target.uuid)
                     routesByProfile[profileID, default: []].insert(route)
@@ -13409,7 +13409,7 @@ final class AppModel {
         var candidate = profileRuntimePlan
         var required = Set<ProfileID>()
         for rule in rules where rule.enabled {
-            guard case let .mihomo(route) = rule.action,
+            guard case let .outbound(route) = rule.action,
                   let routingProfileID = route.routingProfileID else { continue }
             let profileID = ProfileID(rawValue: routingProfileID.uuid)
             guard profiles.contains(where: { $0.id == profileID }) else {

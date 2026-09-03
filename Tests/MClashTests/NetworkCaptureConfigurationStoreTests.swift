@@ -73,7 +73,7 @@ struct NetworkCaptureConfigurationStoreTests {
             sources: [.userID(501)],
             destinations: [.network(try IPNetwork("203.0.113.0/24"))],
             protocols: [.tcp, .udp],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
 
         let saved = try await store.replaceRules(

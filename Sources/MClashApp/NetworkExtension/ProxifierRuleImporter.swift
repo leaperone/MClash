@@ -329,7 +329,7 @@ struct ProxifierRuleImporter: Sendable {
         case "block", "reject":
             action = .reject
         case "proxy", "chain":
-            action = .mihomo(.profileRules)
+            action = .outbound(.profileRules)
             notes.append(
                 AppLocalization.format(
                     "Converted from Proxifier %@ to Mihomo profile rules.",
@@ -526,7 +526,7 @@ struct ProxifierRuleImporter: Sendable {
     }
 
     private func unavailableFallback(for action: CaptureAction) -> UnavailableFallback {
-        if case .mihomo = action { return .reject }
+        if case .outbound = action { return .reject }
         return .direct
     }
 

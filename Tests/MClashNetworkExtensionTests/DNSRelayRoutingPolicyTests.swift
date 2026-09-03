@@ -125,26 +125,26 @@ struct DNSRelayRoutingPolicyTests {
             destinations: [
                 .ip(try IPAddress("1.1.1.1")),
             ],
-            action: .mihomo(.profile(destinationProfile, target: .rules))
+            action: .outbound(.profile(destinationProfile, target: .rules))
         )
         let applicationRule = try CaptureRule(
             id: "application",
             priority: 2,
             sources: [.userID(501)],
-            action: .mihomo(.profile(applicationProfile, target: .rules))
+            action: .outbound(.profile(applicationProfile, target: .rules))
         )
         let portRule = try CaptureRule(
             id: "resolver-port",
             priority: 0,
             sources: [.userID(501)],
             portRanges: [try PortRange(lowerBound: 53, upperBound: 53)],
-            action: .mihomo(.profile(destinationProfile, target: .rules))
+            action: .outbound(.profile(destinationProfile, target: .rules))
         )
         let legacyRule = try CaptureRule(
             id: "legacy",
             priority: 0,
             sources: [.userID(501)],
-            action: .mihomo(.profileRules)
+            action: .outbound(.profileRules)
         )
 
         let eligible = [resolverRule, applicationRule, portRule, legacyRule]
@@ -170,7 +170,7 @@ struct DNSRelayRoutingPolicyTests {
         let decision = CaptureRuleEngine(snapshot: snapshot).evaluate(context)
         #expect(
             decision.action
-                == .mihomo(.profile(applicationProfile, target: .rules))
+                == .outbound(.profile(applicationProfile, target: .rules))
         )
         #expect(decision.cause == .matchedRule("application"))
     }

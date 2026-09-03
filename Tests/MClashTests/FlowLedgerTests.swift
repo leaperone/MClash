@@ -117,7 +117,7 @@ struct FlowLedgerTests {
             rawValue: UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
         )
         let activity = appActivity(
-            disposition: .mihomo(
+            disposition: .outbound(
                 .profile(
                     RoutingProfileID(auxiliaryProfileID.rawValue),
                     target: .rules
@@ -271,7 +271,7 @@ struct FlowLedgerTests {
         )
         let proxiedZero = appActivity(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!,
-            disposition: .mihomo(.profileRules),
+            disposition: .outbound(.profileRules),
             relayState: .relaying
         )
         let measuredDirect = appActivity(
@@ -467,7 +467,7 @@ struct FlowLedgerTests {
     private func appActivity(
         id: UUID = UUID(),
         captureOrigin: AppRoutingActivityCaptureOrigin? = .appRouting,
-        disposition: FlowTrafficDisposition = .mihomo(.profileRules),
+        disposition: FlowTrafficDisposition = .outbound(.profileRules),
         relayState: AppRoutingRelayState = .relaying,
         relayLocalPort: UInt16? = 55_001,
         startedAt: Date? = nil,
@@ -516,7 +516,7 @@ struct FlowLedgerTests {
         switch disposition {
         case .direct, .failOpen: .direct
         case .reject: .reject
-        case let .mihomo(route): .mihomo(route)
+        case let .outbound(route): .outbound(route)
         }
     }
 
