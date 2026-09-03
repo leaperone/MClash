@@ -59,7 +59,7 @@ struct ConfigurationEditorSheet: View {
             .formStyle(.grouped)
             .navigationTitle(
                 AppLocalization.format(
-                    isNew ? "New %@" : "Edit %@",
+                    isNew ? "Create %@" : "Edit %@",
                     AppLocalization.string(section.presentationSingularTitle)
                 )
             )
@@ -102,12 +102,23 @@ struct ConfigurationEditorSheet: View {
             }
         case .proxyGroups:
             Section(AppLocalization.string("Group")) {
+                Label(
+                    AppLocalization.string("Choose a group type, then add fixed nodes or automatic matches below."),
+                    systemImage: "checklist"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 TextField(AppLocalization.string("Name"), text: $name)
                 Picker(AppLocalization.string("Type"), selection: $groupType) {
                     ForEach(ProxyGroupType.allCases.filter { $0 != .relay }, id: \.self) { type in
                         Text(type.localizedTitle).tag(type)
                     }
                 }
+                Text(groupType.taskDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
                 NodeMembershipEditor(
                     nodes: model.configurationDocument.nodes,

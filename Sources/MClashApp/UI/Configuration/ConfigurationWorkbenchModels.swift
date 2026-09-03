@@ -48,6 +48,22 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
         default: singularTitle
         }
     }
+
+    /// Action labels describe the result of the button, rather than exposing
+    /// the model's generic "add item" terminology. This is especially useful
+    /// for first-time users who are creating a routing rule or node group.
+    var createActionTitle: String {
+        switch self {
+        case .workspaces: AppLocalization.string("Create a configuration")
+        case .sources: AppLocalization.string("Add Source")
+        case .nodes: AppLocalization.string("Add node")
+        case .proxyGroups: AppLocalization.string("Create a node group")
+        case .rules: AppLocalization.string("Create a routing rule")
+        case .ruleSets: AppLocalization.string("Create a rule set")
+        case .entrances: AppLocalization.string("Create an entrance")
+        case .dns: AppLocalization.string("Create a DNS policy")
+        }
+    }
     var symbol: String {
         switch self {
         case .workspaces: "rectangle.3.group"
@@ -134,6 +150,18 @@ extension ProxyGroupType {
         case .direct: AppLocalization.string("Direct")
         case .reject: AppLocalization.string("Reject")
         case .relay: AppLocalization.string("Relay")
+        }
+    }
+
+    var taskDescription: String {
+        switch self {
+        case .select: AppLocalization.string("Select one member manually. Nested groups keep the order shown.")
+        case .fallback: AppLocalization.string("Try members from top to bottom and use the first healthy one.")
+        case .urlTest: AppLocalization.string("Choose the member with the best recent health check.")
+        case .loadBalance: AppLocalization.string("Spread new connections across healthy members.")
+        case .direct: AppLocalization.string("Always connect directly without a proxy.")
+        case .reject: AppLocalization.string("Block matching traffic.")
+        case .relay: AppLocalization.string("Chain traffic through nested groups.")
         }
     }
 }

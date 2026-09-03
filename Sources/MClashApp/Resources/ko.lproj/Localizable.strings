@@ -2391,3 +2391,16 @@
 "Send macOS application traffic to a MClash HTTP or SOCKS entrance." = "macOS 앱 트래픽을 MClash HTTP 또는 SOCKS 진입점으로 보냅니다.";
 "Traffic entrances" = "트래픽 진입점";
 "Traffic entrances and their on/off controls are managed together on the Entrances page." = "트래픽 진입점과 켜기／끄기 설정은 진입점 페이지에서 함께 관리합니다.";
+"Create a configuration" = "구성 만들기";
+"Add node" = "노드 추가";
+"Create a node group" = "노드 그룹 만들기";
+"Create a routing rule" = "라우팅 규칙 만들기";
+"Create a rule set" = "규칙 세트 만들기";
+"Create an entrance" = "진입점 만들기";
+"Create a DNS policy" = "DNS 정책 만들기";
+"Choose a group type, then add fixed nodes or automatic matches below." = "그룹 유형을 선택한 다음 아래에서 고정 노드 또는 자동 일치를 추가하세요.";
+"Try members from top to bottom and use the first healthy one." = "위에서 아래 순서로 시도하여 첫 번째 정상 멤버를 사용합니다.";
+"Spread new connections across healthy members." = "새 연결을 정상 멤버에 분산합니다.";
+"Always connect directly without a proxy." = "항상 프록시 없이 직접 연결합니다.";
+"Block matching traffic." = "일치하는 트래픽을 차단합니다.";
+"Chain traffic through nested groups." = "중첩 그룹을 연결하여 전달합니다.";

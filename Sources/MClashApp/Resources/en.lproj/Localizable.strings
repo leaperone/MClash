@@ -2391,3 +2391,16 @@
 "Send macOS application traffic to a MClash HTTP or SOCKS entrance." = "Send macOS application traffic to a MClash HTTP or SOCKS entrance.";
 "Traffic entrances" = "Traffic entrances";
 "Traffic entrances and their on/off controls are managed together on the Entrances page." = "Traffic entrances and their on/off controls are managed together on the Entrances page.";
+"Create a configuration" = "Create a configuration";
+"Add node" = "Add node";
+"Create a node group" = "Create a node group";
+"Create a routing rule" = "Create a routing rule";
+"Create a rule set" = "Create a rule set";
+"Create an entrance" = "Create an entrance";
+"Create a DNS policy" = "Create a DNS policy";
+"Choose a group type, then add fixed nodes or automatic matches below." = "Choose a group type, then add fixed nodes or automatic matches below.";
+"Try members from top to bottom and use the first healthy one." = "Try members from top to bottom and use the first healthy one.";
+"Spread new connections across healthy members." = "Spread new connections across healthy members.";
+"Always connect directly without a proxy." = "Always connect directly without a proxy.";
+"Block matching traffic." = "Block matching traffic.";
+"Chain traffic through nested groups." = "Chain traffic through nested groups.";

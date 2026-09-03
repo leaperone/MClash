@@ -2392,3 +2392,16 @@
 "Send macOS application traffic to a MClash HTTP or SOCKS entrance." = "macOS-Anwendungsverkehr an einen HTTP- oder SOCKS-Eingang von MClash senden.";
 "Traffic entrances" = "Verkehrseingänge";
 "Traffic entrances and their on/off controls are managed together on the Entrances page." = "Verkehrseingänge und ihre Ein-/Aus-Steuerung werden gemeinsam auf der Seite Eingänge verwaltet.";
+"Create a configuration" = "Konfiguration erstellen";
+"Add node" = "Knoten hinzufügen";
+"Create a node group" = "Knotengruppe erstellen";
+"Create a routing rule" = "Routingregel erstellen";
+"Create a rule set" = "Regelsatz erstellen";
+"Create an entrance" = "Eingang erstellen";
+"Create a DNS policy" = "DNS-Richtlinie erstellen";
+"Choose a group type, then add fixed nodes or automatic matches below." = "Wählen Sie einen Gruppentyp und fügen Sie unten feste Knoten oder automatische Treffer hinzu.";
+"Try members from top to bottom and use the first healthy one." = "Testen Sie die Mitglieder von oben nach unten und verwenden Sie das erste gesunde Mitglied.";
+"Spread new connections across healthy members." = "Verteilen Sie neue Verbindungen auf gesunde Mitglieder.";
+"Always connect directly without a proxy." = "Immer direkt und ohne Proxy verbinden.";
+"Block matching traffic." = "Passenden Datenverkehr blockieren.";
+"Chain traffic through nested groups." = "Über verschachtelte Gruppen weiterleiten.";

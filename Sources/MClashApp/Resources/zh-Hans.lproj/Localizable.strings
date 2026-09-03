@@ -2390,3 +2390,16 @@
 "Send macOS application traffic to a MClash HTTP or SOCKS entrance." = "将 macOS 应用流量发送到 MClash 的 HTTP 或 SOCKS 入口。";
 "Traffic entrances" = "流量入口";
 "Traffic entrances and their on/off controls are managed together on the Entrances page." = "流量入口及其开关统一在“入口”页面管理。";
+"Create a configuration" = "创建配置";
+"Add node" = "添加节点";
+"Create a node group" = "创建节点组";
+"Create a routing rule" = "创建路由规则";
+"Create a rule set" = "创建规则集";
+"Create an entrance" = "创建入口";
+"Create a DNS policy" = "创建 DNS 策略";
+"Choose a group type, then add fixed nodes or automatic matches below." = "先选择分组类型，再在下方添加固定节点或自动匹配条件。";
+"Try members from top to bottom and use the first healthy one." = "按从上到下的顺序尝试成员，使用第一个健康成员。";
+"Spread new connections across healthy members." = "将新连接分配到健康成员。";
+"Always connect directly without a proxy." = "始终直连，不经过代理。";
+"Block matching traffic." = "阻止匹配的流量。";
+"Chain traffic through nested groups." = "通过嵌套分组串联转发。";

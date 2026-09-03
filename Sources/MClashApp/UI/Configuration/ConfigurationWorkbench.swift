@@ -288,10 +288,7 @@ struct ConfigurationWorkbench: View {
     }
 
     private var addButtonTitle: String {
-        AppLocalization.format(
-            "Add %@",
-            AppLocalization.string(section.presentationSingularTitle)
-        )
+        section.createActionTitle
     }
 
     private var emptyDescription: String {
