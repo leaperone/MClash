@@ -474,6 +474,8 @@ and can be tested without producing a Mihomo YAML document.
 - `04d5358` adds structured traffic-inspector evidence with route/DNS
   explanations and reviewed quick-rule drafts for domains, applications,
   process paths and IP/CIDR targets; full UI context-menu wiring remains.
+- `a5f7600` wires the traffic explanation into the connection inspector and
+  adds a non-mutating context action to open it for the selected flow.
 - `1a24440` and `a58686c` enforce and document the free standard `macos-26`
   runner policy; sized paid runners are rejected by release packaging tests.
 
