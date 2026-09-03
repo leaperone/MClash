@@ -835,6 +835,13 @@ final class AppModel {
         return MihomoRuntimeControllerAdapter()
     }
 
+    /// Returns the connector-neutral runtime state used by read-only
+    /// automation diagnostics. Keep this narrow so automation never reaches
+    /// into the runtime implementation or exposes a controller secret.
+    func runtimeDiagnostics() async -> NativeRuntimeDiagnostics {
+        await supervisor.diagnostics()
+    }
+
     /// Native DNS is the unified-runtime default. Set the explicit legacy
     /// switch only for rollback during migration; it is never inferred from
     /// missing configuration so a fresh install stays on the MClash path.

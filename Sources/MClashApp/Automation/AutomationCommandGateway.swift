@@ -183,6 +183,8 @@ final class AutomationCommandGateway {
             return try encode(Self.capabilitiesForClients)
         case "system.snapshot":
             return snapshot()
+        case "runtime.diagnostics":
+            return await runtimeDiagnostics()
         case "auth.clients.list":
             return try encode(authorizationStore.list())
         case "auth.clients.revoke":
@@ -1804,6 +1806,86 @@ final class AutomationCommandGateway {
         ])
     }
 
+    /// Connector-neutral runtime state for CLI and automation clients. It
+    /// deliberately omits CoreSession.endpoint/secret and node parameters.
+    private func runtimeDiagnostics() async -> AutomationJSONValue {
+        let value = await model.runtimeDiagnostics()
+        let state: String = switch value.state {
+        case .stopped: "stopped"
+        case .validating: "validating"
+        case .starting: "starting"
+        case .running: "running"
+        case .stopping: "stopping"
+        case .failed: "failed"
+        }
+        let listenerStates: [String: AutomationJSONValue] = value.listenerStates
+            .reduce(into: [:]) { result, entry in
+                result[entry.key.uuidString.lowercased()] = .string(
+                    Self.listenerStateName(entry.value)
+                )
+            }
+        let unsupported = value.unsupportedConnectors.map { item in
+            AutomationJSONValue.object([
+                "route": .string(Self.safeRouteName(item.route)),
+                "protocol": .string(displaySafe(item.protocolName, maximumLength: 32)),
+                "reason": .string(redactedDiagnosticText(item.reason)),
+            ])
+        }
+        return .object([
+            "backend": .string(value.backend == "native" ? "native" : "mihomo"),
+            "state": .string(state),
+            "capabilities": .array(value.capabilities
+                .map { .string($0.rawValue) }
+                .sorted { $0.stringValue ?? "" < $1.stringValue ?? "" }),
+            "controlPlaneAvailable": .bool(value.controlPlaneAvailable),
+            "startedAt": value.startedAt.map { .string($0.ISO8601Format()) } ?? .null,
+            "workspaceRevision": value.workspaceRevision.map {
+                .integer(Int64($0))
+            } ?? .null,
+            "hasCompiledRuntimePlan": .bool(value.hasCompiledRuntimePlan),
+            "listenerCount": .integer(Int64(value.listenerCount)),
+            "enabledListenerCount": .integer(Int64(value.enabledListenerCount)),
+            "listenerStates": .object(listenerStates),
+            "unsupportedConnectors": .array(unsupported),
+            "sessionValidationError": value.sessionValidationError.map {
+                .string(redactedDiagnosticText($0))
+            } ?? .null,
+            "lastError": value.lastError.map {
+                .string(redactedDiagnosticText($0))
+            } ?? .null,
+        ])
+    }
+
+    private static func listenerStateName(
+        _ state: NativeListenerLifecycleState
+    ) -> String {
+        switch state {
+        case .stopped: "stopped"
+        case .starting: "starting"
+        case .running: "running"
+        case .failed: "failed"
+        }
+    }
+
+    private static func safeRouteName(_ route: OutboundRoute) -> String {
+        func safeName(_ value: String, maximumLength: Int) -> String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return String(trimmed.prefix(maximumLength))
+        }
+        switch route {
+        case .profileRules: return "profileRules"
+        case .global: return "global"
+        case let .group(name): return "group:\(safeName(name, maximumLength: 128))"
+        case let .profile(profileID, target):
+            let targetName: String = switch target {
+            case .rules: "rules"
+            case .global: "global"
+            case let .group(name): "group:\(safeName(name, maximumLength: 128))"
+            }
+            return "profile:\(profileID.rawValue):\(targetName)"
+        }
+    }
+
     private func providers(
         request: AutomationRPCRequest
     ) throws -> AutomationJSONValue {
@@ -2346,6 +2428,7 @@ final class AutomationCommandGateway {
         capability("auth.clients.list", "List paired automation clients", .read),
         capability("auth.clients.revoke", "Revoke a paired automation client", .destructive),
         capability("system.snapshot", "Read the current application snapshot", .read),
+        capability("runtime.diagnostics", "Read connector-neutral runtime diagnostics", .read),
         capability("app.ui.show", "Show a MClash window destination", .write, [
             "destination": AppModel.Destination.allCases.map(\.rawValue).joined(separator: "|")
         ]),
@@ -2936,6 +3019,7 @@ final class AutomationCommandGateway {
         "providers.list",
         "auth.clients.list",
         "system.snapshot",
+        "runtime.diagnostics",
         "appRouting.rules.list",
         "profiles.pendingImport.get",
         "profiles.list",

@@ -352,7 +352,7 @@ private struct Invocation {
     let serverInstance: String?
 
     static let usage = """
-    Usage: mclashctl <method|status|capabilities> [options]
+    Usage: mclashctl <method|status|capabilities|runtime-diagnostics> [options]
 
       --params <json>         JSON object passed as RPC params
       --params-stdin          Read the JSON params object from standard input
@@ -368,6 +368,7 @@ private struct Invocation {
 
     Examples:
       mclashctl status --pretty
+      mclashctl runtime-diagnostics --pretty
       mclashctl core.connect
       mclashctl routing.mode.set --params '{"mode":"rule"}'
       mclashctl traffic.connections.closeAll --allow-interaction
@@ -380,6 +381,7 @@ private struct Invocation {
         method = switch command {
         case "status": "system.snapshot"
         case "capabilities": "system.capabilities"
+        case "runtime-diagnostics": "runtime.diagnostics"
         default: command
         }
         var parsedParameters: [String: AutomationJSONValue] = [:]
