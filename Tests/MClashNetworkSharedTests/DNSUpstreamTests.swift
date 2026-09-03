@@ -1,4 +1,6 @@
 import Foundation
+@preconcurrency import Dispatch
+import Darwin
 import Testing
 @testable import MClashNetworkShared
 
@@ -91,6 +93,102 @@ struct DNSUpstreamTests {
         response[2] = 0x81
         response[3] = 0x80
         try DNSWireMessage.validateResponse(response, matching: id, transport: .udp)
+    }
+
+    @Test("Socket DNS upstream exchanges with a loopback UDP server")
+    func socketUDPExchangeUsesLoopbackFixture() async throws {
+        let queryData = query
+        let descriptor = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
+        #expect(descriptor >= 0)
+        guard descriptor >= 0 else { return }
+        defer { Darwin.close(descriptor) }
+
+        var serverAddress = sockaddr_in()
+        serverAddress.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        serverAddress.sin_family = sa_family_t(AF_INET)
+        serverAddress.sin_port = 0
+        serverAddress.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bindResult = withUnsafePointer(to: &serverAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        #expect(bindResult == 0)
+        guard bindResult == 0 else { return }
+
+        var addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let lookupResult = withUnsafeMutablePointer(to: &serverAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.getsockname(descriptor, $0, &addressLength)
+            }
+        }
+        #expect(lookupResult == 0)
+        guard lookupResult == 0 else { return }
+
+        // Keep the fixture bounded even if the upstream never receives a query.
+        var receiveTimeout = timeval(tv_sec: 2, tv_usec: 0)
+        let timeoutResult = withUnsafePointer(to: &receiveTimeout) {
+            Darwin.setsockopt(
+                descriptor, SOL_SOCKET, SO_RCVTIMEO, $0,
+                socklen_t(MemoryLayout<timeval>.size)
+            )
+        }
+        #expect(timeoutResult == 0)
+        guard timeoutResult == 0 else { return }
+
+        let expectedID = try DNSWireMessage.transactionID(of: query)
+        let port = UInt16(bigEndian: serverAddress.sin_port)
+        let server = DispatchQueue.global(qos: .userInitiated)
+        let completed = DispatchSemaphore(value: 0)
+        server.async {
+            defer { completed.signal() }
+            var packet = [UInt8](repeating: 0, count: DNSUpstreamLimits.maximumUDPMessageBytes)
+            var clientAddress = sockaddr_storage()
+            var clientLength = socklen_t(MemoryLayout<sockaddr_storage>.size)
+            let received = withUnsafeMutablePointer(to: &clientAddress) { clientPointer in
+                withUnsafeMutablePointer(to: &clientLength) { lengthPointer in
+                    packet.withUnsafeMutableBytes { buffer in
+                        Darwin.recvfrom(
+                            descriptor,
+                            buffer.baseAddress,
+                            buffer.count,
+                            0,
+                            clientPointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { $0 },
+                            lengthPointer
+                        )
+                    }
+                }
+            }
+            guard received == queryData.count else { return }
+            let receivedQuery = Data(packet.prefix(received))
+            guard (try? DNSWireMessage.validateQuery(receivedQuery, transport: .udp)) == expectedID else {
+                return
+            }
+            var response = receivedQuery
+            response[2] = 0x81
+            response[3] = 0x80
+            response.withUnsafeBytes { bytes in
+                _ = Darwin.sendto(
+                    descriptor,
+                    bytes.baseAddress,
+                    bytes.count,
+                    0,
+                    withUnsafePointer(to: &clientAddress) {
+                        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { $0 }
+                    },
+                    clientLength
+                )
+            }
+        }
+
+        let endpoint = try DNSUpstreamEndpoint(
+            address: IPAddress("127.0.0.1"), port: port, transport: .udp,
+            timeoutMilliseconds: 1_000
+        )
+        let response = try await SocketDNSUpstream(endpoint: endpoint).exchange(query: query)
+        #expect(try DNSWireMessage.transactionID(of: response) == expectedID)
+        try DNSWireMessage.validateResponse(response, matching: expectedID, transport: .udp)
+        #expect(completed.wait(timeout: .now() + 1) == .success)
     }
 
     @Test("Rejects malformed or mismatched messages")
