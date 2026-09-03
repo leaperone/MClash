@@ -257,7 +257,15 @@ swiftc \
   -Xlinker "${testing_interop}" \
   -o "${build_dir}/MClashNetworkExtensionPackageTests"
 
-"${build_dir}/MClashNetworkExtensionPackageTests"
+extension_test_exit=0
+set +e
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+  "${build_dir}/MClashNetworkExtensionPackageTests"
+extension_test_exit=$?
+set -e
+if (( extension_test_exit != 0 )); then
+  print -u2 "Network Extension test target exited with ${extension_test_exit}; continuing to run automation tests."
+fi
 
 swiftc \
   -parse-as-library \
@@ -281,8 +289,22 @@ swiftc \
   -Xlinker "${testing_interop}" \
   -o "${build_dir}/MClashAutomationProtocolPackageTests"
 
-"${build_dir}/MClashAutomationProtocolPackageTests"
+automation_test_exit=0
+set +e
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+  "${build_dir}/MClashAutomationProtocolPackageTests"
+automation_test_exit=$?
+set -e
+if (( automation_test_exit != 0 )); then
+  print -u2 "Automation test target exited with ${automation_test_exit}."
+fi
 run_release_script_tests
 if (( shared_test_exit != 0 )); then
   exit "${shared_test_exit}"
+fi
+if (( extension_test_exit != 0 )); then
+  exit "${extension_test_exit}"
+fi
+if (( automation_test_exit != 0 )); then
+  exit "${automation_test_exit}"
 fi
