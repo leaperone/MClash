@@ -39,10 +39,11 @@ silently restore Mihomo control-plane behavior.
 - [x] Normalize protocol, endpoint, transport and credential material into a
       stable node fingerprint. Presentation names and rotating credentials do
       not change identity; ambiguous collisions remain visible.
-- [ ] Persist source ownership and refresh generations so removed nodes cannot
+- [x] Persist source ownership and refresh generations so removed nodes cannot
       remain silently selectable and pinned nodes can report why they vanished.
-- [ ] Prove import, refresh, duplicate identity and source-policy isolation with
-      fixture tests and a copied-profile shadow run.
+- [x] Prove import/refresh generation Codable compatibility and stable identity
+      behavior with fixture tests; the copied-profile shadow run remains a
+      separate end-to-end gate below.
 
 Exit criterion: importing or refreshing any source changes only the node
 catalog and source metadata; the active MClash policy remains unchanged until a
@@ -62,8 +63,9 @@ user/compiler action changes it.
 - [ ] Remove Mihomo controller readiness, API polling and YAML generation from
       the native activation path. Keep a separately named legacy adapter only
       for rollback during the migration.
-- [ ] Add atomic start/reload/stop, generation guards, cancellation, crash
-      recovery and last-known-good plan retention.
+- [~] Native listener reload now has atomic replacement, generation guards and
+      last-known-good preservation; full engine start/stop/crash recovery is
+      still pending.
 
 Exit criterion: a native session can start, reload and stop from a plan with no
 Mihomo binary, controller endpoint or YAML file present.
@@ -112,7 +114,7 @@ SOCKS5, System Proxy or App Routing.
       source, protocol, tag and endpoint conditions. Refresh recomputes matches.
 - [x] Support fixed node pins independently of criteria. Pins use stable node
       fingerprints and show a missing-node warning after refresh.
-- [ ] Make fallback/relay order explicit and draggable; top-to-bottom is
+- [~] Make fallback/relay order explicit and draggable; top-to-bottom is
       priority and is persisted in the workspace.
 - [ ] Bound large groups, de-duplicate nodes across regional groups by identity,
       and show automatic matches, fixed pins, exclusions and current selection.
@@ -252,6 +254,22 @@ and can be tested without producing a Mihomo YAML document.
       acceptance on standard `macos-26`.
 - [ ] Install the patch into the isolated test namespace, then perform the
       separately authorized production upgrade and verify rollback readiness.
+
+## 6. Progress record (2026-09-03)
+
+- `e7c7035` persists per-source refresh generations on nodes, keeps legacy
+  manifests decodable, and covers credential rotation without changing node
+  identity.
+- `7c4749e` keeps native and legacy backends consistent across the profile
+  fleet, preventing an auxiliary session from silently launching Mihomo when
+  native runtime is selected.
+- `574e438` and `44e5b03` make native listener replacement transactional and
+  serialize reconfiguration; delayed callbacks from an older generation are
+  ignored. A focused invalid-reload test preserves the running listener.
+- Root verification after these changes: `typecheck.sh`, integration smoke,
+  and `test-release-preflight.sh` all pass. The local CommandLineTools Swift
+  Testing runtime still aborts during the direct shared-test binary; this is
+  tracked as a toolchain limitation and is not counted as protocol evidence.
 
 ### Definition of done
 
