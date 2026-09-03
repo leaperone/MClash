@@ -426,6 +426,10 @@ and can be tested without producing a Mihomo YAML document.
 - `d9ab7da` makes the complete Network Extension connector fixture target
   Swift 6-clean; all connector loopback suites pass before the known local
   Swift Testing runtime abort, with no assertion failures.
+- `e4b626c` makes `test-direct.sh` continue after the known local shared-test
+  runtime abort, so Network Extension and Automation targets still execute;
+  the latest run confirms app tests (500/72 suites), connector loopback
+  assertions, and automation suites run before the final 133 status.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
