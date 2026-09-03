@@ -5,6 +5,13 @@ import MClashNetworkShared
 
 @Suite("Native runtime controller seam")
 struct NativeRuntimeControllerTests {
+    @Test("Native workspace activation never materializes legacy configuration")
+    @MainActor
+    func nativeWorkspaceActivationBypassesLegacyMaterialization() {
+        #expect(!AppModel.shouldMaterializeLegacyConfiguration(usingNativeRuntime: true))
+        #expect(AppModel.shouldMaterializeLegacyConfiguration(usingNativeRuntime: false))
+    }
+
     @Test("AppModel runtime selection defaults native only for isolated instances")
     @MainActor
     func appModelRuntimeSelectionIsExplicit() async {

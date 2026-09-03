@@ -866,6 +866,17 @@ final class AppModel {
         }
     }
 
+    /// Native workspace activation is complete once the connector-neutral
+    /// plan has been accepted by the in-process runtime.  It must not pass
+    /// through RuntimeOverrideActivationCoordinator, whose contract is to
+    /// materialize and validate a legacy Mihomo YAML file.  Keep this policy
+    /// explicit so the legacy path remains easy to audit and test.
+    static func shouldMaterializeLegacyConfiguration(
+        usingNativeRuntime: Bool
+    ) -> Bool {
+        !usingNativeRuntime
+    }
+
     /// Returns the connector-neutral runtime state used by read-only
     /// automation diagnostics. Keep this narrow so automation never reaches
     /// into the runtime implementation or exposes a controller secret.
@@ -3583,7 +3594,7 @@ final class AppModel {
         }
         let shouldReconnect = isConnected || isBusy
         let previousProfileID = activeProfileID
-        guard let profileStore, let runtimeOverrideCoordinator else {
+        guard let profileStore else {
             throw AppModelError.profileStoreUnavailable
         }
         guard let activationProfileID = activeProfileID else {
@@ -3650,19 +3661,33 @@ final class AppModel {
         do {
             unifiedConfigurationEnabled = true
             try await synchronizeCompiledCaptureState(compiled)
-            let activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
-                activationProfileID,
-                baseConfiguration: compiled.yaml,
-                overrides: compiledRuntimeOverrides(for: activationProfileID),
-                networkExtensionListener: activeNetworkExtensionMihomoListener,
-                profileMixedListener: nil,
-                routeListeners: [],
-                allowedOutboundProxyNames: unifiedRuntimeProxyNames(),
-                in: profileStore,
-                validator: try makeProfileValidator()
-            )
-            activeProfileID = activation.profileID
-            activeConfigURL = activation.configurationURL
+            if Self.shouldMaterializeLegacyConfiguration(
+                usingNativeRuntime: usesNativeRuntime
+            ) {
+                guard let runtimeOverrideCoordinator else {
+                    throw AppModelError.profileStoreUnavailable
+                }
+                let activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
+                    activationProfileID,
+                    baseConfiguration: compiled.yaml,
+                    overrides: compiledRuntimeOverrides(for: activationProfileID),
+                    networkExtensionListener: activeNetworkExtensionMihomoListener,
+                    profileMixedListener: nil,
+                    routeListeners: [],
+                    allowedOutboundProxyNames: unifiedRuntimeProxyNames(),
+                    in: profileStore,
+                    validator: try makeProfileValidator()
+                )
+                activeProfileID = activation.profileID
+                activeConfigURL = activation.configurationURL
+            } else {
+                // The native engine already owns the compiled plan through
+                // synchronizeCompiledCaptureState. Do not write a YAML file,
+                // invoke a Mihomo validator, or create a legacy activation
+                // receipt merely to switch workspaces.
+                activeProfileID = activationProfileID
+                activeConfigURL = nil
+            }
             compiledConfiguration = compiled
             if shouldReconnect {
                 candidateConnectionAttempted = true
@@ -3826,7 +3851,11 @@ final class AppModel {
                 do {
                     let restored: RuntimeConfigurationActivation
                     if let previousCompiledConfiguration,
-                       previousUnifiedConfigurationEnabled {
+                       previousUnifiedConfigurationEnabled,
+                       !usesNativeRuntime {
+                        guard let runtimeOverrideCoordinator else {
+                            throw AppModelError.profileStoreUnavailable
+                        }
                         restored = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
                             previousProfileID,
                             baseConfiguration: previousCompiledConfiguration.yaml,
@@ -3842,13 +3871,40 @@ final class AppModel {
                             in: profileStore,
                             validator: try makeProfileValidator()
                         )
+                    } else if usesNativeRuntime,
+                              let previousCompiledConfiguration,
+                              previousUnifiedConfigurationEnabled {
+                        try await synchronizeCompiledCaptureState(
+                            previousCompiledConfiguration
+                        )
+                        compiledConfiguration = previousCompiledConfiguration
+                        activeConfigURL = nil
+                        restored = RuntimeConfigurationActivation(
+                            profileID: previousProfileID,
+                            previousProfileID: previousProfileID,
+                            configurationURL: profileLayout?.runtimeConfigurationURL
+                                ?? URL(fileURLWithPath: "/dev/null")
+                        )
+                    } else if usesNativeRuntime {
+                        activeConfigURL = nil
+                        restored = RuntimeConfigurationActivation(
+                            profileID: previousProfileID,
+                            previousProfileID: previousProfileID,
+                            configurationURL: profileLayout?.runtimeConfigurationURL
+                                ?? URL(fileURLWithPath: "/dev/null")
+                        )
                     } else {
+                        guard runtimeOverrideCoordinator != nil else {
+                            throw AppModelError.profileStoreUnavailable
+                        }
                         restored = try await activateStoredProfile(
                             previousProfileID,
                             validator: try makeProfileValidator()
                         )
                     }
-                    activeConfigURL = restored.configurationURL
+                    activeConfigURL = usesNativeRuntime
+                        ? nil
+                        : restored.configurationURL
                     self.activeProfileID = previousProfileID
                     if shouldReconnect {
                         if await performConnect() {
