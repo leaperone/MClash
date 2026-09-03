@@ -282,6 +282,11 @@ and can be tested without producing a Mihomo YAML document.
 - `64cf246` makes native DNS upstream selection deterministic and keeps
   multicast/unspecified resolver addresses on the local network path; focused
   DNS shared and Network Extension tests cover both safeguards.
+- `93750dd` makes isolated/test instances select the native runtime by default;
+  production keeps the legacy adapter unless explicitly migrated, and
+  `MCLASH_LEGACY_RUNTIME=1` is an explicit rollback switch.
+- `4014746` adds application-level quick actions to the traffic inspector
+  alongside existing process-path and domain rule drafts.
 
 ### Definition of done
 
