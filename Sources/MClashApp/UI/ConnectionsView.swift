@@ -1437,6 +1437,18 @@ struct ConnectionsView: View {
         .contextMenu(forSelectionType: String.self) { selection in
             if let identifier = selection.first,
                let row = rows.first(where: { $0.id == identifier }) {
+                Button {
+                    // Selecting first keeps the inspector anchored to the row that
+                    // opened the menu, without performing any runtime operation.
+                    selectedConnectionID = identifier
+                    inspectorPresented = true
+                } label: {
+                    Label(
+                        AppLocalization.string("Inspect why this traffic is here"),
+                        systemImage: "questionmark.circle"
+                    )
+                }
+                Divider()
                 if let domain = observedDomain(for: row.connection) {
                     Button {
                         openRuleDraft(for: row.connection, domain: domain, mode: .suffix)
@@ -1995,6 +2007,36 @@ private struct ConnectionDetailView: View {
                         detailRow("Rule Payload", value: nonEmpty(connection.rulePayload))
                         detailRow("Special Proxy", value: nonEmpty(connection.metadata.specialProxy))
                         detailRow("Special Rules", value: nonEmpty(connection.metadata.specialRules))
+                    }
+
+                    // Keep the route explanation next to the raw routing fields.  The
+                    // compatibility connection record is still the source for the
+                    // existing rows above, while this MClash-owned projection gives
+                    // users one deterministic answer to “why is this traffic here?”.
+                    let trafficInspector = FlowLedgerTrafficInspector(connection: connection)
+                    ConnectionDetailSection("Why this traffic is here") {
+                        ConnectionDetailRow("Decision", value: trafficInspector.why)
+                        detailRow("Entrance", value: trafficInspector.entrance)
+                        detailRow("Matched rule", value: trafficInspector.matchedRule)
+                        detailRow("Rule payload", value: trafficInspector.rulePayload)
+                        detailRow(
+                            "Route chain",
+                            value: trafficInspector.routeChain.isEmpty
+                                ? nil
+                                : trafficInspector.routeChain.joined(separator: " → ")
+                        )
+                        detailRow("Selected node", value: trafficInspector.selectedNode)
+                        ConnectionDetailRow(
+                            "DNS path",
+                            value: trafficInspector.dnsPath.identifier
+                        )
+                        if !trafficInspector.evidence.isEmpty {
+                            ConnectionDetailRow(
+                                "Evidence",
+                                value: trafficInspector.evidence.joined(separator: " · "),
+                                monospaced: true
+                            )
+                        }
                     }
 
                     if let domain = observedDomain(for: connection) {
