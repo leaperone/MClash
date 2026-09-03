@@ -162,9 +162,10 @@ and can be tested without producing a Mihomo YAML document.
       Trojan and Hysteria2; an unsupported transport must not be labelled native.
 - [~] Native SOCKS5, VLESS/Trojan TCP framing and Hysteria2 session prototypes
       exist; real endpoint interoperability is still required.
-- [ ] Complete native TCP/UDP connectors (including Shadowsocks and supported
+- [~] Complete native TCP/UDP connectors (including Shadowsocks and supported
       VLESS WebSocket/Reality variants) with half-close, cancellation, timeout,
-      backpressure and credential-redaction tests.
+      backpressure and credential-redaction tests. Shadowsocks SIP002 TCP
+      framing is integrated; UDP/plugins and VLESS WebSocket/Reality remain.
 - [ ] Validate at least one real endpoint per supported protocol and record
       handshake, TLS/ALPN/SNI, TCP and UDP evidence. TCP reachability alone is
       not protocol proof.
