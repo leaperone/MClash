@@ -343,6 +343,10 @@ and can be tested without producing a Mihomo YAML document.
   `running` state with `startedAt` set and four enabled listener handles
   running. The Network Extension and System Proxy remain inert, so this proves
   lifecycle/plan activation but not external traffic interoperability.
+- The rebuilt bundle was rerun against the current local tree after the
+  native payload boundary change and again reached `state=running` with
+  `startedAt`, `workspaceRevision=28`, four running listener handles and
+  `controlPlaneAvailable=false`.
 - `0be3930` adds a real loopback HTTP entrance test: MClash accepts a client
   CONNECT only after the native HTTP upstream returns 200, then bridges
   `ping`/`pong` payloads in both directions.
