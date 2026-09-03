@@ -58,7 +58,9 @@ user/compiler action changes it.
       workspace revision, listener counts and validation errors in diagnostics.
 - [~] `NativeRuntimeEngine` owns a validated plan/listener session, but does
       not yet bind every socket or replace the production default.
-- [ ] Make `NativeRuntimeEngine` the default lifecycle owner; AppModel must
+- [~] Make `NativeRuntimeEngine` the default lifecycle owner; isolated/test
+      AppModel instances now select it by default while production remains
+      legacy until the full protocol and lifecycle gates pass. AppModel must
       supply a plan and `MClashListenerRegistry`, never a rendered YAML.
 - [~] Remove Mihomo controller readiness, API polling and YAML generation from
       the native activation path. Keep a separately named legacy adapter only
@@ -317,6 +319,10 @@ and can be tested without producing a Mihomo YAML document.
 - `16ee6f6` keeps CLI smoke startup lightweight with an explicit
   `MCLASH_SKIP_AUTO_CONNECT=1`, so endpoint diagnostics can be verified before
   any large source catalog is connected.
+- Latest isolated smoke output confirms `backend=native`, capabilities
+  `nativeRuntime/nativeRouting/nativeDNS`, `controlPlaneAvailable=false`, and
+  `hasCompiledRuntimePlan=true`; production processes and sockets were not
+  changed.
 
 ### Definition of done
 
