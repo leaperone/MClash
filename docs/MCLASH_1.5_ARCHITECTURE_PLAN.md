@@ -404,6 +404,10 @@ and can be tested without producing a Mihomo YAML document.
 - `6892b61` removes legacy “Mihomo connections” wording from traffic source
   labels; the monitor now presents the neutral localized “Connections” label
   while retaining explicit legacy diagnostics only where technically needed.
+- `19e1300` replaces remaining user-facing traffic descriptions that implied
+  Mihomo ownership with MClash traffic backend wording and adds all three keys
+  to the eight localization bundles; a key-set audit reports 2,401 matching
+  entries for every locale.
 - The latest direct application test binary executes the CUNOE resolver suite
   and reports `500 tests in 72 suites passed` before the known
   CommandLineTools shared-test runtime abort; the resolver tests themselves
