@@ -51,40 +51,54 @@ struct Hysteria2SessionTests {
     @Test("Does not allow authentication or ready transitions out of order")
     func rejectsOutOfOrderEvents() {
         var session = Hysteria2Session()
-        #expect(!session.beginAuthentication())
-        #expect(!session.authenticationSucceeded(udpEnabled: true))
+        let initialAuthentication = session.beginAuthentication()
+        #expect(!initialAuthentication)
+        let initialReady = session.authenticationSucceeded(udpEnabled: true)
+        #expect(!initialReady)
         #expect(session.state == .idle)
 
-        #expect(session.beginConnect())
-        #expect(session.beginAuthentication())
-        #expect(!session.beginConnect())
-        #expect(session.authenticationSucceeded(udpEnabled: false))
+        let connected = session.beginConnect()
+        #expect(connected)
+        let authenticating = session.beginAuthentication()
+        #expect(authenticating)
+        let duplicateConnect = session.beginConnect()
+        #expect(!duplicateConnect)
+        let ready = session.authenticationSucceeded(udpEnabled: false)
+        #expect(ready)
         #expect(session.state == .ready(udpEnabled: false))
         // A second response cannot move an already-ready session again.
-        #expect(!session.authenticationSucceeded(udpEnabled: true))
-        #expect(!session.beginAuthentication())
+        let duplicateReady = session.authenticationSucceeded(udpEnabled: true)
+        #expect(!duplicateReady)
+        let duplicateAuthentication = session.beginAuthentication()
+        #expect(!duplicateAuthentication)
     }
 
     @Test("Invalid authentication response fails closed and can be retried")
     func invalidAuthenticationFailsClosed() {
         var session = Hysteria2Session()
-        #expect(session.beginConnect())
-        #expect(session.beginAuthentication())
-        #expect(!session.handleAuthenticationResponse(
+        let connected = session.beginConnect()
+        #expect(connected)
+        let authenticating = session.beginAuthentication()
+        #expect(authenticating)
+        let handled = session.handleAuthenticationResponse(
             statusCode: 233,
             headers: ["Hysteria-UDP": "not-a-boolean"]
-        ))
+        )
+        #expect(!handled)
         if case .failed = session.state {
             // Expected: malformed capability headers never produce ready.
         } else {
             Issue.record("malformed authentication response must fail the session")
         }
-        #expect(session.beginConnect())
-        #expect(session.beginAuthentication())
-        #expect(session.handleAuthenticationResponse(
+        let retry = session.beginConnect()
+        #expect(retry)
+        let retryAuthentication = session.beginAuthentication()
+        #expect(retryAuthentication)
+        let retryHandled = session.handleAuthenticationResponse(
             statusCode: 233,
             headers: ["Hysteria-UDP": "false", "Hysteria-CC-RX": "auto"]
-        ))
+        )
+        #expect(retryHandled)
         #expect(session.state == .ready(udpEnabled: false))
     }
 }
