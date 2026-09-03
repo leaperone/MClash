@@ -107,6 +107,43 @@ struct MClashInboundListenerTests {
         #expect(manager.lifecycleStates()[spec.id] == .stopped)
     }
 
+    @Test("Native inbound accepts supported HTTP, VLESS TCP and Trojan targets")
+    func supportedProtocolRoutesConfigure() throws {
+        let targets: [(String, [String: String])] = [
+            ("http", [:]),
+            ("vless", ["uuid": UUID().uuidString]),
+            ("trojan", ["password": "test-password"])
+        ]
+        for (index, item) in targets.enumerated() {
+            let route = OutboundRoute.group("native-\(item.0)")
+            let target = try OutboundNodeTarget(
+                protocolName: item.0,
+                host: "127.0.0.1",
+                port: 443,
+                parameters: item.1
+            )
+            let catalog = try OutboundNodeTargetCatalog(
+                entries: [OutboundNodeTargetEntry(route: route, target: target)]
+            )
+            let spec = try MClashListenerSpec(
+                name: "Native \(item.0)",
+                kind: .http,
+                enabled: true,
+                port: 20_900 + index,
+                route: .outbound(route)
+            )
+            let manager = NativeInboundListenerManager(
+                routeResolver: { _, _ in .direct },
+                connector: Connector()
+            )
+            try manager.configure(
+                try MClashListenerRegistry(listeners: [spec]),
+                outboundCatalog: catalog
+            )
+            #expect(manager.lifecycleStates()[spec.id] == .stopped)
+        }
+    }
+
     @Test("Unsupported native outbound protocols fail closed at configure time")
     func unsupportedOutboundRouteIsRejected() throws {
         let route: OutboundRoute = .group("Legacy")
