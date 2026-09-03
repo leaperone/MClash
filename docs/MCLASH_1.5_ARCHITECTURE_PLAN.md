@@ -346,6 +346,10 @@ and can be tested without producing a Mihomo YAML document.
 - `0be3930` adds a real loopback HTTP entrance test: MClash accepts a client
   CONNECT only after the native HTTP upstream returns 200, then bridges
   `ping`/`pong` payloads in both directions.
+- `6486703` removes legacy Mihomo route-catalog and private SOCKS fields from
+  Network Extension payloads when native inbound plus native DNS are active;
+  only the connector-neutral node catalog, listener registry and native DNS
+  bootstrap remain, with a regression test for the boundary.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
