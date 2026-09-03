@@ -93,7 +93,7 @@ struct AppRoutingActivityTests {
     func matchedRuleDerivation() {
         let unavailable = FlowTrafficDecision(
             disposition: .direct,
-            reason: .mihomoUnavailable(
+            reason: .outboundUnavailable(
                 rule: .matchedRule("Fallback Rule"),
                 fallback: .direct
             )

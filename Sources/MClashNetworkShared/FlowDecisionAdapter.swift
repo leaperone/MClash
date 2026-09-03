@@ -417,7 +417,93 @@ public enum FlowTrafficDecisionReason: Codable, Hashable, Sendable {
     case configurationUnavailable(CaptureConfigurationLoadFailure)
     case contextUnavailable(FlowContextConversionFailure)
     case rule(RuleDecisionCause)
-    case mihomoUnavailable(rule: RuleDecisionCause, fallback: UnavailableFallback)
+    /// An outbound rule could not be handed to the configured connector and
+    /// therefore used its explicit unavailable fallback.  The reason is
+    /// connector-neutral: Mihomo is only one historical compatibility
+    /// connector and must not leak into persisted activity data.
+    case outboundUnavailable(rule: RuleDecisionCause, fallback: UnavailableFallback)
+
+    private enum CodingKeys: String, CodingKey {
+        case captureDisabled
+        case configurationUnavailable
+        case contextUnavailable
+        case rule
+        case outboundUnavailable
+        // Activity/snapshot records written by older MClash builds used this
+        // connector-specific case name. Keep it decodable during migration,
+        // but never emit it again.
+        case mihomoUnavailable
+    }
+
+    private struct OutboundUnavailablePayload: Codable {
+        let rule: RuleDecisionCause
+        let fallback: UnavailableFallback
+    }
+
+    private struct EmptyPayload: Codable {}
+
+    private struct SinglePayload<Value: Codable>: Codable {
+        let value: Value
+
+        private enum CodingKeys: String, CodingKey { case value = "_0" }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let key = container.allKeys.first else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Traffic decision reason must contain one reason"
+            ))
+        }
+        switch key {
+        case .captureDisabled:
+            self = .captureDisabled
+        case .configurationUnavailable:
+            self = .configurationUnavailable(try container.decode(
+                SinglePayload<CaptureConfigurationLoadFailure>.self,
+                forKey: key
+            ).value)
+        case .contextUnavailable:
+            self = .contextUnavailable(try container.decode(
+                SinglePayload<FlowContextConversionFailure>.self,
+                forKey: key
+            ).value)
+        case .rule:
+            self = .rule(try container.decode(
+                SinglePayload<RuleDecisionCause>.self,
+                forKey: key
+            ).value)
+        case .outboundUnavailable, .mihomoUnavailable:
+            let payload = try container.decode(OutboundUnavailablePayload.self, forKey: key)
+            self = .outboundUnavailable(rule: payload.rule, fallback: payload.fallback)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .captureDisabled:
+            try container.encode(EmptyPayload(), forKey: .captureDisabled)
+        case let .configurationUnavailable(failure):
+            try container.encode(
+                SinglePayload(value: failure),
+                forKey: .configurationUnavailable
+            )
+        case let .contextUnavailable(failure):
+            try container.encode(
+                SinglePayload(value: failure),
+                forKey: .contextUnavailable
+            )
+        case let .rule(cause):
+            try container.encode(SinglePayload(value: cause), forKey: .rule)
+        case let .outboundUnavailable(rule, fallback):
+            try container.encode(
+                OutboundUnavailablePayload(rule: rule, fallback: fallback),
+                forKey: .outboundUnavailable
+            )
+        }
+    }
 }
 
 public struct FlowTrafficDecision: Codable, Hashable, Sendable {
@@ -528,7 +614,7 @@ public struct FlowTrafficDecisionAdapter: Sendable {
             }
             return FlowTrafficDecision(
                 disposition: disposition,
-                reason: .mihomoUnavailable(
+                reason: .outboundUnavailable(
                     rule: ruleDecision.cause,
                     fallback: ruleDecision.unavailableFallback
                 ),

@@ -107,7 +107,7 @@ struct InitialFlowOwnershipPolicyTests {
         )
 
         #expect(resolved.disposition == .reject)
-        #expect(resolved.reason == .mihomoUnavailable(
+        #expect(resolved.reason == .outboundUnavailable(
             rule: .matchedRule(rule.id),
             fallback: .reject
         ))

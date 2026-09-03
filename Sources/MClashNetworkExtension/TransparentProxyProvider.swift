@@ -419,7 +419,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
             "context-unavailable"
         case let .rule(cause):
             diagnosticRuleCause(cause)
-        case .mihomoUnavailable:
+        case .outboundUnavailable:
             "mihomo-route-unavailable"
         }
     }

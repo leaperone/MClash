@@ -201,7 +201,7 @@ public struct AppRoutingActivity: Codable, Hashable, Sendable, Identifiable {
         switch reason {
         case let .rule(cause):
             return matchedRuleIdentifier(in: cause)
-        case let .mihomoUnavailable(rule, _):
+        case let .outboundUnavailable(rule, _):
             return matchedRuleIdentifier(in: rule)
         case .captureDisabled, .configurationUnavailable, .contextUnavailable:
             return nil

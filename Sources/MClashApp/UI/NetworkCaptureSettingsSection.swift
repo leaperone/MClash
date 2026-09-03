@@ -90,7 +90,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         case .captureDisabled: AppLocalization.string("Capture disabled")
         case .configurationUnavailable: AppLocalization.string("Configuration unavailable")
         case .contextUnavailable: AppLocalization.string("Identity unavailable")
-        case let .rule(cause), let .mihomoUnavailable(cause, _):
+        case let .rule(cause), let .outboundUnavailable(cause, _):
             switch cause {
             case let .matchedRule(identifier): identifier
             case let .builtInBypass(reason):
@@ -1218,7 +1218,7 @@ struct AppRoutingView: View {
         case .captureDisabled: AppLocalization.string("Capture disabled")
         case .configurationUnavailable: AppLocalization.string("Configuration unavailable")
         case .contextUnavailable: AppLocalization.string("Identity unavailable")
-        case let .rule(cause), let .mihomoUnavailable(cause, _):
+        case let .rule(cause), let .outboundUnavailable(cause, _):
             switch cause {
             case let .matchedRule(identifier): identifier
             case let .builtInBypass(reason):

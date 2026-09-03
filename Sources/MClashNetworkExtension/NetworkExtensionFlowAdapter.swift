@@ -51,7 +51,7 @@ enum MihomoRouteAvailabilityPolicy {
         }
         return FlowTrafficDecision(
             disposition: disposition,
-            reason: .mihomoUnavailable(rule: cause, fallback: fallback),
+            reason: .outboundUnavailable(rule: cause, fallback: fallback),
             ruleEvidence: decision.ruleEvidence
         )
     }
@@ -715,7 +715,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         switch decision.reason {
         case let .rule(value):
             cause = value
-        case let .mihomoUnavailable(rule, _):
+        case let .outboundUnavailable(rule, _):
             cause = rule
         case .captureDisabled, .configurationUnavailable, .contextUnavailable:
             cause = nil
@@ -739,7 +739,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         switch decision.reason {
         case let .rule(value):
             cause = value
-        case let .mihomoUnavailable(rule, fallback):
+        case let .outboundUnavailable(rule, fallback):
             if case .matchedRule = rule {
                 return fallback
             }

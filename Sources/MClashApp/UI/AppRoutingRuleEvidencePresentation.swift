@@ -281,7 +281,7 @@ struct AppRoutingRuleEvidencePresentation: Equatable {
             )
         case .captureDisabled, .configurationUnavailable:
             AppLocalization.string("The flow was handed back to macOS without a rule match.")
-        case .rule, .mihomoUnavailable:
+        case .rule, .outboundUnavailable:
             AppLocalization.string("The recorded rule ID and outcome remain available above.")
         }
     }

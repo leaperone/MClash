@@ -612,7 +612,7 @@ final class UDPFlowSession: @unchecked Sendable {
     }
 
     private func directFallbackNote(for plan: UDPFlowInterceptionPlan) -> String? {
-        guard case .mihomoUnavailable = plan.decision.reason else { return nil }
+        guard case .outboundUnavailable = plan.decision.reason else { return nil }
         return "Mihomo was unavailable when this destination was decided, so the rule's Direct fallback was used."
     }
 

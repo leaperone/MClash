@@ -6,6 +6,76 @@ import Testing
 struct FlowDecisionAdapterTests {
     private let auditTokenData = Data((0 ..< 32).map(UInt8.init))
 
+    @Test("outbound-unavailable reason uses connector-neutral wire name and migrates legacy snapshots")
+    func outboundUnavailableReasonCodableMigration() throws {
+        let reason = FlowTrafficDecisionReason.outboundUnavailable(
+            rule: .matchedRule("legacy-rule"),
+            fallback: .reject
+        )
+        let encoder = JSONEncoder()
+        let encoded = try encoder.encode(reason)
+        let json = try #require(String(data: encoded, encoding: .utf8))
+        #expect(json.contains("outboundUnavailable"))
+        #expect(!json.contains("mihomoUnavailable"))
+
+        let decoder = JSONDecoder()
+        #expect(try decoder.decode(FlowTrafficDecisionReason.self, from: encoded) == reason)
+
+        // Simulate an activity/snapshot persisted by a pre-migration build.
+        // Only the discriminator changed; the associated payload is identical.
+        let legacyData = Data(
+            json.replacingOccurrences(
+                of: "outboundUnavailable",
+                with: "mihomoUnavailable"
+            ).utf8
+        )
+        #expect(
+            try decoder.decode(FlowTrafficDecisionReason.self, from: legacyData)
+                == reason
+        )
+        let reencoded = try encoder.encode(
+            decoder.decode(FlowTrafficDecisionReason.self, from: legacyData)
+        )
+        let reencodedJSON = try #require(String(data: reencoded, encoding: .utf8))
+        #expect(reencodedJSON.contains("outboundUnavailable"))
+        #expect(!reencodedJSON.contains("mihomoUnavailable"))
+    }
+
+    @Test("decision reason preserves the synthesized legacy payload shapes")
+    func decisionReasonLegacyWireFixtures() throws {
+        let decoder = JSONDecoder()
+        #expect(
+            try decoder.decode(
+                FlowTrafficDecisionReason.self,
+                from: Data(#"{"captureDisabled":{}}"#.utf8)
+            ) == .captureDisabled
+        )
+        #expect(
+            try decoder.decode(
+                FlowTrafficDecisionReason.self,
+                from: Data(#"{"configurationUnavailable":{"_0":{"missingEncodedSnapshot":{}}}}"#.utf8)
+            ) == .configurationUnavailable(.missingEncodedSnapshot)
+        )
+        #expect(
+            try decoder.decode(
+                FlowTrafficDecisionReason.self,
+                from: Data(#"{"contextUnavailable":{"_0":{"missingSourceAppAuditToken":{}}}}"#.utf8)
+            ) == .contextUnavailable(.missingSourceAppAuditToken)
+        )
+        #expect(
+            try decoder.decode(
+                FlowTrafficDecisionReason.self,
+                from: Data(#"{"rule":{"_0":{"matchedRule":{"_0":"legacy"}}}}"#.utf8)
+            ) == .rule(.matchedRule("legacy"))
+        )
+        #expect(
+            try decoder.decode(
+                FlowTrafficDecisionReason.self,
+                from: Data(#"{"mihomoUnavailable":{"rule":{"matchedRule":{"_0":"legacy"}},"fallback":"reject"}}"#.utf8)
+            ) == .outboundUnavailable(rule: .matchedRule("legacy"), fallback: .reject)
+        )
+    }
+
     @Test
     func endpointAndMetadataProduceTrustedRuleContext() throws {
         let identity = try signedIdentity()
@@ -340,7 +410,7 @@ struct FlowDecisionAdapterTests {
             mihomoAvailable: false
         )
         #expect(unavailable.disposition == .reject)
-        #expect(unavailable.reason == .mihomoUnavailable(
+        #expect(unavailable.reason == .outboundUnavailable(
             rule: .matchedRule("rule"),
             fallback: .reject
         ))
