@@ -26,7 +26,7 @@ enum FlowTrafficDNSPath: Hashable, Sendable {
         switch self {
         case .system: "system"
         case .localResolver: "local"
-        case let .remoteResolver(name): "remote:(name)"
+        case let .remoteResolver(name): "remote:\(name)"
         case .fakeIP: "fake-ip"
         case .unknown: "unknown"
         }
@@ -179,7 +179,7 @@ struct FlowLedgerTrafficInspector: Hashable, Sendable {
         case .systemProxy: "system-proxy"
         case .appRouting: "app-routing"
         case .dnsProxy: "dns-proxy"
-        case let .localListener(name): "listener:(name)"
+        case let .localListener(name): "listener:\(name)"
         case .unknown: "unknown"
         }
     }
@@ -189,11 +189,11 @@ struct FlowLedgerTrafficInspector: Hashable, Sendable {
         routeChain: [String], dnsPath: FlowTrafficDNSPath
     ) -> [String] {
         [
-            entrance.map { "entrance=($0)" },
-            matchedRule.map { "rule=($0)" },
-            rulePayload.map { "rule-payload=($0)" },
-            routeChain.isEmpty ? nil : "chain=(routeChain.joined(separator: "→"))",
-            "dns=(dnsPath.identifier)"
+            entrance.map { "entrance=\($0)" },
+            matchedRule.map { "rule=\($0)" },
+            rulePayload.map { "rule-payload=\($0)" },
+            routeChain.isEmpty ? nil : "chain=\(routeChain.joined(separator: "→"))",
+            "dns=\(dnsPath.identifier)"
         ].compactMap { $0 }
     }
 }
