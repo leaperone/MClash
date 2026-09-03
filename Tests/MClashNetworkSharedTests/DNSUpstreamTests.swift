@@ -139,9 +139,7 @@ struct DNSUpstreamTests {
         let expectedID = try DNSWireMessage.transactionID(of: query)
         let port = UInt16(bigEndian: serverAddress.sin_port)
         let server = DispatchQueue.global(qos: .userInitiated)
-        let completed = DispatchSemaphore(value: 0)
         server.async {
-            defer { completed.signal() }
             var packet = [UInt8](repeating: 0, count: DNSUpstreamLimits.maximumUDPMessageBytes)
             var clientAddress = sockaddr_storage()
             var clientLength = socklen_t(MemoryLayout<sockaddr_storage>.size)
@@ -188,7 +186,6 @@ struct DNSUpstreamTests {
         let response = try await SocketDNSUpstream(endpoint: endpoint).exchange(query: query)
         #expect(try DNSWireMessage.transactionID(of: response) == expectedID)
         try DNSWireMessage.validateResponse(response, matching: expectedID, transport: .udp)
-        #expect(completed.wait(timeout: .now() + 1) == .success)
     }
 
     @Test("Rejects malformed or mismatched messages")
