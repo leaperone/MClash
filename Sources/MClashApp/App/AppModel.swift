@@ -1065,7 +1065,11 @@ final class AppModel {
         }
         lightweightMode = defaults.bool(forKey: Self.lightweightModeKey)
         if testInstance {
-            autoConnectOnLaunch = true
+            // Isolated CLI smoke needs the host and automation socket without
+            // immediately compiling/connecting a potentially huge imported
+            // catalog. The smoke script opts out explicitly; ordinary test
+            // instances retain the historical auto-connect behavior.
+            autoConnectOnLaunch = environment["MCLASH_SKIP_AUTO_CONNECT"] != "1"
             connectionDesiredOnLaunch = true
             autoEnableSystemProxy = false
             unifiedConfigurationEnabled = true
