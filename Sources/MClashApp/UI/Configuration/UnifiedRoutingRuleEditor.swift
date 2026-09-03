@@ -107,6 +107,14 @@ struct UnifiedRoutingRuleEditor: View {
                     HStack(spacing: 8) { ruleTemplates }
                     VStack(alignment: .leading, spacing: 8) { ruleTemplates }
                 }
+            } else {
+                // Keep the common matchers discoverable while editing too. The
+                // full matcher menu remains available below, but users should
+                // not have to remember that an app/domain rule lives there.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { commonMatcherShortcuts }
+                    VStack(alignment: .leading, spacing: 8) { commonMatcherShortcuts }
+                }
             }
 
             ForEach($criteria) { $criterion in
@@ -157,6 +165,18 @@ struct UnifiedRoutingRuleEditor: View {
             }
             .pickerStyle(.menu)
             .frame(maxWidth: 420, alignment: .leading)
+
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: action.symbol)
+                    .foregroundStyle(.tint)
+                    .frame(width: 18)
+                Text(action.explanation(proxyGroups: proxyGroups))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
 
             Text(AppLocalization.string("Use Node Selection as the stable parent when rules should follow regional or automatic groups."))
                 .font(.caption)
@@ -225,6 +245,19 @@ struct UnifiedRoutingRuleEditor: View {
         }
         Button(AppLocalization.string("China IP")) {
             criteria = [RuleCriterion(kind: .geoIP, value: "CN")]
+        }
+    }
+
+    @ViewBuilder
+    private var commonMatcherShortcuts: some View {
+        Button(AppLocalization.string("Application")) {
+            criteria = [RuleCriterion(kind: .application)]
+        }
+        Button(AppLocalization.string("Domain")) {
+            criteria = [RuleCriterion(kind: .domain)]
+        }
+        Button(AppLocalization.string("GFW List")) {
+            criteria = [RuleCriterion(kind: .geoSite, value: "gfw")]
         }
     }
 
@@ -540,6 +573,28 @@ private enum RuleAction: Hashable {
 
     var isNonGroup: Bool {
         switch self { case .direct, .reject: true; case .proxyGroup: false }
+    }
+
+    var symbol: String {
+        switch self {
+        case .direct: return "arrow.right.circle"
+        case .reject: return "nosign"
+        case .proxyGroup: return "square.3.layers.3d"
+        }
+    }
+
+    func explanation(proxyGroups: [ProxyGroup]) -> String {
+        switch self {
+        case .direct:
+            return AppLocalization.string("Direct always connects without a proxy.")
+        case .reject:
+            return AppLocalization.string("Reject — block the connection.")
+        case let .proxyGroup(id):
+            guard let id, let group = proxyGroups.first(where: { $0.id == id }) else {
+                return AppLocalization.string("Choose an available MClash proxy group.")
+            }
+            return AppLocalization.format("Group — %@", configurationDisplayName(group.name))
+        }
     }
 
     func summary(proxyGroups: [ProxyGroup]) -> String {
