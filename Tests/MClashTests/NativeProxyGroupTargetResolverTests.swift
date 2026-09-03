@@ -87,19 +87,57 @@ struct NativeProxyGroupTargetResolverTests {
         #expect(providerResult.nodeID == other.id)
     }
 
+    @Test("Native runtime prefers a supported connector before latency")
+    func nativeCapabilityPrecedesCompatibilityLatency() throws {
+        let compatibilityOnly = try node(
+            "Fast Hysteria2",
+            host: "hy2.example",
+            availability: .available,
+            latency: 5,
+            protocol: .hysteria2,
+            parameters: ["password": "secret"]
+        )
+        let native = try node(
+            "CUNOE VLESS",
+            host: "vless.example",
+            availability: .available,
+            latency: 50,
+            protocol: .vless,
+            parameters: ["network": "ws", "uuid": "00000000-0000-0000-0000-000000000001"]
+        )
+        let group = ProxyGroup(
+            name: "美国优先",
+            type: .urlTest,
+            members: [.node(compatibilityOnly.id), .node(native.id)]
+        )
+
+        let result = NativeProxyGroupTargetResolver.resolve(
+            groupID: group.id,
+            groups: [group],
+            nodes: [compatibilityOnly, native],
+            preferNativeTargets: true
+        )
+
+        #expect(result.nodeID == native.id)
+        #expect(result.target?.protocolName == "vless")
+    }
+
     private func node(
         _ name: String,
         host: String,
         availability: NodeAvailability,
         enabled: Bool = true,
         latency: Int? = nil,
-        source: SourceID? = nil
+        source: SourceID? = nil,
+        protocol proto: NodeProtocol = .https,
+        parameters: [String: String] = [:]
     ) throws -> Node {
         try Node(
             displayName: name,
-            protocol: .https,
+            protocol: proto,
             host: host,
             port: 443,
+            parameters: parameters,
             sourceLinks: source.map { [$0] } ?? [],
             enabled: enabled,
             health: NodeHealthSnapshot(

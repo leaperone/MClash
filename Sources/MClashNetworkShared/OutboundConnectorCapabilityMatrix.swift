@@ -37,6 +37,16 @@ public struct OutboundConnectorCapabilityMatrixEntry: Codable, Equatable, Sendab
 /// catalog. It is descriptive only: generating a matrix never changes route
 /// selection or activates a backend.
 public enum OutboundConnectorCapabilityMatrix {
+    /// Shared admission signal used by group selection. Native runtimes should
+    /// prefer a usable native target over a faster compatibility-only target,
+    /// while still retaining the latter when a group has no native member so
+    /// diagnostics can explain the unsupported route.
+    public static func support(
+        for target: OutboundNodeTarget
+    ) -> OutboundConnectorSupportLevel {
+        classify(target).level
+    }
+
     public static func entries(
         for catalog: OutboundNodeTargetCatalog
     ) -> [OutboundConnectorCapabilityMatrixEntry] {
