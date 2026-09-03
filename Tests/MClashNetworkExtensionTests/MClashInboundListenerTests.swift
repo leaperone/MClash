@@ -450,15 +450,15 @@ struct MClashInboundListenerTests {
                 throw FixtureError.timeout("HTTP fixture accept")
             }
             let completed = DispatchSemaphore(value: 0)
-            var sendError: NWError?
+            let sendError = InboundErrorBox<NWError>()
             connection.send(content: data, completion: .contentProcessed { error in
-                sendError = error
+                sendError.set(error)
                 completed.signal()
             })
             guard completed.wait(timeout: .now() + 5) == .success else {
                 throw FixtureError.timeout("HTTP fixture send")
             }
-            if let sendError { throw sendError }
+            if let sendError = sendError.value { throw sendError }
         }
 
         func read(until marker: Data) throws -> Data {
@@ -570,5 +570,19 @@ struct MClashInboundListenerTests {
                 )
             }
         }
+    }
+}
+
+private final class InboundErrorBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value?
+
+    var value: Value? {
+        lock.lock(); defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ value: Value?) {
+        lock.lock(); stored = value; lock.unlock()
     }
 }

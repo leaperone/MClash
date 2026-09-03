@@ -271,12 +271,15 @@ private final class LoopbackTCPFixture: @unchecked Sendable {
         for _ in 0..<100 {
             if result.range(of: marker) != nil { return result }
             let semaphore = DispatchSemaphore(value: 0)
-            var complete = false
+            let box = ReadBox()
             connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
-                if let data { result.append(data) }; complete = isComplete; semaphore.signal()
+                box.append(data)
+                box.complete = isComplete
+                semaphore.signal()
             }
             guard semaphore.wait(timeout: .now() + 0.05) == .success else { continue }
-            if complete { break }
+            result.append(contentsOf: box.data)
+            if box.complete { break }
         }
         guard result.range(of: marker) != nil else { throw FixtureError.timeout("client read marker") }
         return result
@@ -287,12 +290,15 @@ private final class LoopbackTCPFixture: @unchecked Sendable {
         for _ in 0..<100 {
             if result.count >= count { return result }
             let semaphore = DispatchSemaphore(value: 0)
-            var complete = false
+            let box = ReadBox()
             connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
-                if let data { result.append(data) }; complete = isComplete; semaphore.signal()
+                box.append(data)
+                box.complete = isComplete
+                semaphore.signal()
             }
             guard semaphore.wait(timeout: .now() + 0.05) == .success else { continue }
-            if complete { break }
+            result.append(contentsOf: box.data)
+            if box.complete { break }
         }
         guard result.count >= count else { throw FixtureError.timeout("client read bytes") }
         return result
@@ -312,5 +318,31 @@ private final class ErrorBox<Value>: @unchecked Sendable {
 
     func set(_ value: Value) {
         lock.lock(); stored = value; lock.unlock()
+    }
+}
+
+private final class ReadBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = Data()
+    private var finished = false
+
+    var data: Data {
+        lock.lock(); defer { lock.unlock() }
+        return stored
+    }
+
+    var complete: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return finished
+        }
+        set {
+            lock.lock(); finished = newValue; lock.unlock()
+        }
+    }
+
+    func append(_ data: Data?) {
+        guard let data, !data.isEmpty else { return }
+        lock.lock(); stored.append(data); lock.unlock()
     }
 }
