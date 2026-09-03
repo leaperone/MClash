@@ -20,8 +20,9 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
     public let profileRulesProxy: MihomoRouteProxyEndpoint?
     public let routeProxyEndpoints: [MihomoRouteProxyEndpoint]?
     public let encodedCaptureSnapshot: Data?
-    /// Kept opt-in for wire compatibility. Older host payloads decode as
-    /// `.mihomo`, so an upgrade cannot unexpectedly change DNS ownership.
+    /// Kept opt-in for wire compatibility. Older host payloads containing the
+    /// `"mihomo"` mode decode as `.legacyConnector`, so an upgrade cannot
+    /// unexpectedly change DNS ownership.
     public let dnsUpstreamMode: DNSUpstreamMode
     /// Native DNS transport material.  This is independent from the legacy
     /// Mihomo route endpoint and is populated when native DNS is selected.
@@ -33,7 +34,7 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         profileRulesProxy: MihomoRouteProxyEndpoint,
         routeProxyEndpoints: [MihomoRouteProxyEndpoint]? = nil,
         encodedCaptureSnapshot: Data? = nil,
-        dnsUpstreamMode: DNSUpstreamMode = .mihomo,
+        dnsUpstreamMode: DNSUpstreamMode = .legacyConnector,
         nativeUpstreamBootstrap: DNSUpstreamBootstrap? = nil
     ) throws {
         schemaVersion = Self.currentSchemaVersion
@@ -80,7 +81,7 @@ public struct DNSProxyBootstrapConfiguration: Codable, Equatable, Sendable {
         profileRulesProxy = try container.decodeIfPresent(MihomoRouteProxyEndpoint.self, forKey: .profileRulesProxy)
         routeProxyEndpoints = try container.decodeIfPresent([MihomoRouteProxyEndpoint].self, forKey: .routeProxyEndpoints)
         encodedCaptureSnapshot = try container.decodeIfPresent(Data.self, forKey: .encodedCaptureSnapshot)
-        dnsUpstreamMode = try container.decodeIfPresent(DNSUpstreamMode.self, forKey: .dnsUpstreamMode) ?? .mihomo
+        dnsUpstreamMode = try container.decodeIfPresent(DNSUpstreamMode.self, forKey: .dnsUpstreamMode) ?? .legacyConnector
         nativeUpstreamBootstrap = try container.decodeIfPresent(
             DNSUpstreamBootstrap.self,
             forKey: .nativeUpstreamBootstrap

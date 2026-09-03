@@ -909,12 +909,12 @@ final class AppModel {
     /// missing configuration so a fresh install stays on the MClash path.
     private var configuredDNSUpstreamMode: DNSUpstreamMode {
         if ProcessInfo.processInfo.environment["MCLASH_LEGACY_DNS"] == "1" {
-            return .mihomo
+            return .legacyConnector
         }
         // Native POSIX DNS currently accepts literal IP upstreams. If the
         // selected policy contains only hostname/DoH entries, keep the
         // proven Mihomo resolver instead of failing activation outright.
-        return configuredNativeDNSUpstreamBootstrap == nil ? .mihomo : .native
+        return configuredNativeDNSUpstreamBootstrap == nil ? .legacyConnector : .native
     }
 
     /// Builds the connector-neutral DNS payload used by the native DNS

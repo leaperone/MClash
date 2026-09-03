@@ -6,6 +6,41 @@ import Testing
 
 @Suite("Connector-neutral DNS upstream")
 struct DNSUpstreamTests {
+    @Test("Legacy DNS mode keeps persisted Mihomo values readable")
+    func legacyModeDecodesHistoricalWireValue() throws {
+        let decoder = JSONDecoder()
+        let historical = try decoder.decode(
+            DNSUpstreamMode.self,
+            from: Data(#""mihomo""#.utf8)
+        )
+        #expect(historical == .legacyConnector)
+
+        let current = try JSONEncoder().encode(DNSUpstreamMode.legacyConnector)
+        #expect(String(decoding: current, as: UTF8.self) == #""legacyConnector""#)
+    }
+
+    @Test("Bootstrap migrates the historical Mihomo DNS mode without changing ownership")
+    func bootstrapMigratesHistoricalLegacyMode() throws {
+        let bootstrap = try DNSProxyBootstrapConfiguration(
+            revision: 1,
+            activationIdentifier: UUID(),
+            profileRulesProxy: try MihomoRouteProxyEndpoint(
+                route: .profileRules,
+                host: "127.0.0.1",
+                port: 7891,
+            )
+        )
+        let encoded = try bootstrap.encoded()
+        let historical = Data(
+            String(decoding: encoded, as: UTF8.self)
+                .replacingOccurrences(of: #""legacyConnector""#, with: #""mihomo""#)
+                .utf8
+        )
+        let decoded = try DNSProxyBootstrapConfiguration.decode(historical)
+        #expect(decoded.dnsUpstreamMode == .legacyConnector)
+        #expect(decoded.profileRulesProxy == bootstrap.profileRulesProxy)
+    }
+
     @Test("Native DNS bootstrap is connector-neutral and round-trips independently")
     func nativeBootstrapDoesNotNeedMihomoEndpoint() throws {
         let udp = try DNSUpstreamEndpoint(

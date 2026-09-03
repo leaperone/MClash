@@ -25,11 +25,36 @@ public enum DNSUpstreamTransport: String, Codable, Sendable, Equatable {
     case tcp
 }
 
-/// Selects who owns public DNS transport.  Mihomo remains the compatibility
-/// default until the native resolver path has been validated on a release.
+/// Selects who owns public DNS transport.
+///
+/// `legacyConnector` is deliberately named after its role rather than the
+/// implementation that used to provide it.  The old `"mihomo"` wire value is
+/// still accepted when decoding persisted bootstrap payloads, but newly
+/// encoded payloads use the role-oriented `"legacyConnector"` value.
 public enum DNSUpstreamMode: String, Codable, Sendable, Equatable {
-    case mihomo
+    case legacyConnector
     case native
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        switch value {
+        case "legacyConnector", "legacy", "mihomo":
+            self = .legacyConnector
+        case "native":
+            self = .native
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported DNS upstream mode: \(value)"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct DNSUpstreamEndpoint: Codable, Sendable, Hashable, Equatable {
