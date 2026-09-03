@@ -884,6 +884,13 @@ final class AppModel {
         await supervisor.diagnostics()
     }
 
+    /// Host preparation failures are distinct from runtime-engine failures;
+    /// expose the redacted message to read-only automation so isolated shadow
+    /// runs can explain why a persisted workspace was not compiled.
+    var startupPreparationErrorForDiagnostics: String? {
+        startupPreparationErrorMessage
+    }
+
     /// Native DNS is the unified-runtime default. Set the explicit legacy
     /// switch only for rollback during migration; it is never inferred from
     /// missing configuration so a fresh install stays on the MClash path.
@@ -1385,7 +1392,9 @@ final class AppModel {
                 // MClash build or another utility even when no core is ready
                 // yet, so the overview can explain the real network path.
                 await refreshSystemProxyObservation()
-                await synchronizeConfigurationSources()
+                if ProcessInfo.processInfo.environment["MCLASH_SKIP_SOURCE_SYNCHRONIZATION"] != "1" {
+                    await synchronizeConfigurationSources()
+                }
                 startupUnifiedMigrationPending =
                     shouldAutomaticallyMigrateToUnifiedConfiguration()
                 if startupUnifiedMigrationPending {

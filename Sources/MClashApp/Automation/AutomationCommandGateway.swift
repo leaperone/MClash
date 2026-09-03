@@ -1855,6 +1855,9 @@ final class AutomationCommandGateway {
                 .integer(Int64($0))
             } ?? .null,
             "hasCompiledRuntimePlan": .bool(value.hasCompiledRuntimePlan),
+            "startupPreparationError": model.startupPreparationErrorForDiagnostics.map {
+                .string(redactedDiagnosticText($0))
+            } ?? .null,
             "listenerCount": .integer(Int64(value.listenerCount)),
             "enabledListenerCount": .integer(Int64(value.enabledListenerCount)),
             "listenerStates": .object(listenerStates),
