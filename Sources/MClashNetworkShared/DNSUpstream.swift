@@ -130,6 +130,44 @@ public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
     /// policy belongs to the resolver and can be added without changing the
     /// connector-neutral wire contract.
     public var primary: DNSUpstreamEndpoint { endpoints[0] }
+
+    /// The reason a native resolver selected an endpoint. Keeping this
+    /// explicit makes fallback observable without exposing a query or an
+    /// upstream credential in diagnostics.
+    public enum SelectionReason: String, Codable, Equatable, Sendable {
+        case exactAddress
+        case firstMatchingTransport
+        case noMatchingTransport
+    }
+
+    public struct Selection: Codable, Equatable, Sendable {
+        public let endpoint: DNSUpstreamEndpoint?
+        public let reason: SelectionReason
+
+        public init(endpoint: DNSUpstreamEndpoint?, reason: SelectionReason) {
+            self.endpoint = endpoint
+            self.reason = reason
+        }
+    }
+
+    /// Selects an upstream deterministically. An intercepted resolver address
+    /// is only a hint: if it is not configured, the first endpoint in the
+    /// user's ordered bootstrap with the same wire transport wins. No
+    /// unordered set/dictionary participates in this decision.
+    public func select(
+        interceptedAddress: IPAddress?,
+        transport: DNSUpstreamTransport
+    ) -> Selection {
+        let matching = endpoints.filter { $0.transport == transport }
+        guard !matching.isEmpty else {
+            return Selection(endpoint: nil, reason: .noMatchingTransport)
+        }
+        if let interceptedAddress,
+           let exact = matching.first(where: { $0.address == interceptedAddress }) {
+            return Selection(endpoint: exact, reason: .exactAddress)
+        }
+        return Selection(endpoint: matching[0], reason: .firstMatchingTransport)
+    }
 }
 
 public enum DNSUpstreamBootstrapError: Error, Equatable, Sendable {

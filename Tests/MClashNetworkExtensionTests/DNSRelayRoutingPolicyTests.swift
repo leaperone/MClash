@@ -76,6 +76,17 @@ struct DNSRelayRoutingPolicyTests {
         ) == .directLocalResolver)
     }
 
+    @Test("Multicast and unspecified resolvers stay on the local network")
+    func multicastAndUnspecifiedResolverAreDirect() throws {
+        for address in ["224.0.0.251", "0.0.0.0", "ff02::fb", "::"] {
+            #expect(DNSRelayRoutingPolicy.route(
+                destination: try endpoint(address),
+                isTrustedMClashComponent: false,
+                upstreamMode: .native
+            ) == .directLocalResolver)
+        }
+    }
+
     @Test("Native mode falls back to Mihomo for hostname-only endpoints")
     func nativeModeFallsBackForHostname() throws {
         let destination = SOCKS5Endpoint(

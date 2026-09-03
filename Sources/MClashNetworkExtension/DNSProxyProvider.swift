@@ -64,7 +64,12 @@ enum DNSRelayRoutingPolicy {
         if isTrustedMClashComponent {
             return .directTrustedComponent
         }
-        if destination.address.ipAddress?.isLocalNetwork == true {
+        // Never send local resolver traffic (including mDNS/unspecified
+        // destinations) through a proxy connector. These addresses belong to
+        // the host network and proxying them can break LAN services or create
+        // a feedback loop in the DNS provider.
+        if let address = destination.address.ipAddress,
+           address.isLocalNetwork || address.isMulticast || address.isUnspecified {
             return .directLocalResolver
         }
         if upstreamMode == .native, let nativeBootstrap {
@@ -73,14 +78,11 @@ enum DNSRelayRoutingPolicy {
             // transport different from the configured upstream. Select a
             // bootstrap endpoint deterministically and only use one whose
             // wire transport matches this flow.
-            let candidates = nativeBootstrap.endpoints.filter {
-                $0.transport == transport
-            }
-            if let address = destination.address.ipAddress,
-               let endpoint = candidates.first(where: { $0.address == address }) {
-                return .native(endpoint)
-            }
-            if let endpoint = candidates.first {
+            let selection = nativeBootstrap.select(
+                interceptedAddress: destination.address.ipAddress,
+                transport: transport
+            )
+            if let endpoint = selection.endpoint {
                 return .native(endpoint)
             }
         }

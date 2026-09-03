@@ -34,6 +34,29 @@ struct DNSUpstreamTests {
         }
     }
 
+    @Test("Native DNS endpoint selection is ordered and reports fallback")
+    func nativeBootstrapSelectionIsDeterministic() throws {
+        let bootstrap = try DNSUpstreamBootstrap(endpoints: [
+            try DNSUpstreamEndpoint(address: IPAddress("9.9.9.9"), transport: .udp),
+            try DNSUpstreamEndpoint(address: IPAddress("1.1.1.1"), transport: .tcp),
+            try DNSUpstreamEndpoint(address: IPAddress("8.8.8.8"), transport: .udp),
+        ])
+        let exact = bootstrap.select(
+            interceptedAddress: try IPAddress("8.8.8.8"), transport: .udp
+        )
+        #expect(exact.endpoint?.address == try IPAddress("8.8.8.8"))
+        #expect(exact.reason == .exactAddress)
+        let fallback = bootstrap.select(
+            interceptedAddress: try IPAddress("192.0.2.53"), transport: .udp
+        )
+        #expect(fallback.endpoint?.address == try IPAddress("9.9.9.9"))
+        #expect(fallback.reason == .firstMatchingTransport)
+        let unavailable = bootstrap.select(
+            interceptedAddress: nil, transport: .tcp
+        )
+        #expect(unavailable.endpoint?.address == try IPAddress("1.1.1.1"))
+    }
+
     @Test("Native DNS bootstrap does not require a Mihomo route endpoint")
     func nativeBootstrapIsMihomoIndependent() throws {
         let upstream = try DNSUpstreamEndpoint(
