@@ -107,8 +107,8 @@ SOCKS5, System Proxy or App Routing.
       to the GLOBAL group; Direct returns flows to the native network path.
 - [ ] Ensure a direct or rejected decision terminates at MClash and never
       opens a Mihomo relay. Emit the selected mode and disposition in telemetry.
-- [ ] Define deterministic behavior for missing/empty GLOBAL and failed group
-      selection, with a safe direct/reject policy rather than an implicit core
+- [x] Define deterministic behavior for missing/empty GLOBAL and failed group
+      selection, with a safe Direct/Reject policy rather than an implicit core
       default.
 
 ### E. Proxy groups and node selection
@@ -410,6 +410,9 @@ and can be tested without producing a Mihomo YAML document.
 - `6892b61` removes legacy “Mihomo connections” wording from traffic source
   labels; the monitor now presents the neutral localized “Connections” label
   while retaining explicit legacy diagnostics only where technically needed.
+- `9eb41b2` adds native routing tests for Direct mode, Global mode without an
+  exit group and Rule-mode misses; all resolve deterministically to Direct
+  rather than an implicit Mihomo/default-core route.
 - `19e1300` replaces remaining user-facing traffic descriptions that implied
   Mihomo ownership with MClash traffic backend wording and adds all three keys
   to the eight localization bundles; a key-set audit reports 2,401 matching
