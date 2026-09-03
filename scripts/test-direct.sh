@@ -8,23 +8,8 @@ run_release_script_tests() {
   "${repo_root}/scripts/test-release-preflight.sh"
 }
 
-# GitHub-hosted runners provide a complete Xcode toolchain, where SwiftPM is
-# the stable way to locate Swift Testing and binary-target dependencies. App
-# tests inject inert Network Extension managers, and the explicit flag keeps
-# the remaining process-wide Apple test doubles serialized.
-if [[ "${CI:-}" == "true" ]]; then
-  cd "${repo_root}"
-  # Swift Testing can still schedule suites concurrently even when SwiftPM's
-  # test runner receives --no-parallel. Several suites exercise process-wide
-  # Apple framework state, so cap the Testing library itself as well.
-  SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
-    swift test --configuration debug --no-parallel
-  run_release_script_tests
-  exit 0
-fi
-
-# The direct path remains the fallback for standalone Command Line Tools,
-# whose PackageDescription dylib can be out of sync with its Swift interface.
+# The direct harness is used in CI as well as locally. It avoids the SwiftPM
+# manifest/runtime path that can be out of sync on Command Line Tools runners.
 build_dir="${repo_root}/.build/direct-tests"
 sparkle_framework_dir="${SPARKLE_FRAMEWORK_DIR:-$("${repo_root}/scripts/fetch-sparkle-tools.sh")}"
 developer_dir="${DEVELOPER_DIR:-$(xcode-select -p)}"
@@ -202,73 +187,94 @@ swiftc \
 SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
   "${build_dir}/MClashPackageTests"
 
-swiftc \
-  -parse-as-library \
-  -swift-version 6 \
-  -strict-concurrency=complete \
-  -warnings-as-errors \
-  -target "${target_triple}" \
-  -I "${build_dir}" \
-  -L "${build_dir}" \
-  -lMClashNetworkShared \
-  -F "${frameworks}" \
-  -framework Testing \
-  -plugin-path "${plugins}" \
-  "${network_shared_tests[@]}" \
-  "${repo_root}/Tests/TestRunner.swift" \
-  -Xlinker -rpath \
-  -Xlinker "${build_dir}" \
-  -Xlinker -rpath \
-  -Xlinker "${frameworks}" \
-  -Xlinker -rpath \
-  -Xlinker "${testing_interop}" \
-  -o "${build_dir}/MClashNetworkSharedPackageTests"
-
-shared_test_exit=0
-set +e
-SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
-  "${build_dir}/MClashNetworkSharedPackageTests"
-shared_test_exit=$?
-set -e
-if (( shared_test_exit != 0 )); then
-  print -u2 "Shared test target exited with ${shared_test_exit}; continuing to run Network Extension and automation tests."
+# The Command Line Tools Swift Testing runtime can abort while formatting
+# framework values after several suites (for example with signal 5 or the
+# arm64e "Not enough bits" trap). Keep each process bounded so one runtime
+# abort cannot prevent later test files from running. This is deliberately a
+# process split, not a test filter: every source file is compiled and run.
+network_test_chunk_size="${MCLASH_NETWORK_TEST_CHUNK_SIZE:-8}"
+if [[ ! "${network_test_chunk_size}" =~ '^[1-9][0-9]*$' ]]; then
+  print -u2 "MCLASH_NETWORK_TEST_CHUNK_SIZE must be a positive integer."
+  exit 1
 fi
 
-swiftc \
-  -parse-as-library \
-  -swift-version 6 \
-  -strict-concurrency=complete \
-  -warnings-as-errors \
-  -target "${target_triple}" \
-  -I "${build_dir}" \
-  -L "${build_dir}" \
-  -lMClashNetworkExtension \
-  -lMClashNetworkShared \
-  -framework Network \
-  -framework NetworkExtension \
-  -framework Security \
-  -lbsm \
-  -F "${frameworks}" \
-  -framework Testing \
-  -plugin-path "${plugins}" \
-  "${network_extension_tests[@]}" \
-  "${repo_root}/Tests/TestRunner.swift" \
-  -Xlinker -rpath \
-  -Xlinker "${build_dir}" \
-  -Xlinker -rpath \
-  -Xlinker "${frameworks}" \
-  -Xlinker -rpath \
-  -Xlinker "${testing_interop}" \
-  -o "${build_dir}/MClashNetworkExtensionPackageTests"
+run_network_test_chunks() {
+  local target_name="$1"
+  local output_prefix="$2"
+  shift 2
+  local -a library_flags=()
+  while (( $# > 0 )) && [[ "$1" != "--" ]]; do
+    library_flags+=("$1")
+    shift
+  done
+  if (( $# == 0 )); then
+    print -u2 "${target_name} test chunks require a -- delimiter before test files."
+    return 1
+  fi
+  shift
+  local -a test_files=("$@")
+  local chunk_number=0
+  local aggregate_exit=0
+  local offset=1
+  local total=${#test_files[@]}
+
+  while (( offset <= total )); do
+    chunk_number=$((chunk_number + 1))
+    local -a chunk=("${test_files[@]:$offset-1:$network_test_chunk_size}")
+    local executable="${build_dir}/${output_prefix}-${chunk_number}"
+    print "Compiling ${target_name} test chunk ${chunk_number} (${#chunk[@]} files)."
+    swiftc \
+      -parse-as-library \
+      -swift-version 6 \
+      -strict-concurrency=complete \
+      -warnings-as-errors \
+      -target "${target_triple}" \
+      -I "${build_dir}" \
+      -L "${build_dir}" \
+      "${library_flags[@]}" \
+      -F "${frameworks}" \
+      -framework Testing \
+      -plugin-path "${plugins}" \
+      "${chunk[@]}" \
+      "${repo_root}/Tests/TestRunner.swift" \
+      -Xlinker -rpath -Xlinker "${build_dir}" \
+      -Xlinker -rpath -Xlinker "${frameworks}" \
+      -Xlinker -rpath -Xlinker "${testing_interop}" \
+      -o "${executable}"
+
+    local chunk_exit=0
+    if SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 "${executable}"; then
+      chunk_exit=0
+    else
+      chunk_exit=$?
+    fi
+    if (( chunk_exit != 0 )); then
+      print -u2 "${target_name} test chunk ${chunk_number} exited with ${chunk_exit}; continuing remaining chunks."
+      if (( aggregate_exit == 0 )); then aggregate_exit=${chunk_exit}; fi
+    fi
+    offset=$((offset + network_test_chunk_size))
+  done
+  return ${aggregate_exit}
+}
+
+shared_test_exit=0
+if run_network_test_chunks \
+  "MClashNetworkShared" MClashNetworkSharedPackageTests \
+  -lMClashNetworkShared -- "${network_shared_tests[@]}"; then
+  shared_test_exit=0
+else
+  shared_test_exit=$?
+fi
 
 extension_test_exit=0
-set +e
-SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
-  "${build_dir}/MClashNetworkExtensionPackageTests"
-extension_test_exit=$?
-set -e
-if (( extension_test_exit != 0 )); then
-  print -u2 "Network Extension test target exited with ${extension_test_exit}; continuing to run automation tests."
+if run_network_test_chunks \
+  "MClashNetworkExtension" MClashNetworkExtensionPackageTests \
+  -lMClashNetworkExtension -lMClashNetworkShared \
+  -framework Network -framework NetworkExtension -framework Security -lbsm \
+  -- "${network_extension_tests[@]}"; then
+  extension_test_exit=0
+else
+  extension_test_exit=$?
 fi
 
 swiftc \

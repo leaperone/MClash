@@ -343,6 +343,24 @@ struct ReleasePackagingTests {
         ))
     }
 
+    @Test("Direct network tests run in bounded processes without dropping files")
+    func directNetworkTestsAreProcessPartitioned() throws {
+        let script = try source("scripts/test-direct.sh")
+
+        #expect(script.contains("MCLASH_NETWORK_TEST_CHUNK_SIZE:-8"))
+        #expect(!script.contains("swift test --configuration debug --no-parallel"))
+        #expect(script.contains("The direct harness is used in CI as well as locally"))
+        #expect(script.contains("require a -- delimiter before test files"))
+        #expect(script.contains("while (( offset <= total )); do"))
+        #expect(script.contains("SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \"${executable}\""))
+        #expect(script.contains("MClashNetworkSharedPackageTests"))
+        #expect(script.contains("MClashNetworkExtensionPackageTests"))
+        #expect(script.contains("continuing remaining chunks"))
+        #expect(script.contains("network_shared_tests=(\"${repo_root}\"/Tests/MClashNetworkSharedTests/*.swift(N))"))
+        #expect(script.contains("network_extension_tests=(\"${repo_root}\"/Tests/MClashNetworkExtensionTests/*.swift(N))"))
+        #expect(script.contains("if (( aggregate_exit == 0 )); then aggregate_exit=${chunk_exit}; fi"))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
