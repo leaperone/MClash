@@ -4,7 +4,7 @@ enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
     case focused = "Proxy & Issues"
     case all = "All"
     case active = "Active"
-    case viaMihomo = "Via Mihomo"
+    case viaOutbound = "Via Outbound"
     case direct = "Direct"
     case rejected = "Rejected"
     case failed = "Failed"
@@ -19,7 +19,7 @@ enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
             return true
         case .active:
             return activity.isLiveManagedFlow
-        case .viaMihomo:
+        case .viaOutbound:
             if case .outbound = activity.effectiveAction {
                 return activity.relayState != .failed
             }
@@ -41,7 +41,7 @@ enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
         case .outbound, .reject, .failOpen:
             return true
         case .direct:
-            // A Mihomo route that fell back to Direct is important diagnostic
+            // An outbound route that fell back to Direct is important diagnostic
             // evidence. Hide only ordinary Direct traffic in the focused view.
             switch activity.configuredAction {
             case .direct:

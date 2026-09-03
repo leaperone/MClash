@@ -15,17 +15,28 @@ enum TrafficHistoryMeasurement: Hashable, Sendable {
 }
 
 enum TrafficHistorySource: String, CaseIterable, Sendable {
-    case mihomo
+    /// Historical connection snapshots are retained as a source kind for
+    /// checkpoint compatibility, but the ledger no longer models this as a
+    /// Mihomo-owned path. The raw value stays `mihomo` so existing SQLite
+    /// rows and checkpoints continue to decode during migration.
+    case legacyConnector = "mihomo"
     case appRouting
+    case native
+
+    @available(*, deprecated, message: "Use legacyConnector; raw value is retained for storage compatibility")
+    static var mihomo: Self { .legacyConnector }
 }
 
 enum TrafficHistoryOutcome: String, CaseIterable, Sendable {
-    case viaMihomo
+    case viaOutbound = "viaMihomo"
     case direct
     case rejected
     case failOpen
     case relayFailed
     case unresolved
+
+    @available(*, deprecated, message: "Use viaOutbound; raw value is retained for storage compatibility")
+    static var viaMihomo: Self { .viaOutbound }
 }
 
 /// A deliberately narrow application identity for persistence. Process IDs,
@@ -85,12 +96,15 @@ private extension TrafficHistoryApplication.Identity {
 }
 
 enum TrafficHistoryRouteKind: String, CaseIterable, Sendable {
-    case mihomo
+    case outbound = "mihomo"
     case direct
     case rejected
     case failOpen
     case relayFailed
     case unresolved
+
+    @available(*, deprecated, message: "Use outbound; raw value is retained for storage compatibility")
+    static var mihomo: Self { .outbound }
 }
 
 /// A route explanation without destination data or rule payloads. Rule names
@@ -130,7 +144,7 @@ struct TrafficHistoryRoute: Hashable, Sendable {
 private extension TrafficHistoryRouteKind {
     var defaultLabel: String {
         switch self {
-        case .mihomo: "Mihomo"
+        case .outbound: "Proxy"
         case .direct: "Direct"
         case .rejected: "Rejected"
         case .failOpen: "Fail-open"

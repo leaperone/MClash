@@ -2204,7 +2204,7 @@ final class AutomationCommandGateway {
         _ route: FlowLedgerRouteKey
     ) -> AutomationJSONValue {
         switch route {
-        case let .mihomo(rule, payload, chain):
+        case let .outbound(rule, payload, chain):
             return .object([
                 "kind": .string("mihomo"),
                 "rule": rule.map(AutomationJSONValue.string) ?? .null,
@@ -2213,9 +2213,9 @@ final class AutomationCommandGateway {
                 } ?? .null,
                 "chain": .array(chain.map(AutomationJSONValue.string)),
             ])
-        case let .unresolvedMihomo(rule):
+        case let .unresolvedOutbound(rule):
             return .object([
-                "kind": .string("unresolvedMihomo"),
+                "kind": .string("unresolvedOutbound"),
                 "appRoutingRule": rule.map(AutomationJSONValue.string) ?? .null,
             ])
         case .direct: return .object(["kind": .string("direct")])
@@ -2232,7 +2232,7 @@ final class AutomationCommandGateway {
     private func flowLedgerEntry(_ entry: FlowLedgerEntry) -> AutomationJSONValue {
         let identifier: String = switch entry.id {
         case let .appRouting(id): "app:\(id.uuidString.lowercased())"
-        case let .mihomo(id): "mihomo:\(id)"
+        case let .legacyConnection(id): "mihomo:\(id)"
         case let .native(id): "native:\(id)"
         }
         let state: String = switch entry.state {

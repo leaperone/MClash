@@ -7,7 +7,7 @@ enum ProfileTrafficTarget: Hashable, Sendable {
     case system
 }
 
-extension MihomoRoute {
+extension OutboundRoute {
     var mclashTrafficTarget: ProfileTrafficTarget {
         guard let routingProfileID else { return .defaultProfile }
         return .profile(ProfileID(rawValue: routingProfileID.uuid))

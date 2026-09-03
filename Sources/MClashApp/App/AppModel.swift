@@ -12020,15 +12020,12 @@ final class AppModel {
         case let .appRouting(identifier):
             checkpoint = "app:\(identifier.uuidString)"
             source = .appRouting
-        case let .mihomo(identifier):
+        case let .legacyConnection(identifier):
             checkpoint = "mihomo:\(identifier)"
-            source = .mihomo
+            source = .legacyConnector
         case let .native(identifier):
-            // Native observations use the existing durable source until the
-            // history schema grows a distinct native source. The checkpoint
-            // remains namespaced so it cannot collide with a Mihomo record.
             checkpoint = "native:\(identifier)"
-            source = .mihomo
+            source = .native
         }
 
         return TrafficHistoryCompletedFlow(
@@ -12065,11 +12062,11 @@ final class AppModel {
         _ entry: FlowLedgerEntry
     ) -> TrafficHistoryRoute {
         switch entry.outcome {
-        case .viaMihomo:
-            guard let route = entry.mihomoRoute else { return .unresolved }
+        case .viaOutbound:
+            guard let route = entry.outboundRoute else { return .unresolved }
             return TrafficHistoryRoute(
-                kind: .mihomo,
-                displayName: route.chain.last ?? route.rule ?? "Mihomo",
+                kind: .outbound,
+                displayName: route.chain.last ?? route.rule ?? "Proxy",
                 ruleName: route.rule,
                 proxyChain: route.chain
             )
@@ -12092,7 +12089,7 @@ final class AppModel {
         _ outcome: FlowLedgerOutcome
     ) -> TrafficHistoryOutcome {
         switch outcome {
-        case .viaMihomo: .viaMihomo
+        case .viaOutbound: .viaOutbound
         case .direct: .direct
         case .rejected: .rejected
         case .failOpen: .failOpen
@@ -13761,7 +13758,7 @@ final class AppModel {
         let missingRoutes = requiredRoutes
             .subtracting(routePorts.keys)
             .sorted {
-                Self.mihomoRouteSortKey($0) < Self.mihomoRouteSortKey($1)
+                Self.outboundRouteSortKey($0) < Self.outboundRouteSortKey($1)
             }
         guard missingRoutes.count == ports.count,
               Set(ports).count == ports.count,
@@ -13805,7 +13802,7 @@ final class AppModel {
             password: try secureRandomString()
         )
         let sortedRoutes = requestedRoutes.sorted {
-            Self.mihomoRouteSortKey($0) < Self.mihomoRouteSortKey($1)
+            Self.outboundRouteSortKey($0) < Self.outboundRouteSortKey($1)
         }
         var routePorts: [MihomoRoute: Int] = [:]
         let routePortValues = includesLegacyProfileRules
@@ -13822,7 +13819,7 @@ final class AppModel {
         )
     }
 
-    private static func mihomoRouteSortKey(_ route: MihomoRoute) -> String {
+    private static func outboundRouteSortKey(_ route: OutboundRoute) -> String {
         route.stableSortKey
     }
 

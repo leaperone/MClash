@@ -7,6 +7,17 @@ import Testing
 struct TrafficHistoryStoreTests {
     private let baseDate = Date(timeIntervalSince1970: 1_784_166_400)
 
+    @Test("Legacy Mihomo history wire values decode as neutral connector values")
+    func legacyWireValueCompatibility() {
+        #expect(TrafficHistorySource(rawValue: "mihomo") == .legacyConnector)
+        #expect(TrafficHistoryOutcome(rawValue: "viaMihomo") == .viaOutbound)
+        #expect(TrafficHistoryRouteKind(rawValue: "mihomo") == .outbound)
+        #expect(TrafficHistorySource.legacyConnector.rawValue == "mihomo")
+        #expect(TrafficHistoryOutcome.viaOutbound.rawValue == "viaMihomo")
+        #expect(TrafficHistoryRouteKind.outbound.rawValue == "mihomo")
+        #expect(TrafficHistorySource.native.rawValue == "native")
+    }
+
     @Test("Schema is private, durable, healthy, and contains no sensitive traffic columns")
     func privateHealthySchema() async throws {
         let fixture = try Fixture(now: baseDate)
@@ -79,7 +90,7 @@ struct TrafficHistoryStoreTests {
             displayName: "Browser"
         )
         let route = TrafficHistoryRoute(
-            kind: .mihomo,
+            kind: .outbound,
             displayName: "Proxy Group → Node A",
             ruleName: "DomainSuffix",
             proxyChain: ["Proxy Group", "Node A"]
@@ -112,11 +123,11 @@ struct TrafficHistoryStoreTests {
 
         let first = try await fixture.store.ingest(
             [exact, handoff, rejected],
-            sourceCheckpoint: TrafficHistorySourceCheckpoint(source: .mihomo, sequence: 9)
+            sourceCheckpoint: TrafficHistorySourceCheckpoint(source: .legacyConnector, sequence: 9)
         )
         let replay = try await fixture.store.ingest(
             [exact, handoff],
-            sourceCheckpoint: TrafficHistorySourceCheckpoint(source: .mihomo, sequence: 8)
+            sourceCheckpoint: TrafficHistorySourceCheckpoint(source: .legacyConnector, sequence: 8)
         )
         #expect(first == TrafficHistoryIngestResult(
             insertedCount: 3,
@@ -141,7 +152,7 @@ struct TrafficHistoryStoreTests {
         #expect(snapshot.applications.first?.application.displayName == "Browser")
         #expect(snapshot.routes.contains { $0.route.proxyChain == ["Proxy Group", "Node A"] })
         #expect(
-            try await fixture.store.sourceCheckpoint(for: .mihomo)?.sequence == 9
+            try await fixture.store.sourceCheckpoint(for: .legacyConnector)?.sequence == 9
         )
 
         let reopened = try readyStore(
@@ -206,7 +217,7 @@ struct TrafficHistoryStoreTests {
         let fixture = try Fixture(now: baseDate.addingTimeInterval(-3_600))
         _ = try await fixture.store.ingest(
             [completion(id: "before-clear", at: baseDate)],
-            sourceCheckpoint: TrafficHistorySourceCheckpoint(source: .mihomo, sequence: 44)
+            sourceCheckpoint: TrafficHistorySourceCheckpoint(source: .legacyConnector, sequence: 44)
         )
         let clearDate = baseDate.addingTimeInterval(120)
         let baseline = try await fixture.store.clear(at: clearDate)
@@ -219,7 +230,7 @@ struct TrafficHistoryStoreTests {
         ])
         #expect(result.insertedCount == 1)
         #expect(result.beforeBaselineCount == 1)
-        #expect(try await fixture.store.sourceCheckpoint(for: .mihomo)?.sequence == 44)
+        #expect(try await fixture.store.sourceCheckpoint(for: .legacyConnector)?.sequence == 44)
 
         let snapshot = try await fixture.store.snapshot(
             for: .today,
@@ -398,13 +409,13 @@ struct TrafficHistoryStoreTests {
         at date: Date,
         application: TrafficHistoryApplication = .unattributed,
         route: TrafficHistoryRoute = .unresolved,
-        outcome: TrafficHistoryOutcome = .viaMihomo,
+        outcome: TrafficHistoryOutcome = .viaOutbound,
         upload: TrafficHistoryMeasurement = .exact(1),
         download: TrafficHistoryMeasurement = .exact(2)
     ) -> TrafficHistoryCompletedFlow {
         TrafficHistoryCompletedFlow(
             checkpointIdentifier: id,
-            source: .mihomo,
+            source: .legacyConnector,
             completedAt: date,
             application: application,
             route: route,

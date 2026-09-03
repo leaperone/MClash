@@ -102,15 +102,15 @@ struct FlowLedgerTrafficInspector: Hashable, Sendable {
     init(entry: FlowLedgerEntry, dnsPath: FlowTrafficDNSPath = .unknown) {
         route = switch entry.outcome {
         case .direct: .direct
-        case .viaMihomo: .proxy
+        case .viaOutbound: .proxy
         case .rejected: .rejected
         case .failOpen: .failOpen
         case .relayFailed: .unresolved
         }
         entrance = Self.originIdentifier(entry.captureOrigin)
-        matchedRule = nonEmpty(entry.appRoutingRule) ?? nonEmpty(entry.mihomoRoute?.rule)
-        rulePayload = nonEmpty(entry.mihomoRoute?.rulePayload)
-        routeChain = entry.mihomoRoute?.chain ?? []
+        matchedRule = nonEmpty(entry.appRoutingRule) ?? nonEmpty(entry.outboundRoute?.rule)
+        rulePayload = nonEmpty(entry.outboundRoute?.rulePayload)
+        routeChain = entry.outboundRoute?.chain ?? []
         selectedNode = routeChain.last
         self.dnsPath = dnsPath
         destination = entry.destination

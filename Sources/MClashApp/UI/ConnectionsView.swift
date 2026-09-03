@@ -362,11 +362,11 @@ struct ConnectionsView: View {
     }
 
     private func historyRuleTitle(_ entry: FlowLedgerEntry) -> String {
-        entry.mihomoRoute?.rule ?? entry.appRoutingRule ?? "—"
+        entry.outboundRoute?.rule ?? entry.appRoutingRule ?? "—"
     }
 
     private func historyRuleHelp(_ entry: FlowLedgerEntry) -> String {
-        let value = [entry.appRoutingRule, entry.mihomoRoute?.rule, entry.mihomoRoute?.rulePayload]
+        let value = [entry.appRoutingRule, entry.outboundRoute?.rule, entry.outboundRoute?.rulePayload]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: " → ")
@@ -376,11 +376,11 @@ struct ConnectionsView: View {
     }
 
     private func historyRouteTitle(_ entry: FlowLedgerEntry) -> String {
-        entry.mihomoRoute?.chain.last ?? outcomeTitle(entry.outcome)
+        entry.outboundRoute?.chain.last ?? outcomeTitle(entry.outcome)
     }
 
     private func historyRouteHelp(_ entry: FlowLedgerEntry) -> String {
-        guard let chain = entry.mihomoRoute?.chain, !chain.isEmpty else {
+        guard let chain = entry.outboundRoute?.chain, !chain.isEmpty else {
             return outcomeTitle(entry.outcome)
         }
         return chain.joined(separator: " → ")
@@ -414,9 +414,9 @@ struct ConnectionsView: View {
                 captureOriginTitle(entry.captureOrigin),
                 outcomeTitle(entry.outcome),
                 entry.appRoutingRule,
-                entry.mihomoRoute?.rule,
-                entry.mihomoRoute?.rulePayload,
-                entry.mihomoRoute?.chain.joined(separator: " → "),
+                entry.outboundRoute?.rule,
+                entry.outboundRoute?.rulePayload,
+                entry.outboundRoute?.chain.joined(separator: " → "),
             ].compactMap { $0 }.contains {
                 $0.localizedCaseInsensitiveContains(query)
             }
@@ -2427,11 +2427,11 @@ private func trafficCoverageHelp(_ traffic: FlowLedgerTrafficAggregate) -> Strin
 
 private func routeTitle(_ route: FlowLedgerRouteKey) -> String {
     switch route {
-    case let .mihomo(rule, _, chain):
-        return chain.last ?? rule ?? "Mihomo"
-    case let .unresolvedMihomo(rule):
-        return rule.map { AppLocalization.format("Mihomo · %@", $0) }
-            ?? AppLocalization.string("Mihomo · resolving")
+    case let .outbound(rule, _, chain):
+        return chain.last ?? rule ?? AppLocalization.string("Proxy")
+    case let .unresolvedOutbound(rule):
+        return rule.map { AppLocalization.format("Proxy · %@", $0) }
+            ?? AppLocalization.string("Proxy · resolving")
     case .direct:
         return AppLocalization.string("Direct")
     case .rejected:
@@ -2448,19 +2448,19 @@ private func routeSubtitle(
     traffic: FlowLedgerTrafficAggregate
 ) -> String {
     switch route {
-    case let .mihomo(rule, payload, chain):
+    case let .outbound(rule, payload, chain):
         let decision = [rule, payload].compactMap(nonEmpty).joined(separator: " · ")
         let path = chain.joined(separator: " → ")
         return nonEmpty(decision)
             ?? nonEmpty(path)
-            ?? AppLocalization.string("Mihomo route")
-    case let .unresolvedMihomo(rule):
+            ?? AppLocalization.string("Proxy route")
+    case let .unresolvedOutbound(rule):
         return rule.map {
             AppLocalization.format(
-                "App rule %@ · awaiting Mihomo correlation",
+                "App rule %@ · awaiting route details",
                 $0
             )
-        } ?? AppLocalization.string("Awaiting Mihomo correlation")
+        } ?? AppLocalization.string("Awaiting route details")
     case .direct:
         return FlowLedgerTrafficPresentation.directRouteDetail(traffic)
     case .rejected:
@@ -2478,7 +2478,7 @@ private func routeHelp(
     traffic: FlowLedgerTrafficAggregate
 ) -> String {
     switch route {
-    case let .mihomo(rule, payload, chain):
+    case let .outbound(rule, payload, chain):
         let decision = [rule, payload].compactMap(nonEmpty).joined(separator: " · ")
         let path = chain.isEmpty
             ? AppLocalization.string("No proxy chain reported")
@@ -2517,7 +2517,7 @@ private func captureOriginTitle(_ origin: FlowLedgerCaptureOrigin) -> String {
 
 private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
     switch outcome {
-    case .viaMihomo: AppLocalization.string("Via Mihomo")
+    case .viaOutbound: AppLocalization.string("Proxy")
     case .direct: AppLocalization.string("Direct")
     case .rejected: AppLocalization.string("Rejected")
     case .failOpen: AppLocalization.string("Fail Open")
@@ -2527,7 +2527,7 @@ private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
 
 private func outcomeColor(_ outcome: FlowLedgerOutcome) -> Color {
     switch outcome {
-    case .viaMihomo: .green
+    case .viaOutbound: .green
     case .direct: .secondary
     case .rejected, .relayFailed: .red
     case .failOpen: .orange

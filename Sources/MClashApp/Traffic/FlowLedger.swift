@@ -32,34 +32,34 @@ struct FlowLedger: Sendable {
         recentlyClosedConnections: [FlowLedgerClosedConnection] = [],
         appRoutingActivities: [AppRoutingActivity] = [],
         flowRelayObservations: [FlowRelayObservation] = [],
-        mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
+        captureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
         defaultProfileID: ProfileID? = nil,
         associationWindow: TimeInterval = defaultAssociationWindow
     ) {
         let activeRecords = activeConnections.map {
-            FlowLedgerMihomoConnectionRecord(connection: $0, state: .active)
+            FlowLedgerConnectionRecord(connection: $0, state: .active)
         }
         let closedRecords = recentlyClosedConnections.map {
-            FlowLedgerMihomoConnectionRecord(
+            FlowLedgerConnectionRecord(
                 connection: $0.connection,
                 state: .closed(at: $0.closedAt)
             )
         }
         self.init(
-            mihomoConnections: activeRecords + closedRecords,
+            connectionRecords: activeRecords + closedRecords,
             appRoutingActivities: appRoutingActivities,
             flowRelayObservations: flowRelayObservations,
-            mihomoCaptureOrigins: mihomoCaptureOrigins,
+            captureOrigins: captureOrigins,
             defaultProfileID: defaultProfileID,
             associationWindow: associationWindow
         )
     }
 
     init(
-        mihomoConnections: [FlowLedgerMihomoConnectionRecord],
+        connectionRecords: [FlowLedgerConnectionRecord],
         appRoutingActivities: [AppRoutingActivity] = [],
         flowRelayObservations: [FlowRelayObservation] = [],
-        mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
+        captureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
         defaultProfileID: ProfileID? = nil,
         associationWindow: TimeInterval = defaultAssociationWindow
     ) {
@@ -72,7 +72,7 @@ struct FlowLedger: Sendable {
         unmeasuredHandoffCount = 0
 
         guard !Task<Never, Never>.isCancelled else { return }
-        let deduplicatedConnections = Self.deduplicated(mihomoConnections)
+        let deduplicatedConnections = Self.deduplicated(connectionRecords)
         let connectionStarts = Dictionary(
             uniqueKeysWithValues: deduplicatedConnections.compactMap { record in
                 RuntimeTimestampParser.date(from: record.connection.start).map {
@@ -157,7 +157,7 @@ struct FlowLedger: Sendable {
                 Self.entry(
                     record: record,
                     startedAt: connectionStarts[record.connection.id],
-                    captureOrigin: mihomoCaptureOrigins[record.connection.id],
+                    captureOrigin: captureOrigins[record.connection.id],
                     defaultProfileID: defaultProfileID
                 )
             )
@@ -293,12 +293,12 @@ struct FlowLedger: Sendable {
     }
 
     private struct ConnectionMatch {
-        let record: FlowLedgerMihomoConnectionRecord
+        let record: FlowLedgerConnectionRecord
         let association: FlowLedgerAssociation
     }
 
     private struct IndexedConnection {
-        let record: FlowLedgerMihomoConnectionRecord
+        let record: FlowLedgerConnectionRecord
         let startedAt: Date
     }
 
@@ -321,7 +321,7 @@ struct FlowLedger: Sendable {
         private let byRelaySourcePort: [RelayConnectionKey: [IndexedConnection]]
 
         init(
-            records: [FlowLedgerMihomoConnectionRecord],
+            records: [FlowLedgerConnectionRecord],
             connectionStarts: [String: Date]
         ) {
             var index: [ConnectionDestinationKey: [IndexedConnection]] = [:]
@@ -402,9 +402,9 @@ struct FlowLedger: Sendable {
     }
 
     private static func deduplicated(
-        _ records: [FlowLedgerMihomoConnectionRecord]
-    ) -> [FlowLedgerMihomoConnectionRecord] {
-        var byIdentifier: [String: FlowLedgerMihomoConnectionRecord] = [:]
+        _ records: [FlowLedgerConnectionRecord]
+    ) -> [FlowLedgerConnectionRecord] {
+        var byIdentifier: [String: FlowLedgerConnectionRecord] = [:]
         for record in records {
             if let existing = byIdentifier[record.connection.id],
                existing.state.isActive,
@@ -458,9 +458,9 @@ struct FlowLedger: Sendable {
 
         func preferredCandidate(
             relaySourcePort: UInt16? = nil
-        ) -> (record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval)? {
+        ) -> (record: FlowLedgerConnectionRecord, delta: TimeInterval)? {
             var best: (
-                record: FlowLedgerMihomoConnectionRecord,
+                record: FlowLedgerConnectionRecord,
                 delta: TimeInterval
             )?
             index.forEachCandidate(
@@ -507,8 +507,8 @@ struct FlowLedger: Sendable {
     }
 
     private static func candidateIsPreferred(
-        _ lhs: (record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval),
-        _ rhs: (record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval)
+        _ lhs: (record: FlowLedgerConnectionRecord, delta: TimeInterval),
+        _ rhs: (record: FlowLedgerConnectionRecord, delta: TimeInterval)
     ) -> Bool {
         if lhs.delta != rhs.delta { return lhs.delta < rhs.delta }
         if lhs.record.state.isActive != rhs.record.state.isActive {
@@ -579,7 +579,7 @@ struct FlowLedger: Sendable {
             captureOrigin: captureOrigin,
             destination: destination(activity.destination),
             appRoutingRule: nonEmpty(activity.matchedRuleIdentifier),
-            mihomoRoute: matchedRoute,
+            outboundRoute: matchedRoute,
             trafficTarget: activity.mclashTrafficTarget,
             profileID: activity.mclashProfileID(defaultProfileID: defaultProfileID),
             association: match?.association ?? .none,
@@ -593,24 +593,24 @@ struct FlowLedger: Sendable {
     }
 
     private static func entry(
-        record: FlowLedgerMihomoConnectionRecord,
+        record: FlowLedgerConnectionRecord,
         startedAt: Date?,
         captureOrigin explicitOrigin: FlowLedgerCaptureOrigin?,
         defaultProfileID: ProfileID?
     ) -> FlowLedgerEntry {
         let connection = record.connection
         return FlowLedgerEntry(
-            id: .mihomo(connection.id),
+            id: .legacyConnection(connection.id),
             application: application(connection.metadata),
             captureOrigin: explicitOrigin ?? inferredOrigin(connection.metadata),
             destination: destination(connection.metadata),
             appRoutingRule: nil,
-            mihomoRoute: route(connection),
+            outboundRoute: route(connection),
             trafficTarget: .defaultProfile,
             profileID: defaultProfileID,
             association: .none,
             state: record.state.isActive ? .active : .completed,
-            outcome: .viaMihomo,
+            outcome: .viaOutbound,
             startedAt: startedAt,
             endedAt: record.state.closedAt,
             upload: .exact(normalizedBytes(connection.upload)),
@@ -622,11 +622,11 @@ struct FlowLedger: Sendable {
         observation: FlowRelayObservation,
         defaultProfileID: ProfileID?
     ) -> FlowLedgerEntry {
-        let routeEvidence: FlowLedgerMihomoRoute? = {
+        let routeEvidence: FlowLedgerOutboundRoute? = {
             guard observation.route == .relay || !observation.routeChain.isEmpty else {
                 return nil
             }
-            return FlowLedgerMihomoRoute(
+            return FlowLedgerOutboundRoute(
                 rule: nonEmpty(observation.rule),
                 rulePayload: nonEmpty(observation.rulePayload),
                 chain: observation.routeChain,
@@ -637,8 +637,8 @@ struct FlowLedger: Sendable {
         case .direct: .direct
         case .rejected: .rejected
         case .failOpen: .failOpen
-        case .relay: .viaMihomo
-        case .unknown: observation.state == .failed ? .relayFailed : .viaMihomo
+        case .relay: .viaOutbound
+        case .unknown: observation.state == .failed ? .relayFailed : .viaOutbound
         }
         let state: FlowLedgerState = switch observation.state {
         case .active: .active
@@ -670,7 +670,7 @@ struct FlowLedger: Sendable {
                 port: observation.destinationPort
             ),
             appRoutingRule: nonEmpty(observation.rule),
-            mihomoRoute: routeEvidence,
+            outboundRoute: routeEvidence,
             trafficTarget: .defaultProfile,
             profileID: defaultProfileID,
             association: .none,
@@ -813,9 +813,9 @@ struct FlowLedger: Sendable {
         )
     }
 
-    private static func route(_ connection: MihomoConnection) -> FlowLedgerMihomoRoute {
+    private static func route(_ connection: MihomoConnection) -> FlowLedgerOutboundRoute {
         let explanation = RoutingExplanation(connection)
-        return FlowLedgerMihomoRoute(
+        return FlowLedgerOutboundRoute(
             rule: nonEmpty(connection.rule),
             rulePayload: nonEmpty(connection.rulePayload),
             chain: explanation.chains,
@@ -829,7 +829,7 @@ struct FlowLedger: Sendable {
         case .direct: .direct
         case .reject: .rejected
         case .failOpen: .failOpen
-        case .outbound: .viaMihomo
+        case .outbound: .viaOutbound
         }
     }
 
@@ -867,7 +867,7 @@ struct FlowLedger: Sendable {
         in entries: [FlowLedgerEntry]
     ) -> Date? {
         entries.lazy.compactMap { entry -> Date? in
-            guard let terminal = entry.mihomoRoute?.chain.last,
+            guard let terminal = entry.outboundRoute?.chain.last,
                   !isNonProxyTerminal(terminal) else {
                 return nil
             }
@@ -918,13 +918,14 @@ struct FlowLedger: Sendable {
 
 enum FlowLedgerEntryID: Hashable, Sendable {
     case appRouting(UUID)
-    case mihomo(String)
+    /// Identifier produced by the legacy connection snapshot adapter.
+    case legacyConnection(String)
     case native(String)
 
     fileprivate var sortKey: String {
         switch self {
         case let .appRouting(id): "app:\(id.uuidString)"
-        case let .mihomo(id): "mihomo:\(id)"
+        case let .legacyConnection(id): "mihomo:\(id)"
         case let .native(id): "native:\(id)"
         }
     }
@@ -936,7 +937,7 @@ struct FlowLedgerEntry: Hashable, Sendable, Identifiable {
     let captureOrigin: FlowLedgerCaptureOrigin
     let destination: FlowLedgerDestination
     let appRoutingRule: String?
-    let mihomoRoute: FlowLedgerMihomoRoute?
+    let outboundRoute: FlowLedgerOutboundRoute?
     let trafficTarget: ProfileTrafficTarget
     /// Compatibility projection for consumers which still need the real
     /// Profile backing a virtual Default flow.
@@ -955,15 +956,15 @@ struct FlowLedgerEntry: Hashable, Sendable, Identifiable {
         case .rejected: .rejected
         case .failOpen: .failOpen
         case .relayFailed: .relayFailed(appRoutingRule: appRoutingRule)
-        case .viaMihomo:
-            if let mihomoRoute {
-                .mihomo(
-                    rule: mihomoRoute.rule,
-                    rulePayload: mihomoRoute.rulePayload,
-                    chain: mihomoRoute.chain
+        case .viaOutbound:
+            if let outboundRoute {
+                .outbound(
+                    rule: outboundRoute.rule,
+                    rulePayload: outboundRoute.rulePayload,
+                    chain: outboundRoute.chain
                 )
             } else {
-                .unresolvedMihomo(appRoutingRule: appRoutingRule)
+                .unresolvedOutbound(appRoutingRule: appRoutingRule)
             }
         }
     }
@@ -999,7 +1000,7 @@ enum FlowLedgerState: Hashable, Sendable {
 }
 
 enum FlowLedgerOutcome: String, CaseIterable, Hashable, Sendable {
-    case viaMihomo
+    case viaOutbound
     case direct
     case rejected
     case failOpen
@@ -1045,7 +1046,7 @@ struct FlowLedgerApplication: Hashable, Sendable {
     var isAttributed: Bool { key != .unattributed }
 }
 
-struct FlowLedgerMihomoRoute: Hashable, Sendable {
+struct FlowLedgerOutboundRoute: Hashable, Sendable {
     let rule: String?
     let rulePayload: String?
     /// Root-to-leaf route order suitable for user-facing explanation.
@@ -1054,8 +1055,8 @@ struct FlowLedgerMihomoRoute: Hashable, Sendable {
 }
 
 enum FlowLedgerRouteKey: Hashable, Sendable {
-    case mihomo(rule: String?, rulePayload: String?, chain: [String])
-    case unresolvedMihomo(appRoutingRule: String?)
+    case outbound(rule: String?, rulePayload: String?, chain: [String])
+    case unresolvedOutbound(appRoutingRule: String?)
     case direct
     case rejected
     case failOpen
@@ -1063,9 +1064,9 @@ enum FlowLedgerRouteKey: Hashable, Sendable {
 
     fileprivate var sortKey: String {
         switch self {
-        case let .mihomo(rule, payload, chain):
-            "mihomo:\(rule ?? ""):\(payload ?? ""):\(chain.joined(separator: "→"))"
-        case let .unresolvedMihomo(rule): "mihomo-unresolved:\(rule ?? "")"
+        case let .outbound(rule, payload, chain):
+            "outbound:\(rule ?? ""):\(payload ?? ""):\(chain.joined(separator: "→"))"
+        case let .unresolvedOutbound(rule): "outbound-unresolved:\(rule ?? "")"
         case .direct: "direct"
         case .rejected: "rejected"
         case .failOpen: "fail-open"
@@ -1079,7 +1080,7 @@ struct FlowLedgerClosedConnection: Sendable {
     let closedAt: Date
 }
 
-struct FlowLedgerMihomoConnectionRecord: Sendable {
+struct FlowLedgerConnectionRecord: Sendable {
     enum State: Sendable {
         case active
         case closed(at: Date)

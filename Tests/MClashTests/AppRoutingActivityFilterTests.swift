@@ -39,7 +39,7 @@ struct AppRoutingActivityFilterTests {
         let direct = activity(configured: .direct, effective: .direct)
         #expect(AppRoutingActivityFilter.all.includes(direct))
         #expect(AppRoutingActivityFilter.direct.includes(direct))
-        #expect(!AppRoutingActivityFilter.viaMihomo.includes(direct))
+        #expect(!AppRoutingActivityFilter.viaOutbound.includes(direct))
     }
 
     @Test("Live managed flow follows relay lifecycle")

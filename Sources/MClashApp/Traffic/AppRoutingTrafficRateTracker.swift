@@ -22,7 +22,7 @@ struct AppRoutingByteRate: Equatable, Sendable {
 }
 
 enum AppRoutingTrafficPath: Hashable, Sendable {
-    case mihomo(MihomoRoute)
+    case outbound(OutboundRoute)
     case direct
     case failOpen
     case rejected
@@ -186,7 +186,7 @@ struct AppRoutingTrafficRateTracker: Sendable {
 
     private static func path(_ disposition: FlowTrafficDisposition) -> AppRoutingTrafficPath {
         switch disposition {
-        case let .outbound(route): .mihomo(route)
+        case let .outbound(route): .outbound(route)
         case .direct: .direct
         case .failOpen: .failOpen
         case .reject: .rejected

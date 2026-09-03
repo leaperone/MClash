@@ -56,9 +56,9 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         case .direct: AppLocalization.string("direct pass-through")
         case .reject: AppLocalization.string("rejected")
         case .failOpen: AppLocalization.string("fail-open")
-        case .outbound: AppLocalization.string("mihomo proxy")
+        case .outbound: AppLocalization.string("Proxy")
         }
-        let route = entry?.mihomoRoute
+        let route = entry?.outboundRoute
         return [
             activity.source.executablePath,
             activity.source.bundleIdentifier,
@@ -130,12 +130,12 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
             if FlowLedgerAssociationPresentation.isConfirmed(entry?.association) {
                 AppLocalization.string("Route confirmed")
             } else if FlowLedgerAssociationPresentation.isProbable(entry?.association) {
-                AppLocalization.string("Probable Mihomo match")
+                AppLocalization.string("Probable route match")
             } else if (activity.downloadDatagrams ?? 0) > 0 {
                 AppLocalization.string("Response observed")
             } else {
                 AppLocalization.format(
-                    "Sent to Mihomo %@",
+                    "Sent to proxy %@",
                     AppLocalization.string(activity.relayState.rawValue)
                 )
             }
@@ -147,7 +147,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         entry: FlowLedgerEntry?
     ) -> String {
         guard case .outbound = activity.effectiveAction else { return "" }
-        guard let route = entry?.mihomoRoute else {
+        guard let route = entry?.outboundRoute else {
             if activity.relayState == .failed {
                 return AppLocalization.string("Relay failed")
             }
@@ -156,10 +156,10 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
             }
             if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
                 return AppLocalization.string(
-                    "Sent to Mihomo awaiting connections confirmation"
+                    "Sent to proxy; awaiting route details"
                 )
             }
-            return AppLocalization.string("Waiting for Mihomo metadata")
+            return AppLocalization.string("Waiting for route details")
         }
         return [route.rule, route.rulePayload, route.chain.joined(separator: " ")]
             .compactMap { $0 }
@@ -1075,7 +1075,7 @@ struct AppRoutingView: View {
         switch model.networkCaptureState {
         case .on:
             AppLocalization.string(
-                "Start using an application routed through Mihomo. Provider-owned TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed."
+                "Start using an application routed through MClash. Managed TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed."
             )
         default:
             AppLocalization.string(
@@ -1248,7 +1248,11 @@ struct AppRoutingView: View {
             case let .group(group): group
             }
             guard let profileID = route.routingProfileID else {
-                return AppLocalization.format("Mihomo %@", target)
+                return AppLocalization.format(
+                    "%@ · %@",
+                    AppLocalization.string("Proxy"),
+                    target
+                )
             }
             let name = model.profiles.first {
                 $0.id.rawValue == profileID.uuid
@@ -1274,27 +1278,27 @@ struct AppRoutingView: View {
         case .failOpen: AppLocalization.string("Fail-open")
         case .outbound: switch activity.relayState {
             case .pending, .connecting: AppLocalization.string("Connecting")
-            case .ready: AppLocalization.string("Mihomo ready")
+            case .ready: AppLocalization.string("Proxy ready")
             case .relaying:
                 if routeIsConfirmed(activity) {
                     AppLocalization.string("Route confirmed")
                 } else if routeIsProbable(activity) {
-                    AppLocalization.string("Probable Mihomo match")
+                    AppLocalization.string("Probable route match")
                 } else if (activity.downloadDatagrams ?? 0) > 0 {
                     AppLocalization.string("Response observed")
                 } else {
-                    AppLocalization.string("Sent to Mihomo")
+                    AppLocalization.string("Sent to proxy")
                 }
             case .completed:
                 if routeIsConfirmed(activity) {
                     AppLocalization.string("Route confirmed")
                 } else if routeIsProbable(activity) {
-                    AppLocalization.string("Probable Mihomo match")
+                    AppLocalization.string("Probable route match")
                 } else {
-                    AppLocalization.string("Mihomo complete")
+                    AppLocalization.string("Proxy complete")
                 }
             case .failed: AppLocalization.string("Relay failed")
-            case .notApplicable: AppLocalization.string("Mihomo")
+            case .notApplicable: AppLocalization.string("Proxy")
             }
         }
     }
@@ -1409,7 +1413,7 @@ struct AppRoutingView: View {
     private var appRoutingEnableConfirmationMessage: String {
         var effects = [
             AppLocalization.string(
-                "MClash will restart the Mihomo core, which can close current connections."
+                "MClash will restart the active runtime, which can close current connections."
             ),
             AppLocalization.string("macOS may ask you to approve the MClash Network Filter.")
         ]
@@ -1773,8 +1777,8 @@ struct AppRoutingView: View {
         switch action {
         case .direct: AppLocalization.string("Direct")
         case .reject: AppLocalization.string("Reject")
-        case .outbound(.profileRules): AppLocalization.string("Mihomo Rules")
-        case .outbound(.global): AppLocalization.string("Mihomo Global")
+        case .outbound(.profileRules): AppLocalization.string("Profile Rules")
+        case .outbound(.global): AppLocalization.string("Global")
         case let .outbound(.group(group)): group
         case let .outbound(.profile(profileID, target)):
             AppLocalization.format(
@@ -1791,7 +1795,7 @@ struct AppRoutingView: View {
         }?.name ?? AppLocalization.string("Unavailable profile")
     }
 
-    private func profileRouteTitle(_ route: MihomoProfileRoute) -> String {
+    private func profileRouteTitle(_ route: OutboundProfileRoute) -> String {
         switch route {
         case .rules: AppLocalization.string("Rules")
         case .global: AppLocalization.string("Global")
@@ -1850,16 +1854,16 @@ private struct AppRoutingFlowInspector: View {
                             value: outcomeTitle,
                             symbol: outcomeSymbol
                         )
-                        if let route = ledgerEntry?.mihomoRoute {
+                        if let route = ledgerEntry?.outboundRoute {
                             pipelineStage(
-                                "Mihomo Match",
-                                value: mihomoAssociationTitle,
+                                "Why this rule matched",
+                                value: routeAssociationTitle,
                                 symbol: routeIsConfirmed
                                     ? "checkmark.seal.fill"
                                     : "questionmark.diamond.fill"
                             )
                             pipelineStage(
-                                "Mihomo Rule",
+                                "Rule",
                                 value: [route.rule, route.rulePayload]
                                     .compactMap { $0 }
                                     .joined(separator: " · "),
@@ -1874,9 +1878,9 @@ private struct AppRoutingFlowInspector: View {
                             )
                         } else if case .outbound = activity.effectiveAction {
                             pipelineStage(
-                                "Mihomo Metadata",
-                                value: mihomoEvidenceTitle,
-                                symbol: mihomoEvidenceSymbol
+                                "Route metadata",
+                                value: routeEvidenceTitle,
+                                symbol: routeEvidenceSymbol
                             )
                         }
                         pipelineStage("Destination", value: destination, symbol: "scope")
@@ -2085,10 +2089,10 @@ private struct AppRoutingFlowInspector: View {
 
     private var outcomeTitle: String {
         switch ledgerEntry?.outcome {
-        case .viaMihomo:
+        case .viaOutbound:
             routeIsConfirmed
-                ? AppLocalization.string("Mihomo route confirmed")
-                : mihomoEvidenceTitle
+                ? AppLocalization.string("Route confirmed")
+                : routeEvidenceTitle
         case .direct:
             activity.payloadBytesAreMeasured == true
                 ? AppLocalization.string("Direct · relayed and measured")
@@ -2101,14 +2105,14 @@ private struct AppRoutingFlowInspector: View {
             case .direct: AppLocalization.string("Direct")
             case .reject: AppLocalization.string("Rejected")
             case .failOpen: AppLocalization.string("Fail-open")
-            case .outbound: mihomoEvidenceTitle
+            case .outbound: routeEvidenceTitle
             }
         }
     }
 
     private var outcomeSymbol: String {
         switch ledgerEntry?.outcome {
-        case .viaMihomo: "point.3.connected.trianglepath.dotted"
+        case .viaOutbound: "point.3.connected.trianglepath.dotted"
         case .direct: "arrow.right"
         case .rejected: "xmark.octagon.fill"
         case .failOpen: "arrow.uturn.right"
@@ -2125,27 +2129,27 @@ private struct AppRoutingFlowInspector: View {
         FlowLedgerAssociationPresentation.isProbable(ledgerEntry?.association)
     }
 
-    private var mihomoAssociationTitle: String {
+    private var routeAssociationTitle: String {
         FlowLedgerAssociationPresentation.title(ledgerEntry?.association)
     }
 
-    private var mihomoEvidenceTitle: String {
+    private var routeEvidenceTitle: String {
         if routeIsConfirmed {
-            return AppLocalization.string("Route confirmed by Mihomo /connections")
+            return AppLocalization.string("Route confirmed by connection telemetry")
         }
-        if routeIsProbable { return mihomoAssociationTitle }
+        if routeIsProbable { return routeAssociationTitle }
         if (activity.downloadDatagrams ?? 0) > 0 {
             return AppLocalization.string("Response observed; node path not yet matched")
         }
         if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
             return AppLocalization.string(
-                "Sent to Mihomo; awaiting /connections confirmation"
+                "Sent to proxy; awaiting connection telemetry"
             )
         }
-        return AppLocalization.string("Waiting for an associated Mihomo connection")
+        return AppLocalization.string("Waiting for associated connection telemetry")
     }
 
-    private var mihomoEvidenceSymbol: String {
+    private var routeEvidenceSymbol: String {
         if routeIsConfirmed { return "checkmark.seal.fill" }
         if (activity.downloadDatagrams ?? 0) > 0 { return "arrow.down.circle.fill" }
         if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {

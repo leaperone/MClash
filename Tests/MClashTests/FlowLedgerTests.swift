@@ -29,7 +29,7 @@ struct FlowLedgerTests {
         )
 
         let ledger = FlowLedger(
-            mihomoConnections: [],
+            connectionRecords: [],
             flowRelayObservations: [observation]
         )
         let entry = try #require(ledger.entries.first)
@@ -38,11 +38,11 @@ struct FlowLedgerTests {
         #expect(entry.application.displayName == "Safari")
         #expect(entry.captureOrigin == .appRouting)
         #expect(entry.destination.hostname == "api.example.com")
-        #expect(entry.mihomoRoute?.chain == ["CUNOE-Proxy", "US-01"])
+        #expect(entry.outboundRoute?.chain == ["CUNOE-Proxy", "US-01"])
         #expect(entry.upload == .exact(17))
         #expect(entry.download == .exact(83))
         #expect(entry.state == .completed)
-        #expect(entry.outcome == .viaMihomo)
+        #expect(entry.outcome == .viaOutbound)
         #expect(ledger.routeAggregates.first?.traffic.exactTotalBytes == 100)
     }
 
@@ -75,15 +75,15 @@ struct FlowLedgerTests {
         #expect(ledger.entries.count == 2)
         let merged = try #require(ledger.entries.first { $0.id == .appRouting(activity.id) })
         #expect(merged.association == .exactRelayPort(connectionID: "exact"))
-        #expect(merged.mihomoRoute?.rule == "DomainSuffix")
-        #expect(merged.mihomoRoute?.chain == ["Proxy Group", "Node A"])
+        #expect(merged.outboundRoute?.rule == "DomainSuffix")
+        #expect(merged.outboundRoute?.chain == ["Proxy Group", "Node A"])
         #expect(merged.application.displayName == "ExampleApp")
         #expect(merged.captureOrigin == .appRouting)
         #expect(merged.appRoutingRule == "Example Apps")
         #expect(merged.upload == .exact(12))
         #expect(merged.download == .exact(34))
-        #expect(ledger.entries.contains { $0.id == .mihomo("closer") })
-        #expect(!ledger.entries.contains { $0.id == .mihomo("exact") })
+        #expect(ledger.entries.contains { $0.id == .legacyConnection("closer") })
+        #expect(!ledger.entries.contains { $0.id == .legacyConnection("exact") })
     }
 
     @Test("DNS Proxy activity remains distinct from App Routing")
@@ -141,7 +141,7 @@ struct FlowLedgerTests {
             ledger.entries.first { $0.id == .appRouting(activity.id) }
         )
         let defaultEntry = try #require(
-            ledger.entries.first { $0.id == .mihomo("default-lookalike") }
+            ledger.entries.first { $0.id == .legacyConnection("default-lookalike") }
         )
 
         #expect(auxiliaryEntry.profileID == auxiliaryProfileID)
@@ -249,7 +249,7 @@ struct FlowLedgerTests {
             ledger.entries.first { $0.id == .appRouting(activity.id) }?.association
                 == FlowLedgerAssociation.none
         )
-        #expect(ledger.entries.contains { $0.id == .mihomo("unrelated") })
+        #expect(ledger.entries.contains { $0.id == .legacyConnection("unrelated") })
     }
 
     @Test("Handoff and rejection never masquerade as measured zero bytes")
@@ -357,7 +357,7 @@ struct FlowLedgerTests {
         #expect(application.traffic.notApplicableCount == 1)
 
         #expect(ledger.routeAggregates.contains { aggregate in
-            guard case let .mihomo(rule, payload, chain) = aggregate.route else {
+            guard case let .outbound(rule, payload, chain) = aggregate.route else {
                 return false
             }
             return rule == "DomainSuffix"
@@ -366,7 +366,7 @@ struct FlowLedgerTests {
                 && aggregate.traffic.exactTotalBytes == 1_000
         })
         #expect(
-            ledger.outcomeAggregates.first { $0.outcome == .viaMihomo }?.entryCount
+            ledger.outcomeAggregates.first { $0.outcome == .viaOutbound }?.entryCount
                 == 1
         )
         #expect(
@@ -397,10 +397,10 @@ struct FlowLedgerTests {
             ]
         )
 
-        let closed = try #require(ledger.entries.first { $0.id == .mihomo("older") })
+        let closed = try #require(ledger.entries.first { $0.id == .legacyConnection("older") })
         #expect(closed.state == .completed)
         #expect(closed.endedAt == closedAt)
-        #expect(ledger.recentEntries(limit: 1).map(\.id) == [.mihomo("older")])
+        #expect(ledger.recentEntries(limit: 1).map(\.id) == [.legacyConnection("older")])
         #expect(
             ledger.recentEntries(limit: 10, since: baseDate).isEmpty
         )
