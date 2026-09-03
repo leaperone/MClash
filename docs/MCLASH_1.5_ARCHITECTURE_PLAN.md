@@ -379,6 +379,10 @@ and can be tested without producing a Mihomo YAML document.
 - `c2071c3` adds a bounded real UDP loopback test for `SocketDNSUpstream`:
   a local server receives the query, preserves the transaction ID and returns
   a validated DNS response without external network access.
+- `37a7105` fixes native flow planning to derive the destination directly from
+  the intercepted endpoint instead of requiring a legacy Mihomo route plan;
+  VLESS, Trojan and Shadowsocks native connectors now receive their proper
+  destination and cannot be misclassified as SOCKS5 handshakes.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
