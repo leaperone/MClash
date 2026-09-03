@@ -117,7 +117,7 @@ jobs:
         run: python3 scripts/test-attach-appcast-deltas.py
 
   verify-integration:
-    name: Verify Mihomo integration smoke
+    name: Verify compatibility integration smoke
     needs: prepare
     # Keep release verification on the standard, public-repository runner.
     # Do not replace this with a paid runner label.
