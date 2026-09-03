@@ -121,8 +121,11 @@ SOCKS5, System Proxy or App Routing.
       fingerprints and show a missing-node warning after refresh.
 - [~] Make fallback/relay order explicit and draggable; top-to-bottom is
       priority and is persisted in the workspace.
-- [ ] Bound large groups, de-duplicate nodes across regional groups by identity,
+- [~] Bound large groups, de-duplicate nodes across regional groups by identity,
       and show automatic matches, fixed pins, exclusions and current selection.
+      Native source preference now prevents secondary-provider nodes from being
+      flattened into ordinary regional groups; explicit group caps and richer
+      UI counts remain pending.
 - [ ] Replace opaque “new group/import strategy” flows with task templates:
       Node Selection, region priority, failover, fixed node and custom criteria.
 
