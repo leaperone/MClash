@@ -100,11 +100,13 @@ final class NativeInboundListenerManager: @unchecked Sendable {
                         protocolName: target.protocolName
                     )
                 }
-                // This listener currently has an inbound-aware handshake only
-                // for SOCKS5 node targets. Every other protocol remains
-                // fail-closed: opening a raw endpoint would leak application
-                // bytes in the wrong wire format and look like Direct.
-                guard target.protocolName == "socks5" else {
+                // The catalog connector below implements the complete
+                // outbound preamble for SOCKS5, HTTP CONNECT, plain VLESS TCP
+                // and Trojan TCP. Unsupported transports remain fail-closed:
+                // opening a raw endpoint would leak application bytes in the
+                // wrong wire format and look like Direct.
+                guard ["socks5", "http", "vless", "trojan"].contains(target.protocolName),
+                      target.parameters["network"]?.lowercased() != "ws" else {
                     throw NativeInboundListenerConfigurationError.unsupportedOutboundTransport(
                         route: route,
                         protocolName: target.protocolName
@@ -240,11 +242,16 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
                 using: .tcp
             )
         }
-        return NWConnection(
-            host: NWEndpoint.Host(entry.target.host),
-            port: NWEndpoint.Port(rawValue: entry.target.port)!,
-            using: .tcp
-        )
+        switch entry.target.protocolName {
+        case "http":
+            return NativeHTTPConnectOutboundConnector(target: entry.target).makeConnection()
+        case "vless":
+            return NativeVLESSOutboundConnector(target: entry.target).makeConnection()
+        case "trojan":
+            return NativeTrojanOutboundConnector(target: entry.target).makeConnection()
+        default:
+            return NativeSOCKS5OutboundConnector(target: entry.target).makeConnection()
+        }
     }
 
     func establish(
@@ -254,8 +261,7 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
         completion: @escaping @Sendable (Error?) -> Void
     ) {
         guard case let .proxy(routeKey) = route,
-              let entry = catalog.entries.first(where: { $0.route.stableSortKey == routeKey }),
-              entry.target.protocolName == "socks5"
+              let entry = catalog.entries.first(where: { $0.route.stableSortKey == routeKey })
         else {
             completion(NativeInboundSOCKS5HandshakeError.invalidRoute)
             connection.cancel()
@@ -263,6 +269,29 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
         }
 
         let target = entry.target
+        if target.protocolName == "http" {
+            do {
+                let request = try NativeHTTPConnectOutboundConnector(target: target)
+                    .handshake(for: SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port))
+                send(request, on: connection) { [self, connection] error in
+                    guard error == nil else { completion(error); return }
+                    self.receiveHTTPResponse(from: connection, buffer: Data(), completion: completion)
+                }
+            } catch { completion(error); connection.cancel() }
+            return
+        }
+        if target.protocolName == "vless" || target.protocolName == "trojan" {
+            do {
+                let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
+                let payload: Data = if target.protocolName == "vless" {
+                    try NativeVLESSOutboundConnector(target: target).handshake(for: endpoint)
+                } else {
+                    try NativeTrojanOutboundConnector(target: target).handshake(for: endpoint)
+                }
+                send(payload, on: connection, completion: completion)
+            } catch { completion(error); connection.cancel() }
+            return
+        }
         let username = target.parameters["username"] ?? target.parameters["user"]
         let password = target.parameters["password"] ?? target.parameters["pass"]
         let needsCredentials = username != nil || password != nil
@@ -271,7 +300,7 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
             let methods: [SOCKS5AuthenticationMethod] = needsCredentials
                 ? [.usernamePassword]
                 : [.noAuthenticationRequired]
-            try send(Data(try SOCKS5Codec.encodeGreeting(methods: methods)), on: connection) { error in
+            send(Data(try SOCKS5Codec.encodeGreeting(methods: methods)), on: connection) { error in
                 guard error == nil else { completion(error); return }
                 self.receiveExact(2, from: connection, buffer: Data()) { methodData, error in
                     if let error { completion(error); return }
@@ -283,7 +312,7 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
                         if needsCredentials {
                             guard let username, let password else { throw NativeInboundSOCKS5HandshakeError.missingCredentials }
                             let credentials = try SOCKS5UsernamePasswordCredentials(username: username, password: password)
-                            try self.send(
+                            self.send(
                                 SOCKS5Codec.encodeUsernamePasswordRequest(credentials: credentials),
                                 on: connection
                             ) { error in
@@ -309,7 +338,7 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
         _ data: Data,
         on connection: NWConnection,
         completion: @escaping @Sendable (Error?) -> Void
-    ) throws {
+    ) {
         connection.send(content: data, completion: .contentProcessed(completion))
     }
 
@@ -320,7 +349,7 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
     ) throws {
         let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
         let request = try SOCKS5CommandRequest(command: .connect, endpoint: endpoint)
-        try send(SOCKS5Codec.encodeCommandRequest(request), on: connection) { [weak connection] error in
+        send(try SOCKS5Codec.encodeCommandRequest(request), on: connection) { [weak connection] error in
             guard let connection else { completion(error); return }
             guard error == nil else { completion(error); return }
             self.receiveReply(from: connection, buffer: Data(), completion: completion)
@@ -375,6 +404,30 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
             } catch {
                 completion(error)
                 connection.cancel()
+            }
+        }
+    }
+
+    private func receiveHTTPResponse(
+        from connection: NWConnection,
+        buffer: Data,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: HTTPProxyCodec.maximumHeaderBytes) { [weak connection] data, _, complete, error in
+            guard let connection else { completion(NativeInboundSOCKS5HandshakeError.connectionUnavailable); return }
+            var next = buffer
+            if let data { next.append(data) }
+            if let error { completion(error); return }
+            if next.range(of: Data("\r\n\r\n".utf8)) != nil {
+                do {
+                    _ = try HTTPProxyCodec.decodeConnectResponse(next)
+                    completion(nil)
+                } catch { completion(error); connection.cancel() }
+            } else if complete || next.count >= HTTPProxyCodec.maximumHeaderBytes {
+                completion(NativeInboundSOCKS5HandshakeError.truncatedResponse)
+                connection.cancel()
+            } else {
+                self.receiveHTTPResponse(from: connection, buffer: next, completion: completion)
             }
         }
     }
