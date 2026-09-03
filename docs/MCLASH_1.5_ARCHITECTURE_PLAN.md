@@ -347,6 +347,10 @@ and can be tested without producing a Mihomo YAML document.
   native payload boundary change and again reached `state=running` with
   `startedAt`, `workspaceRevision=28`, four running listener handles and
   `controlPlaneAvailable=false`.
+- After the YAML-free native compiler change, a fresh rebuilt bundle again
+  passed copied-profile shadow auto-connect: `state=running`,
+  `hasCompiledRuntimePlan=true`, `workspaceRevision=28`, and four running
+  listener handles, with no native startup error.
 - The subsequent full integration smoke after native payload changes passed
   GEO verification, dual-profile/listener/crash-recovery checks, system proxy
   read-only checks and API smoke; no production service was restarted.
