@@ -483,11 +483,18 @@ and can be tested without producing a Mihomo YAML document.
 - `99de81a` makes `.outbound(OutboundRoute)` the canonical rule action and flow
   disposition throughout the MClash policy path; historical `mihomo` Codable
   keys remain read-compatible but are no longer emitted.
-- `5b2f3bd` adds a native-only bundle mode. A 1.5.0 build 150004 contained no
-  `mclash-mihomo` executable, passed deep code-signature verification, copied
-  the current local profile tree into an isolated namespace and reached
-  `backend=native`, `state=running`, workspace revision 28 with four enabled
-  entrance handles. This proves binary-free plan/lifecycle startup, not yet
+- `5b2f3bd` adds a native-only bundle mode. Builds 150004–150008 contained no
+  `mclash-mihomo` executable and passed deep code-signature verification.
+- The first native-only smoke claims were invalid: the smoke script ignored its
+  positional App path and silently exercised `.build/release/MClash.app`.
+  `effb01e` fixes that test-harness defect and adds a packaging regression test.
+- After the harness fix, the actual binary-free build 150008 copied the current
+  local profile tree into an isolated namespace and reached `backend=native`,
+  `state=running`, workspace revision 28 with four enabled entrance handles.
+  Its runtime catalog contained only native-capable selections: CUNOE VLESS
+  for profile/global, United States and failover; VLESS for Hong Kong/Japan;
+  and Trojan for the explicit 飞鸟云 group. `unsupportedConnectors` was empty.
+  This proves binary-free plan/lifecycle and selection startup, not yet
   external protocol interoperability.
 
 ### Definition of done
