@@ -24,6 +24,10 @@ automation_directory="$(mktemp -d "${TMPDIR:-/tmp}/mclash-native-cli.XXXXXX")"
 namespace="mclash-native-cli-${RANDOM}-$$"
 application_support_identifier="${namespace}"
 shadow_application_support=""
+skip_auto_connect=1
+if [[ "${MCLASH_SHADOW_AUTO_CONNECT:-0}" == "1" ]]; then
+  skip_auto_connect=0
+fi
 log_file="${automation_directory}/mclash.log"
 app_pid=""
 
@@ -49,6 +53,11 @@ if [[ -n "${MCLASH_SHADOW_SOURCE_ROOT:-}" ]]; then
   if [[ -d "${MCLASH_SHADOW_SOURCE_ROOT}/Profiles" ]]; then
     /usr/bin/ditto "${MCLASH_SHADOW_SOURCE_ROOT}/Profiles" \
       "${shadow_application_support}/Profiles"
+  fi
+  if [[ -f "${MCLASH_SHADOW_SOURCE_ROOT}/State/active-profile.json" ]]; then
+    mkdir -p "${shadow_application_support}/State"
+    /usr/bin/ditto "${MCLASH_SHADOW_SOURCE_ROOT}/State/active-profile.json" \
+      "${shadow_application_support}/State/active-profile.json"
   fi
   shadow_manifest="${shadow_application_support}/Configuration/manifest.json"
   if [[ -f "${shadow_manifest}" ]]; then
@@ -108,7 +117,7 @@ trap cleanup EXIT INT TERM
 
 MCLASH_TEST_MODE=1 \
 MCLASH_NATIVE_RUNTIME=1 \
-MCLASH_SKIP_AUTO_CONNECT=1 \
+MCLASH_SKIP_AUTO_CONNECT="${skip_auto_connect}" \
 MCLASH_SKIP_SOURCE_SYNCHRONIZATION=1 \
 MCLASH_INSTANCE_NAMESPACE="${namespace}" \
 MCLASH_APPLICATION_SUPPORT_IDENTIFIER="${application_support_identifier}" \
@@ -149,11 +158,30 @@ print(socket)
 PY
 )"
 
-response="$("${cli}" runtime-diagnostics --socket "${socket_path}" --pretty \
-  --timeout "${MCLASH_SMOKE_TIMEOUT_SECONDS:-30}")"
+response=""
+if [[ "${MCLASH_SHADOW_AUTO_CONNECT:-0}" == "1" ]]; then
+  connect_deadline=$((SECONDS + ${MCLASH_SMOKE_TIMEOUT_SECONDS:-30}))
+  while (( SECONDS < connect_deadline )); do
+    response="$("${cli}" runtime-diagnostics --socket "${socket_path}" --pretty \
+      --timeout "${MCLASH_SMOKE_TIMEOUT_SECONDS:-30}")"
+    state="$(/usr/bin/python3 - "${response}" <<'PY'
+import json, sys
+try:
+    print(json.loads(sys.argv[1]).get("result", {}).get("state", ""))
+except Exception:
+    print("")
+PY
+)"
+    [[ "${state}" == "running" ]] && break
+    sleep 0.2
+  done
+else
+  response="$("${cli}" runtime-diagnostics --socket "${socket_path}" --pretty \
+    --timeout "${MCLASH_SMOKE_TIMEOUT_SECONDS:-30}")"
+fi
 print -r -- "${response}"
 
-/usr/bin/python3 - "${response}" "${MCLASH_SHADOW_SOURCE_ROOT:-}" <<'PY'
+/usr/bin/python3 - "${response}" "${MCLASH_SHADOW_SOURCE_ROOT:-}" "${MCLASH_SHADOW_AUTO_CONNECT:-0}" <<'PY'
 import json
 import sys
 
@@ -173,6 +201,9 @@ if sys.argv[2]:
     revision = diagnostics.get("workspaceRevision")
     if not isinstance(revision, int) or revision <= 0 or not diagnostics.get("hasCompiledRuntimePlan"):
         raise SystemExit("copied-profile shadow did not load a compiled workspace plan")
+if sys.argv[3] == "1":
+    if diagnostics.get("state") != "running" or not diagnostics.get("startedAt"):
+        raise SystemExit("native shadow auto-connect did not reach a running state")
 PY
 
 print "Native runtime CLI smoke passed (namespace=${namespace})."

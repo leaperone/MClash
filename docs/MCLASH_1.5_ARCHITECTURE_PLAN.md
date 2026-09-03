@@ -338,6 +338,11 @@ and can be tested without producing a Mihomo YAML document.
   passed with `hasCompiledRuntimePlan=true`, `workspaceRevision=28`, five
   entrances and a non-empty connector capability matrix; Hysteria2 remained
   explicitly `legacyFallback` with its QUIC reason.
+- With `MCLASH_SHADOW_AUTO_CONNECT=1`, the copied-profile shadow also retains
+  only `State/active-profile.json` and reached the in-process native runtime
+  `running` state with `startedAt` set and four enabled listener handles
+  running. The Network Extension and System Proxy remain inert, so this proves
+  lifecycle/plan activation but not external traffic interoperability.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
