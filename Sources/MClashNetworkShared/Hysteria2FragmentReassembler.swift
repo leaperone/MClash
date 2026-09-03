@@ -8,6 +8,8 @@ public struct Hysteria2FragmentReassembler: Sendable {
 
     private struct Pending: Sendable {
         let expectedCount: UInt8
+        let host: String
+        let port: UInt16
         var fragments: [UInt8: Data]
         var bytes: Int
         var updatedAt: Date
@@ -35,9 +37,23 @@ public struct Hysteria2FragmentReassembler: Sendable {
         }
         if pending[key] == nil {
             guard pending.count < maximumPackets else { return nil }
-            pending[key] = Pending(expectedCount: message.fragmentCount, fragments: [:], bytes: 0, updatedAt: now)
+            pending[key] = Pending(
+                expectedCount: message.fragmentCount,
+                host: message.host,
+                port: message.port,
+                fragments: [:],
+                bytes: 0,
+                updatedAt: now
+            )
         }
         guard var value = pending[key] else { return nil }
+        // A packet's fragments must all address the same destination.  Do not
+        // let a later fragment redirect an otherwise valid reassembled payload.
+        guard value.host == message.host, value.port == message.port else {
+            pending.removeValue(forKey: key)
+            totalBytes -= value.bytes
+            return nil
+        }
         if value.fragments[message.fragmentID] == nil {
             let projected = totalBytes + message.payload.count
             guard projected <= maximumBytes else { return nil }
