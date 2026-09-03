@@ -231,10 +231,21 @@ struct OutboundConnectorTests {
             parameters: ["password": "secret"]
         )
         let connector = NativeHysteria2OutboundConnector(target: target)
-        #expect(try connector.authHeaders().contains { $0.0 == "Hysteria-Auth" && $0.1 == "secret" })
+        let headers = try connector.authHeaders()
+        let hasAuthentication = headers.contains {
+            $0.0 == "Hysteria-Auth" && $0.1 == "secret"
+        }
+        #expect(hasAuthentication)
         let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
-        #expect(try connector.tcpRequest(for: destination).count > 3)
-        #expect(try connector.udpMessage(sessionID: 1, packetID: 1, destination: destination, payload: Data([1])).count > 10)
+        let tcpRequest = try connector.tcpRequest(for: destination)
+        let udpMessage = try connector.udpMessage(
+            sessionID: 1,
+            packetID: 1,
+            destination: destination,
+            payload: Data([1])
+        )
+        #expect(tcpRequest.count > 3)
+        #expect(udpMessage.count > 10)
     }
 
     @Test("HTTP CONNECT connector emits a bounded authenticated request")

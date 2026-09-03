@@ -90,7 +90,7 @@ struct LocalProfileShadowSmokeTests {
                 runtimeDocument.entrances[index].enabled = false
             }
         }
-        guard let httpPort = firstHTTPPort, let socksPort = firstSOCKSPort else {
+        guard let httpPort = firstHTTPPort, firstSOCKSPort != nil else {
             throw ShadowSmokeFailure.noUsableEntrance
         }
         let controllerPort = ports[nextPortIndex]

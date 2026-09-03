@@ -212,7 +212,7 @@ struct NetworkExtensionMihomoListenerTests {
             mihomoListener: primary,
             routeProxyEndpoints: endpoints
         )
-        let encoded = try #require(runtime.encodedMihomoRouteProxyCatalog)
+        let encoded = try #require(runtime.encodedOutboundConnectorCatalog)
         let catalog = try MihomoRouteProxyCatalog.decode(encoded)
 
         #expect(catalog.map(\.route) == [.profileRules, route])

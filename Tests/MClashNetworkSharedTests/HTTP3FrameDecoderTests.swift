@@ -33,10 +33,13 @@ struct HTTP3FrameDecoderTests {
             HTTP3Frame(type: .data, payload: Data("body".utf8))
         )
         var decoder = HTTP3FrameDecoder()
-        #expect(try decoder.append(first + second) == [
+        let frames = try decoder.append(first + second)
+        let expected = [
             HTTP3Frame(type: .headers, payload: Data([0x01])),
             HTTP3Frame(type: .data, payload: Data("body".utf8)),
-        ])
+        ]
+        let preservesOrder = frames == expected
+        #expect(preservesOrder)
     }
 
     @Test("Rejects an unsupported frame type only once its complete frame arrives")
