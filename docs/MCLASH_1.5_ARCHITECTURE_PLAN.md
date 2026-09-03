@@ -376,6 +376,9 @@ and can be tested without producing a Mihomo YAML document.
   verifies the compatibility payload is empty while plan validation succeeds.
 - `be14dd3` keeps the same payload boundary when DNS capture is disabled in a
   native workspace, so legacy route material is not reintroduced by an opt-out.
+- `c2071c3` adds a bounded real UDP loopback test for `SocketDNSUpstream`:
+  a local server receives the query, preserves the transaction ID and returns
+  a validated DNS response without external network access.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
