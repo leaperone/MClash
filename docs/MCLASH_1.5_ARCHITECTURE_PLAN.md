@@ -333,6 +333,9 @@ and can be tested without producing a Mihomo YAML document.
   HTTP Upgrade is validated with RFC 6455 accept checks before the masked
   VLESS binary request is sent; loopback endpoint interoperability is still a
   separate release gate.
+- The rebuilt bundle and latest isolated CLI smoke pass after the WebSocket
+  integration; diagnostics continue to report `controlPlaneAvailable=false`
+  and a compiled native plan without starting a Mihomo process.
 
 ### Definition of done
 
