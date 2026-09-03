@@ -60,7 +60,7 @@ user/compiler action changes it.
       not yet bind every socket or replace the production default.
 - [ ] Make `NativeRuntimeEngine` the default lifecycle owner; AppModel must
       supply a plan and `MClashListenerRegistry`, never a rendered YAML.
-- [ ] Remove Mihomo controller readiness, API polling and YAML generation from
+- [~] Remove Mihomo controller readiness, API polling and YAML generation from
       the native activation path. Keep a separately named legacy adapter only
       for rollback during the migration.
 - [~] Native listener reload now has atomic replacement, generation guards and
@@ -307,6 +307,9 @@ and can be tested without producing a Mihomo YAML document.
 - `59e19e4` and `4dd97b2` are included in the clean verification run after
   resolver/snapshot integration; native group target selection now follows
   selector and health policy instead of the first raw member.
+- `38d97fa` is included in the clean verification run and routes native
+  inbound HTTP/SOCKS traffic through protocol-specific outbound handshakes
+  for SOCKS5, HTTP CONNECT, plain VLESS TCP and Trojan TCP.
 
 ### Definition of done
 
