@@ -272,7 +272,11 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             case .shadowsocks:
                 guard let destination = routePlan?.destinations.original else { return nil }
                 return NativeShadowsocksRelayConnector(target: target, destination: destination)
-            case .vless: return NativeVLESSRelayConnector(target: target)
+            case .vless:
+                if target.parameters["network"]?.lowercased() == "ws" {
+                    return NativeVLESSWebSocketRelayConnector(target: target)
+                }
+                return NativeVLESSRelayConnector(target: target)
             case .trojan: return NativeTrojanRelayConnector(target: target)
             case .hysteria2: return nil
             }
@@ -291,7 +295,8 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             }
         }()
         let nativeUsesSOCKS5 = nativeConnector == nil
-            || (nativeInitialPayload == nil
+            || (!(nativeConnector is any OutboundResponseHandshake)
+                && nativeInitialPayload == nil
                 && nativeTarget.map { NativeConnectorRegistry.kind(for: $0) } != .some(.shadowsocks)
                 && nativeTarget.map { NativeConnectorRegistry.kind(for: $0) } != .some(.http))
         let capability: NativeConnectorCapability = if nativeConnector != nil {

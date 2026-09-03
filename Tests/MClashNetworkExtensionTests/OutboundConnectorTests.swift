@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MClashNetworkShared
 import Testing
@@ -130,7 +131,42 @@ struct OutboundConnectorTests {
         let connection = NativeVLESSOutboundConnector(target: target).makeConnection()
         connection.cancel()
         #expect(target.parameters["network"] == "ws")
-        #expect(NativeConnectorRegistry.capability(for: target) == .legacyFallback)
+        #expect(NativeConnectorRegistry.capability(for: target) == .native)
+    }
+
+    @Test("VLESS WebSocket sends HTTP upgrade before its binary request")
+    func vlessWebSocketTwoPhaseHandshake() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "vless", host: "node.example.com", port: 443,
+            parameters: [
+                "uuid": "00000000-0000-0000-0000-000000000001",
+                "network": "ws", "ws-path": "/vless",
+                "ws-host": "cdn.example.com"
+            ]
+        )
+        let destination = try SOCKS5Endpoint(
+            address: SOCKS5Address(domain: "example.com"), port: 443
+        )
+        let connector = NativeVLESSWebSocketRelayConnector(target: target)
+        let upgrade = try connector.responseHandshake(for: destination)
+        let request = String(decoding: upgrade, as: UTF8.self)
+        #expect(request.hasPrefix("GET /vless HTTP/1.1\r\n"))
+        #expect(!upgrade.contains(0x01), "VLESS bytes must not precede HTTP 101")
+        let headers = request.split(separator: "\r\n")
+        let keyLine = try #require(headers.first(where: { $0.lowercased().hasPrefix("sec-websocket-key:") }))
+        let colon = try #require(keyLine.firstIndex(of: ":"))
+        let key = String(keyLine[keyLine.index(after: colon)...])
+            .trimmingCharacters(in: .whitespaces)
+        let accept = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8)))
+            .base64EncodedString()
+        try connector.validateResponse(Data((
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: \(accept)\r\n\r\n"
+        ).utf8))
+        let binary = try #require(try connector.postResponseHandshake(for: destination))
+        #expect(binary.first == 0x82)
+        #expect(binary[1] & 0x80 == 0x80)
     }
 
     @Test("VLESS WebSocket framing masks client payload and decodes server binary frames")

@@ -25,6 +25,15 @@ protocol OutboundConnector: Sendable {
 protocol OutboundResponseHandshake: Sendable {
     func responseHandshake(for destination: SOCKS5Endpoint) throws -> Data
     func validateResponse(_ response: Data) throws
+
+    /// Bytes that must be sent after the response has been validated.  HTTP
+    /// CONNECT has no second phase; VLESS over WebSocket uses this hook to
+    /// send its masked binary request only after the server's 101 upgrade.
+    func postResponseHandshake(for destination: SOCKS5Endpoint) throws -> Data?
+}
+
+extension OutboundResponseHandshake {
+    func postResponseHandshake(for _: SOCKS5Endpoint) throws -> Data? { nil }
 }
 
 extension OutboundConnector {
@@ -258,10 +267,10 @@ enum VLESSWebSocketCodecError: Error, Equatable, Sendable {
     case upgradeRequiresTwoPhaseHandshake
 }
 
-/// VLESS over WebSocket connector. The HTTP upgrade and VLESS request are
-/// sent together so the existing response gate can open the app flow only
-/// after a verified 101 response. A native capability is advertised only for
-/// explicit WS transport with a valid parsed path and UUID.
+/// VLESS over WebSocket connector. The HTTP upgrade is sent first; the VLESS
+/// binary request is sent only after a verified 101 response. A native
+/// capability is advertised only for explicit WS transport with a valid
+/// parsed path and UUID.
 struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHandshake {
     let target: OutboundNodeTarget
     private let handshakeState = VLESSWebSocketHandshakeState()
@@ -287,14 +296,7 @@ struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHa
     }
 
     func responseHandshake(for destination: SOCKS5Endpoint) throws -> Data {
-        // The current relay can send one initial request and then only read
-        // until the response gate opens. Sending VLESS bytes before the 101
-        // response is invalid for strict WebSocket servers, so this foundation
-        // connector must fail closed until a post-upgrade write hook exists.
-        throw VLESSWebSocketCodecError.upgradeRequiresTwoPhaseHandshake
-        /*
         guard target.parameters["uuid"] != nil else { throw VLESSCodecError.invalidUUID }
-        let codec = try VLESSWebSocketStreamCodec(target: target, destination: destination)
         let keyData = (0..<16).map { _ in UInt8.random(in: 0...255) }
         let key = Data(keyData).base64EncodedString()
         handshakeState.expectedAccept = Data(Insecure.SHA1.hash(
@@ -310,10 +312,11 @@ struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHa
         var request = "GET \(options.path) HTTP/1.1\r\n"
         request += headers.map { "\($0.0): \($0.1)\r\n" }.joined()
         request += "\r\n"
-        var result = Data(request.utf8)
-        result.append(try codec.encodeDestination())
-        return result
-        */
+        return Data(request.utf8)
+    }
+
+    func postResponseHandshake(for destination: SOCKS5Endpoint) throws -> Data? {
+        try VLESSWebSocketStreamCodec(target: target, destination: destination).encodeDestination()
     }
 
     func validateResponse(_ response: Data) throws {
@@ -593,11 +596,14 @@ enum NativeConnectorRegistry {
             return !password.isEmpty && ShadowsocksAEADMethod(rawValue: method.lowercased()) != nil
         case "vless":
             let network = target.parameters["network"]?.lowercased() ?? "tcp"
-            // WebSocket requires a two-phase upgrade: the VLESS binary frame
-            // must be sent only after HTTP 101. The current relay response
-            // gate has no post-upgrade write hook, so keep WS on the explicit
-            // compatibility path rather than advertising a false native
-            // capability.
+            // WebSocket has an explicit two-phase upgrade in
+            // TCPFlowRelay: HTTP 101 is validated before the masked VLESS
+            // binary request is written.  Reality/XTLS remains fallback.
+            if network == "ws" {
+                return target.parameters["uuid"] != nil
+                    && target.vlessWebSocketOptions != nil
+                    && !hasUnsupportedRealityOrXTLSParameters(target.parameters)
+            }
             return network == "tcp" && !hasUnsupportedRealityOrXTLSParameters(target.parameters)
         case "trojan":
             let network = target.parameters["network"]?.lowercased() ?? "tcp"

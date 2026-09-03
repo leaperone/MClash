@@ -381,7 +381,38 @@ final class TCPFlowRelay: @unchecked Sendable {
                         try handshake.validateResponse(Data(nextBuffer[..<end.upperBound]))
                         self.handshakeTimeout?.cancel()
                         self.handshakeTimeout = nil
-                        self.openFlow(initialUpstreamPayload: Data(nextBuffer[end.upperBound...]))
+                        let trailing = Data(nextBuffer[end.upperBound...])
+                        // Some transports have a second wire phase after the
+                        // response gate.  In particular, VLESS over
+                        // WebSocket must not send its binary request until
+                        // HTTP 101 has been validated.  Send that phase first,
+                        // then open the intercepted flow.  Any bytes already
+                        // received after the header are decoded through the
+                        // stream codec before being delivered to the app.
+                        let decodedTrailing: Data
+                        do {
+                            decodedTrailing = try self.streamCodec
+                                .map { try $0.decode(trailing).reduce(Data(), +) }
+                                ?? trailing
+                        } catch {
+                            self.finish(error: error)
+                            return
+                        }
+                        let open: @Sendable () -> Void = { [weak self] in
+                            guard let self else { return }
+                            self.openFlow(initialUpstreamPayload: decodedTrailing)
+                        }
+                        do {
+                            if let payload = try handshake.postResponseHandshake(
+                                for: self.destination
+                            ), !payload.isEmpty {
+                                try self.send(payload, then: open)
+                            } else {
+                                open()
+                            }
+                        } catch {
+                            self.finish(error: error)
+                        }
                     } catch {
                         self.finish(error: error)
                     }
