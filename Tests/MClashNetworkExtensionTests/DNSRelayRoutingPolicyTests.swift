@@ -27,7 +27,7 @@ struct DNSRelayRoutingPolicyTests {
             DNSRelayRoutingPolicy.route(
                 destination: try endpoint("1.1.1.1"),
                 isTrustedMClashComponent: false
-            ) == .mihomo(.profileRules)
+            ) == .proxy(.profileRules)
         )
     }
 
@@ -89,7 +89,7 @@ struct DNSRelayRoutingPolicyTests {
 
     @Test("Native mode falls back to Mihomo for hostname-only endpoints")
     func nativeModeFallsBackForHostname() throws {
-        let destination = SOCKS5Endpoint(
+        let destination = try SOCKS5Endpoint(
             address: SOCKS5Address(domain: "resolver.example"), port: 53
         )
         #expect(DNSRelayRoutingPolicy.route(
