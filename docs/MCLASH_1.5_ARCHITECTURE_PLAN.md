@@ -350,6 +350,9 @@ and can be tested without producing a Mihomo YAML document.
   Network Extension payloads when native inbound plus native DNS are active;
   only the connector-neutral node catalog, listener registry and native DNS
   bootstrap remain, with a regression test for the boundary.
+- `57db0ac` stops constructing a Mihomo UDP association probe during native
+  DNS startup; the legacy probe is now created only by the compatibility DNS
+  path.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
