@@ -2404,3 +2404,6 @@
 "Always connect directly without a proxy." = "항상 프록시 없이 직접 연결합니다.";
 "Block matching traffic." = "일치하는 트래픽을 차단합니다.";
 "Chain traffic through nested groups." = "중첩 그룹을 연결하여 전달합니다.";
+"Live connections are collected by the active MClash traffic backend." = "실시간 연결은 활성 MClash 트래픽 백엔드에서 수집됩니다.";
+"Applications appear after MClash observes a flow." = "MClash가 흐름을 관찰하면 앱이 표시됩니다.";
+"Routes appear as traffic decisions and active connections are observed." = "경로는 트래픽 결정으로 표시되고 활성 연결이 관찰됩니다.";

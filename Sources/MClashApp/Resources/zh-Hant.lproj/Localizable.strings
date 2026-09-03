@@ -2405,3 +2405,6 @@
 "Always connect directly without a proxy." = "始終直連，不經過代理。";
 "Block matching traffic." = "阻止匹配的流量。";
 "Chain traffic through nested groups." = "透過巢狀分組串聯轉發。";
+"Live connections are collected by the active MClash traffic backend." = "即時連線由目前的 MClash 流量後端收集。";
+"Applications appear after MClash observes a flow." = "MClash 觀察到流量後會顯示應用程式。";
+"Routes appear as traffic decisions and active connections are observed." = "路由會顯示為流量決策，並顯示目前觀察到的連線。";

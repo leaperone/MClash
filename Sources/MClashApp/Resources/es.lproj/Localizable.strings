@@ -2405,3 +2405,6 @@
 "Always connect directly without a proxy." = "Conecta siempre directamente sin proxy.";
 "Block matching traffic." = "Bloquea el tráfico coincidente.";
 "Chain traffic through nested groups." = "Encadena el tráfico mediante grupos anidados.";
+"Live connections are collected by the active MClash traffic backend." = "Las conexiones activas se recopilan mediante el backend de tráfico activo de MClash.";
+"Applications appear after MClash observes a flow." = "Las aplicaciones aparecen después de que MClash observa un flujo.";
+"Routes appear as traffic decisions and active connections are observed." = "Las rutas aparecen como decisiones de tráfico y se observan las conexiones activas.";

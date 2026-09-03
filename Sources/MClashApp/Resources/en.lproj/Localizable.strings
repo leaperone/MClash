@@ -2404,3 +2404,6 @@
 "Always connect directly without a proxy." = "Always connect directly without a proxy.";
 "Block matching traffic." = "Block matching traffic.";
 "Chain traffic through nested groups." = "Chain traffic through nested groups.";
+"Live connections are collected by the active MClash traffic backend." = "Live connections are collected by the active MClash traffic backend.";
+"Applications appear after MClash observes a flow." = "Applications appear after MClash observes a flow.";
+"Routes appear as traffic decisions and active connections are observed." = "Routes appear as traffic decisions and active connections are observed.";

@@ -39,7 +39,7 @@ struct ConnectionsView: View {
                 model: model,
                 title: "Connect to inspect traffic",
                 systemImage: "arrow.left.arrow.right",
-                description: "Live connections are streamed from the local Mihomo controller."
+                description: AppLocalization.string("Live connections are collected by the active MClash traffic backend.")
             )
         } else if !presentation.hasSnapshot,
                   let health = model.liveStreamHealth[.connections],
@@ -84,7 +84,7 @@ struct ConnectionsView: View {
             ContentUnavailableView(
                 "No observed application traffic",
                 systemImage: "square.stack.3d.up",
-                description: Text("Applications appear after Mihomo or App Routing observes a flow.")
+            description: Text(AppLocalization.string("Applications appear after MClash observes a flow."))
             )
         } else if filteredApplications.isEmpty {
             ContentUnavailableView.search(text: searchText)
@@ -155,7 +155,7 @@ struct ConnectionsView: View {
             ContentUnavailableView(
                 "No observed routes",
                 systemImage: "point.3.connected.trianglepath.dotted",
-                description: Text("Routes appear as traffic decisions and Mihomo connections are observed.")
+            description: Text(AppLocalization.string("Routes appear as traffic decisions and active connections are observed."))
             )
         } else if filteredRoutes.isEmpty {
             ContentUnavailableView.search(text: searchText)
