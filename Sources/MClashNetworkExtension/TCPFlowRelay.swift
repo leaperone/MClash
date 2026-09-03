@@ -124,15 +124,19 @@ final class TCPFlowRelay: @unchecked Sendable {
     func start() {
         queue.async { [self] in
             guard !finished else { return }
-            if let outboundConnector = self.outboundConnector as? NativeShadowsocksRelayConnector {
-                do {
-                    self.streamCodec = try outboundConnector.makeStreamCodec(for: self.destination)
-                } catch {
-                    self.finish(error: error)
-                    return
-                }
-            } else {
-                self.streamCodec = try? self.outboundConnector.makeStreamCodec(for: self.destination)
+            // The codec is part of the connector contract, rather than a
+            // type-specific relay special case.  In particular this keeps
+            // Shadowsocks SIP002 framing attached to the same connection for
+            // the complete flow (salt/destination, application frames and
+            // response frames), while unsupported transports can simply
+            // return nil and remain on the legacy path.
+            do {
+                self.streamCodec = try self.outboundConnector.makeStreamCodec(
+                    for: self.destination
+                )
+            } catch {
+                self.finish(error: error)
+                return
             }
             let connection = outboundConnector.makeConnection(to: proxy)
             self.connection = connection

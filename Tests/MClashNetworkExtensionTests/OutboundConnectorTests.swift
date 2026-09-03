@@ -360,4 +360,39 @@ struct OutboundConnectorTests {
         #expect(!plan.usesSOCKS5Handshake)
         plan.connection.cancel()
     }
+
+    @Test("Factory keeps one stateful SIP002 codec with the connection plan")
+    func factoryBuildsShadowsocksStreamPlan() throws {
+        let destination = try SOCKS5Endpoint(
+            address: SOCKS5Address(domain: "example.com"),
+            port: 443
+        )
+        let target = try OutboundNodeTarget(
+            protocolName: "shadowsocks",
+            host: "127.0.0.1",
+            port: 18443,
+            parameters: ["method": "aes-256-gcm", "password": "fixture-password"]
+        )
+        let plan = try NativeConnectorFactory.makeTCPPlan(
+            target: target,
+            destination: destination
+        )
+        let codec = try #require(plan.streamCodec)
+        let destinationFrame = try #require(plan.initialPayload)
+        #expect(!destinationFrame.isEmpty)
+        let payload = try codec.encode(Data("hello".utf8))
+        var decoder = try ShadowsocksAEADStreamDecoder(
+            methodName: "aes-256-gcm",
+            password: "fixture-password"
+        )
+        let decoded = try decoder.append(destinationFrame + payload)
+        #expect(decoded == [
+            try ShadowsocksAEADStreamEncoder.encodeDestination(
+                host: "example.com",
+                port: 443
+            ),
+            Data("hello".utf8)
+        ])
+        plan.connection.cancel()
+    }
 }

@@ -768,6 +768,10 @@ struct NativeTCPConnectionPlan: Sendable {
     let connection: NWConnection
     let initialPayload: Data?
     let usesSOCKS5Handshake: Bool
+    /// Stateful framing must travel with the connection plan.  Recreating a
+    /// Shadowsocks codec for each write would rotate the stream salt/nonce
+    /// state and produce an invalid SIP002 stream.
+    let streamCodec: (any NativeStreamCodec)?
 }
 
 enum NativeConnectorFactory {
@@ -782,29 +786,47 @@ enum NativeConnectorFactory {
             return NativeTCPConnectionPlan(
                 connection: connector.makeConnection(),
                 initialPayload: try connector.handshake(for: destination),
-                usesSOCKS5Handshake: false
+                usesSOCKS5Handshake: false,
+                streamCodec: nil
             )
         case .socks5:
             return NativeTCPConnectionPlan(
                 connection: NativeSOCKS5OutboundConnector(target: target).makeConnection(),
                 initialPayload: nil,
-                usesSOCKS5Handshake: true
+                usesSOCKS5Handshake: true,
+                streamCodec: nil
             )
         case .shadowsocks:
-            throw NativeConnectorRegistryError.unsupportedProtocol("shadowsocks stream requires relay framing")
+            let connector = NativeShadowsocksRelayConnector(
+                target: target,
+                destination: destination
+            )
+            guard let codec = try connector.makeStreamCodec(for: destination) else {
+                throw NativeConnectorRegistryError.unsupportedProtocol(
+                    "shadowsocks stream codec is unavailable"
+                )
+            }
+            return NativeTCPConnectionPlan(
+                connection: connector.makeConnection(to: nil),
+                initialPayload: try codec.encodeDestination(),
+                usesSOCKS5Handshake: false,
+                streamCodec: codec
+            )
         case .vless:
             let connector = NativeVLESSOutboundConnector(target: target)
             return NativeTCPConnectionPlan(
                 connection: connector.makeConnection(),
                 initialPayload: try connector.handshake(for: destination),
-                usesSOCKS5Handshake: false
+                usesSOCKS5Handshake: false,
+                streamCodec: nil
             )
         case .trojan:
             let connector = NativeTrojanOutboundConnector(target: target)
             return NativeTCPConnectionPlan(
                 connection: connector.makeConnection(),
                 initialPayload: try connector.handshake(for: destination),
-                usesSOCKS5Handshake: false
+                usesSOCKS5Handshake: false,
+                streamCodec: nil
             )
         case .hysteria2:
             throw NativeConnectorRegistryError.unsupportedProtocol("hysteria2 requires QUIC session")
