@@ -24,6 +24,26 @@ struct NativeRuleEngineProjectionTests {
         #expect(decision.action == .outbound(group.id))
     }
 
+    @Test("native projection fails safe to Direct when Global exit is absent")
+    func globalModeWithoutExitIsDirect() throws {
+        let runtime = plan(groups: [], routingMode: .global, globalGroup: ProxyGroupID())
+        #expect(NativeRuleEngineProjection(plan: runtime)
+            .evaluate(try context("example.com")).action == .direct)
+    }
+
+    @Test("native projection uses Direct for explicit Direct mode and rule miss")
+    func directModeAndRuleMissAreDirect() throws {
+        let directRuntime = plan(groups: [], routingMode: .direct)
+        #expect(NativeRuleEngineProjection(plan: directRuntime)
+            .evaluate(try context("example.com")).action == .direct)
+        let ruleRuntime = plan(
+            groups: [ProxyGroup(name: "Proxy")],
+            rules: [RoutingRule(priority: 10, matchers: [.domainExact("only.example")], action: .reject)]
+        )
+        #expect(NativeRuleEngineProjection(plan: ruleRuntime)
+            .evaluate(try context("other.example")).action == .direct)
+    }
+
     @Test("native projection resolves GEO and nested rule-set references")
     func geoAndRuleSetReference() throws {
         let group = ProxyGroup(name: "Proxy")
