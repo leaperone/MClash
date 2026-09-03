@@ -140,6 +140,57 @@ struct MClashInboundListenerTests {
         }
     }
 
+    @Test("Invalid reload preserves the last known-good listener generation")
+    func invalidReloadIsTransactional() async throws {
+        let id = UUID()
+        let port = UInt16.random(in: 20_000...60_000)
+        let initial = try MClashListenerSpec(
+            id: id,
+            name: "Stable HTTP",
+            kind: .http,
+            enabled: true,
+            port: Int(port)
+        )
+        let manager = NativeInboundListenerManager(
+            routeResolver: { _, _ in .direct },
+            connector: Connector()
+        )
+        let initialRegistry = try MClashListenerRegistry(listeners: [initial])
+        try manager.configure(initialRegistry)
+        manager.start()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(manager.lifecycleStates()[id] == .running(port: port))
+
+        let route: OutboundRoute = .group("unsupported")
+        let target = try OutboundNodeTarget(
+            protocolName: "tuic",
+            host: "127.0.0.1",
+            port: 443
+        )
+        let invalidCatalog = try OutboundNodeTargetCatalog(
+            entries: [OutboundNodeTargetEntry(route: route, target: target)]
+        )
+        let invalid = try MClashListenerSpec(
+            name: "Invalid replacement",
+            kind: .socks5,
+            enabled: true,
+            port: Int(port) + 1,
+            route: .outbound(route)
+        )
+        #expect(throws: NativeInboundListenerConfigurationError.unsupportedOutboundProtocol(
+            route: route,
+            protocolName: "tuic"
+        )) {
+            try manager.configure(
+                try MClashListenerRegistry(listeners: [invalid]),
+                outboundCatalog: invalidCatalog
+            )
+        }
+        #expect(manager.configuredRegistry() == initialRegistry)
+        #expect(manager.lifecycleStates()[id] == .running(port: port))
+        manager.stop()
+    }
+
     /// A real loopback SOCKS5 server is used here rather than only asserting
     /// encoded bytes. This protects the important ordering guarantee: the
     /// inbound connector must finish the upstream greeting and CONNECT reply

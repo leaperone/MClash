@@ -39,6 +39,10 @@ final class NativeInboundListenerManager: @unchecked Sendable {
     private var listeners: [UUID: MClashInboundListener] = [:]
     private var states: [UUID: NativeInboundListenerState] = [:]
     private var registry: MClashListenerRegistry?
+    /// Monotonically increasing configuration generation. A listener may
+    /// deliver a delayed NWListener callback after it was replaced; callbacks
+    /// from an older generation must never mutate the new registry state.
+    private var generation: UInt64 = 0
     private let routeResolver: @Sendable (MClashListenerSpec, MClashInboundDestination) -> MClashInboundRoute
     private let connector: MClashInboundOutboundConnector
 
@@ -59,8 +63,14 @@ final class NativeInboundListenerManager: @unchecked Sendable {
         outboundCatalog: OutboundNodeTargetCatalog? = nil,
         outboundConnector: (any MClashInboundOutboundConnector)? = nil
     ) throws {
-        stop()
         let activeConnector = outboundConnector ?? connector
+        // Build and validate the complete replacement before touching the
+        // currently running listeners. Invalid reloads therefore leave the
+        // last known-good generation serving traffic.
+        let nextGeneration: UInt64
+        lock.lock()
+        nextGeneration = generation &+ 1
+        lock.unlock()
         var newListeners: [UUID: MClashInboundListener] = [:]
         var newStates: [UUID: NativeInboundListenerState] = [:]
         for spec in newRegistry.enabledListeners where spec.kind.requiresSocketEndpoint {
@@ -121,19 +131,30 @@ final class NativeInboundListenerManager: @unchecked Sendable {
                 },
                 connector: activeConnector,
                 stateHandler: { [weak self] ready, actualPort in
-                    self?.listenerStateChanged(id: spec.id, ready: ready, port: actualPort)
+                    self?.listenerStateChanged(
+                        id: spec.id,
+                        generation: nextGeneration,
+                        ready: ready,
+                        port: actualPort
+                    )
                 }
             )
             newListeners[spec.id] = listener
             newStates[spec.id] = .stopped
         }
         lock.lock()
+        let oldListeners = listeners
+        generation = nextGeneration
         registry = newRegistry
         listeners = newListeners
         states = Dictionary(uniqueKeysWithValues: newRegistry.listeners.map {
             ($0.id, newStates[$0.id] ?? .stopped)
         })
         lock.unlock()
+        // Cancellation happens only after the replacement is safely visible.
+        // This keeps reload transactional and avoids a window with no active
+        // listener when the new registry is valid.
+        oldListeners.values.forEach { $0.stop() }
     }
 
     func start() {
@@ -152,6 +173,7 @@ final class NativeInboundListenerManager: @unchecked Sendable {
     func stop() {
         lock.lock()
         let entries = listeners
+        generation &+= 1
         listeners.removeAll()
         for id in states.keys { states[id] = .stopped }
         lock.unlock()
@@ -168,9 +190,9 @@ final class NativeInboundListenerManager: @unchecked Sendable {
         return registry
     }
 
-    private func listenerStateChanged(id: UUID, ready: Bool, port: UInt16?) {
+    private func listenerStateChanged(id: UUID, generation callbackGeneration: UInt64, ready: Bool, port: UInt16?) {
         lock.lock(); defer { lock.unlock() }
-        guard listeners[id] != nil else { return }
+        guard generation == callbackGeneration, listeners[id] != nil else { return }
         states[id] = ready ? .running(port: port ?? 0) : .stopped
     }
 }
