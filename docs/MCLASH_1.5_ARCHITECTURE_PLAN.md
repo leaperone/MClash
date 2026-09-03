@@ -329,6 +329,10 @@ and can be tested without producing a Mihomo YAML document.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
+- `883535a` extends the MClash-owned inbound connector to VLESS WebSocket:
+  HTTP Upgrade is validated with RFC 6455 accept checks before the masked
+  VLESS binary request is sent; loopback endpoint interoperability is still a
+  separate release gate.
 
 ### Definition of done
 
