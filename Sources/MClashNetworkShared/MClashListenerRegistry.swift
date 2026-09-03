@@ -163,7 +163,10 @@ public struct MClashListenerRegistry: Codable, Equatable, Sendable {
             guard names.insert(name).inserted else {
                 throw MClashListenerRegistryError.duplicateName(listener.name)
             }
-            if let endpoint = listener.endpoint {
+            // Disabled entrances do not reserve a socket. This lets users
+            // prepare a replacement on the same port before enabling it;
+            // only simultaneously enabled listeners are a real collision.
+            if listener.enabled, let endpoint = listener.endpoint {
                 guard endpoints.insert(endpoint).inserted else {
                     throw MClashListenerRegistryError.duplicateEndpoint(endpoint)
                 }

@@ -49,4 +49,31 @@ struct MClashListenerRegistryTests {
         #expect(registry.enabledListeners.count == 1)
         #expect(app.endpoint == nil)
     }
+
+    @Test("Disabled socket entrances may stage a port used by an enabled entrance")
+    func disabledEntrancesDoNotReservePorts() throws {
+        let active = try MClashListenerSpec(
+            name: "Active",
+            kind: .http,
+            enabled: true,
+            port: 18_080
+        )
+        let staged = try MClashListenerSpec(
+            name: "Staged",
+            kind: .socks5,
+            enabled: false,
+            port: 18_080
+        )
+        let registry = try MClashListenerRegistry(listeners: [active, staged])
+        #expect(registry.enabledListeners.map(\.name) == ["Active"])
+    }
+
+    @Test("Two enabled entrances still reject the same endpoint")
+    func enabledEntrancesReservePorts() throws {
+        let first = try MClashListenerSpec(name: "First", kind: .http, enabled: true, port: 18_080)
+        let second = try MClashListenerSpec(name: "Second", kind: .socks5, enabled: true, port: 18_080)
+        #expect(throws: MClashListenerRegistryError.duplicateEndpoint("127.0.0.1:18080")) {
+            try MClashListenerRegistry(listeners: [first, second])
+        }
+    }
 }
