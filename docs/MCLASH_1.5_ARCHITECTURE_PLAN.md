@@ -227,8 +227,9 @@ and can be tested without producing a Mihomo YAML document.
    GEO/rule-set fixtures, native DNS bootstrap, direct/reject short-circuit,
    HTTP/SOCKS relay and monitor snapshot behavior.
 3. **Shadow:** copy the current local Profiles into an isolated namespace,
-   use random loopback ports, run the native session and compare expected
-   policy/connection traces. Do not touch the production app or System Proxy.
+   use random loopback ports, compile and inspect the native plan and
+   connector matrix. Full native session traffic/connection trace comparison
+   remains pending; do not touch the production app or System Proxy.
 4. **Protocol:** run real endpoint tests for every connector claimed as native;
    cover TLS/ALPN/SNI, authentication, TCP, UDP, cancellation and failure
    recovery. Record endpoint, timestamp, commit and redacted result.
