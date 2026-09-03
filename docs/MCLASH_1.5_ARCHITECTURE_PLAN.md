@@ -383,6 +383,9 @@ and can be tested without producing a Mihomo YAML document.
   the intercepted endpoint instead of requiring a legacy Mihomo route plan;
   VLESS, Trojan and Shadowsocks native connectors now receive their proper
   destination and cannot be misclassified as SOCKS5 handshakes.
+- `2230554` aligns the connector capability matrix with the native Shadowsocks
+  validator by rejecting empty passwords as `legacyFallback`, with a focused
+  regression test.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
