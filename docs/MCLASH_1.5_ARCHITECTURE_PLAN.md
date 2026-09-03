@@ -364,6 +364,8 @@ and can be tested without producing a Mihomo YAML document.
 - `b84a176` adds the isolated native CLI smoke to the signed release job on the
   standard `macos-26` runner, so every future release package must publish a
   verified native automation endpoint before GitHub Release publication.
+- `523f243` renames the release integration job to “compatibility integration
+  smoke” so the workflow does not present Mihomo as the 1.5 control plane.
 - `0be3930` adds a real loopback HTTP entrance test: MClash accepts a client
   CONNECT only after the native HTTP upstream returns 200, then bridges
   `ping`/`pong` payloads in both directions.
