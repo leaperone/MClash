@@ -291,6 +291,9 @@ and can be tested without producing a Mihomo YAML document.
   native backend by default; the standalone native CLI smoke still exits
   before endpoint publication on this host, so isolated acceptance remains
   open.
+- `1484e41` prevents native workspace activation and rollback from invoking
+  the legacy runtime override coordinator; native activation now keeps the
+  compiled plan in-process without materializing Mihomo YAML.
 
 ### Definition of done
 
