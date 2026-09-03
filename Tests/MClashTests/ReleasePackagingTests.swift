@@ -269,6 +269,43 @@ struct ReleasePackagingTests {
         #expect(workflow.contains("macos-arm64.delta(N)"))
     }
 
+    @Test("GitHub macOS jobs stay on the free standard macos-26 runner")
+    func githubWorkflowsUseOnlyStandardMacOSRunner() throws {
+        let workflowDirectory = repositoryRoot.appendingPathComponent(
+            ".github/workflows",
+            isDirectory: true
+        )
+        let workflowURLs = try FileManager.default.contentsOfDirectory(
+            at: workflowDirectory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "yml" || $0.pathExtension == "yaml" }
+
+        var macOSJobCount = 0
+        for workflowURL in workflowURLs {
+            let workflow = try String(contentsOf: workflowURL, encoding: .utf8)
+            for line in workflow.split(whereSeparator: \.isNewline) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard trimmed.hasPrefix("runs-on:") else { continue }
+                let runner = String(
+                    trimmed.dropFirst("runs-on:".count)
+                        .trimmingCharacters(in: .whitespaces)
+                )
+                guard runner.hasPrefix("macos-") else { continue }
+                macOSJobCount += 1
+                #expect(
+                    runner == "macos-26",
+                    "\(workflowURL.lastPathComponent) uses paid or non-standard macOS runner: \(runner)"
+                )
+                #expect(
+                    !runner.localizedCaseInsensitiveContains("large"),
+                    "\(workflowURL.lastPathComponent) must not use a sized runner: \(runner)"
+                )
+            }
+        }
+
+        #expect(macOSJobCount > 0)
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
