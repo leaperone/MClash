@@ -1173,23 +1173,33 @@ final class AppModel {
                 )
             }
 
-            do {
-                let overrideStore = try RuntimeOverrideStore(profileLayout: layout)
-                runtimeOverrideCoordinator = RuntimeOverrideActivationCoordinator(
-                    overrideStore: overrideStore
-                )
-            } catch {
+            if Self.shouldUseNativeRuntime(
+                environment: processEnvironment,
+                arguments: processArguments
+            ) {
+                // Native sessions do not read or write legacy runtime
+                // overrides. Keeping this coordinator nil prevents malformed
+                // YAML override state from affecting native startup.
                 runtimeOverrideCoordinator = nil
-                initializationFailures.append(
-                    StorageInitializationFailure(
-                        component: .runtimeOverrides,
-                        occurredAt: Date(),
-                        reason: error.localizedDescription,
-                        recoverySuggestion: AppLocalization.string(
-                            "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+            } else {
+                do {
+                    let overrideStore = try RuntimeOverrideStore(profileLayout: layout)
+                    runtimeOverrideCoordinator = RuntimeOverrideActivationCoordinator(
+                        overrideStore: overrideStore
+                    )
+                } catch {
+                    runtimeOverrideCoordinator = nil
+                    initializationFailures.append(
+                        StorageInitializationFailure(
+                            component: .runtimeOverrides,
+                            occurredAt: Date(),
+                            reason: error.localizedDescription,
+                            recoverySuggestion: AppLocalization.string(
+                                "Restore read and write access to the MClash Settings folder, then relaunch MClash."
+                            )
                         )
                     )
-                )
+                }
             }
 
             do {
