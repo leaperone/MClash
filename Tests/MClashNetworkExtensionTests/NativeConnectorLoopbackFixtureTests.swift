@@ -133,14 +133,22 @@ struct NativeConnectorLoopbackFixtureTests {
         ).makeConnection(to: nil)
         try LoopbackTCPFixture.start(client)
         try LoopbackTCPFixture.send(client, data: clientEncoder.encode(destination) + clientEncoder.encode(Data("ping".utf8)))
-        let wire = try server.read(atLeast: 32 + 2 + 16 + 2 + 16 + 4)
-        let frames = try serverDecoder.append(wire)
+        var frames = [Data]()
+        // TCP is a stream: one write may be split into any number of reads.
+        // Keep feeding the decoder until both the destination and payload
+        // frames have arrived instead of relying on a packet-sized read.
+        for _ in 0..<20 where frames.count < 2 {
+            frames.append(contentsOf: try serverDecoder.append(server.read(atLeast: 1)))
+        }
         #expect(frames.count == 2)
         #expect(frames[0] == destination)
         #expect(frames[1] == Data("ping".utf8))
         try server.send(serverEncoder.encode(Data("pong".utf8)))
-        let response = try LoopbackTCPFixture.read(client, atLeast: 32 + 2 + 16 + 4 + 16)
-        #expect(try clientDecoder.append(response) == [Data("pong".utf8)])
+        var responses = [Data]()
+        for _ in 0..<20 where responses.isEmpty {
+            responses.append(contentsOf: try clientDecoder.append(LoopbackTCPFixture.read(client, atLeast: 1)))
+        }
+        #expect(responses == [Data("pong".utf8)])
         client.cancel()
     }
 }
