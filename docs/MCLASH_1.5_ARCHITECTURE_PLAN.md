@@ -135,9 +135,9 @@ Rules are a primary product surface, not an Advanced accordion.
       Reject unsupported matcher names (for example `GEOIP6`) before startup.
 - [x] Keep MClash-owned remote rule-set metadata (source, format, behavior,
       path and refresh policy) separate from source Profile providers.
-- [ ] Add a task-oriented rule editor with plain-language previews and an
+- [x] Add a task-oriented rule editor with plain-language previews and an
       explicit target picker: Node Selection, a named group, DIRECT or REJECT.
-- [ ] Add App Routing application/process matchers and domain matchers to the
+- [x] Add App Routing application/process matchers and domain matchers to the
       same rule model; App Routing only supplies the entrance/capture context.
 - [ ] Keep deterministic priority/order, cycle detection and a final fallback
       rule. Compile GEO data and rule providers into native matcher inputs.
@@ -149,8 +149,10 @@ and can be tested without producing a Mihomo YAML document.
 
 - [x] Model DNS policy in the workspace and pass a connector-neutral bootstrap
       into the native provider. Native DNS does not probe Mihomo.
-- [ ] Implement split DNS, fake-IP/host policy as supported capabilities, local
-      network safeguards and timeout/fallback diagnostics.
+- [~] Implement split DNS, fake-IP/host policy as supported capabilities, local
+      network safeguards and timeout/fallback diagnostics. Local resolver
+      safeguards and deterministic native endpoint diagnostics are complete;
+      split DNS/fake-IP policy remains pending.
 - [x] Maintain protocol descriptors and capability gating for SOCKS5, VLESS,
       Trojan and Hysteria2; an unsupported transport must not be labelled native.
 - [~] Native SOCKS5, VLESS/Trojan TCP framing and Hysteria2 session prototypes
