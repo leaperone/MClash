@@ -306,6 +306,17 @@ struct ReleasePackagingTests {
         #expect(macOSJobCount > 0)
     }
 
+    @Test("Native-only bundles omit the Mihomo executable and distribution metadata")
+    func nativeOnlyBuildOmitsCompatibilityCore() throws {
+        let buildScript = try source("scripts/build-app.sh")
+
+        #expect(buildScript.contains("native_only=\"${MCLASH_NATIVE_ONLY:-0}\""))
+        #expect(buildScript.contains("MClashRuntimeDistributionMode"))
+        #expect(buildScript.contains("runtime_distribution_mode=\"native-only\""))
+        #expect(buildScript.contains("Native-only bundle unexpectedly contains a Mihomo core."))
+        #expect(buildScript.contains("Built native-only MClash"))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

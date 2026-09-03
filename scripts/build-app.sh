@@ -5,6 +5,7 @@ repo_root="${0:A:h:h}"
 source "${repo_root}/scripts/mihomo-alpha-common.sh"
 
 configuration="${CONFIGURATION:-release}"
+native_only="${MCLASH_NATIVE_ONLY:-0}"
 app_version="${MCLASH_BUNDLE_VERSION:-${MCLASH_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${repo_root}/Support/Info.plist")}}"
 build_number="${MCLASH_BUILD_NUMBER:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${repo_root}/Support/Info.plist")}"
 code_sign_identity="${CODE_SIGN_IDENTITY:--}"
@@ -36,6 +37,15 @@ extension_application_identifier="${team_identifier_prefix}${network_extension_b
 app_group_identifier="${host_application_identifier}"
 host_keychain_group="${team_identifier_prefix}${host_bundle_id}.authorization"
 
+if [[ "${native_only}" != "0" && "${native_only}" != "1" ]]; then
+  print -u2 "MCLASH_NATIVE_ONLY must be 0 or 1."
+  exit 1
+fi
+runtime_distribution_mode="compatibility"
+if [[ "${native_only}" == "1" ]]; then
+  runtime_distribution_mode="native-only"
+fi
+
 plist_array_contains() {
   local plist="$1"
   local key="$2"
@@ -59,10 +69,12 @@ fi
 
 mihomo_alpha_select_architecture "${architecture}"
 
-if [[ ! -f "${MIHOMO_ALPHA_RESOURCE_PATH}" ]]; then
-  "${repo_root}/scripts/fetch-mihomo-alpha.sh" --architecture "${architecture}"
+if [[ "${native_only}" != "1" ]]; then
+  if [[ ! -f "${MIHOMO_ALPHA_RESOURCE_PATH}" ]]; then
+    "${repo_root}/scripts/fetch-mihomo-alpha.sh" --architecture "${architecture}"
+  fi
+  mihomo_alpha_verify_selected_artifact
 fi
-mihomo_alpha_verify_selected_artifact
 
 geodata_source="${MCLASH_GEODATA_DIR:-${build_root}/GeoData}"
 geodata_fetch_arguments=(--output "${geodata_source}")
@@ -70,21 +82,27 @@ if [[ "${code_sign_identity}" != "-" || "${MCLASH_REFRESH_GEODATA:-0}" == "1" ]]
   geodata_fetch_arguments+=(--refresh)
 fi
 "${repo_root}/scripts/fetch-mihomo-geodata.sh" "${geodata_fetch_arguments[@]}"
-"${repo_root}/scripts/smoke-test-mihomo-geodata.sh" \
-  "${MIHOMO_ALPHA_RESOURCE_PATH}" \
-  "${geodata_source}"
+if [[ "${native_only}" != "1" ]]; then
+  "${repo_root}/scripts/smoke-test-mihomo-geodata.sh" \
+    "${MIHOMO_ALPHA_RESOURCE_PATH}" \
+    "${geodata_source}"
+fi
 
 license_source="${repo_root}/Sources/MClashApp/Resources/ThirdParty/mihomo-LICENSE.txt"
 corresponding_source="${repo_root}/Sources/MClashApp/Resources/ThirdParty/mihomo-SOURCE.txt"
 notice_source="${repo_root}/ThirdParty/mihomo/NOTICE.md"
 mclash_license="${repo_root}/LICENSE"
-for required_file in "${mclash_license}" "${license_source}" "${corresponding_source}" "${notice_source}"; do
+required_distribution_files=("${mclash_license}")
+if [[ "${native_only}" != "1" ]]; then
+  required_distribution_files+=("${license_source}" "${corresponding_source}" "${notice_source}")
+fi
+for required_file in "${required_distribution_files[@]}"; do
   if [[ ! -s "${required_file}" ]]; then
-    print -u2 "Missing required mihomo distribution material: ${required_file}"
+    print -u2 "Missing required distribution material: ${required_file}"
     exit 1
   fi
 done
-if ! grep -Fq "${MIHOMO_ALPHA_REVISION}" "${corresponding_source}"; then
+if [[ "${native_only}" != "1" ]] && ! grep -Fq "${MIHOMO_ALPHA_REVISION}" "${corresponding_source}"; then
   print -u2 "mihomo-SOURCE.txt does not reference the pinned revision ${MIHOMO_ALPHA_REVISION}."
   exit 1
 fi
@@ -217,7 +235,9 @@ cp "${repo_root}/Support/Info.plist" "${contents}/Info.plist"
 cp "${network_extension_info_source}" "${system_extension_contents}/Info.plist"
 cp "${login_agent_source}" "${contents}/Library/LaunchAgents/one.leaper.mclash.login.plist"
 plutil -lint "${contents}/Library/LaunchAgents/one.leaper.mclash.login.plist" >/dev/null
-cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+if [[ "${native_only}" != "1" ]]; then
+  cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+fi
 ditto "${geodata_source}" "${contents}/Resources/GeoData"
 cp "${license_source}" "${contents}/Resources/GeoData/LICENSE.txt"
 cp "${repo_root}/Sources/MClashApp/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"
@@ -225,12 +245,13 @@ for localization_source in "${repo_root}"/Sources/MClashApp/Resources/*.lproj(N/
   ditto "${localization_source}" "${contents}/Resources/${localization_source:t}"
 done
 cp "${mclash_license}" "${contents}/Resources/MClash-LICENSE.txt"
-cp "${license_source}" "${contents}/Resources/ThirdParty/mihomo-LICENSE.txt"
-cp "${corresponding_source}" "${contents}/Resources/ThirdParty/mihomo-SOURCE.txt"
-cp "${notice_source}" "${contents}/Resources/ThirdParty/mihomo-NOTICE.md"
+if [[ "${native_only}" != "1" ]]; then
+  cp "${license_source}" "${contents}/Resources/ThirdParty/mihomo-LICENSE.txt"
+  cp "${corresponding_source}" "${contents}/Resources/ThirdParty/mihomo-SOURCE.txt"
+  cp "${notice_source}" "${contents}/Resources/ThirdParty/mihomo-NOTICE.md"
+fi
 cp "${sparkle_framework_dir}/LICENSE" "${contents}/Resources/ThirdParty/Sparkle-LICENSE.txt"
 "${repo_root}/scripts/verify-mihomo-geodata.sh" "${contents}/Resources/GeoData"
-recorded_hash="$(mihomo_alpha_recorded_hash "${MIHOMO_ALPHA_RESOURCE_NAME}")"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${app_version}" \
   -c "Set :CFBundleVersion ${build_number}" \
   "${contents}/Info.plist"
@@ -244,10 +265,16 @@ else
     "${contents}/Info.plist"
 fi
 /usr/libexec/PlistBuddy -c \
-  "Add :MClashMihomoAlphaVersion string ${MIHOMO_ALPHA_VERSION}" \
-  -c "Add :MClashMihomoAlphaRawSHA256 string ${recorded_hash}" \
+  "Add :MClashRuntimeDistributionMode string ${runtime_distribution_mode}" \
   -c "Add :MClashSourceRevision string ${source_revision}" \
   "${contents}/Info.plist"
+if [[ "${native_only}" != "1" ]]; then
+  recorded_hash="$(mihomo_alpha_recorded_hash "${MIHOMO_ALPHA_RESOURCE_NAME}")"
+  /usr/libexec/PlistBuddy -c \
+    "Add :MClashMihomoAlphaVersion string ${MIHOMO_ALPHA_VERSION}" \
+    -c "Add :MClashMihomoAlphaRawSHA256 string ${recorded_hash}" \
+    "${contents}/Info.plist"
+fi
 /usr/libexec/PlistBuddy \
   -c 'Set :CFBundleExecutable MClashNetworkExtension' \
   -c "Set :CFBundleShortVersionString ${app_version}" \
@@ -260,16 +287,19 @@ if grep -Eq '\$\([^)]+\)' "${system_extension_contents}/Info.plist"; then
   exit 1
 fi
 
-packaged_hash="$(shasum -a 256 "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}" | awk '{ print $1 }')"
-if [[ "${packaged_hash}" != "${recorded_hash}" ]]; then
-  print -u2 "Packaged mihomo Alpha SHA-256 changed while assembling the app"
-  exit 1
-fi
-
 packaged_core="${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+if [[ "${native_only}" != "1" ]]; then
+  packaged_hash="$(shasum -a 256 "${packaged_core}" | awk '{ print $1 }')"
+  if [[ "${packaged_hash}" != "${recorded_hash}" ]]; then
+    print -u2 "Packaged mihomo Alpha SHA-256 changed while assembling the app"
+    exit 1
+  fi
+fi
 if [[ "${code_sign_identity}" == "-" ]]; then
   codesign --force --sign - "${contents}/Helpers/mclashctl"
-  codesign --force --sign - "${packaged_core}"
+  if [[ "${native_only}" != "1" ]]; then
+    codesign --force --sign - "${packaged_core}"
+  fi
   codesign --force \
     --entitlements "${network_extension_devid_entitlements}" \
     --sign - "${system_extension}"
@@ -387,8 +417,10 @@ else
   codesign --force --options runtime --timestamp \
     --entitlements "${cli_devid_entitlements}" \
     --sign "${code_sign_identity}" "${contents}/Helpers/mclashctl"
-  codesign --force --options runtime --timestamp \
-    --sign "${code_sign_identity}" "${packaged_core}"
+  if [[ "${native_only}" != "1" ]]; then
+    codesign --force --options runtime --timestamp \
+      --sign "${code_sign_identity}" "${packaged_core}"
+  fi
   codesign --force --options runtime --timestamp \
     --entitlements "${network_extension_devid_entitlements}" \
     --sign "${code_sign_identity}" "${system_extension}"
@@ -396,7 +428,9 @@ else
     --entitlements "${host_devid_entitlements}" \
     --sign "${code_sign_identity}" "${app_bundle}"
 fi
-codesign --verify --strict --verbose=2 "${packaged_core}"
+if [[ "${native_only}" != "1" ]]; then
+  codesign --verify --strict --verbose=2 "${packaged_core}"
+fi
 codesign --verify --strict --verbose=2 "${contents}/Helpers/mclashctl"
 if [[ -d "${system_extension}" ]]; then
   codesign --verify --strict --verbose=2 "${system_extension}"
@@ -448,4 +482,12 @@ if [[ "${code_sign_identity}" != "-" ]]; then
     exit 1
   fi
 fi
-print "Built MClash ${app_version} (${build_number}) at ${app_bundle} with mihomo ${MIHOMO_ALPHA_VERSION} (${packaged_hash})"
+if [[ "${native_only}" == "1" ]]; then
+  if [[ -e "${packaged_core}" ]]; then
+    print -u2 "Native-only bundle unexpectedly contains a Mihomo core."
+    exit 1
+  fi
+  print "Built native-only MClash ${app_version} (${build_number}) at ${app_bundle} without Mihomo."
+else
+  print "Built MClash ${app_version} (${build_number}) at ${app_bundle} with mihomo ${MIHOMO_ALPHA_VERSION} (${packaged_hash})"
+fi
