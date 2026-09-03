@@ -475,10 +475,6 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
            }) {
             return "Shadowsocks UDP-over-TCP transport is not implemented by the native connector."
         }
-        if target.protocolName == "vless",
-           target.parameters["network"]?.lowercased() == "ws" {
-            return "VLESS WebSocket transport is not implemented by the native connector."
-        }
         return nil
     }
 
