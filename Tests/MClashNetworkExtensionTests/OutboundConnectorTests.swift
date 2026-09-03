@@ -282,7 +282,7 @@ struct OutboundConnectorTests {
         }
     }
 
-    @Test("Native TCP capability excludes unimplemented VLESS transports")
+    @Test("Native TCP capability excludes only unimplemented VLESS transports")
     func nativeTCPCapabilityIsTransportAware() throws {
         let plain = try OutboundNodeTarget(
             protocolName: "vless", host: "node.example.com", port: 443,
@@ -290,7 +290,7 @@ struct OutboundConnectorTests {
         )
         let websocket = try OutboundNodeTarget(
             protocolName: "vless", host: "node.example.com", port: 443,
-            parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "network": "ws"]
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "network": "ws", "ws-path": "/vless"]
         )
         let reality = try OutboundNodeTarget(
             protocolName: "vless", host: "node.example.com", port: 443,
@@ -298,10 +298,10 @@ struct OutboundConnectorTests {
         )
 
         #expect(NativeConnectorRegistry.supportsNativeTCP(plain))
-        #expect(!NativeConnectorRegistry.supportsNativeTCP(websocket))
+        #expect(NativeConnectorRegistry.supportsNativeTCP(websocket))
         #expect(!NativeConnectorRegistry.supportsNativeTCP(reality))
         #expect(NativeConnectorRegistry.capability(for: plain) == .native)
-        #expect(NativeConnectorRegistry.capability(for: websocket) == .legacyFallback)
+        #expect(NativeConnectorRegistry.capability(for: websocket) == .native)
         #expect(NativeConnectorRegistry.capability(for: reality) == .legacyFallback)
     }
 

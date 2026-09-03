@@ -54,7 +54,7 @@ public enum VLESSWebSocketTransportDiagnostic: Equatable, Sendable {
     public var message: String {
         switch self {
         case let .nativeTransportUnavailable(path):
-            return "VLESS WebSocket transport requires an HTTP upgrade on path \(path); native connector is not enabled yet."
+            return "VLESS WebSocket transport requires a two-phase HTTP upgrade on path \(path)."
         }
     }
 }

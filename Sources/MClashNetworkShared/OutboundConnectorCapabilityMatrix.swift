@@ -83,8 +83,12 @@ public enum OutboundConnectorCapabilityMatrix {
             return (.native, nil)
         case "vless":
             let network = parameters["network"] ?? "tcp"
-            guard network == "tcp" else {
+            guard network == "tcp" || network == "ws" else {
                 return (.legacyFallback, "VLESS \(network) transport is not implemented by the native connector.")
+            }
+            if network == "ws",
+               parameters["uuid"]?.isEmpty != false {
+                return (.legacyFallback, "VLESS WebSocket requires a UUID.")
             }
             if parameters["reality-opts"] != nil || parameters["reality-options"] != nil
                 || parameters["reality"]?.isTruthy == true || parameters["xtls"]?.isTruthy == true
