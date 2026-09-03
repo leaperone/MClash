@@ -19,7 +19,7 @@ struct VLESSCodecTests {
         #expect(data[22] == UInt8("example.com".utf8.count))
         #expect(String(decoding: data.dropFirst(23), as: UTF8.self) == "example.com")
         let hex = data.map { String(format: "%02x", $0) }.joined()
-        #expect(hex.hasPrefix("01000000000000000000000000000000010001bb020b6578616d706c652e636f6d"))
+        #expect(hex.hasPrefix("0100000000000000000000000000000001000101bb020b6578616d706c652e636f6d"))
     }
 
     @Test("Rejects invalid UUID, host, and port")

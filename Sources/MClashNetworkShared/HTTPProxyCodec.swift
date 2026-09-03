@@ -104,7 +104,7 @@ public enum HTTPProxyCodec: Sendable {
             // Never allow callers to override framing or authentication.
             guard normalized.caseInsensitiveCompare("Host") != .orderedSame,
                   normalized.caseInsensitiveCompare("Proxy-Authorization") != .orderedSame else {
-                continue
+                throw HTTPProxyCodecError.invalidHeader
             }
             lines.append("\(normalized): \(value)")
         }
