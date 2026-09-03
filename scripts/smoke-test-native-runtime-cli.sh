@@ -22,8 +22,24 @@ cli="${MCLASH_CLI_PATH:-${app_bundle}/Contents/Helpers/mclashctl}"
 
 automation_directory="$(mktemp -d "${TMPDIR:-/tmp}/mclash-native-cli.XXXXXX")"
 namespace="mclash-native-cli-${RANDOM}-$$"
+application_support_identifier="${namespace}"
+shadow_application_support=""
 log_file="${automation_directory}/mclash.log"
 app_pid=""
+
+# An opt-in copied-profile run stages the user's existing MClash tree under a
+# unique Application Support identifier. The source remains read-only and the
+# disposable copy is removed during cleanup. Test mode keeps Network Extension
+# and System Proxy backends inert, so this cannot reconfigure the live app.
+if [[ -n "${MCLASH_SHADOW_SOURCE_ROOT:-}" ]]; then
+  [[ -d "${MCLASH_SHADOW_SOURCE_ROOT}" ]] || {
+    print -u2 "Shadow source does not exist: ${MCLASH_SHADOW_SOURCE_ROOT}"
+    exit 1
+  }
+  application_support_identifier="MClash-Shadow-${RANDOM}-$$"
+  shadow_application_support="${HOME}/Library/Application Support/${application_support_identifier}"
+  /usr/bin/ditto "${MCLASH_SHADOW_SOURCE_ROOT}" "${shadow_application_support}"
+fi
 
 # Launch Services uses the bundle identifier even when an executable is
 # invoked directly.  The built app intentionally keeps the production
@@ -54,7 +70,11 @@ cleanup() {
     kill -KILL "${app_pid}" 2>/dev/null || true
     wait "${app_pid}" 2>/dev/null || true
   fi
-  rm -rf "${automation_directory}"
+  if [[ "${MCLASH_KEEP_SHADOW:-0}" != "1" ]] && [[ -n "${shadow_application_support}" ]] &&
+     [[ "${shadow_application_support}" == "${HOME}/Library/Application Support/MClash-Shadow-"* ]]; then
+    rm -rf "${shadow_application_support}"
+  fi
+  [[ "${MCLASH_KEEP_SHADOW:-0}" == "1" ]] || rm -rf "${automation_directory}"
 }
 trap cleanup EXIT INT TERM
 
@@ -62,7 +82,7 @@ MCLASH_TEST_MODE=1 \
 MCLASH_NATIVE_RUNTIME=1 \
 MCLASH_SKIP_AUTO_CONNECT=1 \
 MCLASH_INSTANCE_NAMESPACE="${namespace}" \
-MCLASH_APPLICATION_SUPPORT_IDENTIFIER="${namespace}" \
+MCLASH_APPLICATION_SUPPORT_IDENTIFIER="${application_support_identifier}" \
 MCLASH_AUTOMATION_DIRECTORY_PATH="${automation_directory}" \
   "${app_executable}" --mclash-background --mclash-test-instance \
   >"${log_file}" 2>&1 &
@@ -104,7 +124,7 @@ response="$("${cli}" runtime-diagnostics --socket "${socket_path}" --pretty \
   --timeout "${MCLASH_SMOKE_TIMEOUT_SECONDS:-30}")"
 print -r -- "${response}"
 
-/usr/bin/python3 - "${response}" <<'PY'
+/usr/bin/python3 - "${response}" "${MCLASH_SHADOW_SOURCE_ROOT:-}" <<'PY'
 import json
 import sys
 
@@ -120,6 +140,13 @@ capabilities = diagnostics.get("capabilities", [])
 required = {"nativeRuntime", "nativeRouting"}
 if not required.issubset(set(capabilities)):
     raise SystemExit("native runtime capabilities are incomplete")
+if sys.argv[2]:
+    revision = diagnostics.get("workspaceRevision")
+    if not isinstance(revision, int) or revision <= 0 or not diagnostics.get("hasCompiledRuntimePlan"):
+        raise SystemExit("copied-profile shadow did not load a compiled workspace plan")
 PY
 
 print "Native runtime CLI smoke passed (namespace=${namespace})."
+if [[ "${MCLASH_KEEP_SHADOW:-0}" == "1" ]]; then
+  print "Kept shadow artifacts: appSupport=${shadow_application_support:-none} automation=${automation_directory}"
+fi
