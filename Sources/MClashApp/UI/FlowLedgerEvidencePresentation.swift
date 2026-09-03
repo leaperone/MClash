@@ -30,7 +30,7 @@ enum FlowLedgerAssociationPresentation {
                 connectionID
             )
         case .some(.none), nil:
-            return AppLocalization.string("No Mihomo connection association")
+            return AppLocalization.string("No runtime connection association")
         }
     }
 }
@@ -64,7 +64,7 @@ enum FlowLedgerTrafficPresentation {
                 )
             }
             return AppLocalization.string(
-                "All displayed bytes were measured by Mihomo or the App Routing relay."
+                "All displayed bytes were measured by MClash or its App Routing relay."
             )
         }
 
@@ -76,7 +76,7 @@ enum FlowLedgerTrafficPresentation {
         guard traffic.exactTotalBytes > 0 else { return limitation }
 
         return AppLocalization.format(
-            "%@ was measured by Mihomo or the App Routing relay. %@",
+            "%@ was measured by MClash or its App Routing relay. %@",
             formattedLedgerTraffic(traffic.exactTotalBytes),
             limitation
         )

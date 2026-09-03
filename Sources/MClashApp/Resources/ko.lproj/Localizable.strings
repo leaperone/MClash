@@ -197,7 +197,7 @@
 "History Range" = "기록 범위";
 "Hits" = "일치 횟수";
 "IP Addresses & Networks" = "IP 주소 및 네트워크";
-"If Mihomo is unavailable" = "Mihomo를 사용할 수 없는 경우";
+"If the selected route is unavailable" = "If the selected route is unavailable";
 "Import" = "가져오기";
 "Import & Activate" = "가져오기 및 활성화";
 "Import & Activate…" = "가져오기 및 활성화…";
@@ -498,7 +498,7 @@
 "Keep Running" = "계속 실행";
 "Keep Running hides MClash windows while the menu bar item remains available." = "‘계속 실행’을 선택하면 MClash 윈도우가 가려지고 메뉴 막대 항목은 계속 사용할 수 있습니다.";
 "MClash Couldn’t Restore Network Settings" = "MClash가 네트워크 설정을 복원하지 못했습니다";
-"Mihomo stays connected and continues providing local proxy service." = "Mihomo는 연결을 유지하고 로컬 프록시 서비스를 계속 제공합니다.";
+"MClash stays connected and continues providing local proxy service." = "MClash stays connected and continues providing local proxy service.";
 "Quit Anyway" = "그래도 종료";
 "Quit Completely" = "완전히 종료";
 "Quit Completely stops MClash and its active networking services." = "‘완전히 종료’하면 MClash와 활성 네트워크 서비스가 중지됩니다.";
@@ -578,7 +578,7 @@
 "Protocol" = "프로토콜";
 "Follow Profile Rules" = "프로필 규칙 따르기";
 "Named Sub-rule" = "이름 지정 하위 규칙";
-"Mihomo GLOBAL" = "Mihomo GLOBAL";
+"Global exit" = "Global exit";
 "Policy Group" = "정책 그룹";
 "Proxy Node" = "프록시 노드";
 "Loading routing targets…" = "라우팅 대상 불러오는 중…";
@@ -651,11 +651,11 @@
 "App Routing is not intercepting traffic" = "앱 라우팅이 트래픽을 가로채지 않습니다";
 "Per-application rules are currently not being applied." = "앱별 규칙이 현재 적용되지 않습니다.";
 "A previous network state could not be fully restored" = "이전 네트워크 상태를 완전히 복원하지 못했습니다";
-"App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change." = "앱 라우팅, mihomo 코어 또는 macOS 시스템 프록시가 변경 실패 전 상태와 다를 수 있습니다.";
+"App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change." = "App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change.";
 "App Routing stopped after DNS verification failed" = "DNS 확인 실패 후 앱 라우팅이 중지되었습니다";
 "DNS routing is unverified" = "DNS 라우팅을 확인할 수 없습니다";
 "MClash stopped application capture and DNS together; macOS system DNS was restored." = "MClash가 앱 캡처와 DNS를 함께 중지했으며 macOS 시스템 DNS를 복원했습니다.";
-"MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener." = "MClash가 일반 DNS 요청이 전용 Mihomo 리스너에 도달하는지 확인할 수 없습니다.";
+"MClash cannot confirm that ordinary DNS is reaching its private DNS listener." = "MClash cannot confirm that ordinary DNS is reaching its private DNS listener.";
 "Retry App Routing" = "앱 라우팅 재시도";
 "%@ data is reconnecting" = "%@ 데이터에 다시 연결하는 중입니다";
 "Traffic rate" = "트래픽 속도";
@@ -875,7 +875,7 @@
 "%@ unmeasured; no measured payload yet" = "%@ 미측정 · 아직 측정된 페이로드 없음";
 "%@ uses %@ as a dialer dependency" = "%@은(는) %@을(를) 다이얼러 종속성으로 사용";
 "%@ uses %@ as its dialer dependency" = "%@은(는) %@을(를) 다이얼러 종속성으로 사용";
-"%@ was measured by Mihomo or the App Routing relay. %@" = "%@은(는) Mihomo 또는 앱 라우팅 릴레이에서 측정되었습니다. %@";
+"%@ was measured by MClash or its App Routing relay. %@" = "%@ was measured by MClash or its App Routing relay. %@";
 "%@ · %@" = "%@ · %@";
 "%@ · %@ pass-through unmeasured" = "%@ · %@ 통과 · 미측정";
 "%@ · %d running" = "%@ · %d개 실행 중";
@@ -930,7 +930,7 @@
 "Advanced Matching" = "고급 조건";
 "All" = "전체";
 "All TCP traffic" = "모든 TCP 트래픽";
-"All displayed bytes were measured by Mihomo or the App Routing relay." = "표시된 모든 바이트는 Mihomo 또는 앱 라우팅 릴레이에서 측정되었습니다.";
+"All displayed bytes were measured by MClash or its App Routing relay." = "All displayed bytes were measured by MClash or its App Routing relay.";
 "Allow LAN" = "LAN 허용";
 "Another MClash automation server is already running (PID %d)" = "다른 MClash 자동화 서버가 이미 실행 중입니다(PID %d).";
 "Another backup restore transaction is still pending." = "다른 백업 복원 작업이 아직 대기 중입니다.";
@@ -947,14 +947,14 @@
 "App Routing On · revision %@" = "앱 라우팅 켜짐 · 리비전 %@";
 "App Routing Waiting for Connection" = "앱 라우팅 연결 대기 중";
 "App Routing activation failed verification: %@" = "앱 라우팅 활성화 확인 실패: %@";
-"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@" = "DNS 프로바이더 하트비트 또는 Mihomo 백엔드를 확인할 수 없어 앱 라우팅과 DNS 라우팅이 함께 중지되었습니다. macOS 시스템 DNS를 복원했습니다. 마지막 오류: %@";
+"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@" = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@";
 "App Routing could not start. Review Attention or retry." = "앱 라우팅을 시작하지 못했습니다. 주의 페이지를 확인하거나 다시 시도하십시오.";
 "App Routing couldn’t start: %@" = "앱 라우팅을 시작하지 못했습니다: %@";
 "App Routing did not reach a verified running state." = "앱 라우팅이 확인된 실행 상태에 도달하지 못했습니다.";
 "App Routing flow from %@ to %@" = "%@에서 %@까지의 앱 라우팅 흐름";
 "App Routing is off. Saved rules are not intercepting traffic." = "앱 라우팅이 꺼져 있습니다. 저장된 규칙이 트래픽을 가로채지 않습니다.";
 "App Routing relay" = "앱 라우팅 릴레이";
-"App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@." = "앱 라우팅에서 서로 다른 Mihomo 경로 대상 %@개를 요청했습니다. 안전한 최대값은 %@개입니다.";
+"App Routing requests %@ distinct runtime route targets; the safe maximum is %@." = "App Routing requests %@ distinct runtime route targets; the safe maximum is %@.";
 "App Routing targets profile %@, but that profile is no longer available." = "앱 라우팅이 프로필 %@을(를) 대상으로 하지만 해당 프로필을 더 이상 사용할 수 없습니다.";
 "App Routing was disabled when this flow arrived." = "이 흐름이 들어왔을 때 앱 라우팅이 비활성화되어 있었습니다.";
 "App Routing · %@ active rule" = "앱 라우팅 · 활성 규칙 %@개";
@@ -1045,7 +1045,7 @@
 "Connection stream interval must be greater than zero." = "연결 스트림 간격은 0보다 커야 합니다.";
 "Connections entering this port use the Profile's normal rules." = "이 포트로 들어오는 연결은 프로필의 일반 규칙을 사용합니다.";
 "Connections start at the named sub-rule “%@”." = "연결은 이름이 지정된 하위 규칙 “%@”에서 시작됩니다.";
-"Connections use Mihomo's GLOBAL policy selection." = "연결은 Mihomo의 GLOBAL 정책 선택을 사용합니다.";
+"Connections use MClash's Global exit policy." = "Connections use MClash's Global exit policy.";
 "Contains %@" = "%@ 포함";
 "Converted from Proxifier %@ to Mihomo profile rules." = "Proxifier %@을(를) Mihomo 프로필 규칙으로 변환했습니다.";
 "Copied" = "복사됨";
@@ -1178,7 +1178,7 @@
 "Identifier pattern %@ matched the %@; this is a name/pattern match, not an exact signature identity" = "식별자 패턴 %@이(가) %@과(와) 일치했습니다. 이름/패턴 일치이며 정확한 서명 식별 정보 일치는 아닙니다.";
 "Identity unavailable" = "식별 정보를 사용할 수 없음";
 "Import a Profile before configuring proxy groups." = "프록시 그룹을 구성하기 전에 프로필을 가져오십시오.";
-"Import a mihomo profile" = "Mihomo 프로필 가져오기";
+"Import a node profile" = "Import a node profile";
 "Import explicitly selected Proxifier rules" = "명시적으로 선택한 Proxifier 규칙 가져오기";
 "Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly." = "가져온 프록시 및 체인 규칙은 Mihomo를 사용할 수 없을 때 자동으로 직접 연결하지 않고 연결을 거부합니다.";
 "Imported Rule %d" = "가져온 규칙 %d";
@@ -1198,7 +1198,7 @@
 "Live" = "실시간";
 "Live connections are streamed from the local Mihomo controller." = "실시간 연결은 로컬 Mihomo 컨트롤러에서 스트리밍됩니다.";
 "Live data reconnecting · last-known rows shown" = "실시간 데이터 다시 연결 중 · 마지막으로 확인된 행 표시";
-"Live rollback failed without stopping Mihomo: %@" = "실행 중 롤백에 실패했지만 Mihomo는 중지되지 않았습니다: %@";
+"Live rollback failed without stopping the runtime: %@" = "Live rollback failed without stopping the runtime: %@";
 "Load balancing chooses a route independently for each connection." = "부하 분산은 각 연결마다 독립적으로 경로를 선택합니다.";
 "LoadBalance · per connection" = "LoadBalance · 연결별";
 "Loading this Profile’s proxy groups…" = "이 프로필의 프록시 그룹 불러오는 중…";
@@ -1218,7 +1218,7 @@
 "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@" = "MClash가 프로필 저장소를 읽지 못했습니다. 목록이 비어 있어도 프로필이 삭제되었다는 뜻은 아닙니다.\n\n%@";
 "MClash could not read the persistent traffic history: %@" = "MClash가 영구 트래픽 기록을 읽지 못했습니다: %@";
 "MClash could not restore the previous macOS proxy settings, so the running core was left active." = "MClash가 이전 macOS 프록시 설정을 복원하지 못해 실행 중인 코어를 활성 상태로 유지했습니다.";
-"MClash could not stop Network Extension capture, so the mihomo core was left active." = "MClash가 네트워크 확장 프로그램 캡처를 중지하지 못해 Mihomo 코어를 활성 상태로 유지했습니다.";
+"MClash could not stop Network Extension capture, so the runtime was left active." = "MClash could not stop Network Extension capture, so the runtime was left active.";
 "MClash could not update the traffic history retention period: %@" = "MClash가 트래픽 기록 보존 기간을 업데이트하지 못했습니다: %@";
 "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@" = "MClash가 %@회 연속 시도 후에도 macOS 시스템 프록시를 확인하거나 복원하지 못했습니다. 마지막 오류: %@";
 "MClash could not write the persistent traffic history: %@" = "MClash가 영구 트래픽 기록에 쓰지 못했습니다: %@";
@@ -1248,15 +1248,15 @@
 "Mihomo Rule" = "Mihomo 규칙";
 "Mihomo complete" = "Mihomo 완료";
 "Mihomo connections" = "Mihomo 연결";
-"Mihomo controller: %@" = "Mihomo 컨트롤러: %@";
+"Legacy controller: %@" = "Legacy controller: %@";
 "Mihomo policy group" = "Mihomo 정책 그룹";
 "Mihomo profile rules" = "Mihomo 프로필 규칙";
 "Mihomo ready" = "Mihomo 준비됨";
 "Mihomo route" = "Mihomo 경로";
 "Mihomo route confirmed" = "Mihomo 경로 확인됨";
-"Mihomo rule statistics have not been loaded." = "Mihomo 규칙 통계를 불러오지 않았습니다.";
-"Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Mihomo 규칙 통계를 마지막으로 불러온 시각: %@. 이 페이지가 열려 있는 동안 15초마다 새로 고칩니다.";
-"Mihomo · %@" = "Mihomo · %@";
+"Rule statistics have not been loaded." = "Rule statistics have not been loaded.";
+"Rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Rule statistics last loaded %@. They refresh every 15 seconds while this page is open.";
+"Group · %@" = "Group · %@";
 "Mihomo · resolving" = "Mihomo · 확인 중";
 "Missing" = "누락됨";
 "Missing runtime node" = "런타임 노드 누락";
@@ -1284,7 +1284,7 @@
 "No %@ entries are currently available." = "현재 %@ 항목을 사용할 수 없습니다.";
 "No %@ entries contain “%@”." = "%@ 항목 중 “%@”이(가) 포함된 항목이 없습니다.";
 "No %@ sample was received for more than %@ seconds." = "%@ 샘플이 %@초 넘게 수신되지 않았습니다.";
-"No Mihomo connection association" = "Mihomo 연결 연계 없음";
+"No runtime connection association" = "No runtime connection association";
 "No additional error was reported." = "추가 오류가 보고되지 않았습니다.";
 "No application condition could be converted safely." = "응용 프로그램 조건을 안전하게 변환하지 못했습니다.";
 "No backing Profile selected" = "소스로 사용할 프로필이 선택되지 않음";
@@ -1452,7 +1452,7 @@
 "Rule Payload" = "규칙 페이로드";
 "Rule provider name must not be empty." = "규칙 프로바이더 이름은 비워 둘 수 없습니다.";
 "Rule providers: %@" = "규칙 프로바이더: %@";
-"Rules are read from the active mihomo runtime configuration." = "규칙은 활성 Mihomo 런타임 구성에서 읽습니다.";
+"Rules are read from the active MClash routing configuration." = "Rules are read from the active MClash routing configuration.";
 "Rules are saved. Connect MClash to start routing." = "규칙이 저장되었습니다. 라우팅을 시작하려면 MClash에 연결하십시오.";
 "Rules are saved. DNS is excluded in App Routing options." = "규칙이 저장되었습니다. 앱 라우팅 옵션에서 DNS가 제외되었습니다.";
 "Rules are saved. DNS will start together with App Routing." = "규칙이 저장되었습니다. DNS가 앱 라우팅과 함께 시작됩니다.";
@@ -1595,7 +1595,7 @@
 "The flow metadata signing identifier disagreed with the verified running code." = "흐름 메타데이터의 서명 식별자가 확인된 실행 코드와 일치하지 않습니다.";
 "The flow used a destination endpoint type that App Routing cannot match." = "흐름에서 앱 라우팅이 일치시킬 수 없는 대상 엔드포인트 유형을 사용했습니다.";
 "The flow was handed back to macOS without a rule match." = "규칙과 일치하지 않아 흐름이 macOS로 반환되었습니다.";
-"The generated Mihomo configuration is not valid UTF-8." = "생성된 Mihomo 구성이 유효한 UTF-8이 아닙니다.";
+"The generated runtime configuration is not valid UTF-8." = "The generated runtime configuration is not valid UTF-8.";
 "The imported profile filename must end in .yaml or .yml." = "가져온 프로필 파일 이름은 .yaml 또는 .yml로 끝나야 합니다.";
 "The imported profile must be between 1 byte and %@ bytes." = "가져온 프로필은 1바이트~%@바이트여야 합니다.";
 "The imported rules cannot be appended without renumbering the current rule set." = "현재 규칙 집합의 번호를 다시 매기지 않고는 가져온 규칙을 추가할 수 없습니다.";
@@ -1620,7 +1620,7 @@
 "The previous App Routing revision did not return to a running state." = "이전 앱 라우팅 리비전이 실행 상태로 돌아가지 않았습니다.";
 "The previous configuration backup is missing." = "이전 구성 백업이 없습니다.";
 "The previous core session could not be restarted: %@" = "이전 코어 세션을 다시 시작하지 못했습니다: %@";
-"The previous durable rules could not be restored without stopping Mihomo: %@" = "Mihomo를 중지하지 않고는 이전 영구 규칙을 복원하지 못했습니다: %@";
+"The previous durable rules could not be restored without stopping the runtime: %@" = "The previous durable rules could not be restored without stopping the runtime: %@";
 "The previous override document could not be saved: %@" = "이전 재정의 문서를 저장하지 못했습니다: %@";
 "The previous private App Routing listener could not be restored." = "이전 비공개 앱 라우팅 리스너를 복원하지 못했습니다.";
 "The previous profile also could not be restarted." = "이전 프로필도 다시 시작하지 못했습니다.";
@@ -1776,9 +1776,9 @@
 "macOS notification permission was not granted." = "macOS 알림 권한이 부여되지 않았습니다.";
 "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application" = "macOS가 검증 중 네트워크 확장 프로그램 패키지를 거부했습니다. 최신 MClash 업데이트를 설치하거나 응용 프로그램을 다시 설치하십시오";
 "macOS rejected the proxy preference changes while committing them." = "macOS가 프록시 환경설정 변경 사항을 커밋하는 동안 거부했습니다.";
-"mihomo core: %@" = "Mihomo 코어: %@";
-"mihomo did not accept MClash's temporary local proxy port %@." = "Mihomo가 MClash의 임시 로컬 프록시 포트 %@을(를) 허용하지 않았습니다.";
-"mihomo did not apply the requested %@ listener port %@; it reported %@." = "Mihomo가 요청된 %@ 리스너 포트 %@을(를) 적용하지 않고 %@을(를) 보고했습니다.";
+"runtime: %@" = "runtime: %@";
+"The runtime did not accept MClash's temporary local proxy port %@." = "The runtime did not accept MClash's temporary local proxy port %@.";
+"The runtime did not apply the requested %@ listener port %@; it reported %@." = "The runtime did not apply the requested %@ listener port %@; it reported %@.";
 "mihomo proxy" = "Mihomo 프록시";
 "mihomo returned HTTP %@." = "Mihomo에서 HTTP %@을(를) 반환했습니다.";
 "mihomo returned HTTP %@: %@" = "Mihomo에서 HTTP %@을(를) 반환했습니다: %@";
@@ -1835,7 +1835,7 @@
 "Technical Details" = "기술 세부 정보";
 "Close all %@ active connections?" = "활성 연결 %@개를 모두 닫으시겠습니까?";
 "Keep %@ Days" = "%@일 동안 보관";
-"The private mihomo listener is unavailable." = "비공개 mihomo 리스너를 사용할 수 없습니다.";
+"The private runtime listener is unavailable." = "The private runtime listener is unavailable.";
 "Shows route, process, address, and traffic details for the selected connection" = "선택한 연결의 경로, 프로세스, 주소 및 트래픽 세부 정보를 표시합니다";
 "Active connections" = "활성 연결";
 "Connection details for %@" = "%@의 연결 세부 정보";
@@ -2249,7 +2249,7 @@
 "Remove nested group" = "Remove nested group";
 "Entrance name is required." = "Entrance name is required.";
 "How traffic is routed" = "How traffic is routed";
-"The selected group is used by Mihomo GLOBAL mode." = "The selected group is used by Mihomo GLOBAL mode.";
+"The selected group is used by Global mode." = "The selected group is used by Global mode.";
 "Process name" = "Process name";
 "GEOIP country" = "GEOIP country";
 "GEOIP6 country" = "GEOIP6 country";
@@ -2325,9 +2325,9 @@
 "No active providers" = "No active providers";
 "Node Selection setup" = "Node Selection setup";
 "One stable parent for rules, with regional and automatic child groups that refresh with your sources." = "One stable parent for rules, with regional and automatic child groups that refresh with your sources.";
-"Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path." = "Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path.";
+"Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path." = "Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path.";
 "Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity." = "Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity.";
-"Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
+"Reusable rule collections with an explicit source and format." = "Reusable rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
 "Rule Sets" = "Rule Sets";
@@ -2374,7 +2374,7 @@
 "Quick match" = "Quick match";
 "Rule set path must be a relative safe path without line breaks or parent-directory segments." = "Rule set path must be a relative safe path without line breaks or parent-directory segments.";
 "GEOIP6 (unsupported)" = "GEOIP6 (unsupported)";
-"Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.";
+"This runtime does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "This runtime does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.";
 "Recovery listener" = "복구 리스너";
 "Move selector up" = "선택기 위로 이동";
 "Move selector down" = "선택기 아래로 이동";
@@ -2426,3 +2426,5 @@
 "Route confirmed by connection telemetry" = "연결 텔레메트리로 경로 확인됨";
 "Sent to proxy; awaiting connection telemetry" = "프록시에 전송됨 · 연결 텔레메트리 대기 중";
 "Waiting for associated connection telemetry" = "연결된 텔레메트리 대기 중";
+"The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "App Routing 실시간 업데이트가 거부되었습니다. 런타임을 재시작하지 않고 이전 규칙을 복원했습니다.";
+"Native runtime is ready; no legacy controller was contacted." = "네이티브 런타임이 준비되었습니다. 레거시 컨트롤러에는 연결하지 않았습니다.";

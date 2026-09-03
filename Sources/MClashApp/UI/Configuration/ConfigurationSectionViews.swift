@@ -230,7 +230,7 @@ struct ConfigurationView: View {
                         }
                     }
                     .frame(maxWidth: 360, alignment: .leading)
-                    .help(AppLocalization.string("The selected group is used by Mihomo GLOBAL mode."))
+                    .help(AppLocalization.string("The selected group is used by Global mode."))
                 }
             }
         }

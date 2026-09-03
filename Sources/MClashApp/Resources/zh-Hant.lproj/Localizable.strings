@@ -198,7 +198,7 @@
 "History Range" = "歷史範圍";
 "Hits" = "命中次數";
 "IP Addresses & Networks" = "IP 位址與網段";
-"If Mihomo is unavailable" = "Mihomo 不可用時";
+"If the selected route is unavailable" = "If the selected route is unavailable";
 "Import" = "匯入";
 "Import & Activate" = "匯入並啟用";
 "Import & Activate…" = "匯入並啟用…";
@@ -497,7 +497,7 @@
 "Keep Running" = "繼續執行";
 "Keep Running hides MClash windows while the menu bar item remains available." = "繼續執行會隱藏 MClash 視窗，選單列項目仍可使用。";
 "MClash Couldn’t Restore Network Settings" = "MClash 無法還原網路設定";
-"Mihomo stays connected and continues providing local proxy service." = "Mihomo 會保持連線，並繼續提供本機代理服務。";
+"MClash stays connected and continues providing local proxy service." = "MClash stays connected and continues providing local proxy service.";
 "Quit Anyway" = "仍要結束";
 "Quit Completely" = "完全結束";
 "Quit Completely stops MClash and its active networking services." = "完全結束會停止 MClash 及作用中的網路服務。";
@@ -578,7 +578,7 @@
 "Protocol" = "協定";
 "Follow Profile Rules" = "遵循設定檔規則";
 "Named Sub-rule" = "命名子規則";
-"Mihomo GLOBAL" = "Mihomo GLOBAL";
+"Global exit" = "Global exit";
 "Policy Group" = "策略群組";
 "Proxy Node" = "代理節點";
 "Loading routing targets…" = "正在載入路由目標…";
@@ -651,11 +651,11 @@
 "App Routing is not intercepting traffic" = "應用程式分流未攔截流量";
 "Per-application rules are currently not being applied." = "各 App 規則目前未套用。";
 "A previous network state could not be fully restored" = "無法完整還原之前的網路狀態";
-"App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change." = "應用程式分流、mihomo 核心或 macOS 系統代理的狀態，可能與變更失敗前不一致。";
+"App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change." = "App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change.";
 "App Routing stopped after DNS verification failed" = "DNS 驗證失敗後，應用程式分流已停止";
 "DNS routing is unverified" = "無法驗證 DNS 路由";
 "MClash stopped application capture and DNS together; macOS system DNS was restored." = "MClash 已同時停止應用程式擷取和 DNS，並還原 macOS 系統 DNS。";
-"MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener." = "MClash 無法確認一般 DNS 要求是否送達其專用 Mihomo 監聽器。";
+"MClash cannot confirm that ordinary DNS is reaching its private DNS listener." = "MClash cannot confirm that ordinary DNS is reaching its private DNS listener.";
 "Retry App Routing" = "重試應用程式分流";
 "%@ data is reconnecting" = "%@資料正在重新連線";
 "Traffic rate" = "流量速率";
@@ -876,7 +876,7 @@
 "%@ unmeasured; no measured payload yet" = "%@ 未量測；尚無量測資料";
 "%@ uses %@ as a dialer dependency" = "%@ 將 %@ 用作撥號器相依項目";
 "%@ uses %@ as its dialer dependency" = "%@ 將 %@ 用作其撥號器相依項目";
-"%@ was measured by Mihomo or the App Routing relay. %@" = "%@ 由 Mihomo 或應用程式分流轉送量測。%@";
+"%@ was measured by MClash or its App Routing relay. %@" = "%@ was measured by MClash or its App Routing relay. %@";
 "%@ · %@" = "%@ · %@";
 "%@ · %@ pass-through unmeasured" = "%@ · %@ 直接放行未量測";
 "%@ · %d running" = "%@ · %d 個正在執行";
@@ -931,7 +931,7 @@
 "Advanced Matching" = "進階比對";
 "All" = "全部";
 "All TCP traffic" = "所有 TCP 流量";
-"All displayed bytes were measured by Mihomo or the App Routing relay." = "顯示的所有位元組均由 Mihomo 或應用程式分流轉送量測。";
+"All displayed bytes were measured by MClash or its App Routing relay." = "All displayed bytes were measured by MClash or its App Routing relay.";
 "Allow LAN" = "允許區域網路存取";
 "Another MClash automation server is already running (PID %d)" = "另一個 MClash 自動化伺服器已在執行（PID %d）";
 "Another backup restore transaction is still pending." = "另一個備份還原操作仍在等待完成。";
@@ -948,14 +948,14 @@
 "App Routing On · revision %@" = "應用程式分流已開啟 · 修訂版本 %@";
 "App Routing Waiting for Connection" = "應用程式分流正在等待連線";
 "App Routing activation failed verification: %@" = "應用程式分流啟用驗證失敗：%@";
-"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@" = "由於無法驗證 DNS 提供者心跳或 Mihomo 後端，應用程式分流和 DNS 路由已一並停止。macOS 系統 DNS 已還原。上次錯誤：%@";
+"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@" = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@";
 "App Routing could not start. Review Attention or retry." = "應用程式分流無法啟動。請檢視「注意事項」或重試。";
 "App Routing couldn’t start: %@" = "應用程式分流無法啟動：%@";
 "App Routing did not reach a verified running state." = "應用程式分流未進入已驗證的執行狀態。";
 "App Routing flow from %@ to %@" = "從 %@ 到 %@ 的應用程式分流流量";
 "App Routing is off. Saved rules are not intercepting traffic." = "應用程式分流已關閉。已儲存的規則不會攔截流量。";
 "App Routing relay" = "應用程式分流轉送";
-"App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@." = "應用程式分流請求 %@ 個不同的 Mihomo 路由目標；安全上限為 %@ 個。";
+"App Routing requests %@ distinct runtime route targets; the safe maximum is %@." = "App Routing requests %@ distinct runtime route targets; the safe maximum is %@.";
 "App Routing targets profile %@, but that profile is no longer available." = "應用程式分流指向設定檔 %@，但該設定檔已不可用。";
 "App Routing was disabled when this flow arrived." = "此流量到達時，應用程式分流已停用。";
 "App Routing · %@ active rule" = "應用程式分流 · %@ 條作用中規則";
@@ -1046,7 +1046,7 @@
 "Connection stream interval must be greater than zero." = "連線資料流間隔必須大於零。";
 "Connections entering this port use the Profile's normal rules." = "進入此連接埠的連線會使用該設定檔的一般規則。";
 "Connections start at the named sub-rule “%@”." = "連線從名為「%@」的子規則開始。";
-"Connections use Mihomo's GLOBAL policy selection." = "連線使用 Mihomo 的 GLOBAL 策略選擇。";
+"Connections use MClash's Global exit policy." = "Connections use MClash's Global exit policy.";
 "Contains %@" = "包含 %@";
 "Converted from Proxifier %@ to Mihomo profile rules." = "已從 Proxifier %@ 轉換為 Mihomo 設定檔規則。";
 "Copied" = "已複製";
@@ -1179,7 +1179,7 @@
 "Identifier pattern %@ matched the %@; this is a name/pattern match, not an exact signature identity" = "識別碼模式 %@ 與 %@ 比對；這是名稱或模式比對，並非精確的簽署身分";
 "Identity unavailable" = "身分不可用";
 "Import a Profile before configuring proxy groups." = "設定代理群組前，請先匯入設定檔。";
-"Import a mihomo profile" = "匯入 Mihomo 設定檔";
+"Import a node profile" = "Import a node profile";
 "Import explicitly selected Proxifier rules" = "匯入明確選擇的 Proxifier 規則";
 "Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly." = "Mihomo 不可用時，匯入的代理和鏈規則會拒絕連線，而不是靜默直連。";
 "Imported Rule %d" = "匯入的規則 %d";
@@ -1199,7 +1199,7 @@
 "Live" = "即時";
 "Live connections are streamed from the local Mihomo controller." = "即時連線由本機 Mihomo 控制器傳輸。";
 "Live data reconnecting · last-known rows shown" = "正在重新連線即時資料 · 顯示最後一次已知記錄";
-"Live rollback failed without stopping Mihomo: %@" = "即時還原失敗，且未停止 Mihomo：%@";
+"Live rollback failed without stopping the runtime: %@" = "Live rollback failed without stopping the runtime: %@";
 "Load balancing chooses a route independently for each connection." = "負載平衡會為每個連線單獨選擇路由。";
 "LoadBalance · per connection" = "負載平衡 · 每個連線";
 "Loading this Profile’s proxy groups…" = "正在載入此設定檔的代理群組…";
@@ -1219,7 +1219,7 @@
 "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@" = "MClash 無法讀取設定檔儲存空間。此處列表為空並不表示設定檔已被刪除。\n\n%@";
 "MClash could not read the persistent traffic history: %@" = "MClash 無法讀取持續保留的流量歷史：%@";
 "MClash could not restore the previous macOS proxy settings, so the running core was left active." = "MClash 無法還原先前的 macOS 代理設定，因此核心會繼續執行。";
-"MClash could not stop Network Extension capture, so the mihomo core was left active." = "MClash 無法停止網路延伸功能的流量擷取，因此讓 mihomo 核心保持作用中。";
+"MClash could not stop Network Extension capture, so the runtime was left active." = "MClash could not stop Network Extension capture, so the runtime was left active.";
 "MClash could not update the traffic history retention period: %@" = "MClash 無法更新流量歷史保留期限：%@";
 "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@" = "連續嘗試 %@ 次後，MClash 仍無法驗證或還原 macOS 系統代理。上次錯誤：%@";
 "MClash could not write the persistent traffic history: %@" = "MClash 無法寫入持續保留的流量歷史：%@";
@@ -1249,15 +1249,15 @@
 "Mihomo Rule" = "Mihomo 規則";
 "Mihomo complete" = "Mihomo 已完成";
 "Mihomo connections" = "Mihomo 連線";
-"Mihomo controller: %@" = "Mihomo 控制器：%@";
+"Legacy controller: %@" = "Legacy controller: %@";
 "Mihomo policy group" = "Mihomo 策略群組";
 "Mihomo profile rules" = "Mihomo 設定檔規則";
 "Mihomo ready" = "Mihomo 已就緒";
 "Mihomo route" = "Mihomo 路由";
 "Mihomo route confirmed" = "Mihomo 路由已確認";
-"Mihomo rule statistics have not been loaded." = "尚未載入 Mihomo 規則統計。";
-"Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Mihomo 規則統計上次載入於 %@。此頁面開啟時每 15 秒重新整理一次。";
-"Mihomo · %@" = "Mihomo · %@";
+"Rule statistics have not been loaded." = "Rule statistics have not been loaded.";
+"Rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Rule statistics last loaded %@. They refresh every 15 seconds while this page is open.";
+"Group · %@" = "Group · %@";
 "Mihomo · resolving" = "Mihomo · 正在解析";
 "Missing" = "缺少";
 "Missing runtime node" = "缺少執行階段節點";
@@ -1285,7 +1285,7 @@
 "No %@ entries are currently available." = "目前沒有可用的 %@ 項目。";
 "No %@ entries contain “%@”." = "沒有 %@ 項目包含「%@」。";
 "No %@ sample was received for more than %@ seconds." = "未收到 %@ 樣本已超過 %@ 秒。";
-"No Mihomo connection association" = "未關聯 Mihomo 連線";
+"No runtime connection association" = "No runtime connection association";
 "No additional error was reported." = "未報告其他錯誤。";
 "No application condition could be converted safely." = "無法安全轉換任何應用程式條件。";
 "No backing Profile selected" = "未選擇預設設定檔來源";
@@ -1453,7 +1453,7 @@
 "Rule Payload" = "規則內容";
 "Rule provider name must not be empty." = "規則提供者名稱不能為空。";
 "Rule providers: %@" = "規則提供者：%@";
-"Rules are read from the active mihomo runtime configuration." = "規則從目前 Mihomo 執行階段設定中讀取。";
+"Rules are read from the active MClash routing configuration." = "Rules are read from the active MClash routing configuration.";
 "Rules are saved. Connect MClash to start routing." = "規則已儲存。連線 MClash 後即可開始路由。";
 "Rules are saved. DNS is excluded in App Routing options." = "規則已儲存。應用程式分流選項中已排除 DNS。";
 "Rules are saved. DNS will start together with App Routing." = "規則已儲存。DNS 將隨應用程式分流一起啟動。";
@@ -1596,7 +1596,7 @@
 "The flow metadata signing identifier disagreed with the verified running code." = "流量中繼資料中的簽署識別碼與已驗證的執行程式碼不一致。";
 "The flow used a destination endpoint type that App Routing cannot match." = "此流量使用了應用程式分流無法比對的目標端點類型。";
 "The flow was handed back to macOS without a rule match." = "未比對到規則，此流量已交還 macOS。";
-"The generated Mihomo configuration is not valid UTF-8." = "產生的 Mihomo 設定不是有效的 UTF-8。";
+"The generated runtime configuration is not valid UTF-8." = "The generated runtime configuration is not valid UTF-8.";
 "The imported profile filename must end in .yaml or .yml." = "匯入的設定檔名必須以 .yaml 或 .yml 結尾。";
 "The imported profile must be between 1 byte and %@ bytes." = "匯入的設定檔大小必須在 1 位元組到 %@ 位元組之間。";
 "The imported rules cannot be appended without renumbering the current rule set." = "若不重新編號目前規則集，則無法追加匯入的規則。";
@@ -1621,7 +1621,7 @@
 "The previous App Routing revision did not return to a running state." = "先前的應用程式分流修訂版本未回到執行狀態。";
 "The previous configuration backup is missing." = "缺少先前的設定備份。";
 "The previous core session could not be restarted: %@" = "無法重新啟動先前的核心工作階段：%@";
-"The previous durable rules could not be restored without stopping Mihomo: %@" = "若不停止 Mihomo，則無法還原先前的持續保留的規則：%@";
+"The previous durable rules could not be restored without stopping the runtime: %@" = "The previous durable rules could not be restored without stopping the runtime: %@";
 "The previous override document could not be saved: %@" = "無法儲存先前的覆寫設定檔案：%@";
 "The previous private App Routing listener could not be restored." = "無法還原先前的應用程式分流專用監聽器。";
 "The previous profile also could not be restarted." = "先前的設定檔也無法重新啟動。";
@@ -1777,9 +1777,9 @@
 "macOS notification permission was not granted." = "未取得 macOS 通知權限。";
 "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application" = "macOS 在驗證時拒絕了網路延伸功能套件。請安裝最新的 MClash 更新或重新安裝應用程式";
 "macOS rejected the proxy preference changes while committing them." = "macOS 在提交代理偏好設定更改時拒絕了這些更改。";
-"mihomo core: %@" = "Mihomo 核心：%@";
-"mihomo did not accept MClash's temporary local proxy port %@." = "Mihomo 未接受 MClash 的暫時本機代理連接埠 %@。";
-"mihomo did not apply the requested %@ listener port %@; it reported %@." = "Mihomo 未套用請求的 %@ 監聽器連接埠 %@；其報告值為 %@。";
+"runtime: %@" = "runtime: %@";
+"The runtime did not accept MClash's temporary local proxy port %@." = "The runtime did not accept MClash's temporary local proxy port %@.";
+"The runtime did not apply the requested %@ listener port %@; it reported %@." = "The runtime did not apply the requested %@ listener port %@; it reported %@.";
 "mihomo proxy" = "Mihomo 代理";
 "mihomo returned HTTP %@." = "Mihomo 傳回了 HTTP %@。";
 "mihomo returned HTTP %@: %@" = "Mihomo 傳回了 HTTP %@：%@";
@@ -1836,7 +1836,7 @@
 "Technical Details" = "技術詳細資訊";
 "Close all %@ active connections?" = "要關閉全部 %@ 個作用中連線嗎？";
 "Keep %@ Days" = "保留 %@ 天";
-"The private mihomo listener is unavailable." = "私人 mihomo 接聽器無法使用。";
+"The private runtime listener is unavailable." = "The private runtime listener is unavailable.";
 "Shows route, process, address, and traffic details for the selected connection" = "顯示所選連線的路由、程序、位址和流量詳細資訊";
 "Active connections" = "作用中連線";
 "Connection details for %@" = "%@ 的連線詳細資訊";
@@ -2250,7 +2250,7 @@
 "Remove nested group" = "移除巢狀策略群組";
 "Entrance name is required." = "入口名稱不可為空。";
 "How traffic is routed" = "流量如何路由";
-"The selected group is used by Mihomo GLOBAL mode." = "Mihomo 全域模式會使用選取的策略群組。";
+"The selected group is used by Global mode." = "The selected group is used by Global mode.";
 "Process name" = "程序名稱";
 "GEOIP country" = "GEOIP 國家/地區";
 "GEOIP6 country" = "GEOIP6 國家/地區";
@@ -2326,9 +2326,9 @@
 "No active providers" = "沒有作用中的提供者";
 "Node Selection setup" = "節點選擇方案";
 "One stable parent for rules, with regional and automatic child groups that refresh with your sources." = "使用一個穩定的規則父組，地區和自動子組會隨來源更新。";
-"Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path." = "選填的本機項目，每行一條 Mihomo 規則；遠端來源會由 Mihomo 載入到指定快取路徑。";
+"Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path." = "Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path.";
 "Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity." = "一般 HTTP/SOCKS 代理流量無法提供程序資訊；應用程式分流可以附帶驗證過的應用程式身份。";
-"Reusable Mihomo rule collections with an explicit source and format." = "可重複使用的 MClash Mihomo 規則集合，可明確設定來源和格式。";
+"Reusable rule collections with an explicit source and format." = "Reusable rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "讓選定應用程式透過此設定路由；規則仍在「規則」頁管理，此開關只控制入口。";
 "Rule Set" = "規則集";
 "Rule Sets" = "規則集";
@@ -2375,7 +2375,7 @@
 "Quick match" = "快速匹配";
 "Rule set path must be a relative safe path without line breaks or parent-directory segments." = "規則集路徑必須是安全的相對路徑，不能包含換行或父目錄片段。";
 "GEOIP6 (unsupported)" = "GEOIP6（不支援）";
-"Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "Mihomo 不支援 GEOIP6 規則，請使用 IP-CIDR6 匹配 IPv6 網路。";
+"This runtime does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "This runtime does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.";
 "Recovery listener" = "復原監聽器";
 "Move selector up" = "上移選取器";
 "Move selector down" = "下移選取器";
@@ -2427,3 +2427,5 @@
 "Route confirmed by connection telemetry" = "已透過連線遙測確認路由";
 "Sent to proxy; awaiting connection telemetry" = "已傳送到代理，正在等待連線遙測";
 "Waiting for associated connection telemetry" = "正在等待關聯的連線遙測";
+"The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "應用程式分流即時更新遭拒；已在不重新啟動執行階段的情況下還原先前的規則。";
+"Native runtime is ready; no legacy controller was contacted." = "原生執行階段已就緒；未聯絡相容性控制器。";

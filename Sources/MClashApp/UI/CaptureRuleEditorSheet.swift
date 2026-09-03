@@ -615,7 +615,7 @@ struct CaptureRuleEditorSheet: View {
                         .foregroundStyle(.secondary)
 
                     Picker(
-                        AppLocalization.string("If Mihomo is unavailable"),
+                        AppLocalization.string("If the selected route is unavailable"),
                         selection: $draft.unavailableFallback
                     ) {
                         Text(AppLocalization.string("Connect directly"))
@@ -1018,7 +1018,7 @@ struct CaptureRuleEditorSheet: View {
         let action = draft.action == .mihomoGroup
             && !draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? AppLocalization.format(
-                "Mihomo · %@",
+                "Group · %@",
                 draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             : AppLocalization.string(draft.action.title)

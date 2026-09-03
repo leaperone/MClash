@@ -198,7 +198,7 @@
 "History Range" = "History Range";
 "Hits" = "Hits";
 "IP Addresses & Networks" = "IP Addresses & Networks";
-"If Mihomo is unavailable" = "If Mihomo is unavailable";
+"If the selected route is unavailable" = "If the selected route is unavailable";
 "Import" = "Import";
 "Import & Activate" = "Import & Activate";
 "Import & Activate…" = "Import & Activate…";
@@ -497,7 +497,7 @@
 "Keep Running" = "Keep Running";
 "Keep Running hides MClash windows while the menu bar item remains available." = "Keep Running hides MClash windows while the menu bar item remains available.";
 "MClash Couldn’t Restore Network Settings" = "MClash Couldn’t Restore Network Settings";
-"Mihomo stays connected and continues providing local proxy service." = "Mihomo stays connected and continues providing local proxy service.";
+"MClash stays connected and continues providing local proxy service." = "MClash stays connected and continues providing local proxy service.";
 "Quit Anyway" = "Quit Anyway";
 "Quit Completely" = "Quit Completely";
 "Quit Completely stops MClash and its active networking services." = "Quit Completely stops MClash and its active networking services.";
@@ -578,7 +578,7 @@
 "Protocol" = "Protocol";
 "Follow Profile Rules" = "Follow Profile Rules";
 "Named Sub-rule" = "Named Sub-rule";
-"Mihomo GLOBAL" = "Mihomo GLOBAL";
+"Global exit" = "Global exit";
 "Policy Group" = "Policy Group";
 "Proxy Node" = "Proxy Node";
 "Loading routing targets…" = "Loading routing targets…";
@@ -651,11 +651,11 @@
 "App Routing is not intercepting traffic" = "App Routing is not intercepting traffic";
 "Per-application rules are currently not being applied." = "Per-application rules are currently not being applied.";
 "A previous network state could not be fully restored" = "A previous network state could not be fully restored";
-"App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change." = "App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change.";
+"App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change." = "App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change.";
 "App Routing stopped after DNS verification failed" = "App Routing stopped after DNS verification failed";
 "DNS routing is unverified" = "DNS routing is unverified";
 "MClash stopped application capture and DNS together; macOS system DNS was restored." = "MClash stopped application capture and DNS together; macOS system DNS was restored.";
-"MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener." = "MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener.";
+"MClash cannot confirm that ordinary DNS is reaching its private DNS listener." = "MClash cannot confirm that ordinary DNS is reaching its private DNS listener.";
 "Retry App Routing" = "Retry App Routing";
 "%@ data is reconnecting" = "%@ data is reconnecting";
 "Traffic rate" = "Traffic rate";
@@ -875,7 +875,7 @@
 "%@ unmeasured; no measured payload yet" = "%@ unmeasured; no measured payload yet";
 "%@ uses %@ as a dialer dependency" = "%@ uses %@ as a dialer dependency";
 "%@ uses %@ as its dialer dependency" = "%@ uses %@ as its dialer dependency";
-"%@ was measured by Mihomo or the App Routing relay. %@" = "%@ was measured by Mihomo or the App Routing relay. %@";
+"%@ was measured by MClash or its App Routing relay. %@" = "%@ was measured by MClash or its App Routing relay. %@";
 "%@ · %@" = "%@ · %@";
 "%@ · %@ pass-through unmeasured" = "%@ · %@ pass-through unmeasured";
 "%@ · %d running" = "%@ · %d running";
@@ -930,7 +930,7 @@
 "Advanced Matching" = "Advanced Matching";
 "All" = "All";
 "All TCP traffic" = "All TCP traffic";
-"All displayed bytes were measured by Mihomo or the App Routing relay." = "All displayed bytes were measured by Mihomo or the App Routing relay.";
+"All displayed bytes were measured by MClash or its App Routing relay." = "All displayed bytes were measured by MClash or its App Routing relay.";
 "Allow LAN" = "Allow LAN";
 "Another MClash automation server is already running (PID %d)" = "Another MClash automation server is already running (PID %d)";
 "Another backup restore transaction is still pending." = "Another backup restore transaction is still pending.";
@@ -947,14 +947,14 @@
 "App Routing On · revision %@" = "App Routing On · revision %@";
 "App Routing Waiting for Connection" = "App Routing Waiting for Connection";
 "App Routing activation failed verification: %@" = "App Routing activation failed verification: %@";
-"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@" = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@";
+"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@" = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@";
 "App Routing could not start. Review Attention or retry." = "App Routing could not start. Review Attention or retry.";
 "App Routing couldn’t start: %@" = "App Routing couldn’t start: %@";
 "App Routing did not reach a verified running state." = "App Routing did not reach a verified running state.";
 "App Routing flow from %@ to %@" = "App Routing flow from %@ to %@";
 "App Routing is off. Saved rules are not intercepting traffic." = "App Routing is off. Saved rules are not intercepting traffic.";
 "App Routing relay" = "App Routing relay";
-"App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@." = "App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@.";
+"App Routing requests %@ distinct runtime route targets; the safe maximum is %@." = "App Routing requests %@ distinct runtime route targets; the safe maximum is %@.";
 "App Routing targets profile %@, but that profile is no longer available." = "App Routing targets profile %@, but that profile is no longer available.";
 "App Routing was disabled when this flow arrived." = "App Routing was disabled when this flow arrived.";
 "App Routing · %@ active rule" = "App Routing · %@ active rule";
@@ -1045,7 +1045,7 @@
 "Connection stream interval must be greater than zero." = "Connection stream interval must be greater than zero.";
 "Connections entering this port use the Profile's normal rules." = "Connections entering this port use the Profile's normal rules.";
 "Connections start at the named sub-rule “%@”." = "Connections start at the named sub-rule “%@”.";
-"Connections use Mihomo's GLOBAL policy selection." = "Connections use Mihomo's GLOBAL policy selection.";
+"Connections use MClash's Global exit policy." = "Connections use MClash's Global exit policy.";
 "Contains %@" = "Contains %@";
 "Converted from Proxifier %@ to Mihomo profile rules." = "Converted from Proxifier %@ to Mihomo profile rules.";
 "Copied" = "Copied";
@@ -1178,7 +1178,7 @@
 "Identifier pattern %@ matched the %@; this is a name/pattern match, not an exact signature identity" = "Identifier pattern %@ matched the %@; this is a name/pattern match, not an exact signature identity";
 "Identity unavailable" = "Identity unavailable";
 "Import a Profile before configuring proxy groups." = "Import a Profile before configuring proxy groups.";
-"Import a mihomo profile" = "Import a mihomo profile";
+"Import a node profile" = "Import a node profile";
 "Import explicitly selected Proxifier rules" = "Import explicitly selected Proxifier rules";
 "Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly." = "Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly.";
 "Imported Rule %d" = "Imported Rule %d";
@@ -1198,7 +1198,7 @@
 "Live" = "Live";
 "Live connections are streamed from the local Mihomo controller." = "Live connections are streamed from the local Mihomo controller.";
 "Live data reconnecting · last-known rows shown" = "Live data reconnecting · last-known rows shown";
-"Live rollback failed without stopping Mihomo: %@" = "Live rollback failed without stopping Mihomo: %@";
+"Live rollback failed without stopping the runtime: %@" = "Live rollback failed without stopping the runtime: %@";
 "Load balancing chooses a route independently for each connection." = "Load balancing chooses a route independently for each connection.";
 "LoadBalance · per connection" = "LoadBalance · per connection";
 "Loading this Profile’s proxy groups…" = "Loading this Profile’s proxy groups…";
@@ -1218,7 +1218,7 @@
 "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@" = "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@";
 "MClash could not read the persistent traffic history: %@" = "MClash could not read the persistent traffic history: %@";
 "MClash could not restore the previous macOS proxy settings, so the running core was left active." = "MClash could not restore the previous macOS proxy settings, so the running core was left active.";
-"MClash could not stop Network Extension capture, so the mihomo core was left active." = "MClash could not stop Network Extension capture, so the mihomo core was left active.";
+"MClash could not stop Network Extension capture, so the runtime was left active." = "MClash could not stop Network Extension capture, so the runtime was left active.";
 "MClash could not update the traffic history retention period: %@" = "MClash could not update the traffic history retention period: %@";
 "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@" = "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@";
 "MClash could not write the persistent traffic history: %@" = "MClash could not write the persistent traffic history: %@";
@@ -1248,15 +1248,15 @@
 "Mihomo Rule" = "Mihomo Rule";
 "Mihomo complete" = "Mihomo complete";
 "Mihomo connections" = "Mihomo connections";
-"Mihomo controller: %@" = "Mihomo controller: %@";
+"Legacy controller: %@" = "Legacy controller: %@";
 "Mihomo policy group" = "Mihomo policy group";
 "Mihomo profile rules" = "Mihomo profile rules";
 "Mihomo ready" = "Mihomo ready";
 "Mihomo route" = "Mihomo route";
 "Mihomo route confirmed" = "Mihomo route confirmed";
-"Mihomo rule statistics have not been loaded." = "Mihomo rule statistics have not been loaded.";
-"Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open.";
-"Mihomo · %@" = "Mihomo · %@";
+"Rule statistics have not been loaded." = "Rule statistics have not been loaded.";
+"Rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Rule statistics last loaded %@. They refresh every 15 seconds while this page is open.";
+"Group · %@" = "Group · %@";
 "Mihomo · resolving" = "Mihomo · resolving";
 "Missing" = "Missing";
 "Missing runtime node" = "Missing runtime node";
@@ -1284,7 +1284,7 @@
 "No %@ entries are currently available." = "No %@ entries are currently available.";
 "No %@ entries contain “%@”." = "No %@ entries contain “%@”.";
 "No %@ sample was received for more than %@ seconds." = "No %@ sample was received for more than %@ seconds.";
-"No Mihomo connection association" = "No Mihomo connection association";
+"No runtime connection association" = "No runtime connection association";
 "No additional error was reported." = "No additional error was reported.";
 "No application condition could be converted safely." = "No application condition could be converted safely.";
 "No backing Profile selected" = "No backing Profile selected";
@@ -1452,7 +1452,7 @@
 "Rule Payload" = "Rule Payload";
 "Rule provider name must not be empty." = "Rule provider name must not be empty.";
 "Rule providers: %@" = "Rule providers: %@";
-"Rules are read from the active mihomo runtime configuration." = "Rules are read from the active mihomo runtime configuration.";
+"Rules are read from the active MClash routing configuration." = "Rules are read from the active MClash routing configuration.";
 "Rules are saved. Connect MClash to start routing." = "Rules are saved. Connect MClash to start routing.";
 "Rules are saved. DNS is excluded in App Routing options." = "Rules are saved. DNS is excluded in App Routing options.";
 "Rules are saved. DNS will start together with App Routing." = "Rules are saved. DNS will start together with App Routing.";
@@ -1595,7 +1595,7 @@
 "The flow metadata signing identifier disagreed with the verified running code." = "The flow metadata signing identifier disagreed with the verified running code.";
 "The flow used a destination endpoint type that App Routing cannot match." = "The flow used a destination endpoint type that App Routing cannot match.";
 "The flow was handed back to macOS without a rule match." = "The flow was handed back to macOS without a rule match.";
-"The generated Mihomo configuration is not valid UTF-8." = "The generated Mihomo configuration is not valid UTF-8.";
+"The generated runtime configuration is not valid UTF-8." = "The generated runtime configuration is not valid UTF-8.";
 "The imported profile filename must end in .yaml or .yml." = "The imported profile filename must end in .yaml or .yml.";
 "The imported profile must be between 1 byte and %@ bytes." = "The imported profile must be between 1 byte and %@ bytes.";
 "The imported rules cannot be appended without renumbering the current rule set." = "The imported rules cannot be appended without renumbering the current rule set.";
@@ -1620,7 +1620,7 @@
 "The previous App Routing revision did not return to a running state." = "The previous App Routing revision did not return to a running state.";
 "The previous configuration backup is missing." = "The previous configuration backup is missing.";
 "The previous core session could not be restarted: %@" = "The previous core session could not be restarted: %@";
-"The previous durable rules could not be restored without stopping Mihomo: %@" = "The previous durable rules could not be restored without stopping Mihomo: %@";
+"The previous durable rules could not be restored without stopping the runtime: %@" = "The previous durable rules could not be restored without stopping the runtime: %@";
 "The previous override document could not be saved: %@" = "The previous override document could not be saved: %@";
 "The previous private App Routing listener could not be restored." = "The previous private App Routing listener could not be restored.";
 "The previous profile also could not be restarted." = "The previous profile also could not be restarted.";
@@ -1776,9 +1776,9 @@
 "macOS notification permission was not granted." = "macOS notification permission was not granted.";
 "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application" = "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application";
 "macOS rejected the proxy preference changes while committing them." = "macOS rejected the proxy preference changes while committing them.";
-"mihomo core: %@" = "mihomo core: %@";
-"mihomo did not accept MClash's temporary local proxy port %@." = "mihomo did not accept MClash's temporary local proxy port %@.";
-"mihomo did not apply the requested %@ listener port %@; it reported %@." = "mihomo did not apply the requested %@ listener port %@; it reported %@.";
+"runtime: %@" = "runtime: %@";
+"The runtime did not accept MClash's temporary local proxy port %@." = "The runtime did not accept MClash's temporary local proxy port %@.";
+"The runtime did not apply the requested %@ listener port %@; it reported %@." = "The runtime did not apply the requested %@ listener port %@; it reported %@.";
 "mihomo proxy" = "mihomo proxy";
 "mihomo returned HTTP %@." = "mihomo returned HTTP %@.";
 "mihomo returned HTTP %@: %@" = "mihomo returned HTTP %@: %@";
@@ -1835,7 +1835,7 @@
 "Technical Details" = "Technical Details";
 "Close all %@ active connections?" = "Close all %@ active connections?";
 "Keep %@ Days" = "Keep %@ Days";
-"The private mihomo listener is unavailable." = "The private mihomo listener is unavailable.";
+"The private runtime listener is unavailable." = "The private runtime listener is unavailable.";
 "Shows route, process, address, and traffic details for the selected connection" = "Shows route, process, address, and traffic details for the selected connection";
 "Active connections" = "Active connections";
 "Connection details for %@" = "Connection details for %@";
@@ -2249,7 +2249,7 @@
 "Remove nested group" = "Remove nested group";
 "Entrance name is required." = "Entrance name is required.";
 "How traffic is routed" = "How traffic is routed";
-"The selected group is used by Mihomo GLOBAL mode." = "The selected group is used by Mihomo GLOBAL mode.";
+"The selected group is used by Global mode." = "The selected group is used by Global mode.";
 "Process name" = "Process name";
 "GEOIP country" = "GEOIP country";
 "GEOIP6 country" = "GEOIP6 country";
@@ -2325,9 +2325,9 @@
 "No active providers" = "No active providers";
 "Node Selection setup" = "Node Selection setup";
 "One stable parent for rules, with regional and automatic child groups that refresh with your sources." = "One stable parent for rules, with regional and automatic child groups that refresh with your sources.";
-"Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path." = "Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path.";
+"Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path." = "Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path.";
 "Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity." = "Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity.";
-"Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
+"Reusable rule collections with an explicit source and format." = "Reusable rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
 "Rule Sets" = "Rule Sets";
@@ -2374,7 +2374,7 @@
 "Quick match" = "Quick match";
 "Rule set path must be a relative safe path without line breaks or parent-directory segments." = "Rule set path must be a relative safe path without line breaks or parent-directory segments.";
 "GEOIP6 (unsupported)" = "GEOIP6 (unsupported)";
-"Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.";
+"This runtime does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "This runtime does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.";
 "Recovery listener" = "Recovery listener";
 "Move selector up" = "Move selector up";
 "Move selector down" = "Move selector down";
@@ -2426,3 +2426,5 @@
 "Route confirmed by connection telemetry" = "Route confirmed by connection telemetry";
 "Sent to proxy; awaiting connection telemetry" = "Sent to proxy; awaiting connection telemetry";
 "Waiting for associated connection telemetry" = "Waiting for associated connection telemetry";
+"The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "The App Routing live update was rejected; the previous rules were restored without restarting the runtime.";
+"Native runtime is ready; no legacy controller was contacted." = "Native runtime is ready; no legacy controller was contacted.";

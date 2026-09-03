@@ -198,7 +198,7 @@
 "History Range" = "Intervalo del historial";
 "Hits" = "Coincidencias";
 "IP Addresses & Networks" = "Direcciones IP y redes";
-"If Mihomo is unavailable" = "Si Mihomo no está disponible";
+"If the selected route is unavailable" = "If the selected route is unavailable";
 "Import" = "Importar";
 "Import & Activate" = "Importar y activar";
 "Import & Activate…" = "Importar y activar…";
@@ -498,7 +498,7 @@
 "Keep Running" = "Mantener activo";
 "Keep Running hides MClash windows while the menu bar item remains available." = "«Mantener activo» oculta las ventanas de MClash, pero conserva su icono en la barra de menús.";
 "MClash Couldn’t Restore Network Settings" = "MClash no ha podido restaurar la configuración de red";
-"Mihomo stays connected and continues providing local proxy service." = "Mihomo permanece conectado y sigue ofreciendo el servicio de proxy local.";
+"MClash stays connected and continues providing local proxy service." = "MClash stays connected and continues providing local proxy service.";
 "Quit Anyway" = "Salir de todos modos";
 "Quit Completely" = "Salir por completo";
 "Quit Completely stops MClash and its active networking services." = "«Salir por completo» cierra MClash y sus servicios de red activos.";
@@ -578,7 +578,7 @@
 "Protocol" = "Protocolo";
 "Follow Profile Rules" = "Seguir las reglas del perfil";
 "Named Sub-rule" = "Subregla con nombre";
-"Mihomo GLOBAL" = "Mihomo GLOBAL";
+"Global exit" = "Global exit";
 "Policy Group" = "Grupo de políticas";
 "Proxy Node" = "Nodo proxy";
 "Loading routing targets…" = "Cargando destinos de enrutamiento…";
@@ -656,11 +656,11 @@
 "App Routing is not intercepting traffic" = "El enrutamiento de aplicaciones no está interceptando tráfico";
 "Per-application rules are currently not being applied." = "Las reglas por aplicación no se están aplicando en este momento.";
 "A previous network state could not be fully restored" = "No se pudo restaurar por completo un estado de red anterior";
-"App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change." = "El enrutamiento de aplicaciones, el núcleo de mihomo o el proxy del sistema de macOS podrían no coincidir con el estado anterior al cambio fallido.";
+"App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change." = "App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change.";
 "App Routing stopped after DNS verification failed" = "El enrutamiento de aplicaciones se detuvo tras fallar la verificación de DNS";
 "DNS routing is unverified" = "El enrutamiento DNS no está verificado";
 "MClash stopped application capture and DNS together; macOS system DNS was restored." = "MClash detuvo conjuntamente la captura de aplicaciones y DNS; se restauró el DNS del sistema de macOS.";
-"MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener." = "MClash no puede confirmar que las consultas DNS normales estén llegando a su servicio de escucha privado de Mihomo.";
+"MClash cannot confirm that ordinary DNS is reaching its private DNS listener." = "MClash cannot confirm that ordinary DNS is reaching its private DNS listener.";
 "%@ data is reconnecting" = "Reconectando los datos de %@";
 "Mihomo rules could not be loaded" = "No se pudieron cargar las reglas de Mihomo";
 "The core may still route traffic, but MClash cannot explain or inspect the active rule set." = "El núcleo puede seguir enrutando tráfico, pero MClash no puede explicar ni inspeccionar el conjunto de reglas activo.";
@@ -876,7 +876,7 @@
 "%@ unmeasured; no measured payload yet" = "%@ sin medir; aún no se ha medido la carga útil";
 "%@ uses %@ as a dialer dependency" = "%@ usa %@ como dependencia de conexión";
 "%@ uses %@ as its dialer dependency" = "%@ usa %@ como dependencia de conexión";
-"%@ was measured by Mihomo or the App Routing relay. %@" = "%@ fue medido por Mihomo o el relé de enrutamiento de aplicaciones. %@";
+"%@ was measured by MClash or its App Routing relay. %@" = "%@ was measured by MClash or its App Routing relay. %@";
 "%@ · %@" = "%@ · %@";
 "%@ · %@ pass-through unmeasured" = "%@ · %@ de paso directo sin medir";
 "%@ · %d running" = "%@ · %d en ejecución";
@@ -931,7 +931,7 @@
 "Advanced Matching" = "Coincidencia avanzada";
 "All" = "Todos";
 "All TCP traffic" = "Todo el tráfico TCP";
-"All displayed bytes were measured by Mihomo or the App Routing relay." = "Todos los bytes mostrados fueron medidos por Mihomo o por el relé del enrutamiento de aplicaciones.";
+"All displayed bytes were measured by MClash or its App Routing relay." = "All displayed bytes were measured by MClash or its App Routing relay.";
 "Allow LAN" = "Permitir LAN";
 "Another MClash automation server is already running (PID %d)" = "Otro servidor de automatización MClash ya se está ejecutando (PID %d)";
 "Another backup restore transaction is still pending." = "Aún está pendiente otra transacción de restauración de copia de seguridad.";
@@ -948,14 +948,14 @@
 "App Routing On · revision %@" = "Enrutamiento de aplicaciones activado · revisión %@";
 "App Routing Waiting for Connection" = "Enrutamiento de aplicaciones · esperando conexión";
 "App Routing activation failed verification: %@" = "Falló la verificación al activar el enrutamiento de aplicaciones: %@";
-"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@" = "El enrutamiento de aplicaciones y el enrutamiento DNS se detuvieron juntos porque no se pudo verificar la señal de actividad del proveedor DNS o el backend de Mihomo. Se restauró el DNS del sistema de macOS. Último error: %@";
+"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@" = "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@";
 "App Routing could not start. Review Attention or retry." = "No se pudo iniciar el enrutamiento de aplicaciones. Consulta Atención o inténtalo de nuevo.";
 "App Routing couldn’t start: %@" = "No se pudo iniciar el enrutamiento de aplicaciones: %@";
 "App Routing did not reach a verified running state." = "El enrutamiento de aplicaciones no alcanzó un estado de ejecución verificado.";
 "App Routing flow from %@ to %@" = "Flujo de enrutamiento de aplicaciones de %@ a %@";
 "App Routing is off. Saved rules are not intercepting traffic." = "El enrutamiento de aplicaciones está desactivado. Las reglas guardadas no interceptan el tráfico.";
 "App Routing relay" = "Relé de enrutamiento de aplicaciones";
-"App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@." = "El enrutamiento de aplicaciones solicita %@ objetivos de ruta Mihomo distintos; el máximo seguro es %@.";
+"App Routing requests %@ distinct runtime route targets; the safe maximum is %@." = "App Routing requests %@ distinct runtime route targets; the safe maximum is %@.";
 "App Routing targets profile %@, but that profile is no longer available." = "El enrutamiento de aplicaciones apunta al perfil %@, pero ese perfil ya no está disponible.";
 "App Routing was disabled when this flow arrived." = "El enrutamiento de aplicaciones estaba deshabilitado cuando llegó este flujo.";
 "App Routing · %@ active rule" = "Enrutamiento de aplicaciones · %@ regla activa";
@@ -1046,7 +1046,7 @@
 "Connection stream interval must be greater than zero." = "El intervalo del flujo de conexiones debe ser mayor que cero.";
 "Connections entering this port use the Profile's normal rules." = "Las conexiones que ingresan a este puerto utilizan las reglas normales del perfil.";
 "Connections start at the named sub-rule “%@”." = "Las conexiones comienzan en la subregla denominada “%@”.";
-"Connections use Mihomo's GLOBAL policy selection." = "Las conexiones utilizan la selección de políticas GLOBAL de Mihomo.";
+"Connections use MClash's Global exit policy." = "Connections use MClash's Global exit policy.";
 "Contains %@" = "Contiene %@";
 "Converted from Proxifier %@ to Mihomo profile rules." = "Convertido de Proxifier %@ a reglas del perfil de Mihomo.";
 "Copied" = "Copiado";
@@ -1179,7 +1179,7 @@
 "Identifier pattern %@ matched the %@; this is a name/pattern match, not an exact signature identity" = "El patrón de identificador %@ coincidió con %@; es una coincidencia por nombre o patrón, no una identidad de firma exacta";
 "Identity unavailable" = "Identidad no disponible";
 "Import a Profile before configuring proxy groups." = "Importe un perfil antes de configurar grupos de proxy.";
-"Import a mihomo profile" = "Importar un perfil de Mihomo";
+"Import a node profile" = "Import a node profile";
 "Import explicitly selected Proxifier rules" = "Importar reglas de Proxifier seleccionadas explícitamente";
 "Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly." = "Las reglas de cadena y proxy importadas rechazan las conexiones mientras Mihomo no está disponible en lugar de conectarse directamente de forma silenciosa.";
 "Imported Rule %d" = "Regla importada %d";
@@ -1199,7 +1199,7 @@
 "Live" = "En directo";
 "Live connections are streamed from the local Mihomo controller." = "Las conexiones en directo se transmiten desde el controlador local de Mihomo.";
 "Live data reconnecting · last-known rows shown" = "Reconectando datos en directo · se muestran las últimas filas conocidas";
-"Live rollback failed without stopping Mihomo: %@" = "La reversión en directo falló sin detener a Mihomo: %@";
+"Live rollback failed without stopping the runtime: %@" = "Live rollback failed without stopping the runtime: %@";
 "Load balancing chooses a route independently for each connection." = "El equilibrio de carga elige una ruta de forma independiente para cada conexión.";
 "LoadBalance · per connection" = "Equilibrio de carga · por conexión";
 "Loading this Profile’s proxy groups…" = "Cargando los grupos de proxy de este perfil…";
@@ -1219,7 +1219,7 @@
 "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@" = "MClash no pudo leer el almacenamiento de su perfil. Una lista vacía aquí no significa que sus perfiles hayan sido eliminados.\n\n%@";
 "MClash could not read the persistent traffic history: %@" = "MClash no pudo leer el historial de tráfico persistente: %@";
 "MClash could not restore the previous macOS proxy settings, so the running core was left active." = "MClash no pudo restaurar la configuración anterior del proxy de macOS, por lo que el núcleo en ejecución se dejó activo.";
-"MClash could not stop Network Extension capture, so the mihomo core was left active." = "MClash no pudo detener la captura de la extensión de red, por lo que el núcleo de Mihomo quedó activo.";
+"MClash could not stop Network Extension capture, so the runtime was left active." = "MClash could not stop Network Extension capture, so the runtime was left active.";
 "MClash could not update the traffic history retention period: %@" = "MClash no pudo actualizar el período de retención del historial de tráfico: %@";
 "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@" = "MClash no pudo verificar ni restaurar el proxy del sistema de macOS después de %@ intentos consecutivos. Último error: %@";
 "MClash could not write the persistent traffic history: %@" = "MClash no pudo escribir el historial de tráfico persistente: %@";
@@ -1249,15 +1249,15 @@
 "Mihomo Rule" = "Regla de Mihomo";
 "Mihomo complete" = "Mihomo completo";
 "Mihomo connections" = "Conexiones de Mihomo";
-"Mihomo controller: %@" = "Controlador de Mihomo: %@";
+"Legacy controller: %@" = "Legacy controller: %@";
 "Mihomo policy group" = "Grupo de políticas de Mihomo";
 "Mihomo profile rules" = "Reglas del perfil de Mihomo";
 "Mihomo ready" = "Mihomo listo";
 "Mihomo route" = "Ruta de Mihomo";
 "Mihomo route confirmed" = "Ruta de Mihomo confirmada";
-"Mihomo rule statistics have not been loaded." = "No se han cargado las estadísticas de reglas de Mihomo.";
-"Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Las estadísticas de reglas de Mihomo se cargaron por última vez %@. Se actualizan cada 15 segundos mientras esta página está abierta.";
-"Mihomo · %@" = "Mihomo · %@";
+"Rule statistics have not been loaded." = "Rule statistics have not been loaded.";
+"Rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Rule statistics last loaded %@. They refresh every 15 seconds while this page is open.";
+"Group · %@" = "Group · %@";
 "Mihomo · resolving" = "Mihomo · resolviendo";
 "Missing" = "Falta";
 "Missing runtime node" = "Falta el nodo de tiempo de ejecución";
@@ -1285,7 +1285,7 @@
 "No %@ entries are currently available." = "No hay ninguna entrada de %@ disponible.";
 "No %@ entries contain “%@”." = "Ninguna entrada de %@ contiene “%@”.";
 "No %@ sample was received for more than %@ seconds." = "No se recibió ninguna muestra de %@ durante más de %@ segundos.";
-"No Mihomo connection association" = "Sin conexión de Mihomo asociada";
+"No runtime connection association" = "No runtime connection association";
 "No additional error was reported." = "No se informó ningún error adicional.";
 "No application condition could be converted safely." = "No se pudo convertir de forma segura ninguna condición de aplicación.";
 "No backing Profile selected" = "Sin perfil asociado seleccionado";
@@ -1453,7 +1453,7 @@
 "Rule Payload" = "Carga útil de la regla";
 "Rule provider name must not be empty." = "El nombre del proveedor de reglas no debe estar vacío.";
 "Rule providers: %@" = "Proveedores de reglas: %@";
-"Rules are read from the active mihomo runtime configuration." = "Las reglas se leen de la configuración activa de ejecución de Mihomo.";
+"Rules are read from the active MClash routing configuration." = "Rules are read from the active MClash routing configuration.";
 "Rules are saved. Connect MClash to start routing." = "Las reglas se guardan. Conecte MClash para comenzar a enrutar.";
 "Rules are saved. DNS is excluded in App Routing options." = "Las reglas se guardan. DNS está excluido en las opciones de enrutamiento de aplicaciones.";
 "Rules are saved. DNS will start together with App Routing." = "Las reglas se guardan. DNS comenzará junto con el enrutamiento de aplicaciones.";
@@ -1596,7 +1596,7 @@
 "The flow metadata signing identifier disagreed with the verified running code." = "El identificador de firma de los metadatos del flujo no coincidía con el código en ejecución verificado.";
 "The flow used a destination endpoint type that App Routing cannot match." = "El flujo usó un tipo de endpoint de destino que el enrutamiento de aplicaciones no puede reconocer.";
 "The flow was handed back to macOS without a rule match." = "El flujo se devolvió a macOS sin una coincidencia de reglas.";
-"The generated Mihomo configuration is not valid UTF-8." = "La configuración de Mihomo generada no es UTF-8 válida.";
+"The generated runtime configuration is not valid UTF-8." = "The generated runtime configuration is not valid UTF-8.";
 "The imported profile filename must end in .yaml or .yml." = "El nombre del archivo del perfil importado debe terminar en .yaml o .yml.";
 "The imported profile must be between 1 byte and %@ bytes." = "El perfil importado debe tener entre 1 byte y %@ bytes.";
 "The imported rules cannot be appended without renumbering the current rule set." = "Las reglas importadas no se pueden agregar sin volver a numerar el conjunto de reglas actual.";
@@ -1621,7 +1621,7 @@
 "The previous App Routing revision did not return to a running state." = "La revisión anterior de enrutamiento de aplicaciones no volvió al estado de ejecución.";
 "The previous configuration backup is missing." = "Falta la copia de seguridad de la configuración anterior.";
 "The previous core session could not be restarted: %@" = "No se pudo reiniciar la sesión anterior del núcleo: %@";
-"The previous durable rules could not be restored without stopping Mihomo: %@" = "No se pudieron restaurar las reglas persistentes anteriores sin detener Mihomo: %@";
+"The previous durable rules could not be restored without stopping the runtime: %@" = "The previous durable rules could not be restored without stopping the runtime: %@";
 "The previous override document could not be saved: %@" = "No se pudo guardar el documento de anulación anterior: %@";
 "The previous private App Routing listener could not be restored." = "No se pudo restaurar el puerto de escucha privado anterior del enrutamiento de aplicaciones.";
 "The previous profile also could not be restarted." = "El perfil anterior tampoco se pudo reiniciar.";
@@ -1777,9 +1777,9 @@
 "macOS notification permission was not granted." = "No se concedió el permiso de notificación de macOS.";
 "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application" = "macOS rechazó el paquete de extensión de red durante la validación. Instale la última actualización de MClash o reinstale la aplicación";
 "macOS rejected the proxy preference changes while committing them." = "macOS rechazó los cambios de preferencia de proxy mientras los confirmaba.";
-"mihomo core: %@" = "núcleo de Mihomo: %@";
-"mihomo did not accept MClash's temporary local proxy port %@." = "Mihomo no aceptó el puerto de proxy local temporal %@ de MClash.";
-"mihomo did not apply the requested %@ listener port %@; it reported %@." = "Mihomo no aplicó el puerto de escucha %@ solicitado (%@); informó %@.";
+"runtime: %@" = "runtime: %@";
+"The runtime did not accept MClash's temporary local proxy port %@." = "The runtime did not accept MClash's temporary local proxy port %@.";
+"The runtime did not apply the requested %@ listener port %@; it reported %@." = "The runtime did not apply the requested %@ listener port %@; it reported %@.";
 "mihomo proxy" = "proxy de Mihomo";
 "mihomo returned HTTP %@." = "Mihomo devolvió HTTP %@.";
 "mihomo returned HTTP %@: %@" = "Mihomo devolvió HTTP %@: %@";
@@ -1836,7 +1836,7 @@
 "Technical Details" = "Detalles técnicos";
 "Close all %@ active connections?" = "¿Cerrar las %@ conexiones activas?";
 "Keep %@ Days" = "Conservar %@ días";
-"The private mihomo listener is unavailable." = "El listener privado de mihomo no está disponible.";
+"The private runtime listener is unavailable." = "The private runtime listener is unavailable.";
 "Shows route, process, address, and traffic details for the selected connection" = "Muestra la ruta, el proceso, la dirección y los detalles de tráfico de la conexión seleccionada";
 "Active connections" = "Conexiones activas";
 "Connection details for %@" = "Detalles de conexión de %@";
@@ -2250,7 +2250,7 @@
 "Remove nested group" = "Remove nested group";
 "Entrance name is required." = "Entrance name is required.";
 "How traffic is routed" = "How traffic is routed";
-"The selected group is used by Mihomo GLOBAL mode." = "The selected group is used by Mihomo GLOBAL mode.";
+"The selected group is used by Global mode." = "The selected group is used by Global mode.";
 "Process name" = "Process name";
 "GEOIP country" = "GEOIP country";
 "GEOIP6 country" = "GEOIP6 country";
@@ -2326,9 +2326,9 @@
 "No active providers" = "No active providers";
 "Node Selection setup" = "Node Selection setup";
 "One stable parent for rules, with regional and automatic child groups that refresh with your sources." = "One stable parent for rules, with regional and automatic child groups that refresh with your sources.";
-"Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path." = "Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path.";
+"Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path." = "Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path.";
 "Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity." = "Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity.";
-"Reusable Mihomo rule collections with an explicit source and format." = "Reusable Mihomo rule collections with an explicit source and format.";
+"Reusable rule collections with an explicit source and format." = "Reusable rule collections with an explicit source and format.";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance.";
 "Rule Set" = "Rule Set";
 "Rule Sets" = "Rule Sets";
@@ -2375,7 +2375,7 @@
 "Quick match" = "Quick match";
 "Rule set path must be a relative safe path without line breaks or parent-directory segments." = "Rule set path must be a relative safe path without line breaks or parent-directory segments.";
 "GEOIP6 (unsupported)" = "GEOIP6 (unsupported)";
-"Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.";
+"This runtime does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "This runtime does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.";
 "Recovery listener" = "Listener de recuperación";
 "Move selector up" = "Mover selector hacia arriba";
 "Move selector down" = "Mover selector hacia abajo";
@@ -2427,3 +2427,5 @@
 "Route confirmed by connection telemetry" = "Ruta confirmada por la telemetría de conexión";
 "Sent to proxy; awaiting connection telemetry" = "Enviado al proxy; esperando telemetría de conexión";
 "Waiting for associated connection telemetry" = "Esperando telemetría de la conexión asociada";
+"The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "Se rechazó la actualización en vivo de App Routing; las reglas anteriores se restauraron sin reiniciar el entorno de ejecución.";
+"Native runtime is ready; no legacy controller was contacted." = "El entorno de ejecución nativo está listo; no se contactó con ningún controlador heredado.";

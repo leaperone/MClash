@@ -18,12 +18,12 @@ struct OperationalIssue: Identifiable, Equatable, Sendable {
     }
 
     enum Subsystem: String, Sendable {
-        case core = "mihomo Core"
+        case core = "MClash Runtime"
         case controller = "Controller"
         case systemProxy = "System Proxy"
         case appRouting = "App Routing"
         case liveData = "Live Data"
-        case rules = "Mihomo Rules"
+        case rules = "Rules"
         case providers = "Providers"
         case trafficHistory = "Traffic History"
         case application = "Application"
@@ -101,7 +101,7 @@ struct OperationalSnapshot: Equatable, Sendable {
     let captureSummary: String
     let activeCaptureCount: Int
     let activeRuleCount: Int
-    /// Latest connection for which Mihomo reported a non-DIRECT terminal route.
+    /// Latest connection for which the runtime reported a non-DIRECT terminal route.
     /// This is route evidence, not proof that a particular macOS capture plane
     /// originated the flow.
     let latestNonDirectRouteAt: Date?
@@ -141,7 +141,7 @@ extension AppModel {
                     severity: .error,
                     subsystem: .core,
                     title: "The proxy core is not running",
-                    consequence: "No new traffic can be routed through Mihomo until the core reconnects.",
+                    consequence: "No new traffic can be routed through MClash until the runtime reconnects.",
                     technicalDetail: message,
                     primaryActionTitle: "Reconnect",
                     primaryAction: .reconnect
@@ -155,7 +155,7 @@ extension AppModel {
                     id: "controller.degraded",
                     severity: .error,
                     subsystem: .controller,
-                    title: "Mihomo controls are unavailable",
+                    title: "Runtime controls are unavailable",
                     consequence: "Routing may continue, but MClash cannot verify routes, connections, or live statistics.",
                     technicalDetail: message,
                     primaryActionTitle: "Reconnect",
@@ -288,7 +288,7 @@ extension AppModel {
                     severity: .error,
                     subsystem: .appRouting,
                     title: "A previous network state could not be fully restored",
-                    consequence: "App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change.",
+                    consequence: "App Routing, the MClash runtime, or the macOS System Proxy may not match the state from before the failed change.",
                     technicalDetail: networkCaptureRollbackFailure,
                     primaryActionTitle: "View Recovery Log",
                     primaryAction: .openLogs,
@@ -312,7 +312,7 @@ extension AppModel {
                         : "DNS routing is unverified",
                     consequence: restored
                         ? "MClash stopped application capture and DNS together; macOS system DNS was restored."
-                        : "MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener.",
+                        : "MClash cannot confirm that ordinary DNS is reaching its private DNS listener.",
                     technicalDetail: dnsProxyRuntimeError,
                     primaryActionTitle: "Retry App Routing",
                     primaryAction: .openAppRouting,
@@ -348,8 +348,8 @@ extension AppModel {
                     id: "rules.load",
                     severity: .warning,
                     subsystem: .rules,
-                    title: "Mihomo rules could not be loaded",
-                    consequence: "The core may still route traffic, but MClash cannot explain or inspect the active rule set.",
+                    title: "Rules could not be loaded",
+                    consequence: "MClash may still route traffic, but it cannot explain or inspect the active rule set.",
                     technicalDetail: rulesErrorMessage,
                     primaryActionTitle: "Open Rules",
                     primaryAction: .openRules
@@ -493,11 +493,11 @@ extension AppModel {
             ),
             detail: latestRouteAt.map {
                 AppLocalization.format(
-                    "Mihomo last reported a non-direct route %@.",
+                    "The runtime last reported a non-direct route %@.",
                     AppLocalization.relativeDate($0)
                 )
             } ?? AppLocalization.string(
-                "Capture configuration is verified; Mihomo has not yet reported a non-direct route."
+                "Capture configuration is verified; the runtime has not yet reported a non-direct route."
             ),
             captureSummary: captureSummary,
             activeCaptureCount: activeCaptureCount,
@@ -586,7 +586,7 @@ private extension AppModel.LiveStream {
         case .connections:
             "The displayed active connection count and routes may be stale until the stream reconnects."
         case .logs:
-            "New Mihomo log entries may be missing until the stream reconnects."
+            "New runtime log entries may be missing until the stream reconnects."
         case .proxies:
             "Node selections, health, and delay information may be stale."
         case .appRouting:

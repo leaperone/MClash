@@ -138,10 +138,10 @@ struct RulesView: View {
 
     private var rulesFreshnessHelp: String {
         guard let loadedAt = model.rulesLastLoadedAt else {
-            return AppLocalization.string("Mihomo rule statistics have not been loaded.")
+            return AppLocalization.string("Rule statistics have not been loaded.")
         }
         return AppLocalization.format(
-            "Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open.",
+            "Rule statistics last loaded %@. They refresh every 15 seconds while this page is open.",
             AppLocalization.relativeDate(loadedAt)
         )
     }
@@ -155,7 +155,7 @@ struct RulesView: View {
                     title: AppLocalization.string("Connect to inspect rules"),
                     systemImage: "list.bullet.rectangle",
                     description: AppLocalization.string(
-                        "Rules are read from the active mihomo runtime configuration."
+                        "Rules are read from the active MClash routing configuration."
                     )
                 )
             } else if case let .degraded(message) = model.controllerState {

@@ -258,7 +258,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         if context.coreIsConnected {
             details.append(
                 AppLocalization.string(
-                    "Mihomo stays connected and continues providing local proxy service."
+                    "MClash stays connected and continues providing local proxy service."
                 )
             )
         }

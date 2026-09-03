@@ -4142,7 +4142,7 @@ final class AppModel {
         }
 
         let panel = NSOpenPanel()
-        panel.title = AppLocalization.string("Import a mihomo profile")
+        panel.title = AppLocalization.string("Import a node profile")
         panel.prompt = AppLocalization.string("Import")
         panel.allowedContentTypes = [.yaml]
         panel.allowsMultipleSelection = false
@@ -7339,7 +7339,7 @@ final class AppModel {
                     outcome: .rulesUpdatedLive(dnsEnabled: candidate.dnsEnabled)
                 )
                 appendSupervisorLog(
-                    "App Routing rules were updated live; Mihomo and existing relays stayed connected."
+                    "App Routing rules were updated live; MClash and existing relays stayed connected."
                 )
                 if let candidateCompiledConfiguration {
                     compiledConfiguration = candidateCompiledConfiguration
@@ -7473,7 +7473,7 @@ final class AppModel {
                     let transactionError = NetworkCaptureTransactionFailure(
                         updateReason: primaryError.localizedDescription,
                         rollbackReason: AppLocalization.format(
-                            "The previous durable rules could not be restored without stopping Mihomo: %@",
+                            "The previous durable rules could not be restored without stopping the runtime: %@",
                             rollbackFailures.joined(separator: "; ")
                         )
                     )
@@ -7530,13 +7530,13 @@ final class AppModel {
                         )
                     )
                     appendSupervisorLog(
-                        "The App Routing live update was rejected; the previous rules were restored without restarting Mihomo."
+                        "The App Routing live update was rejected; the previous rules were restored without restarting the runtime."
                     )
                 } catch {
                     let transactionError = NetworkCaptureTransactionFailure(
                         updateReason: primaryError.localizedDescription,
                         rollbackReason: AppLocalization.format(
-                            "Live rollback failed without stopping Mihomo: %@",
+                            "Live rollback failed without stopping the runtime: %@",
                             error.localizedDescription
                         )
                     )
@@ -7592,7 +7592,7 @@ final class AppModel {
                 if !reconnected {
                     rollbackFailures.append(
                         AppLocalization.format(
-                            "mihomo core: %@",
+                            "runtime: %@",
                             errorMessage ?? AppLocalization.string(
                                 "the previous session could not be restarted"
                             )
@@ -7784,7 +7784,7 @@ final class AppModel {
         let listener = activeNetworkExtensionMihomoListener
         guard configuredDNSUpstreamMode == .native || listener != nil else {
             reportNetworkCaptureFailure(
-                AppLocalization.string("The private mihomo listener is unavailable.")
+                AppLocalization.string("The private runtime listener is unavailable.")
             )
             return
         }
@@ -7836,7 +7836,7 @@ final class AppModel {
                 appendSupervisorLog(
                     usesNativeRuntime
                         ? "MClash native Network Extension is routing selected flows."
-                        : "Network Extension is routing selected flows through mihomo."
+                        : "Network Extension is routing selected flows through the MClash runtime."
                 )
             case .requiresReboot:
                 networkCaptureState = .requiresReboot
@@ -9411,7 +9411,7 @@ final class AppModel {
             controllerGeneration &+= 1
             controllerState = .ready
             errorMessage = nil
-            appendSupervisorLog("Native runtime is ready; no Mihomo controller was contacted.")
+            appendSupervisorLog("Native runtime is ready; no legacy controller was contacted.")
             return
         }
         if activeControllerEndpoint == session.endpoint, controllerState == .ready {
@@ -11426,7 +11426,7 @@ final class AppModel {
             }
             dnsProxyAutomaticallyDisabled = true
             let message = AppLocalization.format(
-                "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@",
+                "App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or runtime could not be verified. macOS system DNS was restored. Last error: %@",
                 runtimeFailure.localizedDescription
             )
             dnsProxyRuntimeError = message
@@ -13530,7 +13530,7 @@ final class AppModel {
         else {
             throw AppModelError.profileActivationFailed(
                 AppLocalization.string(
-                    "The generated Mihomo configuration is not valid UTF-8."
+                    "The generated runtime configuration is not valid UTF-8."
                 )
             )
         }
@@ -13579,7 +13579,7 @@ final class AppModel {
             } catch {
                 rollbackFailures.append(
                     AppLocalization.format(
-                        "Mihomo controller: %@",
+                        "Legacy controller: %@",
                         error.localizedDescription
                     )
                 )
@@ -14070,7 +14070,7 @@ private enum AppModelError: LocalizedError {
             )
         case .networkCaptureDisableFailed:
             AppLocalization.string(
-                "MClash could not stop Network Extension capture, so the mihomo core was left active."
+                "MClash could not stop Network Extension capture, so the runtime was left active."
             )
         case let .secureRandomGenerationFailed(status):
             AppLocalization.format(
@@ -14085,7 +14085,7 @@ private enum AppModelError: LocalizedError {
             )
         case let .localProxyOverrideRejected(port):
             AppLocalization.format(
-                "mihomo did not accept MClash's temporary local proxy port %@.",
+                "The runtime did not accept MClash's temporary local proxy port %@.",
                 String(port)
             )
         case .explicitLocalProxyListenersIncomplete:
@@ -14099,7 +14099,7 @@ private enum AppModelError: LocalizedError {
             )
         case let .explicitLocalProxyListenerRejected(field, requested, actual):
             AppLocalization.format(
-                "mihomo did not apply the requested %@ listener port %@; it reported %@.",
+                "The runtime did not apply the requested %@ listener port %@; it reported %@.",
                 field,
                 String(requested),
                 String(actual)
@@ -14110,7 +14110,7 @@ private enum AppModelError: LocalizedError {
             )
         case let .tooManyNetworkCaptureRoutes(actual, maximum):
             AppLocalization.format(
-                "App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@.",
+                "App Routing requests %@ distinct runtime route targets; the safe maximum is %@.",
                 String(actual),
                 String(maximum)
             )
