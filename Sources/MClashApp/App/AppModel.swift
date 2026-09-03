@@ -2581,6 +2581,9 @@ final class AppModel {
             plan: compiled.runtimePlan,
             listeners: listeners
         )
+        await supervisor.configureOutboundTargets(
+            activeOutboundNodeTargetCatalog()
+        )
     }
 
     func saveConfigurationDocument(_ document: ConfigurationDocument) async throws {

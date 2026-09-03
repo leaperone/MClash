@@ -239,7 +239,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     /// plane. This is intentionally separate from `configure` so the existing
     /// NativeRuntimeController seam stays source-compatible with the legacy
     /// Mihomo adapter during migration.
-    func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) {
+    func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) async {
         outboundNodeTargets = catalog
     }
 

@@ -25,6 +25,10 @@ protocol NativeRuntimeController: AnyObject, Sendable {
     /// Legacy controllers intentionally ignore this state during migration.
     func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws
 
+    /// Attach connector-neutral node material for outbound route evaluation.
+    /// Legacy controllers intentionally ignore this catalog.
+    func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) async
+
     /// Log forwarding is deliberately synchronous: CoreSupervisor uses this
     /// from pipe callbacks, and the gate itself is thread-safe.
     nonisolated func setProcessLogForwardingEnabled(_ enabled: Bool)
@@ -100,6 +104,10 @@ extension CoreSupervisor {
         // CoreSupervisor remains the legacy Mihomo adapter. Native policy is
         // consumed only by NativeRuntimeEngine.
     }
+
+    func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) async {
+        // Legacy Mihomo adapter ignores native node targets.
+    }
 }
 
 /// Compatibility adapter for the current Mihomo-backed runtime.
@@ -153,6 +161,10 @@ final actor MihomoRuntimeControllerAdapter: ProfileRuntimeSession {
     func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
         // Keep the legacy adapter's behavior unchanged while native runtime is
         // opt-in. The arguments are intentionally not rendered to Mihomo.
+    }
+
+    func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) async {
+        // Keep legacy behavior unchanged while native runtime is opt-in.
     }
 
     nonisolated func setProcessLogForwardingEnabled(_ enabled: Bool) {
