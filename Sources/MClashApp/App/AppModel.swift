@@ -6270,6 +6270,34 @@ final class AppModel {
         return profileProxyWorkspaceStates[profileID] ?? .idle
     }
 
+    /// Reads connector-neutral runtime status through the profile controller
+    /// seam.  This is intentionally separate from the legacy proxy snapshot:
+    /// status surfaces can migrate to a native runtime without decoding a
+    /// Mihomo response or constructing a Mihomo client in the UI layer.
+    func profileRuntimeStatus(
+        for profileID: ProfileID
+    ) async -> RuntimeControllerStatus? {
+        guard case let .available(client) = await resolveProfileProxyController(
+            for: profileID
+        ) else {
+            return nil
+        }
+        return try? await client.fetchRuntimeStatus()
+    }
+
+    /// Reads normalized runtime rules through the same seam as status.  The
+    /// returned summaries are safe for native and legacy controllers alike.
+    func profileRuntimeRules(
+        for profileID: ProfileID
+    ) async -> [RuntimeRuleSummary]? {
+        guard case let .available(client) = await resolveProfileProxyController(
+            for: profileID
+        ) else {
+            return nil
+        }
+        return try? await client.fetchRuntimeRules()
+    }
+
     func pendingProxySelection(
         profileID: ProfileID,
         group: String

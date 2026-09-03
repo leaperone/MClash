@@ -131,8 +131,9 @@ struct ProfileProxyWorkspaceSnapshotBuilder: Sendable {
 /// rather than a particular core implementation. Mihomo is currently the
 /// adapter behind it; a native controller can implement the same contract
 /// without changing the presentation layer.
-protocol ProfileProxyControllerClient: ProfileProxyWorkspaceClient {
+protocol ProfileProxyControllerClient: RuntimeControllerClient {
     func fetchConfig() async throws -> MihomoConfig
+    func fetchRules() async throws -> MihomoRuleCollection
     func fetchProxies() async throws -> MihomoProxyCollection
     func selectProxy(group: String, proxy: String) async throws
     func clearProxyOverride(group: String) async throws
@@ -157,6 +158,30 @@ extension ProfileProxyControllerClient {
 
     func clearWorkspaceRoute(group: String) async throws {
         try await clearProxyOverride(group: group)
+    }
+}
+
+extension ProfileProxyControllerClient {
+    func fetchRuntimeStatus() async throws -> RuntimeControllerStatus {
+        let config = try await fetchConfig()
+        return RuntimeControllerStatus(
+            state: .running,
+            routingMode: config.mode,
+            backend: "legacy-mihomo"
+        )
+    }
+
+    func fetchRuntimeRules() async throws -> [RuntimeRuleSummary] {
+        let collection = try await fetchRules()
+        return collection.rules.map { rule in
+            RuntimeRuleSummary(
+                id: "\(rule.index):\(rule.type):\(rule.payload)",
+                kind: rule.type,
+                matcher: rule.payload,
+                outbound: rule.proxy,
+                hitCount: rule.extra?.hitCount
+            )
+        }
     }
 }
 
