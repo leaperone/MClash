@@ -35,6 +35,10 @@ extension NativeInboundListenerConfigurationError: LocalizedError {
 /// deliberately opt-in at the caller: constructing this manager never binds
 /// a socket, and `start()` only starts listeners supplied by `configure`.
 final class NativeInboundListenerManager: @unchecked Sendable {
+    /// Serializes reload/stop transactions. Without this separate lock two
+    /// concurrent configure calls could reserve the same generation while
+    /// building their replacements.
+    private let reconfigurationLock = NSLock()
     private let lock = NSLock()
     private var listeners: [UUID: MClashInboundListener] = [:]
     private var states: [UUID: NativeInboundListenerState] = [:]
@@ -63,6 +67,8 @@ final class NativeInboundListenerManager: @unchecked Sendable {
         outboundCatalog: OutboundNodeTargetCatalog? = nil,
         outboundConnector: (any MClashInboundOutboundConnector)? = nil
     ) throws {
+        reconfigurationLock.lock()
+        defer { reconfigurationLock.unlock() }
         let activeConnector = outboundConnector ?? connector
         // Build and validate the complete replacement before touching the
         // currently running listeners. Invalid reloads therefore leave the
@@ -171,6 +177,8 @@ final class NativeInboundListenerManager: @unchecked Sendable {
     }
 
     func stop() {
+        reconfigurationLock.lock()
+        defer { reconfigurationLock.unlock() }
         lock.lock()
         let entries = listeners
         generation &+= 1
