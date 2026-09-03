@@ -815,21 +815,33 @@ final class AppModel {
     private var startupPreparationErrorMessage: String?
     private let testInstance: Bool
 
-    /// Whether this instance was explicitly opted into the in-process native
-    /// runtime. Production keeps the Mihomo adapter unless this flag is set;
-    /// this makes the migration reversible without relying on profile shape or
-    /// the presence of a generated YAML file.
+    /// Whether this instance uses the in-process native runtime. Isolated/test
+    /// instances deliberately default to native so they exercise the new
+    /// lifecycle, while production remains on the compatibility adapter until
+    /// the release gates are complete. `MCLASH_LEGACY_RUNTIME=1` is an
+    /// explicit rollback switch and always wins.
     private var usesNativeRuntime: Bool {
         supervisor.runtimeCapabilities.contains(.nativeRuntime)
     }
 
-    /// Runtime selection is intentionally an explicit opt-in. Keeping this
-    /// small factory internal also lets lifecycle tests exercise the exact
-    /// environment contract without mutating the process environment.
+    /// Runtime selection is deterministic and side-effect free. Keeping this
+    /// small policy function separate lets lifecycle tests exercise the exact
+    /// environment/argument contract without mutating the process environment.
+    static func shouldUseNativeRuntime(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        arguments: [String] = CommandLine.arguments
+    ) -> Bool {
+        guard environment["MCLASH_LEGACY_RUNTIME"] != "1" else { return false }
+        return environment["MCLASH_NATIVE_RUNTIME"] == "1"
+            || environment["MCLASH_TEST_MODE"] == "1"
+            || arguments.contains("--mclash-test-instance")
+    }
+
     static func runtimeController(
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        arguments: [String] = CommandLine.arguments
     ) -> any NativeRuntimeController {
-        if environment["MCLASH_NATIVE_RUNTIME"] == "1" {
+        if shouldUseNativeRuntime(environment: environment, arguments: arguments) {
             return NativeRuntimeEngine()
         }
         return MihomoRuntimeControllerAdapter()
@@ -842,9 +854,10 @@ final class AppModel {
     /// controller is native.  The legacy path remains the explicit fallback
     /// until native routing has completed its production readiness gates.
     static func runtimeSessionFactory(
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        arguments: [String] = CommandLine.arguments
     ) -> CoreFleetSupervisor.SessionFactory {
-        let useNative = environment["MCLASH_NATIVE_RUNTIME"] == "1"
+        let useNative = shouldUseNativeRuntime(environment: environment, arguments: arguments)
         return { _ in
             if useNative {
                 return NativeRuntimeEngine()
@@ -921,13 +934,18 @@ final class AppModel {
         networkEnvironmentMonitor: (any NetworkEnvironmentMonitoring)? = nil,
         profileProxyControllerResolver: ProfileProxyControllerResolver? = nil
     ) {
+        let processEnvironment = ProcessInfo.processInfo.environment
+        let processArguments = CommandLine.arguments
         let selectedSupervisor = supervisor
-            ?? Self.runtimeController()
+            ?? Self.runtimeController(
+                environment: processEnvironment,
+                arguments: processArguments
+            )
         self.supervisor = selectedSupervisor
         // Use the same backend for auxiliary profiles.  Previously the
         // primary controller could be native while CoreFleetSupervisor's
         // default factory still launched legacy Mihomo sessions.
-        let sessionEnvironment: [String: String]
+        var sessionEnvironment: [String: String]
         if supervisor != nil {
             // Tests and embedding callers that inject a controller should
             // get a fleet matching that controller, without consulting a
@@ -937,7 +955,16 @@ final class AppModel {
                 ? ["MCLASH_NATIVE_RUNTIME": "1"]
                 : [:]
         } else {
-            sessionEnvironment = ProcessInfo.processInfo.environment
+            sessionEnvironment = processEnvironment
+            // Preserve argument-based test isolation when constructing the
+            // fleet factory (the factory intentionally accepts environment
+            // values so it remains deterministic in unit tests).
+            if Self.shouldUseNativeRuntime(
+                environment: processEnvironment,
+                arguments: processArguments
+            ) {
+                sessionEnvironment["MCLASH_NATIVE_RUNTIME"] = "1"
+            }
         }
         coreFleet = CoreFleetSupervisor(
             sessionFactory: Self.runtimeSessionFactory(environment: sessionEnvironment)
@@ -948,7 +975,7 @@ final class AppModel {
         self.localPortProbe = localPortProbe
         self.geoDataInstaller = geoDataInstaller
         profileProxyControllerResolverOverride = profileProxyControllerResolver
-        let environment = ProcessInfo.processInfo.environment
+        let environment = processEnvironment
         testInstance = environment["MCLASH_TEST_MODE"] == "1"
             || CommandLine.arguments.contains("--mclash-test-instance")
         let defaults: UserDefaults

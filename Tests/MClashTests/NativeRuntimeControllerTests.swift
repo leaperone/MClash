@@ -5,7 +5,7 @@ import MClashNetworkShared
 
 @Suite("Native runtime controller seam")
 struct NativeRuntimeControllerTests {
-    @Test("AppModel runtime selection is explicit and opt-in")
+    @Test("AppModel runtime selection defaults native only for isolated instances")
     @MainActor
     func appModelRuntimeSelectionIsExplicit() async {
         let native = AppModel.runtimeController(
@@ -17,6 +17,29 @@ struct NativeRuntimeControllerTests {
         let legacy = AppModel.runtimeController(environment: [:])
         #expect(await legacy.diagnostics().backend == "mihomo")
         #expect(!(await legacy.diagnostics().capabilities.contains(.nativeRuntime)))
+
+        let isolated = AppModel.runtimeController(
+            environment: ["MCLASH_TEST_MODE": "1"],
+            arguments: []
+        )
+        #expect(await isolated.diagnostics().backend == "native")
+        #expect(await isolated.diagnostics().capabilities.contains(.nativeRuntime))
+
+        let argumentIsolated = AppModel.runtimeController(
+            environment: [:],
+            arguments: ["mclash", "--mclash-test-instance"]
+        )
+        #expect(await argumentIsolated.diagnostics().backend == "native")
+
+        let rollback = AppModel.runtimeController(
+            environment: [
+                "MCLASH_TEST_MODE": "1",
+                "MCLASH_NATIVE_RUNTIME": "1",
+                "MCLASH_LEGACY_RUNTIME": "1"
+            ],
+            arguments: []
+        )
+        #expect(await rollback.diagnostics().backend == "mihomo")
     }
 
     @Test("Native selection is propagated to auxiliary profile sessions")
@@ -33,6 +56,21 @@ struct NativeRuntimeControllerTests {
         let legacySession = legacyFactory(ProfileID())
         #expect(legacySession.metadata.backend == .mihomo)
         #expect(legacySession.metadata.capabilities.contains(.legacyCore))
+
+        let isolatedFactory = AppModel.runtimeSessionFactory(
+            environment: ["MCLASH_TEST_MODE": "1"],
+            arguments: []
+        )
+        #expect(isolatedFactory(ProfileID()).metadata.backend == .native)
+
+        let rollbackFactory = AppModel.runtimeSessionFactory(
+            environment: [
+                "MCLASH_TEST_MODE": "1",
+                "MCLASH_LEGACY_RUNTIME": "1"
+            ],
+            arguments: []
+        )
+        #expect(rollbackFactory(ProfileID()).metadata.backend == .mihomo)
     }
 
     @Test("Native AppModel runtime lifecycle never contacts a controller")
