@@ -430,6 +430,10 @@ and can be tested without producing a Mihomo YAML document.
   runtime abort, so Network Extension and Automation targets still execute;
   the latest run confirms app tests (500/72 suites), connector loopback
   assertions, and automation suites run before the final 133 status.
+- `d22858d` extends that behavior across all direct targets. The latest run
+  reports application `500/72`, Automation `6/6`, and Network Extension
+  assertions executing before the same host runtime 133; no test assertion
+  failures were recorded before the toolchain abort.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
