@@ -186,7 +186,11 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 revision: bootstrap.revision,
                 activationIdentifier: bootstrap.activationIdentifier
             )
-            let probe = MihomoUDPAssociationProbe()
+            // Native DNS owns its upstream sockets directly. Construct the
+            // legacy Mihomo probe only for the compatibility DNS path.
+            let probe = dataPlane.dnsUpstreamMode == .native
+                ? nil
+                : MihomoUDPAssociationProbe()
             backendProbingSuspended = false
             self.reporter = reporter
             self.proxy = dataPlane.proxy
@@ -226,6 +230,12 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 }
             } else {
                 guard let proxy = dataPlane.proxy else {
+                    reporter.markStartupFailed(.backendUnavailable)
+                    runtime.stop()
+                    startCompletion.call(DNSProxyBootstrapError.dataPlaneUnavailable)
+                    return
+                }
+                guard let probe else {
                     reporter.markStartupFailed(.backendUnavailable)
                     runtime.stop()
                     startCompletion.call(DNSProxyBootstrapError.dataPlaneUnavailable)
