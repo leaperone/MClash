@@ -1,0 +1,262 @@
+# MClash 1.5 architecture and delivery plan
+
+This is the implementation plan for the 1.5.x migration. It is the product
+and engineering contract for the native MClash runtime; `docs/MCLASH_PRODUCT_REWORK.md`
+keeps the older product-feedback ledger. A checked item means that code and a
+matching test or live proof exist. A partial item must not be used as a release
+claim.
+
+## 1. Target architecture
+
+MClash owns the configuration, policy, ingress, DNS, routing decision, traffic
+inspection and lifecycle. An imported Profile is a node source only. Mihomo is
+an interoperability reference and, during the transition, an optional
+outbound connector; it is not a source of truth and must not receive policy
+sections from an imported Profile.
+
+```text
+node-only sources -> normalized node catalog -> MClash compiler
+                                                   |
+Entrances -> capture -> DNS -> rule engine -> group selection -> connector
+             |             |        |                |             |
+          HTTP/SOCKS   native DNS  MClash rules   MClash groups   native/legacy
+          System Proxy/App Routing/TUN (capabilities)              node transport
+```
+
+The final native path must run without a Mihomo process, YAML, controller or
+Mihomo listener. A legacy connector may remain behind the same
+`OutboundConnector` interface until each protocol has native interoperability
+evidence. The fallback is explicit, observable and removable; it may not
+silently restore Mihomo control-plane behavior.
+
+## 2. Workstreams and exit criteria
+
+### A. Node-only source import and reconciliation
+
+- [x] Parse source Profiles as node records plus refresh metadata only.
+- [x] Drop source `proxy-groups`, `rules`, `rule-providers`, `dns`, `tun`,
+      `listeners`, `mixed-port` and controller settings at the import boundary.
+- [x] Normalize protocol, endpoint, transport and credential material into a
+      stable node fingerprint. Presentation names and rotating credentials do
+      not change identity; ambiguous collisions remain visible.
+- [ ] Persist source ownership and refresh generations so removed nodes cannot
+      remain silently selectable and pinned nodes can report why they vanished.
+- [ ] Prove import, refresh, duplicate identity and source-policy isolation with
+      fixture tests and a copied-profile shadow run.
+
+Exit criterion: importing or refreshing any source changes only the node
+catalog and source metadata; the active MClash policy remains unchanged until a
+user/compiler action changes it.
+
+### B. Native control plane and runtime session
+
+- [x] Compile a connector-neutral `CompiledRuntimePlan` from the active
+      workspace, including nodes, groups, rules, rule sets, DNS policy,
+      entrances and routing mode.
+- [x] Validate plan references and listener registry before activation; expose
+      workspace revision, listener counts and validation errors in diagnostics.
+- [~] `NativeRuntimeEngine` owns a validated plan/listener session, but does
+      not yet bind every socket or replace the production default.
+- [ ] Make `NativeRuntimeEngine` the default lifecycle owner; AppModel must
+      supply a plan and `MClashListenerRegistry`, never a rendered YAML.
+- [ ] Remove Mihomo controller readiness, API polling and YAML generation from
+      the native activation path. Keep a separately named legacy adapter only
+      for rollback during the migration.
+- [ ] Add atomic start/reload/stop, generation guards, cancellation, crash
+      recovery and last-known-good plan retention.
+
+Exit criterion: a native session can start, reload and stop from a plan with no
+Mihomo binary, controller endpoint or YAML file present.
+
+### C. Entrances and capture
+
+All ingress mechanisms are first-class entrance records. They are not rules and
+App Routing is not a separate policy editor.
+
+- [x] Registry supports multiple named HTTP and SOCKS5 entrances with unique
+      loopback endpoints and explicit enabled state.
+- [x] Model System Proxy, App Routing and TUN as entrance capabilities with
+      clear capture semantics; do not expose App Routing as a duplicate global
+      switch.
+- [ ] Bind native HTTP CONNECT and SOCKS5 listeners and relay their accepted
+      flows through the same route engine. Support per-entrance default action.
+- [ ] Add native System Proxy and App Routing lifecycle ownership. TUN remains
+      opt-in and must stay disabled unless its Network Extension path is proven.
+- [ ] Make arbitrary user-defined ports valid; reserve only ports currently
+      occupied by another enabled entrance and report actionable collisions.
+- [ ] Show `Entrance -> mode -> matched rule -> group -> node` in connection
+      details. Never present an internal recovery port as a user configuration.
+
+Exit criterion: every accepted flow has one identifiable entrance and enters
+the same MClash policy pipeline, regardless of whether it came from HTTP,
+SOCKS5, System Proxy or App Routing.
+
+### D. Routing modes and built-in targets
+
+- [x] Persist exactly three top-level modes: `Rule`, `Global`, `Direct`.
+- [x] Provide stable built-ins: `GLOBAL`/全局出口, `DIRECT`/直连 and
+      `REJECT`/拦截. They are selectable targets, not user-created groups.
+- [x] In Rule mode evaluate the ordered rule table; Global sends proxy flows
+      to the GLOBAL group; Direct returns flows to the native network path.
+- [ ] Ensure a direct or rejected decision terminates at MClash and never
+      opens a Mihomo relay. Emit the selected mode and disposition in telemetry.
+- [ ] Define deterministic behavior for missing/empty GLOBAL and failed group
+      selection, with a safe direct/reject policy rather than an implicit core
+      default.
+
+### E. Proxy groups and node selection
+
+- [x] Keep a stable `Node Selection` root so rules target one understandable
+      place, while regional/failover groups can be nested below it.
+- [x] Support criteria-based membership: name/host wildcard or substring,
+      source, protocol, tag and endpoint conditions. Refresh recomputes matches.
+- [x] Support fixed node pins independently of criteria. Pins use stable node
+      fingerprints and show a missing-node warning after refresh.
+- [ ] Make fallback/relay order explicit and draggable; top-to-bottom is
+      priority and is persisted in the workspace.
+- [ ] Bound large groups, de-duplicate nodes across regional groups by identity,
+      and show automatic matches, fixed pins, exclusions and current selection.
+- [ ] Replace opaque “new group/import strategy” flows with task templates:
+      Node Selection, region priority, failover, fixed node and custom criteria.
+
+Exit criterion: a user can configure hundreds of nodes without toggling every
+node, and a source refresh preserves intended membership and priority.
+
+### F. Rules, rule sets and application routing
+
+Rules are a primary product surface, not an Advanced accordion.
+
+- [x] Support exact/suffix/wildcard domains, IP/CIDR and IPv6 CIDR, ports and
+      ranges, network conditions, process name/path and application identity.
+- [x] Support `GEOIP`, `GEOSITE` (including `gfw`), `RULE-SET`,
+      `PROCESS-NAME` and `PROCESS-PATH` with capability-aware validation.
+      Reject unsupported matcher names (for example `GEOIP6`) before startup.
+- [x] Keep MClash-owned remote rule-set metadata (source, format, behavior,
+      path and refresh policy) separate from source Profile providers.
+- [ ] Add a task-oriented rule editor with plain-language previews and an
+      explicit target picker: Node Selection, a named group, DIRECT or REJECT.
+- [ ] Add App Routing application/process matchers and domain matchers to the
+      same rule model; App Routing only supplies the entrance/capture context.
+- [ ] Keep deterministic priority/order, cycle detection and a final fallback
+      rule. Compile GEO data and rule providers into native matcher inputs.
+
+Exit criterion: every rule can be explained as `match -> action -> connector`
+and can be tested without producing a Mihomo YAML document.
+
+### G. Native DNS and outbound protocols
+
+- [x] Model DNS policy in the workspace and pass a connector-neutral bootstrap
+      into the native provider. Native DNS does not probe Mihomo.
+- [ ] Implement split DNS, fake-IP/host policy as supported capabilities, local
+      network safeguards and timeout/fallback diagnostics.
+- [x] Maintain protocol descriptors and capability gating for SOCKS5, VLESS,
+      Trojan and Hysteria2; an unsupported transport must not be labelled native.
+- [~] Native SOCKS5, VLESS/Trojan TCP framing and Hysteria2 session prototypes
+      exist; real endpoint interoperability is still required.
+- [ ] Complete native TCP/UDP connectors (including Shadowsocks and supported
+      VLESS WebSocket/Reality variants) with half-close, cancellation, timeout,
+      backpressure and credential-redaction tests.
+- [ ] Validate at least one real endpoint per supported protocol and record
+      handshake, TLS/ALPN/SNI, TCP and UDP evidence. TCP reachability alone is
+      not protocol proof.
+
+### H. Traffic monitor and packet-workbench UX
+
+- [x] Separate collection from presentation with `Live`, `Paused snapshot` and
+      `Refresh snapshot` states; preserve row selection and scroll position.
+- [x] Record stable fields: time, app/process, source/entrance, destination,
+      protocol, matched rule, mode, group/chain, node, bytes and state.
+- [ ] Add bounded retention/backpressure and an explicit “why this traffic is
+      here” inspector, including direct/proxy/reject explanation and DNS path.
+- [ ] Add right-click/context actions for exact-domain, suffix-domain, app,
+      process, IP/CIDR, GEOIP/GEOSITE and rule-set drafts. Open the normal rule
+      editor for review; copying a destination remains secondary.
+- [ ] Keep aggregate history separate from volatile rows and label stale data.
+      Pausing must freeze visible ordering even while collection continues.
+
+### I. UI, copy and i18n
+
+- [ ] Navigation follows the traffic model: Entrances, Configuration/Mode,
+      Rules, Rule Sets, Node Groups, Nodes, Sources, then Overview/Diagnostics.
+- [ ] Remove the standalone “代理” tab and ambiguous “工作方案/新建规则/
+      新建代理组” wording. Use task names that describe the result.
+- [ ] Apply the Rockxy-inspired calm status header, compact segmented controls,
+      stable table/inspector hierarchy and restrained motion. Respect reduced
+      motion; live numbers must not make paused work jump.
+- [ ] Provide complete Simplified Chinese and English localization for new
+      screens, validation errors, protocol capabilities, empty states and
+      recovery actions. No user-visible key or fallback English remains.
+- [ ] Accessibility pass: keyboard navigation, VoiceOver labels, focus order,
+      contrast and actionable error recovery.
+
+## 3. Safety and compatibility rules
+
+- Never overwrite the running production app, profile, system proxy or network
+  extension during development. Shadow instances use separate app name,
+  application-support directory, lock, automation discovery and random
+  loopback ports.
+- Never enable TUN or change LAN/private/link-local behavior implicitly. Local
+  and private ranges default to DIRECT unless the user explicitly overrides
+  the policy; Parsec's required direct destinations remain protected.
+- Candidate plans are immutable snapshots. Validate size, references, matcher
+  support, listener collisions and protocol capabilities before activation.
+  A failed candidate leaves the last-known-good session untouched.
+- Redact credentials, subscription URLs and endpoint secrets in logs,
+  diagnostics, snapshots and test output. Do not treat a codec/unit test as
+  proof of server interoperability.
+- Every native fallback to a legacy connector is visible in diagnostics with a
+  reason and protocol/transport capability; no hidden Mihomo control-plane
+  resurrection is allowed.
+
+## 4. Verification matrix
+
+1. **Static/unit:** typecheck/direct link, model round trips, source policy
+   isolation, plan/listener validation, rule ordering/cycles, identity
+   reconciliation, DNS framing and connector codecs.
+2. **Integration:** compile every routing mode and entrance shape; validate
+   GEO/rule-set fixtures, native DNS bootstrap, direct/reject short-circuit,
+   HTTP/SOCKS relay and monitor snapshot behavior.
+3. **Shadow:** copy the current local Profiles into an isolated namespace,
+   use random loopback ports, run the native session and compare expected
+   policy/connection traces. Do not touch the production app or System Proxy.
+4. **Protocol:** run real endpoint tests for every connector claimed as native;
+   cover TLS/ALPN/SNI, authentication, TCP, UDP, cancellation and failure
+   recovery. Record endpoint, timestamp, commit and redacted result.
+5. **Live CLI:** inspect active workspace/source/entrance/mode, list listeners,
+   test direct/proxy/reject, inspect a frozen traffic row, and verify that a
+   missing/invalid candidate does not replace the running session.
+
+## 5. 1.5.x release gates and sequence
+
+### Minor release: 1.5.0
+
+- [ ] All required workstreams above are complete or explicitly excluded from
+      the supported 1.5 contract; no unchecked item is presented as native.
+- [ ] Mihomo is absent from the default control/data path, or the release notes
+      clearly identify the remaining connector-only compatibility boundary.
+- [ ] Clean checkout build succeeds on the standard free `macos-26` runner.
+      Do not use `macos-26-xlarge`, `macos-15-xlarge` or other larger runners.
+- [ ] Full static/unit/integration/shadow/protocol/CLI evidence is attached to
+      the release candidate. Package, sign, notarize and inspect the DMG/ZIP.
+- [ ] Install only the isolated 1.5.0 build first; preserve a backup and a
+      documented rollback path. Production installation requires explicit
+      acceptance after the isolated CLI run.
+
+### Patch release: 1.5.1 (or the next fix-forward patch)
+
+- [ ] Start from the exact released 1.5.0 commit/tag; never reuse or mutate a
+      failed immutable tag.
+- [ ] Fix only verified regressions from 1.5.0 acceptance, with a regression
+      test and release-note entry for each fix.
+- [ ] Repeat clean build, signing/notarization, package hash, shadow and CLI
+      acceptance on standard `macos-26`.
+- [ ] Install the patch into the isolated test namespace, then perform the
+      separately authorized production upgrade and verify rollback readiness.
+
+### Definition of done
+
+The migration is complete only when a fresh node-only import, native plan,
+native entrance, native DNS, native rule/group decision, supported native
+connector, monitor snapshot and CLI inspection all work in an isolated app;
+the production app remains untouched until that evidence is reviewed; and the
+1.5.0 and subsequent patch artifacts are published from verified commits.
