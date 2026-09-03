@@ -106,7 +106,9 @@ final class NativeInboundListenerManager: @unchecked Sendable {
                 // opening a raw endpoint would leak application bytes in the
                 // wrong wire format and look like Direct.
                 guard ["socks5", "http", "vless", "trojan"].contains(target.protocolName),
-                      target.parameters["network"]?.lowercased() != "ws" else {
+                      target.protocolName != "vless"
+                        || target.parameters["network"]?.lowercased() != "ws"
+                        || target.vlessWebSocketOptions != nil else {
                     throw NativeInboundListenerConfigurationError.unsupportedOutboundTransport(
                         route: route,
                         protocolName: target.protocolName
@@ -246,6 +248,10 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
         case "http":
             return NativeHTTPConnectOutboundConnector(target: entry.target).makeConnection()
         case "vless":
+            if entry.target.parameters["network"]?.lowercased() == "ws" {
+                return NativeVLESSWebSocketRelayConnector(target: entry.target)
+                    .makeConnection(to: nil)
+            }
             return NativeVLESSOutboundConnector(target: entry.target).makeConnection()
         case "trojan":
             return NativeTrojanOutboundConnector(target: entry.target).makeConnection()
@@ -283,6 +289,22 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
         if target.protocolName == "vless" || target.protocolName == "trojan" {
             do {
                 let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
+                if target.protocolName == "vless",
+                   target.parameters["network"]?.lowercased() == "ws" {
+                    let handshake = NativeVLESSWebSocketRelayConnector(target: target)
+                    let request = try handshake.responseHandshake(for: endpoint)
+                    send(request, on: connection) { [self, connection] error in
+                        guard error == nil else { completion(error); return }
+                        self.receiveVLESSWebSocketResponse(
+                            from: connection,
+                            handshake: handshake,
+                            destination: endpoint,
+                            buffer: Data(),
+                            completion: completion
+                        )
+                    }
+                    return
+                }
                 let payload: Data = if target.protocolName == "vless" {
                     try NativeVLESSOutboundConnector(target: target).handshake(for: endpoint)
                 } else {
@@ -428,6 +450,42 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
                 connection.cancel()
             } else {
                 self.receiveHTTPResponse(from: connection, buffer: next, completion: completion)
+            }
+        }
+    }
+
+    private func receiveVLESSWebSocketResponse(
+        from connection: NWConnection,
+        handshake: NativeVLESSWebSocketRelayConnector,
+        destination: SOCKS5Endpoint,
+        buffer: Data,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: HTTPProxyCodec.maximumHeaderBytes) { [self, connection] data, _, complete, error in
+            var next = buffer
+            if let data { next.append(data) }
+            if let error { completion(error); return }
+            if next.range(of: Data("\r\n\r\n".utf8)) != nil {
+                do {
+                    try handshake.validateResponse(next)
+                    let payload = try handshake.postResponseHandshake(for: destination)
+                    if let payload, !payload.isEmpty {
+                        send(payload, on: connection, completion: completion)
+                    } else {
+                        completion(nil)
+                    }
+                } catch { completion(error); connection.cancel() }
+            } else if complete || next.count >= HTTPProxyCodec.maximumHeaderBytes {
+                completion(NativeInboundSOCKS5HandshakeError.truncatedResponse)
+                connection.cancel()
+            } else {
+                receiveVLESSWebSocketResponse(
+                    from: connection,
+                    handshake: handshake,
+                    destination: destination,
+                    buffer: next,
+                    completion: completion
+                )
             }
         }
     }

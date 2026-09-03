@@ -112,6 +112,11 @@ struct MClashInboundListenerTests {
         let targets: [(String, [String: String])] = [
             ("http", [:]),
             ("vless", ["uuid": UUID().uuidString]),
+            ("vless", [
+                "uuid": UUID().uuidString,
+                "network": "ws",
+                "ws-opts": "{\"path\":\"/ws/\",\"headers\":{\"Host\":\"proxy.example\"}}"
+            ]),
             ("trojan", ["password": "test-password"])
         ]
         for (index, item) in targets.enumerated() {
