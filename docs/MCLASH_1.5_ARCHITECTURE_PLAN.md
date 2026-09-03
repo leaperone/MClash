@@ -389,6 +389,11 @@ and can be tested without producing a Mihomo YAML document.
 - The standalone capability-matrix binary now executes 4/4 tests on this Mac,
   covering stable route ordering, VLESS WebSocket/Reality classification,
   empty Shadowsocks password fallback and Codable round-trip.
+- `aa20886` adds native source preference: regional/generic groups select
+  CUNOE-Proxy nodes when that source exists, while explicitly named AI,
+  飞鸟云 or kaze groups may opt into secondary sources. Nested groups apply
+  the policy independently, preventing unrelated AWS nodes from flattening
+  into every regional group.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
