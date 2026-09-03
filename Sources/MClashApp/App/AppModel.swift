@@ -1821,11 +1821,23 @@ final class AppModel {
     /// replace it without changing workspace/rule semantics.
     private func activeOutboundNodeTargetCatalog() -> OutboundNodeTargetCatalog? {
         guard let workspace = configurationDocument.currentWorkspace else { return nil }
+        let preferredSourceIDs: Set<SourceID> = Set(
+            configurationDocument.sources.compactMap { source in
+                let normalized = source.displayName
+                    .unicodeScalars
+                    .filter { CharacterSet.alphanumerics.contains($0) }
+                    .map(String.init)
+                    .joined()
+                    .lowercased()
+                return normalized.contains("cunoeproxy") ? source.id : nil
+            }
+        )
         func target(for groupID: ProxyGroupID) -> OutboundNodeTarget? {
             NativeProxyGroupTargetResolver.resolve(
                 groupID: groupID,
                 groups: configurationDocument.proxyGroups,
-                nodes: configurationDocument.nodes
+                nodes: configurationDocument.nodes,
+                preferredSourceIDs: preferredSourceIDs
             ).target
         }
         let primaryGroup = workspace.globalProxyGroupID

@@ -30,12 +30,11 @@ public enum NativeProxyGroupTargetResolver {
     public static func resolve(
         groupID: ProxyGroupID,
         groups: [ProxyGroup],
-        nodes: [Node]
+        nodes: [Node],
+        preferredSourceIDs: Set<SourceID> = []
     ) -> NativeProxyGroupTargetResolution {
         let groupsByID = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let nodesByID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let usableNodes = nodes.filter(isUsable)
-        let usableIDs = Set(usableNodes.map(\.id))
         var visited = Set<ProxyGroupID>()
 
         guard let group = groupsByID[groupID], group.enabled else {
@@ -45,6 +44,14 @@ public enum NativeProxyGroupTargetResolver {
         func candidates(for group: ProxyGroup) -> [NodeID] {
             guard visited.insert(group.id).inserted else { return [] }
             defer { visited.remove(group.id) }
+
+            let groupNodes = nodesForGroup(
+                group,
+                nodes: nodes,
+                preferredSourceIDs: preferredSourceIDs
+            )
+            let usableNodes = groupNodes.filter(isUsable)
+            let usableIDs = Set(usableNodes.map(\.id))
 
             var ids: [NodeID] = []
             var seen = Set<NodeID>()
@@ -102,6 +109,32 @@ public enum NativeProxyGroupTargetResolver {
             return .init(groupID: groupID, nodeID: nil, target: nil, reason: "Selected node has no valid native outbound target.")
         }
         return .init(groupID: groupID, nodeID: nodeID, target: target)
+    }
+
+    private static func nodesForGroup(
+        _ group: ProxyGroup,
+        nodes: [Node],
+        preferredSourceIDs: Set<SourceID>
+    ) -> [Node] {
+        guard !preferredSourceIDs.isEmpty,
+              !allowsSecondarySources(group.name) else {
+            return nodes
+        }
+        return nodes.filter { node in
+            node.sourceLinks.contains { preferredSourceIDs.contains($0) }
+        }
+    }
+
+    /// Explicit provider groups may opt into secondary sources. Regional and
+    /// generic groups stay on the preferred CUNOE source by default.
+    private static func allowsSecondarySources(_ name: String) -> Bool {
+        let normalized = name.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: .current
+        ).lowercased()
+        return normalized.contains("ai")
+            || normalized.contains("飞鸟")
+            || normalized.contains("kaze")
     }
 
     private static func isUsable(_ node: Node) -> Bool {

@@ -61,18 +61,46 @@ struct NativeProxyGroupTargetResolverTests {
         #expect(result.nodeID == fast.id)
     }
 
+    @Test("Regional groups prefer CUNOE while explicit provider groups may opt in")
+    func preferredSourcePolicy() throws {
+        let cunoe = SourceID()
+        let secondary = SourceID()
+        let preferred = try node("US preferred", host: "cunoe.example", availability: .available, source: cunoe)
+        let other = try node("US other", host: "other.example", availability: .available, source: secondary)
+        let regional = ProxyGroup(name: "美国优先", members: [.node(other.id), .node(preferred.id)])
+        let provider = ProxyGroup(name: "AI 专用", members: [.node(other.id), .node(preferred.id)])
+
+        let regionalResult = NativeProxyGroupTargetResolver.resolve(
+            groupID: regional.id,
+            groups: [regional, provider],
+            nodes: [other, preferred],
+            preferredSourceIDs: [cunoe]
+        )
+        #expect(regionalResult.nodeID == preferred.id)
+
+        let providerResult = NativeProxyGroupTargetResolver.resolve(
+            groupID: provider.id,
+            groups: [regional, provider],
+            nodes: [other, preferred],
+            preferredSourceIDs: [cunoe]
+        )
+        #expect(providerResult.nodeID == other.id)
+    }
+
     private func node(
         _ name: String,
         host: String,
         availability: NodeAvailability,
         enabled: Bool = true,
-        latency: Int? = nil
+        latency: Int? = nil,
+        source: SourceID? = nil
     ) throws -> Node {
         try Node(
             displayName: name,
             protocol: .https,
             host: host,
             port: 443,
+            sourceLinks: source.map { [$0] } ?? [],
             enabled: enabled,
             health: NodeHealthSnapshot(
                 availability: availability,
