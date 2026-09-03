@@ -12916,7 +12916,14 @@ final class AppModel {
         networkExtensionProfileListeners = listeners
         networkExtensionMihomoListener = listeners[activeProfileID]
 
-        let shouldStartAuxiliary = startAuxiliary && !unifiedConfigurationEnabled
+        // Native runtime owns every profile route in-process. Auxiliary
+        // Mihomo sessions are a legacy-only compatibility mechanism and must
+        // never trigger binary discovery or GEO data installation while the
+        // native capability gate is active (including during transitional
+        // non-unified documents).
+        let shouldStartAuxiliary = startAuxiliary
+            && !unifiedConfigurationEnabled
+            && !usesNativeRuntime
         let auxiliarySpecs = profileRuntimePlan.enabledSessions.filter {
             $0.profileID != activeProfileID
         }
