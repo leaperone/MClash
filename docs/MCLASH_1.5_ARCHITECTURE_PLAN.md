@@ -294,6 +294,10 @@ and can be tested without producing a Mihomo YAML document.
 - `1484e41` prevents native workspace activation and rollback from invoking
   the legacy runtime override coordinator; native activation now keeps the
   compiled plan in-process without materializing Mihomo YAML.
+- `59e19e4` resolves native proxy groups through explicit pins, dynamic
+  selectors, nested groups and node health/availability, with cycle and empty
+  group fail-closed behavior; `4dd97b2` stabilizes paused traffic snapshot
+  ordering and selection while the controller refreshes.
 
 ### Definition of done
 
