@@ -412,6 +412,10 @@ and can be tested without producing a Mihomo YAML document.
   and reports `500 tests in 72 suites passed` before the known
   CommandLineTools shared-test runtime abort; the resolver tests themselves
   pass.
+- A versioned build rehearsal with `MCLASH_VERSION=1.5.0` and build number
+  `150001` produced a signed `MClash 1.5.0 (150001)` bundle in `.build/release`
+  and passed the isolated native CLI smoke. This is a build artifact only; no
+  tag or GitHub Release was created.
 - The same run confirms the `Localization resources` suite passes with all
   eight bundles, including the neutral traffic-monitor strings.
 - `5d62f74` makes the Network Extension inbound suite independently
