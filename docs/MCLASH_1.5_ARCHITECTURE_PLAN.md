@@ -364,6 +364,8 @@ and can be tested without producing a Mihomo YAML document.
   and override store in native/test instances, preventing stale YAML override
   state from participating in native startup; production legacy initialization
   remains unchanged.
+- `be14dd3` keeps the same payload boundary when DNS capture is disabled in a
+  native workspace, so legacy route material is not reintroduced by an opt-out.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
