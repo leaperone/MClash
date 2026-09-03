@@ -100,7 +100,7 @@ jobs:
     name: Verify unit and release metadata tests
     needs: prepare
     # Keep release verification on the standard, public-repository runner.
-    # Do not replace this with a -large/-xlarge label.
+    # Do not replace this with a paid runner label.
     runs-on: macos-26
     timeout-minutes: 25
     steps:
@@ -120,7 +120,7 @@ jobs:
     name: Verify Mihomo integration smoke
     needs: prepare
     # Keep release verification on the standard, public-repository runner.
-    # Do not replace this with a -large/-xlarge label.
+    # Do not replace this with a paid runner label.
     runs-on: macos-26
     timeout-minutes: 35
     env:
