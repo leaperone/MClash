@@ -319,6 +319,12 @@ and can be tested without producing a Mihomo YAML document.
   `nativeRuntime/nativeRouting/nativeDNS`, `controlPlaneAvailable=false`, and
   `hasCompiledRuntimePlan=true`; production processes and sockets were not
   changed.
+- `b431f54` is covered by the clean typecheck and its factory tests preserve a
+  single stateful Shadowsocks codec for target, payload and response frames.
+- The current built bundle passes `smoke-test-native-runtime-cli.sh` after
+  disposable-bundle staging, proving the native diagnostics endpoint can be
+  queried without auto-connecting a source or reusing the production bundle
+  identity.
 
 ### Definition of done
 
