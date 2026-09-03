@@ -374,6 +374,10 @@ and can be tested without producing a Mihomo YAML document.
 - `57db0ac` stops constructing a Mihomo UDP association probe during native
   DNS startup; the legacy probe is now created only by the compatibility DNS
   path.
+- `603009b` makes native capture fail closed when DNS takeover is enabled but
+  only a legacy Mihomo DNS mode is available; DNS-disabled capture remains
+  valid, and an actionable diagnostic is exposed instead of publishing a dead
+  legacy listener.
 - `dbc192e` skips constructing the legacy `RuntimeOverrideActivationCoordinator`
   and override store in native/test instances, preventing stale YAML override
   state from participating in native startup; production legacy initialization
