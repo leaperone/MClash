@@ -585,7 +585,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let nativeTarget: OutboundNodeTarget? = {
             guard case let .mihomo(route) = outcome.decision.disposition,
                   let target = currentState.outboundNodeTargets?.target(for: route),
-                  NativeConnectorRegistry.kind(for: target) == .socks5 else { return nil }
+                  NativeConnectorRegistry.supportsNativeUDP(target) else { return nil }
             return target
         }()
         let nativeDestination = try? ProviderSOCKSConfiguration.destination(for: endpoint)

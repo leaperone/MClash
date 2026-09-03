@@ -585,6 +585,9 @@ enum NativeConnectorRegistry {
             // transport and therefore remain on the legacy compatibility path.
             let plugin = target.parameters["plugin"] ?? target.parameters["plugin-opts"]
             guard plugin?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return false }
+            // UDP-over-TCP is a distinct transport and cannot be represented
+            // by the SIP002 stream codec. Do not classify it as native TCP.
+            guard !hasUnsupportedShadowsocksTransport(target.parameters) else { return false }
             let method = target.parameters["method"] ?? target.parameters["cipher"] ?? "aes-256-gcm"
             let password = target.parameters["password"] ?? target.parameters["passwd"] ?? ""
             return !password.isEmpty && ShadowsocksAEADMethod(rawValue: method.lowercased()) != nil
@@ -602,6 +605,58 @@ enum NativeConnectorRegistry {
         default:
             return false
         }
+    }
+
+    /// Native UDP is allow-listed. The current native UDP conversation is a
+    /// SOCKS5 UDP association; Shadowsocks SIP002 framing is TCP-only.
+    /// Keeping this separate from `supportsNativeTCP` prevents a Shadowsocks
+    /// node from accidentally entering the native UDP path.
+    static func supportsNativeUDP(_ target: OutboundNodeTarget) -> Bool {
+        guard supports(target) else { return false }
+        return target.protocolName == "socks5"
+    }
+
+    /// Returns an actionable reason for Shadowsocks transport variants that
+    /// deliberately remain on the compatibility connector.
+    static func unsupportedNativeTransportReason(
+        for target: OutboundNodeTarget
+    ) -> String? {
+        guard target.protocolName == "shadowsocks" else { return nil }
+        let hasPlugin = target.parameters.keys.contains { key in
+            let normalized = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased().replacingOccurrences(of: "_", with: "-")
+            return normalized == "plugin" || normalized == "plugin-opts"
+        }
+        if hasPlugin {
+            return "Shadowsocks plugins require a dedicated native transport."
+        }
+        if hasUnsupportedShadowsocksTransport(target.parameters) {
+            return "Shadowsocks UDP-over-TCP transport is not implemented by the native connector."
+        }
+        return nil
+    }
+
+    private static func hasUnsupportedShadowsocksTransport(
+        _ parameters: [String: String]
+    ) -> Bool {
+        let normalized = Dictionary(
+            parameters.map { key, value in
+                (
+                    key.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased().replacingOccurrences(of: "_", with: "-"),
+                    value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                )
+            }, uniquingKeysWith: { first, _ in first }
+        )
+        if normalized["udp-over-tcp-version"] != nil || normalized["uot-version"] != nil {
+            return true
+        }
+        for key in ["udp-over-tcp", "uot"] {
+            if let value = normalized[key], ["true", "yes", "1", "on"].contains(value) {
+                return true
+            }
+        }
+        return false
     }
 
     /// Native VLESS currently implements plain TCP only. Reality and XTLS

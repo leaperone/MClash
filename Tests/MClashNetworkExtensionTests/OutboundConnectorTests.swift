@@ -58,6 +58,39 @@ struct OutboundConnectorTests {
             parameters: ["method": "aes-256-gcm", "password": "secret", "plugin": "v2ray-plugin"]
         )
         #expect(NativeConnectorRegistry.capability(for: target) == .legacyFallback)
+        #expect(!NativeConnectorRegistry.supportsNativeUDP(target))
+        #expect(
+            NativeConnectorRegistry.unsupportedNativeTransportReason(for: target)
+                == "Shadowsocks plugins require a dedicated native transport."
+        )
+    }
+
+    @Test("Shadowsocks UDP and UDP-over-TCP variants never enter native paths")
+    func shadowsocksUDPVariantsAreNeverNative() throws {
+        let udp = try OutboundNodeTarget(
+            protocolName: "shadowsocks", host: "node.example.com", port: 443,
+            parameters: ["method": "aes-256-gcm", "password": "secret", "udp": "true"]
+        )
+        // The udp flag describes server capability; it does not make the
+        // SIP002 TCP stream codec a UDP connector. Native UDP is therefore
+        // never advertised for any Shadowsocks target.
+        #expect(NativeConnectorRegistry.capability(for: udp) == .native)
+        #expect(!NativeConnectorRegistry.supportsNativeUDP(udp))
+
+        let udpOverTCP = try OutboundNodeTarget(
+            protocolName: "shadowsocks", host: "node.example.com", port: 443,
+            parameters: [
+                "method": "aes-256-gcm", "password": "secret",
+                "udp-over-tcp": "true", "udp-over-tcp-version": "2"
+            ]
+        )
+        #expect(NativeConnectorRegistry.capability(for: udpOverTCP) == .legacyFallback)
+        #expect(!NativeConnectorRegistry.supportsNativeTCP(udpOverTCP))
+        #expect(!NativeConnectorRegistry.supportsNativeUDP(udpOverTCP))
+        #expect(
+            NativeConnectorRegistry.unsupportedNativeTransportReason(for: udpOverTCP)
+                == "Shadowsocks UDP-over-TCP transport is not implemented by the native connector."
+        )
     }
 
     @Test("Native VLESS connector emits a destination handshake")

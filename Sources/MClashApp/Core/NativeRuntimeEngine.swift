@@ -456,6 +456,20 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
            target.parameters["plugin"] != nil || target.parameters["plugin-opts"] != nil {
             return "Shadowsocks plugins require a dedicated native transport."
         }
+        if target.protocolName == "shadowsocks",
+           target.parameters.contains(where: { key, value in
+               let normalized = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                   .lowercased().replacingOccurrences(of: "_", with: "-")
+               if normalized == "udp-over-tcp-version" || normalized == "uot-version" {
+                   return true
+               }
+               guard normalized == "udp-over-tcp" || normalized == "uot" else { return false }
+               return ["true", "yes", "1", "on"].contains(
+                   value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+               )
+           }) {
+            return "Shadowsocks UDP-over-TCP transport is not implemented by the native connector."
+        }
         if target.protocolName == "vless",
            target.parameters["network"]?.lowercased() == "ws" {
             return "VLESS WebSocket transport is not implemented by the native connector."
