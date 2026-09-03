@@ -386,6 +386,9 @@ and can be tested without producing a Mihomo YAML document.
 - `2230554` aligns the connector capability matrix with the native Shadowsocks
   validator by rejecting empty passwords as `legacyFallback`, with a focused
   regression test.
+- The standalone capability-matrix binary now executes 4/4 tests on this Mac,
+  covering stable route ordering, VLESS WebSocket/Reality classification,
+  empty Shadowsocks password fallback and Codable round-trip.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
