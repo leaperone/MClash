@@ -412,6 +412,8 @@ and can be tested without producing a Mihomo YAML document.
   and reports `500 tests in 72 suites passed` before the known
   CommandLineTools shared-test runtime abort; the resolver tests themselves
   pass.
+- The same run confirms the `Localization resources` suite passes with all
+  eight bundles, including the neutral traffic-monitor strings.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
