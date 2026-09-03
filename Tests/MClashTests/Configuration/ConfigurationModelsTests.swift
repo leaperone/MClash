@@ -17,6 +17,30 @@ struct ConfigurationModelsTests {
         #expect(NodeID.stable(for: old.fingerprint) == NodeID.stable(for: refreshed.fingerprint))
     }
 
+    @Test func nodeSourceRevisionIsPersistedAndLegacyManifestsDecode() throws {
+        let source = SourceID()
+        let node = try Node(
+            displayName: "US 01",
+            protocol: .vless,
+            host: "us.example.com",
+            port: 443,
+            sourceLinks: [source],
+            sourceRevisionByID: [source: 7]
+        )
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let roundTrip = try decoder.decode(Node.self, from: encoder.encode(node))
+        #expect(roundTrip.sourceLinks == [source])
+        #expect(roundTrip.sourceRevisionByID == [source: 7])
+
+        var legacy = try #require(JSONSerialization.jsonObject(with: encoder.encode(node)) as? [String: Any])
+        legacy.removeValue(forKey: "sourceRevisionByID")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacy)
+        let decodedLegacy = try decoder.decode(Node.self, from: legacyData)
+        #expect(decodedLegacy.sourceLinks == [source])
+        #expect(decodedLegacy.sourceRevisionByID.isEmpty)
+    }
+
     @Test func nodeProjectsToConnectorNeutralOutboundTarget() throws {
         let node = try Node(
             displayName: "SOCKS node",

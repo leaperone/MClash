@@ -2209,6 +2209,13 @@ final class AppModel {
                         let merged = document.nodes[index]
                         var sourceLinks = merged.sourceLinks
                         if !sourceLinks.contains(sourceID) { sourceLinks.append(sourceID) }
+                        var sourceRevisionByID = merged.sourceRevisionByID
+                        // Only an authoritative parse advances ownership. A
+                        // failed/partial refresh must never make a stale node
+                        // appear freshly advertised by this source.
+                        if refreshAuthoritative {
+                            sourceRevisionByID[sourceID] = source.revision
+                        }
                         // Rebuild through Node.init so a node loaded from an
                         // older manifest receives the current normalized
                         // endpoint fingerprint instead of retaining stale
@@ -2221,6 +2228,7 @@ final class AppModel {
                             port: node.port,
                             parameters: node.parameters,
                             sourceLinks: sourceLinks,
+                            sourceRevisionByID: sourceRevisionByID,
                             tags: node.tags.isEmpty ? merged.tags : node.tags,
                             region: node.region ?? merged.region,
                             enabled: merged.enabled,
@@ -2258,6 +2266,9 @@ final class AppModel {
                                 port: node.port,
                                 parameters: node.parameters,
                                 sourceLinks: node.sourceLinks,
+                                sourceRevisionByID: refreshAuthoritative
+                                    ? [sourceID: source.revision]
+                                    : [:],
                                 tags: node.tags,
                                 region: node.region,
                                 enabled: node.enabled,
@@ -2266,7 +2277,26 @@ final class AppModel {
                                 lastSeenAt: node.lastSeenAt
                             )
                         } else {
-                            nodeToAppend = node
+                            if refreshAuthoritative {
+                                nodeToAppend = try Node(
+                                    id: node.id,
+                                    displayName: node.displayName,
+                                    protocol: node.proto,
+                                    host: node.host,
+                                    port: node.port,
+                                    parameters: node.parameters,
+                                    sourceLinks: node.sourceLinks,
+                                    sourceRevisionByID: [sourceID: source.revision],
+                                    tags: node.tags,
+                                    region: node.region,
+                                    enabled: node.enabled,
+                                    health: node.health,
+                                    userAlias: node.userAlias,
+                                    lastSeenAt: node.lastSeenAt
+                                )
+                            } else {
+                                nodeToAppend = node
+                            }
                         }
                         document.nodes.append(nodeToAppend)
                         sourceNodeIDsSeen[sourceID, default: []].insert(nodeToAppend.id)
@@ -2283,6 +2313,7 @@ final class AppModel {
                     where existingSourceNodeIDs.contains(document.nodes[index].id)
                         && !liveIDs.contains(document.nodes[index].id) {
                         document.nodes[index].sourceLinks.removeAll { $0 == sourceID }
+                        document.nodes[index].sourceRevisionByID.removeValue(forKey: sourceID)
                         if document.nodes[index].sourceLinks.isEmpty {
                             document.nodes[index].health.availability = .sourceRemoved
                         }

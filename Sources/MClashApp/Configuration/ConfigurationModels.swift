@@ -66,6 +66,13 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
     public var port: Int
     public var parameters: [String: String]
     public var sourceLinks: [SourceID]
+    /// The last authoritative refresh generation in which each source
+    /// advertised this node. This is deliberately separate from `sourceLinks`:
+    /// links describe current ownership while generations make reconciliation
+    /// auditable and prevent a stale/partial refresh from looking current.
+    /// Missing entries are treated as legacy data and are backfilled by the
+    /// source synchronizer.
+    public var sourceRevisionByID: [SourceID: Int]
     public var tags: Set<String>
     public var region: String?
     public var enabled: Bool
@@ -92,11 +99,57 @@ public struct Node: Codable, Hashable, Identifiable, Sendable {
         )
     }
 
-    public init(id: NodeID = NodeID(), displayName: String, protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String] = [:], sourceLinks: [SourceID] = [], tags: Set<String> = [], region: String? = nil, enabled: Bool = true, health: NodeHealthSnapshot = NodeHealthSnapshot(), userAlias: String? = nil, lastSeenAt: Date? = nil) throws {
+    public init(id: NodeID = NodeID(), displayName: String, protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String] = [:], sourceLinks: [SourceID] = [], sourceRevisionByID: [SourceID: Int] = [:], tags: Set<String> = [], region: String? = nil, enabled: Bool = true, health: NodeHealthSnapshot = NodeHealthSnapshot(), userAlias: String? = nil, lastSeenAt: Date? = nil) throws {
         let normalizedHost = Self.normalizeHost(host)
         guard !normalizedHost.isEmpty, (1...65535).contains(port) else { throw ConfigurationModelError.invalidNodeEndpoint(host: host, port: port) }
-        self.id = id; self.displayName = displayName; self.proto = proto; self.host = normalizedHost; self.port = port; self.parameters = parameters; self.sourceLinks = sourceLinks; self.tags = tags; self.region = region; self.enabled = enabled; self.health = health; self.userAlias = userAlias; self.lastSeenAt = lastSeenAt
+        self.id = id; self.displayName = displayName; self.proto = proto; self.host = normalizedHost; self.port = port; self.parameters = parameters; self.sourceLinks = sourceLinks; self.sourceRevisionByID = sourceRevisionByID.filter { $0.value >= 0 }; self.tags = tags; self.region = region; self.enabled = enabled; self.health = health; self.userAlias = userAlias; self.lastSeenAt = lastSeenAt
         self.fingerprint = Self.makeFingerprint(protocol: proto, host: normalizedHost, port: port, parameters: parameters)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, fingerprint, displayName, proto, host, port, parameters, sourceLinks,
+             sourceRevisionByID, tags, region, enabled, health, userAlias, lastSeenAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let id = try container.decode(NodeID.self, forKey: .id)
+        let displayName = try container.decode(String.self, forKey: .displayName)
+        let proto = try container.decode(NodeProtocol.self, forKey: .proto)
+        let host = try container.decode(String.self, forKey: .host)
+        let port = try container.decode(Int.self, forKey: .port)
+        let parameters = try container.decode([String: String].self, forKey: .parameters)
+        let sourceLinks = try container.decodeIfPresent([SourceID].self, forKey: .sourceLinks) ?? []
+        let revisions = try container.decodeIfPresent([SourceID: Int].self, forKey: .sourceRevisionByID) ?? [:]
+        let tags = try container.decodeIfPresent(Set<String>.self, forKey: .tags) ?? []
+        let region = try container.decodeIfPresent(String.self, forKey: .region)
+        let enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        let health = try container.decodeIfPresent(NodeHealthSnapshot.self, forKey: .health) ?? NodeHealthSnapshot()
+        let userAlias = try container.decodeIfPresent(String.self, forKey: .userAlias)
+        let lastSeenAt = try container.decodeIfPresent(Date.self, forKey: .lastSeenAt)
+        try self.init(id: id, displayName: displayName, protocol: proto, host: host, port: port,
+                      parameters: parameters, sourceLinks: sourceLinks,
+                      sourceRevisionByID: revisions, tags: tags, region: region,
+                      enabled: enabled, health: health, userAlias: userAlias, lastSeenAt: lastSeenAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(fingerprint, forKey: .fingerprint)
+        try container.encode(displayName, forKey: .displayName)
+        try container.encode(proto, forKey: .proto)
+        try container.encode(host, forKey: .host)
+        try container.encode(port, forKey: .port)
+        try container.encode(parameters, forKey: .parameters)
+        try container.encode(sourceLinks, forKey: .sourceLinks)
+        try container.encode(sourceRevisionByID, forKey: .sourceRevisionByID)
+        try container.encode(tags, forKey: .tags)
+        try container.encodeIfPresent(region, forKey: .region)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(health, forKey: .health)
+        try container.encodeIfPresent(userAlias, forKey: .userAlias)
+        try container.encodeIfPresent(lastSeenAt, forKey: .lastSeenAt)
     }
 
     public static func makeFingerprint(protocol proto: NodeProtocol, host: String, port: Int, parameters: [String: String]) -> String {
