@@ -31,6 +31,49 @@ struct NetworkExtensionControlTests {
         #expect(configuration.encodedDNSProxyBootstrap != nil)
     }
 
+    @Test("Native ingress and DNS omit legacy route catalog and SOCKS fields")
+    func nativeDataPlaneOmitsLegacyRoutePayload() throws {
+        let snapshot = try CaptureConfigurationSnapshot(revision: 2, rules: [])
+        let preferences = try NetworkCapturePreferences(
+            enabled: true,
+            dnsEnabled: true,
+            failOpen: true,
+            snapshot: snapshot
+        )
+        let upstream = try DNSUpstreamBootstrap(endpoints: [
+            try DNSUpstreamEndpoint(address: IPAddress("223.5.5.5"), transport: .udp)
+        ])
+        let route: OutboundRoute = .group("Native")
+        let endpoint = try MihomoRouteProxyEndpoint(
+            route: .group("Native"),
+            host: "127.0.0.1",
+            port: 19_001,
+            username: "legacy",
+            password: "legacy"
+        )
+        let listener = try MClashListenerSpec(
+            name: "Native HTTP",
+            kind: .http,
+            enabled: true,
+            port: 19_002,
+            route: .outbound(route)
+        )
+        let registry = try MClashListenerRegistry(listeners: [listener])
+        let configuration = try NetworkExtensionRuntimeConfiguration(
+            preferences: preferences,
+            routeProxyEndpoints: [endpoint],
+            dnsUpstreamMode: .native,
+            nativeUpstreamBootstrap: upstream,
+            inboundListenerRegistry: registry,
+            nativeInboundListenersEnabled: true
+        )
+        #expect(configuration.encodedOutboundConnectorCatalog == nil)
+        #expect(configuration.mihomoListener == nil)
+        #expect(configuration.providerConfiguration["mihomoRouteProxyCatalog"] == nil)
+        #expect(configuration.providerConfiguration["mihomoSOCKSPort"] == nil)
+        #expect(configuration.encodedInboundListenerRegistry != nil)
+    }
+
     @Test("Reducer enforces the full enable order")
     func reducerEnableOrder() throws {
         var state = NetworkExtensionControlState.inactive

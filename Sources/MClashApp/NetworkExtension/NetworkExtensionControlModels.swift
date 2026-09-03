@@ -88,9 +88,16 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = preferences.enabled
         self.encodedCaptureSnapshot = encodedSnapshot
-        let endpoints = try routeProxyEndpoints ?? mihomoListener?.routeProxyEndpoints() ?? []
+        let nativeDataPlane = nativeInboundListenersEnabled && dnsUpstreamMode == .native
+        let endpoints = nativeDataPlane
+            ? []
+            : try routeProxyEndpoints ?? mihomoListener?.routeProxyEndpoints() ?? []
         let routeProxyCatalog = endpoints.isEmpty ? nil : try MihomoRouteProxyCatalog.encode(endpoints)
-        encodedOutboundConnectorCatalog = routeProxyCatalog
+        // Native ingress and native DNS do not need a loopback Mihomo route
+        // catalog or private SOCKS relay. Keep those fields nil so the
+        // Network Extension cannot accidentally resurrect the legacy control
+        // plane while a native workspace is active.
+        encodedOutboundConnectorCatalog = nativeDataPlane ? nil : routeProxyCatalog
         encodedOutboundNodeTargetCatalog = try outboundNodeTargetCatalog?.encoded()
         encodedInboundListenerRegistry = try inboundListenerRegistry?.encoded()
         self.nativeInboundListenersEnabled = nativeInboundListenersEnabled
@@ -120,7 +127,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
                 nativeUpstreamBootstrap: nativeUpstreamBootstrap
             ).encoded()
         }
-        self.mihomoListener = mihomoListener
+        self.mihomoListener = nativeDataPlane ? nil : mihomoListener
     }
 
     var providerConfiguration: [String: NSObject] {
