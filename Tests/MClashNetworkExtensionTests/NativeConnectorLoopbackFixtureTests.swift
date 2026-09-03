@@ -19,6 +19,10 @@ struct NativeConnectorLoopbackFixtureTests {
         let connector = NativeHTTPConnectOutboundConnector(target: target)
         let client = connector.makeConnection()
         try LoopbackTCPFixture.start(client)
+        try LoopbackTCPFixture.send(
+            client,
+            data: try connector.handshake(for: destination)
+        )
 
         let request = try server.read(until: Data("\r\n\r\n".utf8))
         #expect(try HTTPProxyCodec.decodeConnectRequest(request).host == "example.com")
@@ -43,6 +47,10 @@ struct NativeConnectorLoopbackFixtureTests {
         let connector = NativeHTTPConnectOutboundConnector(target: target)
         let client = connector.makeConnection()
         try LoopbackTCPFixture.start(client)
+        try LoopbackTCPFixture.send(
+            client,
+            data: try connector.handshake(for: destination)
+        )
         _ = try server.read(until: Data("\r\n\r\n".utf8))
         try server.send(Data("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n".utf8))
         let response = try LoopbackTCPFixture.read(client, until: Data("\r\n\r\n".utf8))
@@ -63,7 +71,8 @@ struct NativeConnectorLoopbackFixtureTests {
         try LoopbackTCPFixture.start(client)
         try LoopbackTCPFixture.send(client, data: try SOCKS5Codec.encodeGreeting(methods: [.noAuthenticationRequired]))
         let greeting = try server.read(atLeast: 3)
-        #expect(try SOCKS5Codec.decodeMethodSelection(Data(greeting.suffix(2))).method == .noAuthenticationRequired)
+        #expect(greeting.first == 5)
+        #expect(greeting[2] == SOCKS5AuthenticationMethod.noAuthenticationRequired.rawValue)
         try server.send(Data([5, 0]))
         #expect(try LoopbackTCPFixture.read(client, atLeast: 2).suffix(2) == Data([5, 0]))
 
@@ -165,7 +174,7 @@ private final class LoopbackTCPFixture: @unchecked Sendable {
     private var connection: NWConnection?
     private var buffer = Data()
     private let lock = NSLock()
-    let port: UInt16
+    private(set) var port: UInt16 = 0
 
     init() throws {
         listener = try NWListener(using: .tcp, on: .any)
@@ -235,16 +244,20 @@ private final class LoopbackTCPFixture: @unchecked Sendable {
 
     static func start(_ connection: NWConnection) throws {
         let semaphore = DispatchSemaphore(value: 0)
-        var failure: NWError?
+        let failure = ErrorBox<NWError>()
         connection.stateUpdateHandler = { state in
             switch state {
-            case .ready, .failed(let error): failure = error; semaphore.signal()
+            case .ready:
+                semaphore.signal()
+            case .failed(let error):
+                failure.set(error)
+                semaphore.signal()
             default: break
             }
         }
         connection.start(queue: DispatchQueue(label: "one.leaper.mclash.native-loopback-client"))
         guard semaphore.wait(timeout: .now() + 5) == .success else { throw FixtureError.timeout("connection readiness") }
-        if let failure { throw failure }
+        if let failure = failure.value { throw failure }
     }
 
     static func send(_ connection: NWConnection, data: Data) throws {
@@ -287,3 +300,17 @@ private final class LoopbackTCPFixture: @unchecked Sendable {
 }
 
 private enum FixtureError: Error { case timeout(String) }
+
+private final class ErrorBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value?
+
+    var value: Value? {
+        lock.lock(); defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ value: Value) {
+        lock.lock(); stored = value; lock.unlock()
+    }
+}

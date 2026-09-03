@@ -42,7 +42,8 @@ struct OutboundConnectorTests {
         )
         let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
         let connector = NativeShadowsocksRelayConnector(target: target, destination: destination)
-        let codec = try #require(connector.makeStreamCodec(for: destination))
+        let codecValue = try connector.makeStreamCodec(for: destination)
+        let codec = try #require(codecValue)
         let targetFrame = try codec.encodeDestination()
         let appFrame = try codec.encode(Data("hello".utf8))
         var decoder = try ShadowsocksAEADStreamDecoder(methodName: "aes-256-gcm", password: "secret")
@@ -159,11 +160,12 @@ struct OutboundConnectorTests {
             .trimmingCharacters(in: .whitespaces)
         let accept = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8)))
             .base64EncodedString()
-        try connector.validateResponse(Data((
+        let response = Data((
             "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
             "Sec-WebSocket-Accept: \(accept)\r\n\r\n"
-        ).utf8))
+        ).utf8)
+        try connector.validateResponse(response)
         let binary = try #require(try connector.postResponseHandshake(for: destination))
         #expect(binary.first == 0x82)
         #expect(binary[1] & 0x80 == 0x80)

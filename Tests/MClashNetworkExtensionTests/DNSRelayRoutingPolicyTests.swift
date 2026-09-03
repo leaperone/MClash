@@ -37,7 +37,13 @@ struct DNSRelayRoutingPolicyTests {
             destination: try endpoint("1.1.1.1"),
             isTrustedMClashComponent: false,
             upstreamMode: .native,
-            transport: .tcp
+            transport: .tcp,
+            nativeBootstrap: try DNSUpstreamBootstrap(endpoints: [
+                try DNSUpstreamEndpoint(
+                    address: IPAddress("1.1.1.1"),
+                    transport: .tcp
+                )
+            ])
         )
         #expect(route == .native(try DNSUpstreamEndpoint(
             address: IPAddress("1.1.1.1"), port: 53, transport: .tcp
