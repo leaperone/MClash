@@ -304,6 +304,9 @@ and can be tested without producing a Mihomo YAML document.
 - `38d97fa` extends the native inbound catalog connector beyond SOCKS5 to
   validated HTTP CONNECT plus plain VLESS/Trojan TCP handshakes; unsupported
   transports remain fail-closed.
+- `59e19e4` and `4dd97b2` are included in the clean verification run after
+  resolver/snapshot integration; native group target selection now follows
+  selector and health policy instead of the first raw member.
 
 ### Definition of done
 
