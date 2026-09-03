@@ -14,7 +14,11 @@ run_release_script_tests() {
 # the remaining process-wide Apple test doubles serialized.
 if [[ "${CI:-}" == "true" ]]; then
   cd "${repo_root}"
-  swift test --configuration debug --no-parallel
+  # Swift Testing can still schedule suites concurrently even when SwiftPM's
+  # test runner receives --no-parallel. Several suites exercise process-wide
+  # Apple framework state, so cap the Testing library itself as well.
+  SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+    swift test --configuration debug --no-parallel
   run_release_script_tests
   exit 0
 fi

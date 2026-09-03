@@ -20,6 +20,11 @@ struct ReleasePackagingTests {
                 "swift test --configuration debug --no-parallel"
             )
         )
+        #expect(
+            testScript.contains(
+                "SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1"
+            )
+        )
     }
 
     @Test("AppModel tests never construct live Network Extension managers")
