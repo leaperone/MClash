@@ -350,6 +350,9 @@ and can be tested without producing a Mihomo YAML document.
 - The subsequent full integration smoke after native payload changes passed
   GEO verification, dual-profile/listener/crash-recovery checks, system proxy
   read-only checks and API smoke; no production service was restarted.
+- `b84a176` adds the isolated native CLI smoke to the signed release job on the
+  standard `macos-26` runner, so every future release package must publish a
+  verified native automation endpoint before GitHub Release publication.
 - `0be3930` adds a real loopback HTTP entrance test: MClash accepts a client
   CONNECT only after the native HTTP upstream returns 200, then bridges
   `ping`/`pong` payloads in both directions.
