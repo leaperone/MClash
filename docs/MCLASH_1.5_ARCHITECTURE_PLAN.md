@@ -275,10 +275,11 @@ and can be tested without producing a Mihomo YAML document.
   and `test-release-preflight.sh` all pass. The local CommandLineTools Swift
   Testing runtime still aborts during the direct shared-test binary; this is
   tracked as a toolchain limitation and is not counted as protocol evidence.
-- The isolated native CLI smoke currently exits with signal 137 before
-  publishing its automation endpoint on this Mac. No production process is
-  touched; this remains an explicit blocker for isolated runtime acceptance
-  and must be reproduced with a lighter harness or a full CI/Xcode runner.
+- The isolated native CLI smoke initially exited with signal 137 because a
+  second bundle reused the production bundle identifier while
+  `LSMultipleInstancesProhibited` was active. `7903abc` stages a disposable
+  bundle with a unique identifier and ad-hoc signature; the smoke now
+  publishes a real native automation endpoint without touching production.
 - `dd8be34` adds task-oriented rule shortcuts for Application, Domain and GFW
   List matching, plus an explicit explanation of Direct, Reject and group
   targets in the editor.
@@ -310,6 +311,12 @@ and can be tested without producing a Mihomo YAML document.
 - `38d97fa` is included in the clean verification run and routes native
   inbound HTTP/SOCKS traffic through protocol-specific outbound handshakes
   for SOCKS5, HTTP CONNECT, plain VLESS TCP and Trojan TCP.
+- `b431f54` integrates stateful native Shadowsocks SIP002 TCP stream plans;
+  salt/nonce framing is retained across application writes and unsupported
+  plugins/UoT remain explicit fallback cases.
+- `16ee6f6` keeps CLI smoke startup lightweight with an explicit
+  `MCLASH_SKIP_AUTO_CONNECT=1`, so endpoint diagnostics can be verified before
+  any large source catalog is connected.
 
 ### Definition of done
 
