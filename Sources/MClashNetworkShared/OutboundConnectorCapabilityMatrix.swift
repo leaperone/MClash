@@ -109,8 +109,8 @@ public enum OutboundConnectorCapabilityMatrix {
             let supportedMethods = Set([
                 "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305"
             ])
-            guard parameters["password"] != nil || parameters["passwd"] != nil,
-                  supportedMethods.contains(method) else {
+            let password = parameters["password"] ?? parameters["passwd"] ?? ""
+            guard !password.isEmpty, supportedMethods.contains(method) else {
                 return (.legacyFallback, "Shadowsocks cipher or password is not supported by the native connector.")
             }
             return (.native, nil)

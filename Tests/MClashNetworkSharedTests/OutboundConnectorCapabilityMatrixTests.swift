@@ -38,6 +38,21 @@ struct OutboundConnectorCapabilityMatrixTests {
         #expect(entries.map(\.transport) == ["tcp", "ws", "tcp"])
     }
 
+    @Test("Rejects Shadowsocks entries with an empty password")
+    func rejectsEmptyShadowsocksPassword() throws {
+        let target = try OutboundNodeTarget(
+            protocolName: "shadowsocks",
+            host: "ss.example.com",
+            port: 443,
+            parameters: ["method": "aes-256-gcm", "password": ""]
+        )
+        let catalog = try OutboundNodeTargetCatalog(
+            entries: [.init(route: .global, target: target)]
+        )
+        let entry = try #require(OutboundConnectorCapabilityMatrix.entries(for: catalog).first)
+        #expect(entry.support == .legacyFallback)
+    }
+
     @Test("Matrix entries round-trip without backend-specific fields")
     func roundTrips() throws {
         let target = try OutboundNodeTarget(protocolName: "trojan", host: "example.com", port: 443)
