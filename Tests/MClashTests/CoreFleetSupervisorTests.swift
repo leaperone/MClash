@@ -250,10 +250,48 @@ struct CoreFleetSupervisorTests {
 
         #expect(await fixture.fleet.stop(profileID: profileID))
     }
+
+    @Test("Native profile sessions participate without constructing Mihomo")
+    func nativeSessionFactoryProvidesMetadataAndLifecycle() async throws {
+        let fixture = try CoreFleetFixture()
+        defer { fixture.cleanup() }
+        let profileID = ProfileID()
+        let plan = ProfileRuntimePlan(
+            sessions: [
+                ProfileSessionSpec(profileID: profileID, mixedPort: 17_900),
+            ],
+            primaryProfileID: profileID
+        )
+
+        let result = try await fixture.nativeFleet.reconcile(
+            plan: plan,
+            launchConfigurations: try fixture.configurations(for: [profileID])
+        )
+
+        #expect(result[profileID] == .started)
+        #expect(
+            await fixture.nativeFleet.metadata(for: profileID)
+                == ProfileRuntimeSessionMetadata(
+                    backend: .native,
+                    capabilities: [
+                        .nativeRuntime,
+                        .nativeRouting,
+                        .nativeDNS
+                    ]
+                )
+        )
+        guard case .running = await fixture.nativeFleet.state(for: profileID) else {
+            Issue.record("Expected the native profile session to be running")
+            return
+        }
+        #expect(await fixture.nativeFleet.stop(profileID: profileID))
+        #expect(await fixture.nativeFleet.state(for: profileID) == .stopped)
+    }
 }
 
 private final class CoreFleetFixture: @unchecked Sendable {
     let fleet: CoreFleetSupervisor
+    let nativeFleet: CoreFleetSupervisor
 
     private let root: URL
     private let executableURL: URL
@@ -291,6 +329,9 @@ private final class CoreFleetFixture: @unchecked Sendable {
             supervisorFactory: { _ in
                 CoreSupervisor(readinessProbe: { _ in "fleet-test-core" })
             }
+        )
+        nativeFleet = CoreFleetSupervisor(
+            sessionFactory: { _ in NativeRuntimeEngine() }
         )
     }
 

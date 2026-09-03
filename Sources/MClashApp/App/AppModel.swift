@@ -1357,7 +1357,15 @@ final class AppModel {
                     startAuxiliary: false
                 )
                 if let activeProfileID {
-                    if runtimeOverrideCoordinator != nil {
+                    if usesNativeRuntime {
+                        // The native engine consumes the compiled workspace
+                        // plan directly. Activating a stored profile here
+                        // would ask RuntimeOverrideActivationCoordinator to
+                        // render and persist a Mihomo YAML document, which is
+                        // both unnecessary and makes startup depend on the
+                        // legacy runtime configuration URL.
+                        activeConfigURL = nil
+                    } else if runtimeOverrideCoordinator != nil {
                         let activation = try await activateStoredProfile(
                             activeProfileID,
                             validator: try makeProfileValidator()
@@ -5571,7 +5579,7 @@ final class AppModel {
         if isConnected, controllerIsReady {
             return true
         }
-        guard activeConfigURL != nil else {
+        guard usesNativeRuntime || activeConfigURL != nil else {
             selection = .profiles
             errorMessage = AppLocalization.string(
                 "Add or select a profile before connecting."
@@ -5591,7 +5599,13 @@ final class AppModel {
                 throw AppModelError.profileStoreUnavailable
             }
             try await repairManagedMixedPortCollision()
-            if let activeProfileID, runtimeOverrideCoordinator != nil {
+            if let activeProfileID,
+               runtimeOverrideCoordinator != nil,
+               !usesNativeRuntime {
+                // NativeRuntimeEngine already owns the compiled plan attached
+                // during startup/configuration. Do not materialize a legacy
+                // Mihomo runtime YAML merely to satisfy the compatibility
+                // activation coordinator.
                 let activation = try await activateStoredProfile(
                     activeProfileID,
                     validator: try makeProfileValidator()

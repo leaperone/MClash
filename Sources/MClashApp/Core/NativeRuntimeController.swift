@@ -30,9 +30,48 @@ protocol NativeRuntimeController: AnyObject, Sendable {
     nonisolated func setProcessLogForwardingEnabled(_ enabled: Bool)
 }
 
-extension CoreSupervisor: NativeRuntimeController {}
+/// The implementation-neutral identity of a profile runtime session.
+///
+/// CoreFleetSupervisor uses this boundary instead of constructing a
+/// CoreSupervisor directly.  A native session can therefore participate in
+/// the same profile lifecycle while the legacy Mihomo adapter remains the
+/// default for existing callers.
+enum ProfileRuntimeSessionBackend: String, Codable, Equatable, Sendable {
+    case native
+    case mihomo
+}
+
+struct ProfileRuntimeSessionMetadata: Equatable, Sendable {
+    let backend: ProfileRuntimeSessionBackend
+    let capabilities: Set<NativeRuntimeCapability>
+
+    init(
+        backend: ProfileRuntimeSessionBackend,
+        capabilities: Set<NativeRuntimeCapability>
+    ) {
+        self.backend = backend
+        self.capabilities = capabilities
+    }
+}
+
+/// A profile-scoped runtime owned by the connector-neutral fleet.
+///
+/// This intentionally inherits the existing lifecycle surface so the
+/// migration is source-compatible with the Mihomo-backed implementation.
+protocol ProfileRuntimeSession: NativeRuntimeController {
+    nonisolated var metadata: ProfileRuntimeSessionMetadata { get }
+}
+
+extension CoreSupervisor: ProfileRuntimeSession {}
 
 extension CoreSupervisor {
+    nonisolated var metadata: ProfileRuntimeSessionMetadata {
+        ProfileRuntimeSessionMetadata(
+            backend: .mihomo,
+            capabilities: runtimeCapabilities
+        )
+    }
+
     nonisolated var runtimeCapabilities: Set<NativeRuntimeCapability> {
         [.legacyCore, .legacyController]
     }
@@ -67,10 +106,16 @@ extension CoreSupervisor {
 /// No behavior is added here: the adapter forwards lifecycle operations to
 /// CoreSupervisor verbatim. It is intentionally a separate type so a native
 /// runtime can replace it at the AppModel boundary in a later migration.
-final actor MihomoRuntimeControllerAdapter: NativeRuntimeController {
+final actor MihomoRuntimeControllerAdapter: ProfileRuntimeSession {
     nonisolated let events: AsyncStream<CoreEvent>
     nonisolated var runtimeCapabilities: Set<NativeRuntimeCapability> {
         [.legacyCore, .legacyController]
+    }
+    nonisolated var metadata: ProfileRuntimeSessionMetadata {
+        ProfileRuntimeSessionMetadata(
+            backend: .mihomo,
+            capabilities: runtimeCapabilities
+        )
     }
     private let supervisor: CoreSupervisor
 

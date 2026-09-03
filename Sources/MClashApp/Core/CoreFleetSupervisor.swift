@@ -28,21 +28,22 @@ struct CoreFleetReconcileResult: Equatable, Sendable {
     }
 }
 
-/// Owns one independent `CoreSupervisor` for every profile and reconciles the
-/// running processes against a validated `ProfileRuntimePlan`.
+/// Owns one independent `ProfileRuntimeSession` for every profile and
+/// reconciles the sessions against a validated `ProfileRuntimePlan`.
 actor CoreFleetSupervisor {
     typealias SupervisorFactory = @Sendable (ProfileID) -> CoreSupervisor
+    typealias SessionFactory = @Sendable (ProfileID) -> any ProfileRuntimeSession
 
     nonisolated let events: AsyncStream<CoreFleetEvent>
 
     private struct ManagedSession {
-        let supervisor: CoreSupervisor
+        let session: any ProfileRuntimeSession
         let eventForwarder: Task<Void, Never>
         var lastLaunchConfiguration: CoreLaunchConfiguration?
     }
 
     private let continuation: AsyncStream<CoreFleetEvent>.Continuation
-    private let supervisorFactory: SupervisorFactory
+    private let sessionFactory: SessionFactory
     private let validator: ProfileRuntimePlanValidator
     private var sessions: [ProfileID: ManagedSession] = [:]
 
@@ -54,10 +55,13 @@ actor CoreFleetSupervisor {
 
     init(
         validator: ProfileRuntimePlanValidator = ProfileRuntimePlanValidator(),
-        supervisorFactory: @escaping SupervisorFactory = { _ in CoreSupervisor() }
+        supervisorFactory: @escaping SupervisorFactory = { _ in CoreSupervisor() },
+        sessionFactory: SessionFactory? = nil
     ) {
         self.validator = validator
-        self.supervisorFactory = supervisorFactory
+        self.sessionFactory = sessionFactory ?? { profileID in
+            supervisorFactory(profileID)
+        }
         let pair = AsyncStream<CoreFleetEvent>.makeStream(
             of: CoreFleetEvent.self,
             bufferingPolicy: .bufferingNewest(1_000)
@@ -102,12 +106,12 @@ actor CoreFleetSupervisor {
                 throw CancellationError()
             }
             guard let session = sessions[profileID] else { continue }
-            let state = await session.supervisor.state()
+            let state = await session.session.state()
             if state == .stopped {
                 outcomes[profileID] = .unchanged
                 continue
             }
-            let stopped = await session.supervisor.stop()
+            let stopped = await session.session.stop()
             outcomes[profileID] = stopped
                 ? .stopped
                 : .failed(Self.stopFailureMessage(profileID))
@@ -129,9 +133,9 @@ actor CoreFleetSupervisor {
                 continue
             }
 
-            let supervisor = supervisor(for: profileID)
+            let session = session(for: profileID)
             let previousConfiguration = sessions[profileID]?.lastLaunchConfiguration
-            let previousState = await supervisor.state()
+            let previousState = await session.state()
             guard !emergencyShutdownRequested else {
                 throw CancellationError()
             }
@@ -143,7 +147,7 @@ actor CoreFleetSupervisor {
 
             let isRestart = previousConfiguration != nil
             if previousState != .stopped {
-                let stopped = await supervisor.stop()
+                let stopped = await session.stop()
                 guard !emergencyShutdownRequested else {
                     throw CancellationError()
                 }
@@ -159,9 +163,9 @@ actor CoreFleetSupervisor {
                 guard !emergencyShutdownRequested else {
                     throw CancellationError()
                 }
-                try await supervisor.start(configuration)
+                try await session.start(configuration)
                 guard !emergencyShutdownRequested else {
-                    _ = await supervisor.stop()
+                    _ = await session.stop()
                     throw CancellationError()
                 }
                 sessions[profileID]?.lastLaunchConfiguration = configuration
@@ -179,7 +183,7 @@ actor CoreFleetSupervisor {
         await beginMutation()
         defer { endMutation() }
         guard let session = sessions[profileID] else { return true }
-        return await session.supervisor.stop()
+        return await session.session.stop()
     }
 
     /// Stops every known session independently and returns per-profile results.
@@ -192,7 +196,7 @@ actor CoreFleetSupervisor {
             $0.description < $1.description
         }) {
             guard let session = sessions[profileID] else { continue }
-            results[profileID] = await session.supervisor.stop()
+            results[profileID] = await session.session.stop()
         }
         return results
     }
@@ -204,14 +208,14 @@ actor CoreFleetSupervisor {
     @discardableResult
     func forceStopAll() async -> [ProfileID: Bool] {
         emergencyShutdownRequested = true
-        let supervisors = sessions.map { ($0.key, $0.value.supervisor) }
+        let sessions = sessions.map { ($0.key, $0.value.session) }
         return await withTaskGroup(
             of: (ProfileID, Bool).self,
             returning: [ProfileID: Bool].self
         ) { group in
-            for (profileID, supervisor) in supervisors {
+            for (profileID, session) in sessions {
                 group.addTask {
-                    (profileID, await supervisor.stop())
+                    (profileID, await session.stop())
                 }
             }
             var results: [ProfileID: Bool] = [:]
@@ -224,13 +228,13 @@ actor CoreFleetSupervisor {
 
     func state(for profileID: ProfileID) async -> CoreRunState? {
         guard let session = sessions[profileID] else { return nil }
-        return await session.supervisor.state()
+        return await session.session.state()
     }
 
     func states() async -> [ProfileID: CoreRunState] {
         var result: [ProfileID: CoreRunState] = [:]
         for (profileID, session) in sessions {
-            result[profileID] = await session.supervisor.state()
+            result[profileID] = await session.session.state()
         }
         return result
     }
@@ -239,33 +243,38 @@ actor CoreFleetSupervisor {
         _ enabled: Bool,
         for profileID: ProfileID
     ) {
-        sessions[profileID]?.supervisor.setProcessLogForwardingEnabled(enabled)
+        sessions[profileID]?.session.setProcessLogForwardingEnabled(enabled)
     }
 
     func setProcessLogForwardingEnabledForAll(_ enabled: Bool) {
         for session in sessions.values {
-            session.supervisor.setProcessLogForwardingEnabled(enabled)
+            session.session.setProcessLogForwardingEnabled(enabled)
         }
     }
 
-    private func supervisor(for profileID: ProfileID) -> CoreSupervisor {
+    private func session(for profileID: ProfileID) -> any ProfileRuntimeSession {
         if let existing = sessions[profileID] {
-            return existing.supervisor
+            return existing.session
         }
 
-        let supervisor = supervisorFactory(profileID)
-        let eventForwarder = Task { [weak self, events = supervisor.events] in
+        let session = sessionFactory(profileID)
+        let eventForwarder = Task { [weak self, events = session.events] in
             for await event in events {
                 guard !Task.isCancelled else { return }
                 await self?.forward(event, profileID: profileID)
             }
         }
         sessions[profileID] = ManagedSession(
-            supervisor: supervisor,
+            session: session,
             eventForwarder: eventForwarder,
             lastLaunchConfiguration: nil
         )
-        return supervisor
+        return session
+    }
+
+    /// Returns implementation metadata without exposing the concrete session.
+    func metadata(for profileID: ProfileID) -> ProfileRuntimeSessionMetadata? {
+        sessions[profileID]?.session.metadata
     }
 
     private func forward(_ event: CoreEvent, profileID: ProfileID) {

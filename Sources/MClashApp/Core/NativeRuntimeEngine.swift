@@ -149,13 +149,21 @@ extension CoreRunState {
 /// added behind this seam in subsequent migrations. Keeping this object
 /// usable now lets tests prove that selecting native runtime cannot launch
 /// Mihomo as a side effect.
-final actor NativeRuntimeEngine: NativeRuntimeController {
+final actor NativeRuntimeEngine: ProfileRuntimeSession {
     nonisolated let events: AsyncStream<CoreEvent>
     nonisolated let runtimeCapabilities: Set<NativeRuntimeCapability> = [
         .nativeRuntime,
         .nativeRouting,
         .nativeDNS
     ]
+    nonisolated let metadata = ProfileRuntimeSessionMetadata(
+        backend: .native,
+        capabilities: [
+            .nativeRuntime,
+            .nativeRouting,
+            .nativeDNS
+        ]
+    )
 
     private let continuation: AsyncStream<CoreEvent>.Continuation
     private var currentState: CoreRunState = .stopped
