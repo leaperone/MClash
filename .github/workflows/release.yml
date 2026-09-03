@@ -133,7 +133,7 @@ jobs:
         shell: zsh {0}
         run: ./scripts/integration-test.sh
 
-  native-release-readiness:
+  native_release_readiness:
     name: Verify native 1.5.x release evidence
     needs: prepare
     if: startsWith(needs.prepare.outputs.version, '1.5.')
@@ -164,7 +164,15 @@ jobs:
     # The signed release build is the authoritative full-product compile/link
     # gate. A separate typecheck job duplicated that work and added ~18 minutes
     # to each release, so typecheck remains a developer/PR check only.
-    needs: [prepare, verify-unit, verify-integration, native-release-readiness]
+    needs: [prepare, verify-unit, verify-integration, native_release_readiness]
+    # Keep the established release path for pre-1.5 tags; the native evidence
+    # gate is intentionally mandatory only for the new 1.5.x line.
+    if: >-
+      always() && needs.prepare.result == 'success' &&
+      needs.verify-unit.result == 'success' &&
+      needs.verify-integration.result == 'success' &&
+      (needs.native_release_readiness.result == 'success' ||
+      needs.native_release_readiness.result == 'skipped')
     runs-on: macos-26
     timeout-minutes: 60
     environment:
