@@ -270,6 +270,10 @@ and can be tested without producing a Mihomo YAML document.
   and `test-release-preflight.sh` all pass. The local CommandLineTools Swift
   Testing runtime still aborts during the direct shared-test binary; this is
   tracked as a toolchain limitation and is not counted as protocol evidence.
+- The isolated native CLI smoke currently exits with signal 137 before
+  publishing its automation endpoint on this Mac. No production process is
+  touched; this remains an explicit blocker for isolated runtime acceptance
+  and must be reproduced with a lighter harness or a full CI/Xcode runner.
 
 ### Definition of done
 
