@@ -343,6 +343,9 @@ and can be tested without producing a Mihomo YAML document.
   `running` state with `startedAt` set and four enabled listener handles
   running. The Network Extension and System Proxy remain inert, so this proves
   lifecycle/plan activation but not external traffic interoperability.
+- `0be3930` adds a real loopback HTTP entrance test: MClash accepts a client
+  CONNECT only after the native HTTP upstream returns 200, then bridges
+  `ping`/`pong` payloads in both directions.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
