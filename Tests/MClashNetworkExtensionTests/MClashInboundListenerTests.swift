@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import Dispatch
 @preconcurrency import Network
+import MClashNetworkShared
 import Testing
 @testable import MClashNetworkExtension
 
@@ -341,34 +342,26 @@ struct MClashInboundListenerTests {
             using: .tcp
         )
         let clientQueue = DispatchQueue(label: "one.leaper.mclash.native-http-inbound-client")
-        let ready = DispatchSemaphore(value: 0)
-        client.stateUpdateHandler = { state in
-            switch state {
-            case .ready, .failed, .cancelled: ready.signal()
-            default: break
-            }
-        }
         client.start(queue: clientQueue)
-        #expect(ready.wait(timeout: .now() + 5) == .success)
         try await send(Data("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n".utf8), on: client)
 
         let firstRead = ReceiveOnce()
         receiveOnce(from: client, into: firstRead)
-        #expect(firstRead.semaphore.wait(timeout: .now() + 0.2) == .timedOut)
+        try await Task.sleep(for: .milliseconds(200))
         #expect(firstRead.data == nil)
 
         let request = try upstream.read(until: Data("\r\n\r\n".utf8))
         #expect(try HTTPProxyCodec.decodeConnectRequest(request).host == "example.com")
-        try await upstream.send(Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8))
-        #expect(firstRead.semaphore.wait(timeout: .now() + 5) == .success)
+        try upstream.send(Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8))
+        for _ in 0..<50 where firstRead.data == nil { try await Task.sleep(for: .milliseconds(100)) }
         #expect(firstRead.data?.range(of: Data("200 Connection Established".utf8)) != nil)
 
         try await send(Data("ping".utf8), on: client)
         #expect(try upstream.read(atLeast: 4).suffix(4) == Data("ping".utf8))
-        try await upstream.send(Data("pong".utf8))
+        try upstream.send(Data("pong".utf8))
         let response = ReceiveOnce()
         receiveOnce(from: client, into: response)
-        #expect(response.semaphore.wait(timeout: .now() + 5) == .success)
+        for _ in 0..<50 where response.data == nil { try await Task.sleep(for: .milliseconds(100)) }
         #expect(response.data?.suffix(4) == Data("pong".utf8))
         client.cancel()
     }
@@ -383,7 +376,6 @@ struct MClashInboundListenerTests {
     }
 
     private final class ReceiveOnce: @unchecked Sendable {
-        let semaphore = DispatchSemaphore(value: 0)
         private let lock = NSLock()
         private var value: Data?
 
@@ -394,7 +386,6 @@ struct MClashInboundListenerTests {
 
         func set(_ data: Data?) {
             lock.lock(); value = data; lock.unlock()
-            semaphore.signal()
         }
     }
 
@@ -421,7 +412,7 @@ struct MClashInboundListenerTests {
         private var connection: NWConnection?
         private var buffer = Data()
         private var didAccept = false
-        let port: UInt16
+        private(set) var port: UInt16 = 0
 
         init() throws {
             listener = try NWListener(using: .tcp, on: .any)
@@ -452,18 +443,22 @@ struct MClashInboundListenerTests {
             listener.cancel()
         }
 
-        func send(_ data: Data) async throws {
+        func send(_ data: Data) throws {
             let acceptedNow = accepted.wait(timeout: .now() + 5) == .success
             lock.lock(); let connection = self.connection; let hasAccepted = didAccept; lock.unlock()
             guard acceptedNow || hasAccepted, let connection else {
                 throw FixtureError.timeout("HTTP fixture accept")
             }
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                connection.send(content: data, completion: .contentProcessed { error in
-                    if let error { continuation.resume(throwing: error) }
-                    else { continuation.resume() }
-                })
+            let completed = DispatchSemaphore(value: 0)
+            var sendError: NWError?
+            connection.send(content: data, completion: .contentProcessed { error in
+                sendError = error
+                completed.signal()
+            })
+            guard completed.wait(timeout: .now() + 5) == .success else {
+                throw FixtureError.timeout("HTTP fixture send")
             }
+            if let sendError { throw sendError }
         }
 
         func read(until marker: Data) throws -> Data {
