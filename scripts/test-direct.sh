@@ -220,7 +220,15 @@ swiftc \
   -Xlinker "${testing_interop}" \
   -o "${build_dir}/MClashNetworkSharedPackageTests"
 
-"${build_dir}/MClashNetworkSharedPackageTests"
+shared_test_exit=0
+set +e
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+  "${build_dir}/MClashNetworkSharedPackageTests"
+shared_test_exit=$?
+set -e
+if (( shared_test_exit != 0 )); then
+  print -u2 "Shared test target exited with ${shared_test_exit}; continuing to run Network Extension and automation tests."
+fi
 
 swiftc \
   -parse-as-library \
@@ -275,3 +283,6 @@ swiftc \
 
 "${build_dir}/MClashAutomationProtocolPackageTests"
 run_release_script_tests
+if (( shared_test_exit != 0 )); then
+  exit "${shared_test_exit}"
+fi
