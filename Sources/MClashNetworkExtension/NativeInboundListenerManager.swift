@@ -230,6 +230,25 @@ struct NativeInboundDirectConnector: MClashInboundOutboundConnector {
 struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
     let catalog: OutboundNodeTargetCatalog
 
+    func makeBridgeCodec(
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute
+    ) throws -> (any MClashInboundBridgeCodec)? {
+        guard case let .proxy(routeKey) = route,
+              let entry = catalog.entries.first(where: { $0.route.stableSortKey == routeKey }) else {
+            return nil
+        }
+        guard entry.target.protocolName == "vless",
+              entry.target.parameters["network"]?.lowercased() == "ws" else {
+            return nil
+        }
+        let endpoint = try SOCKS5Endpoint(
+            address: SOCKS5Address(domain: destination.host),
+            port: destination.port
+        )
+        return try VLESSWebSocketStreamCodec(target: entry.target, destination: endpoint)
+    }
+
     func connect(to destination: MClashInboundDestination, route: MClashInboundRoute) -> NWConnection {
         guard case let .proxy(routeKey) = route,
               let entry = catalog.entries.first(where: { $0.route.stableSortKey == routeKey }),

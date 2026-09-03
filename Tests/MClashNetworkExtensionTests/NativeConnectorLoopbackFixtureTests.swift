@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @preconcurrency import Network
 import MClashNetworkShared
@@ -113,6 +114,52 @@ struct NativeConnectorLoopbackFixtureTests {
         #expect(try server.read(atLeast: 4).suffix(4) == Data("ping".utf8))
         try server.send(Data("pong".utf8))
         #expect(try LoopbackTCPFixture.read(client, atLeast: 4).suffix(4) == Data("pong".utf8))
+        client.cancel()
+    }
+
+    @Test("VLESS WebSocket bridge masks client payload and decodes segmented server frames")
+    func vlessWebSocketBridgeLoopback() throws {
+        let server = try LoopbackTCPFixture()
+        defer { server.stop() }
+        let target = try OutboundNodeTarget(
+            protocolName: "vless", host: "127.0.0.1", port: server.port,
+            parameters: [
+                "uuid": "00000000-0000-0000-0000-000000000001",
+                "network": "ws", "ws-path": "/vless"
+            ]
+        )
+        let destination = SOCKS5Endpoint(address: try SOCKS5Address(domain: "example.com"), port: 443)
+        let connector = NativeVLESSWebSocketRelayConnector(target: target)
+        let client = connector.makeConnection(to: nil)
+        try LoopbackTCPFixture.start(client)
+        try LoopbackTCPFixture.send(client, data: try connector.responseHandshake(for: destination))
+        let upgrade = try server.read(until: Data("\r\n\r\n".utf8))
+        let lines = String(decoding: upgrade, as: UTF8.self).split(separator: "\r\n")
+        let key = String(try #require(lines.first(where: { $0.lowercased().hasPrefix("sec-websocket-key:") }))
+            .split(separator: ":", maxSplits: 1)[1].trimmingCharacters(in: .whitespaces))
+        let accept = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
+        try server.send(Data(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n").utf8))
+        _ = try LoopbackTCPFixture.read(client, until: Data("\r\n\r\n".utf8))
+        try LoopbackTCPFixture.send(client, data: try connector.postResponseHandshake(for: destination)!)
+        let destinationFrame = try server.read(atLeast: 2)
+        #expect(destinationFrame[0] & 0x80 != 0)
+        #expect(destinationFrame[1] & 0x80 != 0, "client VLESS WS frames must be masked")
+
+        let codec = try #require(connector.makeStreamCodec(for: destination) as? VLESSWebSocketStreamCodec)
+        try LoopbackTCPFixture.send(client, data: try codec.encode(Data("ping".utf8)))
+        let applicationFrame = try server.read(atLeast: 2)
+        #expect(applicationFrame[0] == 0x82)
+        #expect(applicationFrame[1] & 0x80 != 0, "application payload must remain masked")
+
+        // Send two unmasked binary frames in one TCP write, then feed the
+        // decoder in small segments to prove framing is independent of reads.
+        let serverFrames = Data([0x82, 0x04]) + Data("pong".utf8) + Data([0x82, 0x05]) + Data("again".utf8)
+        try server.send(serverFrames)
+        var decoded = [Data]()
+        for _ in 0..<20 where decoded.count < 2 {
+            decoded.append(contentsOf: try codec.decode(LoopbackTCPFixture.read(client, atLeast: 1)))
+        }
+        #expect(decoded == [Data("pong".utf8), Data("again".utf8)])
         client.cancel()
     }
 

@@ -186,7 +186,7 @@ struct NativeVLESSOutboundConnector: Sendable {
 /// is a byte tunnel: client frames must be masked, server frames must not be
 /// masked.  We intentionally reject fragmented/control frames here rather
 /// than silently delivering malformed data to the VLESS codec.
-final class VLESSWebSocketStreamCodec: NativeStreamCodec, @unchecked Sendable {
+final class VLESSWebSocketStreamCodec: NativeStreamCodec, MClashInboundBridgeCodec, @unchecked Sendable {
     private var receiveBuffer = Data()
     private let destination: Data
 
@@ -204,6 +204,10 @@ final class VLESSWebSocketStreamCodec: NativeStreamCodec, @unchecked Sendable {
     func encode(_ payload: Data) throws -> Data { try Self.frame(payload, mask: true) }
 
     func decode(_ input: Data) throws -> [Data] {
+        guard input.count <= Self.maximumPayload,
+              receiveBuffer.count <= Self.maximumPayload + 10 - input.count else {
+            throw VLESSWebSocketCodecError.messageTooLarge
+        }
         receiveBuffer.append(input)
         var output: [Data] = []
         while true {
@@ -215,7 +219,9 @@ final class VLESSWebSocketStreamCodec: NativeStreamCodec, @unchecked Sendable {
             let masked = second & 0x80 != 0
             var length = Int(second & 0x7f)
             var headerLength = 2
-            if !fin || opcode != 0x2 || masked { throw VLESSWebSocketCodecError.invalidFrame }
+            guard first & 0x70 == 0, fin, opcode == 0x2, !masked else {
+                throw VLESSWebSocketCodecError.invalidFrame
+            }
             if length == 126 {
                 guard receiveBuffer.count >= 4 else { break }
                 length = Int(receiveBuffer[receiveBuffer.startIndex + 2]) << 8
@@ -223,13 +229,15 @@ final class VLESSWebSocketStreamCodec: NativeStreamCodec, @unchecked Sendable {
                 headerLength = 4
             } else if length == 127 {
                 guard receiveBuffer.count >= 10 else { break }
-                var value = 0
-                for offset in 0..<8 { value = (value << 8) | Int(receiveBuffer[receiveBuffer.startIndex + 2 + offset]) }
-                guard value <= 16 * 1024 * 1024 else { throw VLESSWebSocketCodecError.messageTooLarge }
-                length = value
+                var value: UInt64 = 0
+                for offset in 0..<8 { value = (value << 8) | UInt64(receiveBuffer[receiveBuffer.startIndex + 2 + offset]) }
+                guard value <= UInt64(Self.maximumPayload), value <= UInt64(Int.max) else {
+                    throw VLESSWebSocketCodecError.messageTooLarge
+                }
+                length = Int(value)
                 headerLength = 10
             }
-            guard length <= 16 * 1024 * 1024 else { throw VLESSWebSocketCodecError.messageTooLarge }
+            guard length <= Self.maximumPayload else { throw VLESSWebSocketCodecError.messageTooLarge }
             guard receiveBuffer.count >= headerLength + length else { break }
             let bodyStart = receiveBuffer.startIndex + headerLength
             output.append(Data(receiveBuffer[bodyStart..<(bodyStart + length)]))
@@ -239,7 +247,7 @@ final class VLESSWebSocketStreamCodec: NativeStreamCodec, @unchecked Sendable {
     }
 
     private static func frame(_ payload: Data, mask: Bool) throws -> Data {
-        guard payload.count <= 16 * 1024 * 1024 else { throw VLESSWebSocketCodecError.messageTooLarge }
+        guard payload.count <= Self.maximumPayload else { throw VLESSWebSocketCodecError.messageTooLarge }
         var result = Data([0x82])
         let flag: UInt8 = mask ? 0x80 : 0
         if payload.count < 126 {
@@ -259,6 +267,8 @@ final class VLESSWebSocketStreamCodec: NativeStreamCodec, @unchecked Sendable {
         } else { result.append(payload) }
         return result
     }
+
+    private static let maximumPayload = 16 * 1024 * 1024
 }
 
 enum VLESSWebSocketCodecError: Error, Equatable, Sendable {

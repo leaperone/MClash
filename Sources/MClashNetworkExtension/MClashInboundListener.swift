@@ -29,6 +29,14 @@ enum MClashInboundRoute: Equatable, Sendable {
 protocol MClashInboundOutboundConnector: Sendable {
     func connect(to destination: MClashInboundDestination, route: MClashInboundRoute) -> NWConnection
 
+    /// Returns the per-upstream transport codec used after establishment. A
+    /// codec is deliberately created for each connection: WebSocket framing
+    /// has receive state, while plain TCP transports use the identity default.
+    func makeBridgeCodec(
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute
+    ) throws -> (any MClashInboundBridgeCodec)?
+
     /// Completes any protocol handshake required by the selected outbound
     /// transport. The completion must only succeed once the upstream is ready
     /// to carry application bytes. The default is used by DIRECT and test
@@ -41,7 +49,21 @@ protocol MClashInboundOutboundConnector: Sendable {
     )
 }
 
+/// Adapts application bytes to and from a transport framing layer. Returning
+/// nil means the transport is a plain byte stream. Implementations must own
+/// their mutable decoder state and must be safe to use from the listener's
+/// serial queue only.
+protocol MClashInboundBridgeCodec: AnyObject, Sendable {
+    func encode(_ payload: Data) throws -> Data
+    func decode(_ input: Data) throws -> [Data]
+}
+
 extension MClashInboundOutboundConnector {
+    func makeBridgeCodec(
+        to _: MClashInboundDestination,
+        route _: MClashInboundRoute
+    ) throws -> (any MClashInboundBridgeCodec)? { nil }
+
     func establish(
         _ connection: NWConnection,
         to destination: MClashInboundDestination,
@@ -181,7 +203,15 @@ final class MClashInboundListener: @unchecked Sendable {
                     guard error == nil else { client.cancel(); upstream.cancel(); return }
                     client.send(content: response, completion: .contentProcessed { error in
                         guard error == nil else { client.cancel(); upstream.cancel(); return }
-                        self.bridge(client, upstream)
+                        do {
+                            let codec = try self.connector.makeBridgeCodec(
+                                to: destination,
+                                route: decision
+                            )
+                            self.bridge(client, upstream, codec: codec)
+                        } catch {
+                            client.cancel(); upstream.cancel()
+                        }
                     })
                 }
             case .failed, .cancelled:
@@ -193,14 +223,55 @@ final class MClashInboundListener: @unchecked Sendable {
         upstream.start(queue: queue)
     }
 
-    private func bridge(_ a: NWConnection, _ b: NWConnection) {
-        pump(from: a, to: b); pump(from: b, to: a)
+    private func bridge(
+        _ a: NWConnection,
+        _ b: NWConnection,
+        codec: (any MClashInboundBridgeCodec)?
+    ) {
+        pump(from: a, to: b, transform: { data in
+            guard let codec else { return [data] }
+            return [try codec.encode(data)]
+        })
+        pump(from: b, to: a, transform: { data in
+            guard let codec else { return [data] }
+            return try codec.decode(data)
+        })
     }
-    private func pump(from source: NWConnection, to target: NWConnection) {
+    private func pump(
+        from source: NWConnection,
+        to target: NWConnection,
+        transform: @escaping @Sendable (Data) throws -> [Data]
+    ) {
         source.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, error in
-            guard let self, error == nil, let data, !data.isEmpty else { if complete { target.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in target.cancel() }) }; return }
-            target.send(content: data, completion: .contentProcessed { _ in self.pump(from: source, to: target) })
+            guard let self, error == nil, let data, !data.isEmpty else {
+                if complete { target.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in target.cancel() }) }
+                else if let error { source.cancel(); target.cancel(); _ = error }
+                return
+            }
+            do {
+                let transformed = try transform(data)
+                send(transformed, index: 0, from: source, to: target, transform: transform)
+            } catch {
+                source.cancel(); target.cancel()
+            }
         }
+    }
+
+    private func send(
+        _ chunks: [Data],
+        index: Int,
+        from source: NWConnection,
+        to target: NWConnection,
+        transform: @escaping @Sendable (Data) throws -> [Data]
+    ) {
+        guard index < chunks.count else {
+            pump(from: source, to: target, transform: transform)
+            return
+        }
+        target.send(content: chunks[index], completion: .contentProcessed { [weak self] error in
+            guard let self, error == nil else { source.cancel(); target.cancel(); return }
+            self.send(chunks, index: index + 1, from: source, to: target, transform: transform)
+        })
     }
 
     private static func socksReply(_ code: SOCKS5ReplyCode) -> Data { Data([5, code.rawValue, 0, 1, 0, 0, 0, 0, 0, 0]) }

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @preconcurrency import Dispatch
 @preconcurrency import Network
@@ -363,6 +364,88 @@ struct MClashInboundListenerTests {
         receiveOnce(from: client, into: response)
         for _ in 0..<50 where response.data == nil { try await Task.sleep(for: .milliseconds(100)) }
         #expect(response.data?.suffix(4) == Data("pong".utf8))
+        client.cancel()
+    }
+
+    @Test("Native HTTP entrance frames VLESS WebSocket application bytes")
+    func nativeHTTPInboundVLESSWebSocketBridgeLoopback() async throws {
+        let upstream = try LoopbackHTTPConnectFixture()
+        defer { upstream.stop() }
+        let route = OutboundRoute.group("Loopback VLESS WS")
+        let target = try OutboundNodeTarget(
+            protocolName: "vless", host: "127.0.0.1", port: upstream.port,
+            parameters: [
+                "uuid": "00000000-0000-0000-0000-000000000001",
+                "network": "ws", "ws-path": "/vless"
+            ]
+        )
+        let catalog = try OutboundNodeTargetCatalog(entries: [
+            OutboundNodeTargetEntry(route: route, target: target)
+        ])
+        let spec = try MClashListenerSpec(
+            name: "Native VLESS WS loopback", kind: .http, enabled: true,
+            port: Int(UInt16.random(in: 20_000...60_000)), route: .outbound(route)
+        )
+        let manager = NativeInboundListenerManager(
+            routeResolver: { _, _ in .reject }, connector: NativeInboundDirectConnector()
+        )
+        try manager.configure(
+            try MClashListenerRegistry(listeners: [spec]), outboundCatalog: catalog,
+            outboundConnector: NativeInboundCatalogConnector(catalog: catalog)
+        )
+        manager.start()
+        defer { manager.stop() }
+        var port: UInt16?
+        for _ in 0..<50 {
+            if case .running(let actual) = manager.lifecycleStates()[spec.id] { port = actual; break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard let port else { Issue.record("Native VLESS WS listener did not become ready"); return }
+
+        let client = NWConnection(
+            host: NWEndpoint.Host("127.0.0.1"), port: NWEndpoint.Port(rawValue: port)!, using: .tcp
+        )
+        client.start(queue: DispatchQueue(label: "one.leaper.mclash.native-vless-ws-client"))
+        try await send(Data("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n".utf8), on: client)
+
+        let upgrade = try upstream.read(until: Data("\r\n\r\n".utf8))
+        let keyLine = try #require(String(decoding: upgrade, as: UTF8.self)
+            .split(separator: "\r\n")
+            .first(where: { $0.lowercased().hasPrefix("sec-websocket-key:") }))
+        let key = String(keyLine.split(separator: ":", maxSplits: 1)[1].trimmingCharacters(in: .whitespaces))
+        let accept = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
+        try upstream.send(Data(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n").utf8))
+
+        // The listener's establish phase sends the VLESS destination as a
+        // masked binary frame before acknowledging the client's CONNECT.
+        let destinationFrame = try upstream.read(atLeast: 2)
+        #expect(destinationFrame[0] == 0x82)
+        #expect(destinationFrame[1] & 0x80 != 0)
+        let response = ReceiveOnce()
+        receiveOnce(from: client, into: response)
+        for _ in 0..<50 where response.data == nil { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(response.data?.range(of: Data("200 Connection Established".utf8)) != nil)
+
+        try await send(Data("ping".utf8), on: client)
+        let applicationFrame = try upstream.read(atLeast: 2)
+        #expect(applicationFrame[0] == 0x82)
+        #expect(applicationFrame[1] & 0x80 != 0, "client application bytes must be masked")
+
+        // Multiple server frames may arrive in one TCP read. The listener
+        // decodes both and forwards only their application payloads.
+        try upstream.send(Data([0x82, 0x04]) + Data("pong".utf8) + Data([0x82, 0x05]) + Data("again".utf8))
+        let decoded = ReceiveOnce()
+        receiveOnce(from: client, into: decoded)
+        for _ in 0..<50 where decoded.data == nil { try await Task.sleep(for: .milliseconds(20)) }
+        var decodedBytes = decoded.data ?? Data()
+        if decodedBytes.range(of: Data("again".utf8)) == nil {
+            let second = ReceiveOnce()
+            receiveOnce(from: client, into: second)
+            for _ in 0..<50 where second.data == nil { try await Task.sleep(for: .milliseconds(20)) }
+            decodedBytes.append(second.data ?? Data())
+        }
+        #expect(decodedBytes.range(of: Data("pong".utf8)) != nil)
+        #expect(decodedBytes.range(of: Data("again".utf8)) != nil)
         client.cancel()
     }
 
