@@ -19,6 +19,22 @@ struct NativeRuntimeControllerTests {
         #expect(!(await legacy.diagnostics().capabilities.contains(.nativeRuntime)))
     }
 
+    @Test("Native selection is propagated to auxiliary profile sessions")
+    @MainActor
+    func appModelRuntimeSelectionPropagatesToFleetFactory() async {
+        let nativeFactory = AppModel.runtimeSessionFactory(
+            environment: ["MCLASH_NATIVE_RUNTIME": "1"]
+        )
+        let nativeSession = nativeFactory(ProfileID())
+        #expect(nativeSession.metadata.backend == .native)
+        #expect(nativeSession.metadata.capabilities.contains(.nativeRuntime))
+
+        let legacyFactory = AppModel.runtimeSessionFactory(environment: [:])
+        let legacySession = legacyFactory(ProfileID())
+        #expect(legacySession.metadata.backend == .mihomo)
+        #expect(legacySession.metadata.capabilities.contains(.legacyCore))
+    }
+
     @Test("Native AppModel runtime lifecycle never contacts a controller")
     @MainActor
     func nativeRuntimeLifecycleIsControllerFree() async throws {

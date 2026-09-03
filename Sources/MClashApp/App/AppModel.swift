@@ -835,6 +835,24 @@ final class AppModel {
         return MihomoRuntimeControllerAdapter()
     }
 
+    /// Selects the implementation for auxiliary profile sessions as well as
+    /// the primary session.  Keeping this decision in one factory is
+    /// important during the migration: native mode must never accidentally
+    /// create a CoreSupervisor for a secondary profile while the primary
+    /// controller is native.  The legacy path remains the explicit fallback
+    /// until native routing has completed its production readiness gates.
+    static func runtimeSessionFactory(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> CoreFleetSupervisor.SessionFactory {
+        let useNative = environment["MCLASH_NATIVE_RUNTIME"] == "1"
+        return { _ in
+            if useNative {
+                return NativeRuntimeEngine()
+            }
+            return MihomoRuntimeControllerAdapter()
+        }
+    }
+
     /// Returns the connector-neutral runtime state used by read-only
     /// automation diagnostics. Keep this narrow so automation never reaches
     /// into the runtime implementation or exposes a controller secret.
@@ -903,9 +921,27 @@ final class AppModel {
         networkEnvironmentMonitor: (any NetworkEnvironmentMonitoring)? = nil,
         profileProxyControllerResolver: ProfileProxyControllerResolver? = nil
     ) {
-        self.supervisor = supervisor
+        let selectedSupervisor = supervisor
             ?? Self.runtimeController()
-        coreFleet = CoreFleetSupervisor()
+        self.supervisor = selectedSupervisor
+        // Use the same backend for auxiliary profiles.  Previously the
+        // primary controller could be native while CoreFleetSupervisor's
+        // default factory still launched legacy Mihomo sessions.
+        let sessionEnvironment: [String: String]
+        if supervisor != nil {
+            // Tests and embedding callers that inject a controller should
+            // get a fleet matching that controller, without consulting a
+            // process-wide environment variable.
+            sessionEnvironment = selectedSupervisor.runtimeCapabilities
+                .contains(.nativeRuntime)
+                ? ["MCLASH_NATIVE_RUNTIME": "1"]
+                : [:]
+        } else {
+            sessionEnvironment = ProcessInfo.processInfo.environment
+        }
+        coreFleet = CoreFleetSupervisor(
+            sessionFactory: Self.runtimeSessionFactory(environment: sessionEnvironment)
+        )
         self.binaryLocator = binaryLocator
         self.secretStore = secretStore
         self.systemProxyManager = systemProxyManager
