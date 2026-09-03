@@ -829,8 +829,16 @@ final class AppModel {
     /// environment/argument contract without mutating the process environment.
     static func shouldUseNativeRuntime(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        arguments: [String] = CommandLine.arguments
+        arguments: [String] = CommandLine.arguments,
+        distributionMode: String? = Bundle.main.object(
+            forInfoDictionaryKey: "MClashRuntimeDistributionMode"
+        ) as? String
     ) -> Bool {
+        // A native-only artifact cannot honor the legacy rollback switch: it
+        // deliberately contains no compatibility core to launch. This bundle
+        // marker makes a normally launched 1.5 build select the same runtime
+        // that isolated validation exercises.
+        if distributionMode == "native-only" { return true }
         guard environment["MCLASH_LEGACY_RUNTIME"] != "1" else { return false }
         return environment["MCLASH_NATIVE_RUNTIME"] == "1"
             || environment["MCLASH_TEST_MODE"] == "1"
@@ -839,9 +847,16 @@ final class AppModel {
 
     static func runtimeController(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        arguments: [String] = CommandLine.arguments
+        arguments: [String] = CommandLine.arguments,
+        distributionMode: String? = Bundle.main.object(
+            forInfoDictionaryKey: "MClashRuntimeDistributionMode"
+        ) as? String
     ) -> any NativeRuntimeController {
-        if shouldUseNativeRuntime(environment: environment, arguments: arguments) {
+        if shouldUseNativeRuntime(
+            environment: environment,
+            arguments: arguments,
+            distributionMode: distributionMode
+        ) {
             return NativeRuntimeEngine()
         }
         return MihomoRuntimeControllerAdapter()
@@ -855,9 +870,16 @@ final class AppModel {
     /// until native routing has completed its production readiness gates.
     static func runtimeSessionFactory(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        arguments: [String] = CommandLine.arguments
+        arguments: [String] = CommandLine.arguments,
+        distributionMode: String? = Bundle.main.object(
+            forInfoDictionaryKey: "MClashRuntimeDistributionMode"
+        ) as? String
     ) -> CoreFleetSupervisor.SessionFactory {
-        let useNative = shouldUseNativeRuntime(environment: environment, arguments: arguments)
+        let useNative = shouldUseNativeRuntime(
+            environment: environment,
+            arguments: arguments,
+            distributionMode: distributionMode
+        )
         return { _ in
             if useNative {
                 return NativeRuntimeEngine()

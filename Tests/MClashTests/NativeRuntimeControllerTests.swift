@@ -12,14 +12,14 @@ struct NativeRuntimeControllerTests {
             AppModel.nativeCaptureRequiresNativeDNS(
                 usingNativeRuntime: true,
                 dnsEnabled: true,
-                upstreamMode: .mihomo
+                upstreamMode: .legacyConnector
             )
         )
         #expect(
             !AppModel.nativeCaptureRequiresNativeDNS(
                 usingNativeRuntime: true,
                 dnsEnabled: false,
-                upstreamMode: .mihomo
+                upstreamMode: .legacyConnector
             )
         )
         #expect(
@@ -33,7 +33,7 @@ struct NativeRuntimeControllerTests {
             !AppModel.nativeCaptureRequiresNativeDNS(
                 usingNativeRuntime: false,
                 dnsEnabled: true,
-                upstreamMode: .mihomo
+                upstreamMode: .legacyConnector
             )
         )
     }
@@ -80,6 +80,13 @@ struct NativeRuntimeControllerTests {
             arguments: []
         )
         #expect(await rollback.diagnostics().backend == "mihomo")
+
+        let nativeOnly = AppModel.runtimeController(
+            environment: ["MCLASH_LEGACY_RUNTIME": "1"],
+            arguments: [],
+            distributionMode: "native-only"
+        )
+        #expect(await nativeOnly.diagnostics().backend == "native")
     }
 
     @Test("Native selection is propagated to auxiliary profile sessions")
@@ -111,6 +118,13 @@ struct NativeRuntimeControllerTests {
             arguments: []
         )
         #expect(rollbackFactory(ProfileID()).metadata.backend == .mihomo)
+
+        let nativeOnlyFactory = AppModel.runtimeSessionFactory(
+            environment: ["MCLASH_LEGACY_RUNTIME": "1"],
+            arguments: [],
+            distributionMode: "native-only"
+        )
+        #expect(nativeOnlyFactory(ProfileID()).metadata.backend == .native)
     }
 
     @Test("Native AppModel runtime lifecycle never contacts a controller")
