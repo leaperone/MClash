@@ -274,6 +274,12 @@ and can be tested without producing a Mihomo YAML document.
   publishing its automation endpoint on this Mac. No production process is
   touched; this remains an explicit blocker for isolated runtime acceptance
   and must be reproduced with a lighter harness or a full CI/Xcode runner.
+- `dd8be34` adds task-oriented rule shortcuts for Application, Domain and GFW
+  List matching, plus an explicit explanation of Direct, Reject and group
+  targets in the editor.
+- `64cf246` makes native DNS upstream selection deterministic and keeps
+  multicast/unspecified resolver addresses on the local network path; focused
+  DNS shared and Network Extension tests cover both safeguards.
 
 ### Definition of done
 
