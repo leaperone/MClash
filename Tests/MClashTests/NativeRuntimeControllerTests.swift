@@ -405,6 +405,63 @@ struct NativeRuntimeControllerTests {
         #expect(evaluation.connectorDiagnostic == nil)
     }
 
+    @Test("Native engine derives a native-preferred catalog from its compiled plan")
+    func nativeEngineOwnsConnectorCatalogSelection() async throws {
+        let hysteria = try Node(
+            displayName: "Fast compatibility node",
+            protocol: .hysteria2,
+            host: "hy2.example",
+            port: 443,
+            parameters: ["password": "secret"],
+            health: NodeHealthSnapshot(availability: .available, latencyMilliseconds: 5)
+        )
+        let vless = try Node(
+            displayName: "CUNOE VLESS",
+            protocol: .vless,
+            host: "vless.example",
+            port: 443,
+            parameters: [
+                "network": "ws",
+                "uuid": "00000000-0000-0000-0000-000000000001"
+            ],
+            health: NodeHealthSnapshot(availability: .available, latencyMilliseconds: 50)
+        )
+        let group = ProxyGroup(
+            name: "美国优先",
+            type: .fallback,
+            members: [.node(hysteria.id), .node(vless.id)]
+        )
+        let base = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let plan = CompiledRuntimePlan(
+            workspaceID: base.workspaceID,
+            workspaceRevision: 4,
+            nodes: [hysteria, vless],
+            proxyGroups: [group],
+            rules: [],
+            ruleSets: [],
+            dnsPolicy: nil,
+            entrances: [],
+            routingMode: .global,
+            globalProxyGroupID: group.id
+        )
+        let engine = try NativeRuntimeEngine(
+            plan: plan,
+            listeners: MClashListenerRegistry()
+        )
+
+        let diagnostics = await engine.diagnostics()
+        let groupCapability = try #require(
+            diagnostics.connectorCapabilities.first {
+                $0.route == .group("美国优先")
+            }
+        )
+        #expect(groupCapability.protocolName == "vless")
+        #expect(groupCapability.support == .native)
+        #expect(diagnostics.unsupportedConnectors.isEmpty)
+    }
+
     @Test("Native engine reports unsupported connector instead of silently going direct")
     func nativeRouteEvaluationReportsUnsupportedConnector() async throws {
         let group = ProxyGroup(name: "Imported")

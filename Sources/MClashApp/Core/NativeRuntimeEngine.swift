@@ -208,6 +208,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         sessionValidationError = nil
         listenerHandles = Self.makeListenerHandles(for: listeners)
         self.outboundNodeTargets = outboundNodeTargets
+            ?? Self.makeOutboundNodeTargetCatalog(from: plan)
     }
 
     func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
@@ -220,6 +221,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         }
         sessionState = state
         listenerHandles = Self.makeListenerHandles(for: listeners)
+        outboundNodeTargets = Self.makeOutboundNodeTargetCatalog(from: plan)
         // A policy reload may occur while the native runtime is active. The
         // Network Extension owns actual sockets, so refreshing the safe
         // handles is enough here; mirror the current running state for
@@ -416,6 +418,34 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         Dictionary(uniqueKeysWithValues: registry.listeners.map { spec in
             (spec.id, NativeListenerHandle(spec: spec))
         })
+    }
+
+    /// The validated runtime plan is the native engine's source of truth for
+    /// connector selection. Building the catalog here prevents a host-side
+    /// compatibility projection from overwriting a newer group resolution.
+    private static func makeOutboundNodeTargetCatalog(
+        from plan: CompiledRuntimePlan
+    ) -> OutboundNodeTargetCatalog? {
+        func target(for groupID: ProxyGroupID) -> OutboundNodeTarget? {
+            NativeProxyGroupTargetResolver.resolve(
+                groupID: groupID,
+                groups: plan.proxyGroups,
+                nodes: plan.nodes
+            ).target
+        }
+
+        let primaryGroupID = plan.globalProxyGroupID ?? plan.proxyGroups.first?.id
+        var entries: [OutboundNodeTargetEntry] = []
+        if let primaryGroupID, let target = target(for: primaryGroupID) {
+            entries.append(.init(route: .profileRules, target: target))
+            entries.append(.init(route: .global, target: target))
+        }
+        for group in plan.proxyGroups {
+            guard let target = target(for: group.id) else { continue }
+            entries.append(.init(route: .group(group.name), target: target))
+        }
+        guard !entries.isEmpty else { return nil }
+        return try? OutboundNodeTargetCatalog(entries: entries)
     }
 
     private func beginListeners() {
