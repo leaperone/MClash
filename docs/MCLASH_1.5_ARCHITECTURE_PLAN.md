@@ -87,8 +87,12 @@ App Routing is not a separate policy editor.
       now support SOCKS5, HTTP CONNECT, plain VLESS TCP and Trojan TCP;
       complete AppModel/Network Extension lifecycle wiring and stream edge
       cases remain pending.
-- [ ] Add native System Proxy and App Routing lifecycle ownership. TUN remains
-      opt-in and must stay disabled unless its Network Extension path is proven.
+- [~] Add native System Proxy and App Routing lifecycle ownership. The native
+      entrance coordinator now provides transactional activation/deactivation,
+      revision guards and an isolated side-effect backend; wiring the real
+      SystemConfiguration/Network Extension providers remains pending. TUN
+      remains opt-in and must stay disabled unless its Network Extension path
+      is proven.
 - [ ] Make arbitrary user-defined ports valid; reserve only ports currently
       occupied by another enabled entrance and report actionable collisions.
 - [ ] Show `Entrance -> mode -> matched rule -> group -> node` in connection
@@ -179,11 +183,14 @@ and can be tested without producing a Mihomo YAML document.
       `Refresh snapshot` states; preserve row selection and scroll position.
 - [x] Record stable fields: time, app/process, source/entrance, destination,
       protocol, matched rule, mode, group/chain, node, bytes and state.
-- [ ] Add bounded retention/backpressure and an explicit “why this traffic is
+- [~] Add bounded retention/backpressure and an explicit “why this traffic is
       here” inspector, including direct/proxy/reject explanation and DNS path.
-- [ ] Add right-click/context actions for exact-domain, suffix-domain, app,
-      process, IP/CIDR, GEOIP/GEOSITE and rule-set drafts. Open the normal rule
-      editor for review; copying a destination remains secondary.
+      The native inspector projection is now structured and privacy-bounded;
+      full FlowLedger retention/backpressure policy remains pending.
+- [~] Add right-click/context actions for exact-domain, suffix-domain, app,
+      process, IP/CIDR, GEOIP/GEOSITE and rule-set drafts. The inspector now
+      emits reviewed drafts for exact/suffix domain, application, process path
+      and IP/CIDR; GEOIP/GEOSITE/rule-set actions and UI wiring remain pending.
 - [ ] Keep aggregate history separate from volatile rows and label stale data.
       Pausing must freeze visible ordering even while collection continues.
 
@@ -461,6 +468,14 @@ and can be tested without producing a Mihomo YAML document.
 - The rebuilt bundle and latest isolated CLI smoke pass after the WebSocket
   integration; diagnostics continue to report `controlPlaneAvailable=false`
   and a compiled native plan without starting a Mihomo process.
+- `f9cd9b5` adds a transactional native entrance lifecycle coordinator for
+  System Proxy and App Routing with revision guards and an isolated side-effect
+  backend; real system-provider wiring remains a later gate.
+- `04d5358` adds structured traffic-inspector evidence with route/DNS
+  explanations and reviewed quick-rule drafts for domains, applications,
+  process paths and IP/CIDR targets; full UI context-menu wiring remains.
+- `1a24440` and `a58686c` enforce and document the free standard `macos-26`
+  runner policy; sized paid runners are rejected by release packaging tests.
 
 ### Definition of done
 
