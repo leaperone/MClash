@@ -23,7 +23,8 @@ struct CompiledRuntimePlanTests {
 
         // Keep this assertion explicit: the plan is policy data, not rendered
         // YAML and must not accidentally grow a Mihomo-specific field.
-        #expect(!JSONEncoder().encode(plan).isEmpty)
+        let encoded = try JSONEncoder().encode(plan)
+        #expect(!encoded.isEmpty)
     }
 
     @Test func MihomoRenderingIsAnExplicitCompatibilityBoundary() throws {
