@@ -423,6 +423,9 @@ and can be tested without producing a Mihomo YAML document.
   assertions before the host Swift runtime abort.
 - `4da7dfe` fixes VLESS WebSocket `Sec-WebSocket-Accept` comparison to remain
   case-sensitive as required by RFC 6455; the focused WebSocket test passes.
+- `d9ab7da` makes the complete Network Extension connector fixture target
+  Swift 6-clean; all connector loopback suites pass before the known local
+  Swift Testing runtime abort, with no assertion failures.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
