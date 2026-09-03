@@ -32,6 +32,10 @@ struct NativeRuntimeDiagnostics: Equatable, Sendable {
     /// represented by safe in-process handles; this does not imply that a
     /// production socket was bound by the engine.
     let listenerStates: [UUID: NativeListenerLifecycleState]
+    /// Capability matrix for every catalog entry, including native and
+    /// compatibility paths. This is the authoritative connector-neutral
+    /// report exposed to diagnostics clients.
+    let connectorCapabilities: [OutboundConnectorCapabilityMatrixEntry]
     /// Connector capabilities discovered from the attached node catalog.
     /// Unknown protocols are reported here instead of silently falling back
     /// to a direct connection.
@@ -308,6 +312,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             enabledListenerCount: sessionState?.listeners.enabledListeners.count ?? 0,
             sessionValidationError: sessionValidationError,
             listenerStates: listenerHandles.mapValues(\.state),
+            connectorCapabilities: Self.connectorCapabilityMatrix(in: outboundNodeTargets),
             unsupportedConnectors: Self.unsupportedConnectors(in: outboundNodeTargets)
         )
     }
@@ -481,13 +486,20 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         in catalog: OutboundNodeTargetCatalog?
     ) -> [NativeRuntimeConnectorDiagnostic] {
         guard let catalog else { return [] }
-        return catalog.entries.compactMap { entry in
-            guard let reason = unsupportedConnectorReason(for: entry.target) else { return nil }
+        return OutboundConnectorCapabilityMatrix.entries(for: catalog).compactMap { item in
+            guard let reason = item.reason else { return nil }
             return NativeRuntimeConnectorDiagnostic(
-                route: entry.route,
-                protocolName: entry.target.protocolName,
+                route: item.route,
+                protocolName: item.protocolName,
                 reason: reason
             )
         }
+    }
+
+    private static func connectorCapabilityMatrix(
+        in catalog: OutboundNodeTargetCatalog?
+    ) -> [OutboundConnectorCapabilityMatrixEntry] {
+        guard let catalog else { return [] }
+        return OutboundConnectorCapabilityMatrix.entries(for: catalog)
     }
 }

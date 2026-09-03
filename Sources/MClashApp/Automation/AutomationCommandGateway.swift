@@ -1831,6 +1831,18 @@ final class AutomationCommandGateway {
                 "reason": .string(redactedDiagnosticText(item.reason)),
             ])
         }
+        let connectorCapabilities = value.connectorCapabilities.map { item in
+            var object: [String: AutomationJSONValue] = [
+                "route": .string(Self.safeRouteName(item.route)),
+                "protocol": .string(displaySafe(item.protocolName, maximumLength: 32)),
+                "transport": .string(displaySafe(item.transport, maximumLength: 32)),
+                "support": .string(item.support.rawValue),
+            ]
+            object["reason"] = item.reason.map {
+                .string(redactedDiagnosticText($0))
+            } ?? .null
+            return AutomationJSONValue.object(object)
+        }
         return .object([
             "backend": .string(value.backend == "native" ? "native" : "mihomo"),
             "state": .string(state),
@@ -1846,6 +1858,7 @@ final class AutomationCommandGateway {
             "listenerCount": .integer(Int64(value.listenerCount)),
             "enabledListenerCount": .integer(Int64(value.enabledListenerCount)),
             "listenerStates": .object(listenerStates),
+            "connectorCapabilities": .array(connectorCapabilities),
             "unsupportedConnectors": .array(unsupported),
             "sessionValidationError": value.sessionValidationError.map {
                 .string(redactedDiagnosticText($0))
