@@ -254,6 +254,10 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             preferredHostname: outcome.destinationHostname,
             routeCatalog: currentState.mihomoSOCKSConfigurations
         )
+        let nativeDestination = try? SOCKS5Endpoint(
+            address: SOCKS5Address(domain: endpoint.host),
+            port: UInt16(endpoint.port) ?? 0
+        )
         // Native connectors use the node-only catalog directly. A missing
         // loopback Mihomo route endpoint must not make this target unusable.
         let nativeTarget: OutboundNodeTarget? = {
@@ -270,7 +274,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             case .http: return NativeHTTPConnectRelayConnector(target: target)
             case .socks5: return NativeSOCKS5RelayConnector(target: target)
             case .shadowsocks:
-                guard let destination = routePlan?.destinations.original else { return nil }
+                guard let destination = nativeDestination else { return nil }
                 return NativeShadowsocksRelayConnector(target: target, destination: destination)
             case .vless:
                 if target.parameters["network"]?.lowercased() == "ws" {
@@ -285,20 +289,23 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             guard let target = nativeTarget else { return nil }
             switch NativeConnectorRegistry.kind(for: target) {
             case .vless:
-                guard let destination = routePlan?.destinations.original else { return nil }
+                guard let destination = nativeDestination else { return nil }
                 return try? NativeVLESSOutboundConnector(target: target).handshake(for: destination)
             case .trojan:
-                guard let destination = routePlan?.destinations.original else { return nil }
+                guard let destination = nativeDestination else { return nil }
                 return try? NativeTrojanOutboundConnector(target: target).handshake(for: destination)
             default:
                 return nil
             }
         }()
-        let nativeUsesSOCKS5 = nativeConnector == nil
-            || (!(nativeConnector is any OutboundResponseHandshake)
-                && nativeInitialPayload == nil
-                && nativeTarget.map { NativeConnectorRegistry.kind(for: $0) } != .some(.shadowsocks)
-                && nativeTarget.map { NativeConnectorRegistry.kind(for: $0) } != .some(.http))
+        let nativeUsesSOCKS5: Bool = if nativeConnector != nil,
+                                         let target = nativeTarget {
+            NativeConnectorRegistry.kind(for: target) == .socks5
+        } else {
+            // A legacy Mihomo route speaks SOCKS5; an unsupported native
+            // target must not be mistaken for one and is handled fail-closed.
+            routePlan?.proxy != nil
+        }
         let capability: NativeConnectorCapability = if nativeConnector != nil {
             .native
         } else if routePlan?.proxy != nil {
@@ -308,7 +315,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         }
         return TCPFlowInterceptionPlan(
             decision: outcome.decision,
-            destination: routePlan?.destinations.original,
+            destination: routePlan?.destinations.original ?? nativeDestination,
             mihomoDestination: routePlan?.destinations.mihomo,
             nativeTarget: nativeTarget,
             proxy: routePlan?.proxy,
