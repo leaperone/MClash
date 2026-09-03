@@ -284,6 +284,224 @@ struct MClashInboundListenerTests {
         connection.cancel()
     }
 
+    /// Exercises the complete MClash-owned HTTP entrance, not only the
+    /// outbound codec.  The local HTTP proxy deliberately holds its response
+    /// until the test releases it: a client must not receive CONNECT success
+    /// (or send application bytes) while the selected upstream is unready.
+    @Test("Native HTTP entrance waits for upstream 2xx and bridges payload")
+    func nativeHTTPInboundUpstreamGateLoopback() async throws {
+        let upstream = try LoopbackHTTPConnectFixture()
+        defer { upstream.stop() }
+
+        let route = OutboundRoute.group("Loopback HTTP")
+        let target = try OutboundNodeTarget(
+            protocolName: "http",
+            host: "127.0.0.1",
+            port: upstream.port
+        )
+        let catalog = try OutboundNodeTargetCatalog(
+            entries: [OutboundNodeTargetEntry(route: route, target: target)]
+        )
+        let listenerPort = UInt16.random(in: 20_000...60_000)
+        let spec = try MClashListenerSpec(
+            name: "Native HTTP loopback",
+            kind: .http,
+            enabled: true,
+            port: Int(listenerPort),
+            route: .outbound(route)
+        )
+        let manager = NativeInboundListenerManager(
+            routeResolver: { _, _ in .reject },
+            connector: NativeInboundDirectConnector()
+        )
+        try manager.configure(
+            try MClashListenerRegistry(listeners: [spec]),
+            outboundCatalog: catalog,
+            outboundConnector: NativeInboundCatalogConnector(catalog: catalog)
+        )
+        manager.start()
+        defer { manager.stop() }
+
+        for _ in 0..<50 {
+            if case .running(let port) = manager.lifecycleStates()[spec.id] {
+                #expect(port == listenerPort)
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard case .running(let port) = manager.lifecycleStates()[spec.id] else {
+            Issue.record("Native HTTP listener did not become ready")
+            return
+        }
+
+        let client = NWConnection(
+            host: NWEndpoint.Host("127.0.0.1"),
+            port: NWEndpoint.Port(rawValue: port)!,
+            using: .tcp
+        )
+        let clientQueue = DispatchQueue(label: "one.leaper.mclash.native-http-inbound-client")
+        let ready = DispatchSemaphore(value: 0)
+        client.stateUpdateHandler = { state in
+            switch state {
+            case .ready, .failed, .cancelled: ready.signal()
+            default: break
+            }
+        }
+        client.start(queue: clientQueue)
+        #expect(ready.wait(timeout: .now() + 5) == .success)
+        try await send(Data("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n".utf8), on: client)
+
+        let firstRead = ReceiveOnce()
+        receiveOnce(from: client, into: firstRead)
+        #expect(firstRead.semaphore.wait(timeout: .now() + 0.2) == .timedOut)
+        #expect(firstRead.data == nil)
+
+        let request = try upstream.read(until: Data("\r\n\r\n".utf8))
+        #expect(try HTTPProxyCodec.decodeConnectRequest(request).host == "example.com")
+        try await upstream.send(Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8))
+        #expect(firstRead.semaphore.wait(timeout: .now() + 5) == .success)
+        #expect(firstRead.data?.range(of: Data("200 Connection Established".utf8)) != nil)
+
+        try await send(Data("ping".utf8), on: client)
+        #expect(try upstream.read(atLeast: 4).suffix(4) == Data("ping".utf8))
+        try await upstream.send(Data("pong".utf8))
+        let response = ReceiveOnce()
+        receiveOnce(from: client, into: response)
+        #expect(response.semaphore.wait(timeout: .now() + 5) == .success)
+        #expect(response.data?.suffix(4) == Data("pong".utf8))
+        client.cancel()
+    }
+
+    private func send(_ data: Data, on connection: NWConnection) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            })
+        }
+    }
+
+    private final class ReceiveOnce: @unchecked Sendable {
+        let semaphore = DispatchSemaphore(value: 0)
+        private let lock = NSLock()
+        private var value: Data?
+
+        var data: Data? {
+            lock.lock(); defer { lock.unlock() }
+            return value
+        }
+
+        func set(_ data: Data?) {
+            lock.lock(); value = data; lock.unlock()
+            semaphore.signal()
+        }
+    }
+
+    private func receiveOnce(from connection: NWConnection, into result: ReceiveOnce) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, _, _ in
+            result.set(data)
+        }
+    }
+
+    private enum FixtureError: Error {
+        case timeout(String)
+    }
+
+    /// A deliberately minimal local HTTP proxy. It records the CONNECT
+    /// request but does not answer until `send` is called by the test, making
+    /// the listener's response gate observable at the socket boundary.
+    private final class LoopbackHTTPConnectFixture: @unchecked Sendable {
+        private let listener: NWListener
+        private let queue = DispatchQueue(label: "one.leaper.mclash.http-connect-fixture")
+        private let ready = DispatchSemaphore(value: 0)
+        private let accepted = DispatchSemaphore(value: 0)
+        private let available = DispatchSemaphore(value: 0)
+        private let lock = NSLock()
+        private var connection: NWConnection?
+        private var buffer = Data()
+        private var didAccept = false
+        let port: UInt16
+
+        init() throws {
+            listener = try NWListener(using: .tcp, on: .any)
+            listener.stateUpdateHandler = { [weak self] state in
+                if case .ready = state { self?.ready.signal() }
+            }
+            listener.newConnectionHandler = { [weak self] connection in
+                guard let self else { connection.cancel(); return }
+                self.lock.lock()
+                self.connection = connection
+                self.didAccept = true
+                self.lock.unlock()
+                connection.start(queue: self.queue)
+                self.accepted.signal()
+                self.receive(connection)
+            }
+            listener.start(queue: queue)
+            guard ready.wait(timeout: .now() + 5) == .success,
+                  let port = listener.port?.rawValue, port > 0 else {
+                throw FixtureError.timeout("HTTP fixture readiness")
+            }
+            self.port = port
+        }
+
+        func stop() {
+            lock.lock(); let connection = self.connection; lock.unlock()
+            connection?.cancel()
+            listener.cancel()
+        }
+
+        func send(_ data: Data) async throws {
+            let acceptedNow = accepted.wait(timeout: .now() + 5) == .success
+            lock.lock(); let connection = self.connection; let hasAccepted = didAccept; lock.unlock()
+            guard acceptedNow || hasAccepted, let connection else {
+                throw FixtureError.timeout("HTTP fixture accept")
+            }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                connection.send(content: data, completion: .contentProcessed { error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                })
+            }
+        }
+
+        func read(until marker: Data) throws -> Data {
+            for _ in 0..<100 {
+                lock.lock(); let current = buffer; lock.unlock()
+                if current.range(of: marker) != nil {
+                    lock.lock(); buffer.removeAll(); lock.unlock()
+                    return current
+                }
+                _ = available.wait(timeout: .now() + 0.05)
+            }
+            throw FixtureError.timeout("HTTP fixture header")
+        }
+
+        func read(atLeast count: Int) throws -> Data {
+            for _ in 0..<100 {
+                lock.lock(); let current = buffer; lock.unlock()
+                if current.count >= count {
+                    lock.lock(); buffer.removeAll(); lock.unlock()
+                    return current
+                }
+                _ = available.wait(timeout: .now() + 0.05)
+            }
+            throw FixtureError.timeout("HTTP fixture payload")
+        }
+
+        private func receive(_ connection: NWConnection) {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, error in
+                guard let self else { return }
+                if let data, !data.isEmpty {
+                    self.lock.lock(); self.buffer.append(data); self.lock.unlock()
+                    self.available.signal()
+                }
+                guard error == nil, !complete else { return }
+                self.receive(connection)
+            }
+        }
+    }
+
     private final class LoopbackSOCKS5Fixture: @unchecked Sendable {
         private let listener: NWListener
         private let queue = DispatchQueue(label: "one.leaper.mclash.socks5-fixture")
