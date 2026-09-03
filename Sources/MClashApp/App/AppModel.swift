@@ -5755,7 +5755,12 @@ final class AppModel {
                     : [],
                 startAuxiliary: false
             )
-            if unifiedConfigurationEnabled, runtimeOverrideCoordinator == nil {
+            // Native runtime keeps the compiled plan in-process and does not
+            // require the legacy YAML activation coordinator. Only the
+            // compatibility path needs that coordinator for unified mode.
+            if unifiedConfigurationEnabled,
+               !usesNativeRuntime,
+               runtimeOverrideCoordinator == nil {
                 throw AppModelError.profileStoreUnavailable
             }
             try await repairManagedMixedPortCollision()
