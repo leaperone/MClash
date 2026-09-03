@@ -103,8 +103,7 @@ public enum OutboundConnectorCapabilityMatrix {
             }
             let method = parameters["method"] ?? parameters["cipher"] ?? "aes-256-gcm"
             let supportedMethods = Set([
-                "aes-128-gcm", "aes-192-gcm", "aes-256-gcm",
-                "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305"
+                "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305"
             ])
             guard parameters["password"] != nil || parameters["passwd"] != nil,
                   supportedMethods.contains(method) else {
