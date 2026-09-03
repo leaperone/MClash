@@ -414,6 +414,9 @@ and can be tested without producing a Mihomo YAML document.
   pass.
 - The same run confirms the `Localization resources` suite passes with all
   eight bundles, including the neutral traffic-monitor strings.
+- `5d62f74` makes the Network Extension inbound suite independently
+  compilable on Swift 6 and executes all 10 loopback tests successfully,
+  including the native HTTP upstream 2xx gate and payload bridge.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
