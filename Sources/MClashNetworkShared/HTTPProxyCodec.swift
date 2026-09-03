@@ -97,8 +97,8 @@ public enum HTTPProxyCodec: Sendable {
         for (name, value) in extraHeaders {
             let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty,
-                  !normalized.contains(where: { $0 == "\r" || $0 == "\n" || $0 == ":" }),
-                  !value.contains(where: { $0 == "\r" || $0 == "\n" }) else {
+                  !normalized.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" || $0 == ":" }),
+                  !value.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) else {
                 throw HTTPProxyCodecError.invalidHeader
             }
             // Never allow callers to override framing or authentication.

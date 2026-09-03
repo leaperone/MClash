@@ -42,7 +42,8 @@ struct Hysteria2TCPResponseDecoderTests {
         }
         var oversized = Hysteria2TCPResponseDecoder()
         #expect(throws: Hysteria2CodecError.oversized) {
-            try oversized.append(Data([0x00, 0xff, 0xff, 0x00]))
+            // QUIC varint 4097 (two-byte encoding: 0x50 0x01).
+            try oversized.append(Data([0x00, 0x50, 0x01]))
         }
     }
 }
