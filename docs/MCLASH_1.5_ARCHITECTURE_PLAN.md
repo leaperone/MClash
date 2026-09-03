@@ -360,6 +360,10 @@ and can be tested without producing a Mihomo YAML document.
 - `57db0ac` stops constructing a Mihomo UDP association probe during native
   DNS startup; the legacy probe is now created only by the compatibility DNS
   path.
+- `dbc192e` skips constructing the legacy `RuntimeOverrideActivationCoordinator`
+  and override store in native/test instances, preventing stale YAML override
+  state from participating in native startup; production legacy initialization
+  remains unchanged.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
