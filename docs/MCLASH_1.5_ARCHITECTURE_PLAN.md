@@ -80,8 +80,11 @@ App Routing is not a separate policy editor.
 - [x] Model System Proxy, App Routing and TUN as entrance capabilities with
       clear capture semantics; do not expose App Routing as a duplicate global
       switch.
-- [ ] Bind native HTTP CONNECT and SOCKS5 listeners and relay their accepted
-      flows through the same route engine. Support per-entrance default action.
+- [~] Bind native HTTP CONNECT and SOCKS5 listeners and relay their accepted
+      flows through the same route engine. Native listener protocol preambles
+      now support SOCKS5, HTTP CONNECT, plain VLESS TCP and Trojan TCP;
+      complete AppModel/Network Extension lifecycle wiring and stream edge
+      cases remain pending.
 - [ ] Add native System Proxy and App Routing lifecycle ownership. TUN remains
       opt-in and must stay disabled unless its Network Extension path is proven.
 - [ ] Make arbitrary user-defined ports valid; reserve only ports currently
@@ -298,6 +301,9 @@ and can be tested without producing a Mihomo YAML document.
   selectors, nested groups and node health/availability, with cycle and empty
   group fail-closed behavior; `4dd97b2` stabilizes paused traffic snapshot
   ordering and selection while the controller refreshes.
+- `38d97fa` extends the native inbound catalog connector beyond SOCKS5 to
+  validated HTTP CONNECT plus plain VLESS/Trojan TCP handshakes; unsupported
+  transports remain fail-closed.
 
 ### Definition of done
 
