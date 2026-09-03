@@ -1,0 +1,281 @@
+import Foundation
+@preconcurrency import Network
+import MClashNetworkShared
+import Testing
+@testable import MClashNetworkExtension
+
+/// These tests use only 127.0.0.1.  They deliberately exercise the socket
+/// boundary (rather than just comparing encoded Data) while keeping the
+/// server deterministic and independent of a subscription or the installed
+/// Mihomo process.
+@Suite("Native connector loopback fixtures")
+struct NativeConnectorLoopbackFixtureTests {
+    @Test("HTTP CONNECT gates the stream on a 2xx response and round-trips payload")
+    func httpConnectLoopback() throws {
+        let server = try LoopbackTCPFixture()
+        defer { server.stop() }
+        let target = try OutboundNodeTarget(protocolName: "http", host: "127.0.0.1", port: server.port)
+        let destination = SOCKS5Endpoint(address: try SOCKS5Address(domain: "example.com"), port: 443)
+        let connector = NativeHTTPConnectOutboundConnector(target: target)
+        let client = connector.makeConnection()
+        try LoopbackTCPFixture.start(client)
+
+        let request = try server.read(until: Data("\r\n\r\n".utf8))
+        #expect(try HTTPProxyCodec.decodeConnectRequest(request).host == "example.com")
+        try server.send(Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8))
+        let response = try LoopbackTCPFixture.read(client, until: Data("\r\n\r\n".utf8))
+        #expect(try connector.validate(response: response) == 200)
+
+        try LoopbackTCPFixture.send(client, data: Data("ping".utf8))
+        #expect(try server.read(atLeast: 4).suffix(4) == Data("ping".utf8))
+        try server.send(Data("pong".utf8))
+        #expect(try LoopbackTCPFixture.read(client, atLeast: 4).suffix(4) == Data("pong".utf8))
+        client.cancel()
+        _ = destination // Keep the destination visible in this fixture's contract.
+    }
+
+    @Test("HTTP CONNECT rejects a non-2xx response before payload exchange")
+    func httpConnectFailureLoopback() throws {
+        let server = try LoopbackTCPFixture()
+        defer { server.stop() }
+        let target = try OutboundNodeTarget(protocolName: "http", host: "127.0.0.1", port: server.port)
+        let destination = SOCKS5Endpoint(address: try SOCKS5Address(domain: "blocked.example"), port: 443)
+        let connector = NativeHTTPConnectOutboundConnector(target: target)
+        let client = connector.makeConnection()
+        try LoopbackTCPFixture.start(client)
+        _ = try server.read(until: Data("\r\n\r\n".utf8))
+        try server.send(Data("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n".utf8))
+        let response = try LoopbackTCPFixture.read(client, until: Data("\r\n\r\n".utf8))
+        #expect(throws: HTTPProxyCodecError.proxyRejected(status: 407)) {
+            try connector.validate(response: response)
+        }
+        client.cancel()
+        _ = destination
+    }
+
+    @Test("SOCKS5 connector completes greeting, CONNECT, and payload round-trip")
+    func socks5Loopback() throws {
+        let server = try LoopbackTCPFixture()
+        defer { server.stop() }
+        let target = try OutboundNodeTarget(protocolName: "socks5", host: "127.0.0.1", port: server.port)
+        let destination = SOCKS5Endpoint(address: try SOCKS5Address(domain: "example.com"), port: 443)
+        let client = NativeSOCKS5OutboundConnector(target: target).makeConnection()
+        try LoopbackTCPFixture.start(client)
+        try LoopbackTCPFixture.send(client, data: try SOCKS5Codec.encodeGreeting(methods: [.noAuthenticationRequired]))
+        let greeting = try server.read(atLeast: 3)
+        #expect(try SOCKS5Codec.decodeMethodSelection(Data(greeting.suffix(2))).method == .noAuthenticationRequired)
+        try server.send(Data([5, 0]))
+        #expect(try LoopbackTCPFixture.read(client, atLeast: 2).suffix(2) == Data([5, 0]))
+
+        let command = try SOCKS5Codec.encodeCommandRequest(
+            SOCKS5CommandRequest(command: .connect, endpoint: destination)
+        )
+        try LoopbackTCPFixture.send(client, data: command)
+        let request = try server.read(atLeast: command.count)
+        #expect(try SOCKS5Codec.decodeCommandRequest(Data(request.suffix(command.count))).endpoint == destination)
+        let reply = Data([5, 0, 0, 1, 127, 0, 0, 1, 0x01, 0xbb])
+        try server.send(reply)
+        #expect(try SOCKS5Codec.decodeCommandReply(LoopbackTCPFixture.read(client, atLeast: reply.count)).code == .succeeded)
+        try LoopbackTCPFixture.send(client, data: Data("ping".utf8))
+        #expect(try server.read(atLeast: 4).suffix(4) == Data("ping".utf8))
+        try server.send(Data("pong".utf8))
+        #expect(try LoopbackTCPFixture.read(client, atLeast: 4).suffix(4) == Data("pong".utf8))
+        client.cancel()
+    }
+
+    @Test("VLESS plain TCP sends the request before application payload")
+    func vlessPlainTCPLoopback() throws {
+        let server = try LoopbackTCPFixture()
+        defer { server.stop() }
+        let target = try OutboundNodeTarget(
+            protocolName: "vless", host: "127.0.0.1", port: server.port,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001"]
+        )
+        let destination = SOCKS5Endpoint(address: try SOCKS5Address(domain: "example.com"), port: 443)
+        let connector = NativeVLESSOutboundConnector(target: target)
+        let client = connector.makeConnection()
+        try LoopbackTCPFixture.start(client)
+        let handshake = try connector.handshake(for: destination)
+        try LoopbackTCPFixture.send(client, data: handshake)
+        let received = try server.read(atLeast: handshake.count)
+        #expect(Data(received.prefix(handshake.count)) == handshake)
+        #expect(received.first == VLESSCodec.version)
+        try LoopbackTCPFixture.send(client, data: Data("ping".utf8))
+        #expect(try server.read(atLeast: 4).suffix(4) == Data("ping".utf8))
+        try server.send(Data("pong".utf8))
+        #expect(try LoopbackTCPFixture.read(client, atLeast: 4).suffix(4) == Data("pong".utf8))
+        client.cancel()
+    }
+
+    @Test("Shadowsocks AEAD stream authenticates and round-trips framed bytes")
+    func shadowsocksLoopback() throws {
+        let server = try LoopbackTCPFixture()
+        defer { server.stop() }
+        let target = try OutboundNodeTarget(
+            protocolName: "shadowsocks", host: "127.0.0.1", port: server.port,
+            parameters: ["method": "aes-256-gcm", "password": "fixture-password"]
+        )
+        let destination = try ShadowsocksAEADStreamEncoder.encodeDestination(host: "example.com", port: 443)
+        var clientEncoder = try ShadowsocksAEADStreamEncoder(
+            methodName: "aes-256-gcm", password: "fixture-password", salt: Data(repeating: 0x11, count: 32)
+        )
+        var serverDecoder = try ShadowsocksAEADStreamDecoder(methodName: "aes-256-gcm", password: "fixture-password")
+        var clientDecoder = try ShadowsocksAEADStreamDecoder(methodName: "aes-256-gcm", password: "fixture-password")
+        var serverEncoder = try ShadowsocksAEADStreamEncoder(
+            methodName: "aes-256-gcm", password: "fixture-password", salt: Data(repeating: 0x22, count: 32)
+        )
+        let client = NativeShadowsocksRelayConnector(
+            target: target,
+            destination: try SOCKS5Endpoint(
+                address: SOCKS5Address(domain: "example.com"),
+                port: 443
+            )
+        ).makeConnection(to: nil)
+        try LoopbackTCPFixture.start(client)
+        try LoopbackTCPFixture.send(client, data: clientEncoder.encode(destination) + clientEncoder.encode(Data("ping".utf8)))
+        let wire = try server.read(atLeast: 32 + 2 + 16 + 2 + 16 + 4)
+        let frames = try serverDecoder.append(wire)
+        #expect(frames.count == 2)
+        #expect(frames[0] == destination)
+        #expect(frames[1] == Data("ping".utf8))
+        try server.send(serverEncoder.encode(Data("pong".utf8)))
+        let response = try LoopbackTCPFixture.read(client, atLeast: 32 + 2 + 16 + 4 + 16)
+        #expect(try clientDecoder.append(response) == [Data("pong".utf8)])
+        client.cancel()
+    }
+}
+
+/// Small synchronous NWConnection fixture.  Synchronous waits are intentional
+/// here: each test has a bounded five-second timeout and never touches a
+/// process, DNS resolver, or externally configured proxy.
+private final class LoopbackTCPFixture: @unchecked Sendable {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "one.leaper.mclash.native-loopback-fixture")
+    private let ready = DispatchSemaphore(value: 0)
+    private let accepted = DispatchSemaphore(value: 0)
+    private let dataAvailable = DispatchSemaphore(value: 0)
+    private var connection: NWConnection?
+    private var buffer = Data()
+    private let lock = NSLock()
+    let port: UInt16
+
+    init() throws {
+        listener = try NWListener(using: .tcp, on: .any)
+        listener.stateUpdateHandler = { [weak self] state in
+            if case .ready = state { self?.ready.signal() }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { connection.cancel(); return }
+            self.connection = connection
+            connection.stateUpdateHandler = { _ in }
+            connection.start(queue: self.queue)
+            self.accepted.signal()
+            self.receiveNext(connection)
+        }
+        listener.start(queue: queue)
+        guard ready.wait(timeout: .now() + 5) == .success,
+              let port = listener.port?.rawValue, port > 0 else {
+            throw FixtureError.timeout("listener readiness")
+        }
+        self.port = port
+    }
+
+    func stop() { connection?.cancel(); listener.cancel() }
+
+    func send(_ data: Data) throws {
+        guard accepted.wait(timeout: .now() + 5) == .success || connection != nil,
+              let connection else { throw FixtureError.timeout("accept") }
+        let done = DispatchSemaphore(value: 0)
+        connection.send(content: data, completion: .contentProcessed { error in
+            if let error { _ = error }
+            done.signal()
+        })
+        guard done.wait(timeout: .now() + 5) == .success else { throw FixtureError.timeout("send") }
+    }
+
+    func read(until marker: Data) throws -> Data {
+        for _ in 0..<100 {
+            lock.lock(); let current = buffer; lock.unlock()
+            if current.range(of: marker) != nil {
+                lock.lock(); buffer.removeAll(); lock.unlock()
+                return current
+            }
+            guard dataAvailable.wait(timeout: .now() + 0.05) == .success else { continue }
+        }
+        throw FixtureError.timeout("read marker")
+    }
+
+    func read(atLeast count: Int) throws -> Data {
+        for _ in 0..<100 {
+            lock.lock(); let current = buffer; lock.unlock()
+            if current.count >= count {
+                lock.lock(); buffer.removeAll(); lock.unlock()
+                return current
+            }
+            guard dataAvailable.wait(timeout: .now() + 0.05) == .success else { continue }
+        }
+        throw FixtureError.timeout("read bytes")
+    }
+
+    private func receiveNext(_ connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, _ in
+            guard let self else { return }
+            if let data, !data.isEmpty { self.lock.lock(); self.buffer.append(data); self.lock.unlock(); self.dataAvailable.signal() }
+            if !complete { self.receiveNext(connection) }
+        }
+    }
+
+    static func start(_ connection: NWConnection) throws {
+        let semaphore = DispatchSemaphore(value: 0)
+        var failure: NWError?
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready, .failed(let error): failure = error; semaphore.signal()
+            default: break
+            }
+        }
+        connection.start(queue: DispatchQueue(label: "one.leaper.mclash.native-loopback-client"))
+        guard semaphore.wait(timeout: .now() + 5) == .success else { throw FixtureError.timeout("connection readiness") }
+        if let failure { throw failure }
+    }
+
+    static func send(_ connection: NWConnection, data: Data) throws {
+        let semaphore = DispatchSemaphore(value: 0)
+        connection.send(content: data, completion: .contentProcessed { _ in semaphore.signal() })
+        guard semaphore.wait(timeout: .now() + 5) == .success else { throw FixtureError.timeout("client send") }
+    }
+
+    static func read(_ connection: NWConnection, until marker: Data) throws -> Data {
+        var result = Data()
+        for _ in 0..<100 {
+            if result.range(of: marker) != nil { return result }
+            let semaphore = DispatchSemaphore(value: 0)
+            var complete = false
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
+                if let data { result.append(data) }; complete = isComplete; semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 0.05) == .success else { continue }
+            if complete { break }
+        }
+        guard result.range(of: marker) != nil else { throw FixtureError.timeout("client read marker") }
+        return result
+    }
+
+    static func read(_ connection: NWConnection, atLeast count: Int) throws -> Data {
+        var result = Data()
+        for _ in 0..<100 {
+            if result.count >= count { return result }
+            let semaphore = DispatchSemaphore(value: 0)
+            var complete = false
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
+                if let data { result.append(data) }; complete = isComplete; semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 0.05) == .success else { continue }
+            if complete { break }
+        }
+        guard result.count >= count else { throw FixtureError.timeout("client read bytes") }
+        return result
+    }
+}
+
+private enum FixtureError: Error { case timeout(String) }
