@@ -1466,6 +1466,18 @@ struct ConnectionsView: View {
                     }
                 }
                 if let processPath = nonEmpty(row.connection.metadata.processPath) {
+                    if let processName = nonEmpty(row.connection.metadata.process) {
+                        Button {
+                            openRuleDraft(
+                                matcher: .processName(processName)
+                            )
+                        } label: {
+                            Label(
+                                AppLocalization.string("Add this app to a rule…"),
+                                systemImage: "app.badge.plus"
+                            )
+                        }
+                    }
                     Button {
                         openProcessRuleDraft(
                             for: row.connection,
@@ -2003,12 +2015,20 @@ private struct ConnectionDetailView: View {
                         }
                     }
                     if let processPath = nonEmpty(connection.metadata.processPath) {
-                        Button(AppLocalization.string("Add process to a rule…")) {
-                            onCreateRule(.processPath(processPath))
+                        VStack(alignment: .leading, spacing: 8) {
+                            if let processName = nonEmpty(connection.metadata.process) {
+                                Button(AppLocalization.string("Add this app to a rule…")) {
+                                    onCreateRule(.processName(processName))
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            Button(AppLocalization.string("Add process to a rule…")) {
+                                onCreateRule(.processPath(processPath))
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
                     } else if let processName = nonEmpty(connection.metadata.process) {
-                        Button(AppLocalization.string("Add process to a rule…")) {
+                        Button(AppLocalization.string("Add this app to a rule…")) {
                             onCreateRule(.processName(processName))
                         }
                         .buttonStyle(.bordered)
