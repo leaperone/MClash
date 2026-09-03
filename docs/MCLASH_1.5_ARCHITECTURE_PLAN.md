@@ -354,6 +354,10 @@ and can be tested without producing a Mihomo YAML document.
   passed copied-profile shadow auto-connect: `state=running`,
   `hasCompiledRuntimePlan=true`, `workspaceRevision=28`, and four running
   listener handles, with no native startup error.
+- After enabling CUNOE-Proxy source preference, the rebuilt current-profile
+  shadow again reached `state=running` with the same five listener handles;
+  capability diagnostics remained explicit, including Hysteria2's QUIC
+  `legacyFallback` reason.
 - The subsequent full integration smoke after native payload changes passed
   GEO verification, dual-profile/listener/crash-recovery checks, system proxy
   read-only checks and API smoke; no production service was restarted.
