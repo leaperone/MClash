@@ -6,6 +6,32 @@ import Testing
 @Suite("Automation command gateway")
 @MainActor
 struct AutomationCommandGatewayTests {
+    @Test("Runtime diagnostics expose safe connector-neutral fields")
+    func runtimeDiagnosticsAreRedactedAndReadOnly() async throws {
+        let fixture = try makeFixture(scopes: [.readSensitive])
+        let response = await fixture.gateway.execute(
+            AutomationRPCRequest(
+                method: "runtime.diagnostics",
+                authorization: fixture.token
+            ),
+            peer: fixture.peer
+        )
+        #expect(response.error == nil)
+        guard let result = response.result?.objectValue else {
+            Issue.record("Expected runtime diagnostics object")
+            return
+        }
+        #expect(result["backend"]?.stringValue == "mihomo")
+        #expect(result["state"]?.stringValue != nil)
+        #expect(result["capabilities"]?.arrayValue != nil)
+        #expect(result["listenerStates"]?.objectValue != nil)
+        #expect(result["unsupportedConnectors"]?.arrayValue != nil)
+        // CoreSession.secret and controller endpoint are intentionally never
+        // part of the connector-neutral diagnostics contract.
+        #expect(result["secret"] == nil)
+        #expect(result["endpoint"] == nil)
+    }
+
     @Test("Capabilities preserve enums and reject unknown or oversized input")
     func capabilitiesAndStrictEnvelope() async throws {
         let fixture = try makeFixture(scopes: [.readBasic])
