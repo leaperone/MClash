@@ -6,6 +6,7 @@ import MClashNetworkShared
 @Suite("Native runtime controller seam")
 struct NativeRuntimeControllerTests {
     @Test("AppModel runtime selection is explicit and opt-in")
+    @MainActor
     func appModelRuntimeSelectionIsExplicit() async {
         let native = AppModel.runtimeController(
             environment: ["MCLASH_NATIVE_RUNTIME": "1"]
@@ -19,6 +20,7 @@ struct NativeRuntimeControllerTests {
     }
 
     @Test("Native AppModel runtime lifecycle never contacts a controller")
+    @MainActor
     func nativeRuntimeLifecycleIsControllerFree() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "mclash-native-lifecycle-\(UUID().uuidString)",
@@ -141,7 +143,7 @@ struct NativeRuntimeControllerTests {
 
         let updatedListener = try MClashListenerSpec(
             name: "Updated SOCKS",
-            kind: .socks,
+            kind: .socks5,
             enabled: true,
             port: 18_082
         )
