@@ -50,7 +50,7 @@ struct ConnectionsView: View {
                 Text(
                     liveStreamDetail(
                         health,
-                        source: AppLocalization.string("Mihomo connections")
+                        source: AppLocalization.string("Connections")
                     )
                 )
             } actions: {
@@ -1244,13 +1244,13 @@ struct ConnectionsView: View {
             }
             return liveStreamDetail(
                 model.liveStreamHealth[.connections] ?? .inactive,
-                source: AppLocalization.string("Mihomo connections")
+                source: AppLocalization.string("Connections")
             )
         case .apps, .routes, .history:
             var staleSources: [String] = []
             if model.isConnected,
                model.liveStreamHealth[.connections]?.hasCurrentData != true {
-                staleSources.append(AppLocalization.string("Mihomo connections"))
+                staleSources.append(AppLocalization.string("Connections"))
             }
             if appRoutingIsActive,
                model.liveStreamHealth[.appRouting]?.hasCurrentData != true {
@@ -1262,7 +1262,7 @@ struct ConnectionsView: View {
                     ? model.liveStreamHealth[.connections].map {
                         liveStreamDetail(
                             $0,
-                            source: AppLocalization.string("Mihomo connections")
+                            source: AppLocalization.string("Connections")
                         )
                     }
                     : nil,
