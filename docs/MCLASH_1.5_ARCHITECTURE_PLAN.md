@@ -416,6 +416,10 @@ and can be tested without producing a Mihomo YAML document.
   `150001` produced a signed `MClash 1.5.0 (150001)` bundle in `.build/release`
   and passed the isolated native CLI smoke. This is a build artifact only; no
   tag or GitHub Release was created.
+- That exact versioned bundle also passed copied-profile shadow auto-connect:
+  `state=running`, `workspaceRevision=28`, four running listener handles and a
+  non-empty connector matrix. Its bundle signature verifies; production was
+  not installed or replaced.
 - The same run confirms the `Localization resources` suite passes with all
   eight bundles, including the neutral traffic-monitor strings.
 - `5d62f74` makes the Network Extension inbound suite independently
