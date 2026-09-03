@@ -712,7 +712,8 @@ struct FlowLedger: Sendable {
         guard let inboundName = nonEmpty(observation.inboundName) else {
             return .unknown
         }
-        if inboundName.hasPrefix(NetworkExtensionMihomoListenerConfiguration.listenerNamePrefix) {
+        if inboundName.hasPrefix(NetworkExtensionMihomoListenerConfiguration.listenerNamePrefix)
+            || inboundName.hasPrefix("native-") {
             return .appRouting
         }
         return .localListener(name: inboundName)

@@ -9,6 +9,7 @@ struct MihomoFlowObservationAdapterTests {
     func projectsConnection() throws {
         let data = Data(
             #"""
+            {
               "id":"legacy-1",
               "metadata":{
                 "network":"tcp",
