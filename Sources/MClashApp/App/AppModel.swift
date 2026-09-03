@@ -3528,9 +3528,16 @@ final class AppModel {
     }
 
     func compileConfiguration(workspaceID: WorkspaceID? = nil) throws -> CompiledConfiguration {
-        try ConfigurationCompiler().compile(
+        let compiler = ConfigurationCompiler(
+            emitsMihomoListeners: !usesNativeRuntime
+        )
+        return try compiler.compile(
             document: configurationDocument,
-            workspaceID: workspaceID
+            workspaceID: workspaceID,
+            validatedDiagnostics: nil,
+            // The connector-neutral plan is authoritative in native mode;
+            // avoid rendering a compatibility YAML document at all.
+            renderCompatibilityYAML: !usesNativeRuntime
         )
     }
 

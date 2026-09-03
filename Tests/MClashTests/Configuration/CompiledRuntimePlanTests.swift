@@ -41,6 +41,19 @@ struct CompiledRuntimePlanTests {
         #expect(legacyResult.runtimePlan == plan)
     }
 
+    @Test("Native compilation can omit compatibility YAML entirely")
+    func nativeCompilationOmitsYAML() throws {
+        let compiler = ConfigurationCompiler(emitsMihomoListeners: false)
+        let result = try compiler.compile(
+            document: .mclashDefault(),
+            workspaceID: nil,
+            validatedDiagnostics: nil,
+            renderCompatibilityYAML: false
+        )
+        #expect(result.mihomoYAML.isEmpty)
+        try result.runtimePlan.validate()
+    }
+
     @Test func planValidationRejectsDanglingGroupMembers() throws {
         let node = try Node(displayName: "node", protocol: .socks5, host: "127.0.0.1", port: 1080)
         let missingGroup = ProxyGroupID()
