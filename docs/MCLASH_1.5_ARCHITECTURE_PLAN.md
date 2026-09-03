@@ -93,7 +93,7 @@ App Routing is not a separate policy editor.
       SystemConfiguration/Network Extension providers remains pending. TUN
       remains opt-in and must stay disabled unless its Network Extension path
       is proven.
-- [ ] Make arbitrary user-defined ports valid; reserve only ports currently
+- [x] Make arbitrary user-defined ports valid; reserve only ports currently
       occupied by another enabled entrance and report actionable collisions.
 - [ ] Show `Entrance -> mode -> matched rule -> group -> node` in connection
       details. Never present an internal recovery port as a user configuration.
