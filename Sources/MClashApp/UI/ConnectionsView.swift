@@ -1815,7 +1815,12 @@ private struct ConnectionPresentationSnapshot: Sendable {
         searchText: String,
         sortOrder: [KeyPathComparator<ConnectionTableRow>]
     ) {
-        let connections = snapshot?.connections ?? []
+        // A frozen snapshot must not inherit incidental ordering changes from
+        // the controller. Stable ordering also gives Table a predictable row
+        // identity, so selection stays on the same connection after refresh.
+        let connections = ConnectionSnapshotOrdering.stableNewestFirst(
+            snapshot?.connections ?? []
+        )
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let isFiltering = !query.isEmpty
         var rows: [ConnectionTableRow] = []
