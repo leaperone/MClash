@@ -88,7 +88,8 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = preferences.enabled
         self.encodedCaptureSnapshot = encodedSnapshot
-        let nativeDataPlane = nativeInboundListenersEnabled && dnsUpstreamMode == .native
+        let nativeDataPlane = nativeInboundListenersEnabled
+            && (dnsUpstreamMode == .native || !preferences.dnsEnabled)
         let endpoints = nativeDataPlane
             ? []
             : try routeProxyEndpoints ?? mihomoListener?.routeProxyEndpoints() ?? []
