@@ -401,6 +401,9 @@ and can be tested without producing a Mihomo YAML document.
   飞鸟云 or kaze groups may opt into secondary sources. Nested groups apply
   the policy independently, preventing unrelated AWS nodes from flattening
   into every regional group.
+- `6892b61` removes legacy “Mihomo connections” wording from traffic source
+  labels; the monitor now presents the neutral localized “Connections” label
+  while retaining explicit legacy diagnostics only where technically needed.
 - The latest direct application test binary executes the CUNOE resolver suite
   and reports `500 tests in 72 suites passed` before the known
   CommandLineTools shared-test runtime abort; the resolver tests themselves
