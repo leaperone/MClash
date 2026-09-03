@@ -73,11 +73,11 @@ struct NativeProxyGroupTargetResolverTests {
             protocol: .https,
             host: host,
             port: 443,
+            enabled: enabled,
             health: NodeHealthSnapshot(
                 availability: availability,
                 latencyMilliseconds: latency
             ),
-            enabled: enabled
         )
     }
 }
