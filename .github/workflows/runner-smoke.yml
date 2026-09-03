@@ -2,6 +2,9 @@ name: Runner smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ci/macos-26-standard
 
 permissions:
   contents: read
