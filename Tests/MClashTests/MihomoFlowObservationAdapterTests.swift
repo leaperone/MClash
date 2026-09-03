@@ -26,7 +26,8 @@ struct MihomoFlowObservationAdapterTests {
               "providerChains":["provider-a"],
               "rule":"DOMAIN-SUFFIX",
               "rulePayload":"example.com"
-            }"""#.utf8
+            }
+            """#.utf8
         )
         let connection = try JSONDecoder().decode(MihomoConnection.self, from: data)
         let observation = MihomoFlowObservationAdapter.observation(
