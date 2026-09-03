@@ -293,10 +293,6 @@ and can be tested without producing a Mihomo YAML document.
   `MCLASH_LEGACY_RUNTIME=1` is an explicit rollback switch.
 - `4014746` adds application-level quick actions to the traffic inspector
   alongside existing process-path and domain rule drafts.
-- `93750dd` is validated in unit tests and keeps isolated instances on the
-  native backend by default; the standalone native CLI smoke still exits
-  before endpoint publication on this host, so isolated acceptance remains
-  open.
 - `1484e41` prevents native workspace activation and rollback from invoking
   the legacy runtime override coordinator; native activation now keeps the
   compiled plan in-process without materializing Mihomo YAML.
