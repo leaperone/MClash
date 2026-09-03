@@ -7,7 +7,11 @@ set -euo pipefail
 # so production MClash state, locks, keychain tokens, and sockets are not
 # involved.
 repo_root="${0:A:h:h}"
-app_bundle="${MCLASH_APP_PATH:-${repo_root}/.build/release/MClash.app}"
+if (( $# > 1 )); then
+  print -u2 "Usage: ${0:t} [MClash.app]"
+  exit 2
+fi
+app_bundle="${MCLASH_APP_PATH:-${1:-${repo_root}/.build/release/MClash.app}}"
 app_executable="${app_bundle}/Contents/MacOS/MClash"
 cli="${MCLASH_CLI_PATH:-${app_bundle}/Contents/Helpers/mclashctl}"
 

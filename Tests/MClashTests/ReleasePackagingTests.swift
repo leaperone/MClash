@@ -314,12 +314,18 @@ struct ReleasePackagingTests {
     @Test("Native-only bundles omit the Mihomo executable and distribution metadata")
     func nativeOnlyBuildOmitsCompatibilityCore() throws {
         let buildScript = try source("scripts/build-app.sh")
+        let smokeScript = try source("scripts/smoke-test-native-runtime-cli.sh")
 
         #expect(buildScript.contains("native_only=\"${MCLASH_NATIVE_ONLY:-0}\""))
         #expect(buildScript.contains("MClashRuntimeDistributionMode"))
         #expect(buildScript.contains("runtime_distribution_mode=\"native-only\""))
         #expect(buildScript.contains("Native-only bundle unexpectedly contains a Mihomo core."))
         #expect(buildScript.contains("Built native-only MClash"))
+        #expect(
+            smokeScript.contains(
+                "app_bundle=\"${MCLASH_APP_PATH:-${1:-${repo_root}/.build/release/MClash.app}}\""
+            )
+        )
     }
 
     @Test("CI unit failures publish a bounded check annotation")
