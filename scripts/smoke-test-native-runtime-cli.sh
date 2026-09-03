@@ -38,7 +38,35 @@ if [[ -n "${MCLASH_SHADOW_SOURCE_ROOT:-}" ]]; then
   }
   application_support_identifier="MClash-Shadow-${RANDOM}-$$"
   shadow_application_support="${HOME}/Library/Application Support/${application_support_identifier}"
-  /usr/bin/ditto "${MCLASH_SHADOW_SOURCE_ROOT}" "${shadow_application_support}"
+  # Copy only authoritative configuration and node-source material. Runtime,
+  # settings and stale system-proxy state are intentionally excluded so a
+  # shadow run cannot inherit an old activation or malformed legacy override.
+  mkdir -p "${shadow_application_support}"
+  if [[ -d "${MCLASH_SHADOW_SOURCE_ROOT}/Configuration" ]]; then
+    /usr/bin/ditto "${MCLASH_SHADOW_SOURCE_ROOT}/Configuration" \
+      "${shadow_application_support}/Configuration"
+  fi
+  if [[ -d "${MCLASH_SHADOW_SOURCE_ROOT}/Profiles" ]]; then
+    /usr/bin/ditto "${MCLASH_SHADOW_SOURCE_ROOT}/Profiles" \
+      "${shadow_application_support}/Profiles"
+  fi
+  shadow_manifest="${shadow_application_support}/Configuration/manifest.json"
+  if [[ -f "${shadow_manifest}" ]]; then
+    # The production document may intentionally expose a LAN bind address;
+    # native shadow listeners are loopback-only and must never open LAN ports.
+    /usr/bin/python3 - "${shadow_manifest}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+for entrance in document.get("entrances", []):
+    if isinstance(entrance, dict):
+        entrance["bindAddress"] = "127.0.0.1"
+path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+  fi
 fi
 
 # Launch Services uses the bundle identifier even when an executable is

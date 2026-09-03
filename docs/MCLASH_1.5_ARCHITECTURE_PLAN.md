@@ -326,6 +326,17 @@ and can be tested without producing a Mihomo YAML document.
   disposable-bundle staging, proving the native diagnostics endpoint can be
   queried without auto-connecting a source or reusing the production bundle
   identity.
+- The same smoke script now accepts `MCLASH_SHADOW_SOURCE_ROOT` and validates
+  that a copied tree produces a compiled workspace plan. The first run against
+  the current production tree exposed `hasCompiledRuntimePlan=false` and
+  `workspaceRevision=null`; this is recorded as a real shadow-import blocker,
+  not treated as a successful copied-profile acceptance.
+- The shadow script now copies only authoritative `Configuration` and
+  `Profiles`, normalizes copied entrance binds to loopback, and excludes stale
+  runtime/settings state. A subsequent run against the current local tree
+  passed with `hasCompiledRuntimePlan=true`, `workspaceRevision=28`, five
+  entrances and a non-empty connector capability matrix; Hysteria2 remained
+  explicitly `legacyFallback` with its QUIC reason.
 - `db92b4a` adds admission coverage for native inbound HTTP, VLESS TCP and
   Trojan targets; protocol-specific handshake tests remain part of the real
   endpoint/interoperability gate.
