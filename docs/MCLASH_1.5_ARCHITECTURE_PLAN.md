@@ -478,6 +478,17 @@ and can be tested without producing a Mihomo YAML document.
   adds a non-mutating context action to open it for the selected flow.
 - `1a24440` and `a58686c` enforce and document the free standard `macos-26`
   runner policy; sized paid runners are rejected by release packaging tests.
+- `30ce803` makes `legacyConnector` the canonical DNS compatibility mode while
+  preserving decode support for historical `mihomo` and `legacy` wire values.
+- `99de81a` makes `.outbound(OutboundRoute)` the canonical rule action and flow
+  disposition throughout the MClash policy path; historical `mihomo` Codable
+  keys remain read-compatible but are no longer emitted.
+- `5b2f3bd` adds a native-only bundle mode. A 1.5.0 build 150004 contained no
+  `mclash-mihomo` executable, passed deep code-signature verification, copied
+  the current local profile tree into an isolated namespace and reached
+  `backend=native`, `state=running`, workspace revision 28 with four enabled
+  entrance handles. This proves binary-free plan/lifecycle startup, not yet
+  external protocol interoperability.
 
 ### Definition of done
 
