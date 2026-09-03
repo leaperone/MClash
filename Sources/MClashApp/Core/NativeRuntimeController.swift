@@ -42,7 +42,25 @@ protocol NativeRuntimeController: AnyObject, Sendable {
 /// default for existing callers.
 enum ProfileRuntimeSessionBackend: String, Codable, Equatable, Sendable {
     case native
-    case mihomo
+    case legacyConnector
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        switch try container.decode(String.self) {
+        case "native": self = .native
+        case "legacyConnector", "mihomo": self = .legacyConnector
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported profile runtime backend"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 struct ProfileRuntimeSessionMetadata: Equatable, Sendable {
@@ -71,7 +89,7 @@ extension CoreSupervisor: ProfileRuntimeSession {}
 extension CoreSupervisor {
     nonisolated var metadata: ProfileRuntimeSessionMetadata {
         ProfileRuntimeSessionMetadata(
-            backend: .mihomo,
+            backend: .legacyConnector,
             capabilities: runtimeCapabilities
         )
     }
@@ -122,7 +140,7 @@ final actor MihomoRuntimeControllerAdapter: ProfileRuntimeSession {
     }
     nonisolated var metadata: ProfileRuntimeSessionMetadata {
         ProfileRuntimeSessionMetadata(
-            backend: .mihomo,
+            backend: .legacyConnector,
             capabilities: runtimeCapabilities
         )
     }

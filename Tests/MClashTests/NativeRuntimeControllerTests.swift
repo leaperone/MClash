@@ -101,7 +101,7 @@ struct NativeRuntimeControllerTests {
 
         let legacyFactory = AppModel.runtimeSessionFactory(environment: [:])
         let legacySession = legacyFactory(ProfileID())
-        #expect(legacySession.metadata.backend == .mihomo)
+        #expect(legacySession.metadata.backend == .legacyConnector)
         #expect(legacySession.metadata.capabilities.contains(.legacyCore))
 
         let isolatedFactory = AppModel.runtimeSessionFactory(
@@ -117,7 +117,7 @@ struct NativeRuntimeControllerTests {
             ],
             arguments: []
         )
-        #expect(rollbackFactory(ProfileID()).metadata.backend == .mihomo)
+        #expect(rollbackFactory(ProfileID()).metadata.backend == .legacyConnector)
 
         let nativeOnlyFactory = AppModel.runtimeSessionFactory(
             environment: ["MCLASH_LEGACY_RUNTIME": "1"],
@@ -125,6 +125,19 @@ struct NativeRuntimeControllerTests {
             distributionMode: "native-only"
         )
         #expect(nativeOnlyFactory(ProfileID()).metadata.backend == .native)
+    }
+
+    @Test("Legacy runtime backend metadata decodes old Mihomo values")
+    func legacyRuntimeBackendWireMigration() throws {
+        let decoded = try JSONDecoder().decode(
+            ProfileRuntimeSessionBackend.self,
+            from: Data("\"mihomo\"".utf8)
+        )
+        #expect(decoded == .legacyConnector)
+        #expect(
+            String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+                == "\"legacyConnector\""
+        )
     }
 
     @Test("Native AppModel runtime lifecycle never contacts a controller")

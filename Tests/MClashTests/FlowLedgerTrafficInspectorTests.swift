@@ -22,7 +22,10 @@ struct FlowLedgerTrafficInspectorTests {
             connector: "native-vless",
             route: .relay
         )
-        let ledger = FlowLedger(flowRelayObservations: [observation])
+        let ledger = FlowLedger(
+            activeConnections: [],
+            flowRelayObservations: [observation]
+        )
         let entry = try #require(ledger.entries.first)
         let inspector = FlowLedgerTrafficInspector(
             entry: entry,
@@ -35,7 +38,13 @@ struct FlowLedgerTrafficInspectorTests {
         #expect(inspector.selectedNode == "US-01")
         #expect(inspector.dnsPath.identifier == "remote:native-dns")
         #expect(inspector.evidence.contains("rule-payload=api.example.com"))
-        #expect(inspector.quickRuleDrafts.map(\.kind) == [.exactDomain, .domainSuffix, .ipAddress, .processPath])
+        #expect(inspector.quickRuleDrafts.map(\.kind) == [
+            .exactDomain,
+            .domainSuffix,
+            .ipAddress,
+            .application,
+            .processPath
+        ])
     }
 
     @Test("Direct and rejected decisions explain themselves and remain actionable")
@@ -44,7 +53,10 @@ struct FlowLedgerTrafficInspectorTests {
             FlowRelayObservation(id: "direct", destinationHost: "local.example", rule: "DIRECT", route: .direct),
             FlowRelayObservation(id: "reject", destinationHost: "blocked.example", rule: "REJECT", route: .rejected)
         ]
-        let ledger = FlowLedger(flowRelayObservations: observations)
+        let ledger = FlowLedger(
+            activeConnections: [],
+            flowRelayObservations: observations
+        )
         let direct = try #require(ledger.entries.first(where: { $0.id == .native("direct") }))
         let rejected = try #require(ledger.entries.first(where: { $0.id == .native("reject") }))
 
