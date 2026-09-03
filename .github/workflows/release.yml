@@ -99,6 +99,8 @@ jobs:
   verify-unit:
     name: Verify unit and release metadata tests
     needs: prepare
+    # Keep release verification on the standard, public-repository runner.
+    # Do not replace this with a -large/-xlarge label.
     runs-on: macos-26
     timeout-minutes: 25
     steps:
@@ -117,6 +119,8 @@ jobs:
   verify-integration:
     name: Verify Mihomo integration smoke
     needs: prepare
+    # Keep release verification on the standard, public-repository runner.
+    # Do not replace this with a -large/-xlarge label.
     runs-on: macos-26
     timeout-minutes: 35
     env:
@@ -137,6 +141,7 @@ jobs:
     name: Verify native 1.5.x release evidence
     needs: prepare
     if: startsWith(needs.prepare.outputs.version, '1.5.')
+    # Native evidence validation is intentionally a short standard-runner job.
     runs-on: macos-26
     timeout-minutes: 5
     steps:
@@ -173,6 +178,8 @@ jobs:
       needs.verify-integration.result == 'success' &&
       (needs.native_release_readiness.result == 'success' ||
       needs.native_release_readiness.result == 'skipped')
+    # The standard macOS runner is sufficient because verification jobs already
+    # perform the expensive checks in parallel; paid large runners are not used.
     runs-on: macos-26
     timeout-minutes: 60
     environment:

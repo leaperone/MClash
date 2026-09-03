@@ -7,8 +7,10 @@ permissions:
   contents: read
 
 jobs:
-  macos-26-arm64:
-    name: macOS 26 arm64 compatibility
+  macos-26-standard-arm64:
+    name: macOS 26 standard arm64 compatibility
+    # Public repositories must use the standard runner. In particular, do not
+    # change this to macos-15-xlarge or any -large/-xlarge label.
     runs-on: macos-26
     timeout-minutes: 45
     env:
