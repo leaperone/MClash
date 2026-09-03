@@ -1798,23 +1798,12 @@ final class AppModel {
     /// replace it without changing workspace/rule semantics.
     private func activeOutboundNodeTargetCatalog() -> OutboundNodeTargetCatalog? {
         guard let workspace = configurationDocument.currentWorkspace else { return nil }
-        let nodesByID = Dictionary(
-            configurationDocument.nodes.filter { $0.enabled }.compactMap { node in
-                node.outboundTarget.map { (node.id, $0) }
-            },
-            uniquingKeysWith: { first, _ in first }
-        )
         func target(for groupID: ProxyGroupID) -> OutboundNodeTarget? {
-            guard let group = configurationDocument.proxyGroups.first(where: { $0.id == groupID }) else { return nil }
-            for member in group.members {
-                switch member {
-                case let .node(nodeID):
-                    if let value = nodesByID[nodeID] { return value }
-                case let .group(childID):
-                    if let value = target(for: childID) { return value }
-                }
-            }
-            return nil
+            NativeProxyGroupTargetResolver.resolve(
+                groupID: groupID,
+                groups: configurationDocument.proxyGroups,
+                nodes: configurationDocument.nodes
+            ).target
         }
         let primaryGroup = workspace.globalProxyGroupID
             ?? workspace.proxyGroupIDs.first
