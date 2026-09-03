@@ -186,9 +186,9 @@ and can be tested without producing a Mihomo YAML document.
 
 ### I. UI, copy and i18n
 
-- [ ] Navigation follows the traffic model: Entrances, Configuration/Mode,
+- [x] Navigation follows the traffic model: Entrances, Configuration/Mode,
       Rules, Rule Sets, Node Groups, Nodes, Sources, then Overview/Diagnostics.
-- [ ] Remove the standalone “代理” tab and ambiguous “工作方案/新建规则/
+- [x] Remove the standalone “代理” tab and ambiguous “工作方案/新建规则/
       新建代理组” wording. Use task names that describe the result.
 - [ ] Apply the Rockxy-inspired calm status header, compact segmented controls,
       stable table/inspector hierarchy and restrained motion. Respect reduced
