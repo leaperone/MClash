@@ -332,7 +332,7 @@ struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHa
         }
         guard values["upgrade"]?.lowercased() == "websocket",
               values["connection"]?.lowercased().contains("upgrade") == true,
-              values["sec-websocket-accept"]?.lowercased() == handshakeState.expectedAccept else { throw VLESSWebSocketCodecError.invalidFrame }
+              values["sec-websocket-accept"] == handshakeState.expectedAccept else { throw VLESSWebSocketCodecError.invalidFrame }
     }
 }
 
