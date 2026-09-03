@@ -322,6 +322,21 @@ struct ReleasePackagingTests {
         #expect(buildScript.contains("Built native-only MClash"))
     }
 
+    @Test("CI unit failures publish a bounded check annotation")
+    func ciUnitTestDiagnosticsAreObservable() throws {
+        let runnerWorkflow = try source(".github/workflows/runner-smoke.yml")
+        let releaseWorkflow = try source(".github/workflows/release.yml")
+        let diagnosticScript = try source("scripts/run-ci-unit-tests.sh")
+
+        #expect(runnerWorkflow.contains("./scripts/run-ci-unit-tests.sh"))
+        #expect(releaseWorkflow.contains("./scripts/run-ci-unit-tests.sh"))
+        #expect(diagnosticScript.contains("::error file=scripts/test-direct.sh"))
+        #expect(diagnosticScript.contains("[:7000]"))
+        #expect(FileManager.default.isExecutableFile(
+            atPath: repositoryRoot.appendingPathComponent("scripts/run-ci-unit-tests.sh").path
+        ))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

@@ -36,7 +36,7 @@ jobs:
         run: ./scripts/typecheck.sh
       - name: Run unit tests
         shell: zsh {0}
-        run: ./scripts/test-direct.sh
+        run: ./scripts/run-ci-unit-tests.sh
       - name: Run integration tests
         shell: zsh {0}
         run: ./scripts/integration-test.sh

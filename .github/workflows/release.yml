@@ -112,7 +112,7 @@ jobs:
           persist-credentials: false
       - name: Run unit tests
         shell: zsh {0}
-        run: ./scripts/test-direct.sh
+        run: ./scripts/run-ci-unit-tests.sh
       - name: Test Sparkle delta metadata
         run: python3 scripts/test-attach-appcast-deltas.py
 
