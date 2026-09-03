@@ -25,6 +25,25 @@ namespace="mclash-native-cli-${RANDOM}-$$"
 log_file="${automation_directory}/mclash.log"
 app_pid=""
 
+# Launch Services uses the bundle identifier even when an executable is
+# invoked directly.  The built app intentionally keeps the production
+# identifier, and its LSMultipleInstancesProhibited policy means macOS can
+# SIGKILL a second process while the installed MClash is running.  Stage a
+# private bundle with a unique identifier so this smoke test is genuinely
+# isolated from the production application.  Do not mutate the build output.
+isolated_app_bundle="${automation_directory}/MClash-isolated.app"
+/usr/bin/ditto "${app_bundle}" "${isolated_app_bundle}"
+/usr/bin/plutil -replace CFBundleIdentifier -string "one.leaper.mclash.${namespace}" \
+  "${isolated_app_bundle}/Contents/Info.plist"
+/usr/bin/plutil -replace LSMultipleInstancesProhibited -bool false \
+  "${isolated_app_bundle}/Contents/Info.plist"
+# Editing Info.plist invalidates the copied bundle's sealed code resources.
+# Re-sign the disposable bundle so AppKit accepts it; this is ad-hoc only and
+# never changes the production app or the release artifact.
+/usr/bin/codesign --force --deep --sign - "${isolated_app_bundle}"
+app_executable="${isolated_app_bundle}/Contents/MacOS/MClash"
+cli="${isolated_app_bundle}/Contents/Helpers/mclashctl"
+
 cleanup() {
   if [[ -n "${app_pid}" ]] && kill -0 "${app_pid}" 2>/dev/null; then
     kill -TERM "${app_pid}" 2>/dev/null || true
