@@ -324,6 +324,8 @@ struct ReleasePackagingTests {
                 "app_bundle=\"${MCLASH_APP_PATH:-${1:-${repo_root}/.build/release/MClash.app}}\""
             )
         )
+        #expect(smokeScript.contains("reserved = set()"))
+        #expect(smokeScript.contains("entrance[\"port\"] = port"))
     }
 
     @Test("CI unit failures publish a bounded check annotation")

@@ -69,14 +69,24 @@ if [[ -n "${MCLASH_SHADOW_SOURCE_ROOT:-}" ]]; then
     # native shadow listeners are loopback-only and must never open LAN ports.
     /usr/bin/python3 - "${shadow_manifest}" <<'PY'
 import json
+import random
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 document = json.loads(path.read_text(encoding="utf-8"))
+reserved = set()
 for entrance in document.get("entrances", []):
     if isinstance(entrance, dict):
         entrance["bindAddress"] = "127.0.0.1"
+        kind = str(entrance.get("kind", "")).lower()
+        if entrance.get("enabled") and kind in {"http", "socks5"}:
+            while True:
+                port = random.randint(20_000, 60_000)
+                if port not in reserved:
+                    reserved.add(port)
+                    entrance["port"] = port
+                    break
 path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
   fi
