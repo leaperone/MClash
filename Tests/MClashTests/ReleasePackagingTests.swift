@@ -270,6 +270,13 @@ struct ReleasePackagingTests {
         #expect(releaseScript.contains("generate-delta-updates.sh"))
         #expect(releaseScript.contains("macos-arm64.delta(N)"))
         #expect(workflow.contains("macos-arm64.delta(N)"))
+        #expect(releaseScript.contains("release_monotonic_now"))
+        #expect(releaseScript.contains("release_phase_start build"))
+        #expect(releaseScript.contains("release_phase_end build"))
+        #expect(releaseScript.contains("app_notarization_staple"))
+        #expect(releaseScript.contains("dmg_creation_signing_notarization"))
+        #expect(releaseScript.contains("delta_appcast"))
+        #expect(releaseScript.contains("source_license_checksum"))
     }
 
     @Test("GitHub macOS jobs stay on the free standard macos-26 runner")

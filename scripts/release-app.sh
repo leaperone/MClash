@@ -1,6 +1,27 @@
 #!/bin/zsh
 set -euo pipefail
 
+# Release phase timing uses a monotonic clock so reports remain meaningful if
+# wall time changes during signing/notarization. Values are bounded and never
+# include command output, paths containing secrets, or credentials.
+typeset -A release_phase_started
+release_monotonic_now() {
+  perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%.6f", clock_gettime(CLOCK_MONOTONIC)'
+}
+release_phase_start() {
+  local phase="$1"
+  release_phase_started["${phase}"]="$(release_monotonic_now)"
+}
+release_phase_end() {
+  local phase="$1"
+  local started="${release_phase_started[${phase}]:-}"
+  local ended
+  [[ -n "${started}" ]] || return 0
+  ended="$(release_monotonic_now)"
+  # Keep output bounded and machine-readable; duration is informational only.
+  awk -v start="${started}" -v end="${ended}" 'BEGIN { d=end-start; if (d < 0) d=0; if (d > 86400) d=86400; printf "Release phase %-30s %.3fs\n", "'"${phase}"'", d }'
+}
+
 repo_root="${0:A:h:h}"
 source "${repo_root}/scripts/mihomo-alpha-common.sh"
 version="${MCLASH_VERSION:-}"
@@ -279,7 +300,9 @@ export MCLASH_VERSION="${version}"
 export MCLASH_BUNDLE_VERSION="${bundle_version}"
 export MCLASH_BUILD_NUMBER="${build_number}"
 export CODE_SIGN_IDENTITY="${identity}"
+release_phase_start build
 "${repo_root}/scripts/build-app.sh"
+release_phase_end build
 
 app="${repo_root}/.build/release/MClash.app"
 if [[ ! -d "${app}" ]]; then
@@ -290,7 +313,9 @@ fi
 # Sparkle's BinaryDelta rejects legacy code-signing xattrs. Clear the fresh
 # build before signing so the released target is a deterministic delta input.
 xattr -cr "${app}"
+release_phase_start app_signing
 sign_application "${app}"
+release_phase_end app_signing
 system_extension="${app}/Contents/Library/SystemExtensions/${network_extension_bundle_id}.systemextension"
 codesign --verify --strict --verbose=2 "${system_extension}"
 codesign --verify --deep --strict --verbose=2 "${app}"
@@ -318,15 +343,18 @@ mihomo_source="${release_dir}/mihomo-${MIHOMO_ALPHA_REVISION}-source.tar.gz"
 sparkle_license="${release_dir}/Sparkle-2.9.4-LICENSE.txt"
 
 ditto -c -k --sequesterRsrc --keepParent "${app}" "${notary_submission}"
+release_phase_start app_notarization_staple
 notarize "${notary_submission}"
 xcrun stapler staple "${app}"
 xcrun stapler validate "${app}"
 codesign --verify --deep --strict --verbose=2 "${app}"
 spctl --assess --type execute --verbose=2 "${app}"
+release_phase_end app_notarization_staple
 
 # The update ZIP is made after stapling so Sparkle installs a self-contained,
 # offline-verifiable app bundle.
 ditto -c -k --sequesterRsrc --keepParent "${app}" "${update_zip}"
+release_phase_start dmg_creation_signing_notarization
 "${repo_root}/scripts/create-dmg.sh" "${app}" "${dmg}" "MClash ${version}"
 sign_path "${dmg}"
 notarize "${dmg}"
@@ -334,8 +362,10 @@ xcrun stapler staple "${dmg}"
 xcrun stapler validate "${dmg}"
 codesign --verify --strict --verbose=2 "${dmg}"
 spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg}"
+release_phase_end dmg_creation_signing_notarization
 
 export MCLASH_RELEASE_TAG="${release_tag}"
+release_phase_start delta_appcast
 "${repo_root}/scripts/generate-delta-updates.sh" \
   "${app}" \
   "${update_zip}" \
@@ -346,6 +376,8 @@ export MCLASH_RELEASE_TAG="${release_tag}"
   "${appcast}" \
   "${release_notes}" \
   "${delta_manifest}"
+release_phase_end delta_appcast
+release_phase_start source_license_checksum
 "${repo_root}/scripts/package-mihomo-source.sh" "${mihomo_source}"
 sparkle_tools="$(${repo_root}/scripts/fetch-sparkle-tools.sh)"
 cp "${sparkle_tools}/LICENSE" "${sparkle_license}"
@@ -364,6 +396,7 @@ cp "${sparkle_tools}/LICENSE" "${sparkle_license}"
   done
   shasum -a 256 "${checksum_assets[@]}" > "${checksums:t}"
 )
+release_phase_end source_license_checksum
 
 print "Release assets ready in ${release_dir}:"
 print "  ${dmg:t}"
