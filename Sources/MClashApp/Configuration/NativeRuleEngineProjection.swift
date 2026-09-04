@@ -32,14 +32,75 @@ public struct NativeRouteDecision: Codable, Hashable, Sendable {
 public typealias NativeRuleSetMatcher = @Sendable (_ ruleSet: RuleSet, _ context: FlowContext) -> Bool
 public typealias NativeGeoMatcher = @Sendable (_ kind: NativeGeoKind, _ value: String, _ context: FlowContext) -> Bool
 
-public enum NativeGeoKind: String, Codable, Hashable, Sendable {
+public enum NativeGeoKind: String, Codable, CaseIterable, Hashable, Sendable {
     case ip
     case site
 }
 
 public protocol NativeGeoDatabaseProvider: Sendable {
     var status: NativeGeoDatabaseStatus { get }
+    /// GEO kinds this provider can evaluate. A provider may be ready for one
+    /// kind while another kind remains unsupported; callers must not infer
+    /// complete GEO coverage from `status == .ready` alone.
+    var supportedKinds: Set<NativeGeoKind> { get }
+    func status(for kind: NativeGeoKind) -> NativeGeoDatabaseStatus
     func matches(kind: NativeGeoKind, value: String, context: FlowContext) -> Bool
+}
+
+public extension NativeGeoDatabaseProvider {
+    func status(for kind: NativeGeoKind) -> NativeGeoDatabaseStatus {
+        supportedKinds.contains(kind) ? status : .unavailable
+    }
+}
+
+/// Dispatches GEOIP and GEOSITE lookups to independently parsed databases.
+/// The native engine keeps one instance per runtime, so neither the protobuf
+/// files nor regular-expression matchers are reconstructed per flow.
+public struct NativeGeoDatabaseProviderSet: NativeGeoDatabaseProvider {
+    private let providers: [NativeGeoKind: any NativeGeoDatabaseProvider]
+    public let status: NativeGeoDatabaseStatus
+    public let supportedKinds: Set<NativeGeoKind>
+
+    public init(providers: [any NativeGeoDatabaseProvider]) {
+        var byKind: [NativeGeoKind: any NativeGeoDatabaseProvider] = [:]
+        for provider in providers {
+            for kind in provider.supportedKinds where byKind[kind] == nil {
+                byKind[kind] = provider
+            }
+        }
+        self.providers = byKind
+        supportedKinds = Set(byKind.keys)
+        let statuses = providers.map(\.status)
+        if statuses.isEmpty {
+            status = .unavailable
+        } else if let failure = statuses.compactMap({ status -> String? in
+            if case let .failed(reason) = status { return reason }
+            return nil
+        }).first {
+            status = .failed(failure)
+        } else if let unsupported = statuses.compactMap({ status -> String? in
+            if case let .installedButUnsupportedFormat(format) = status { return format }
+            return nil
+        }).first {
+            status = .installedButUnsupportedFormat(unsupported)
+        } else {
+            let revisions = statuses.compactMap { status -> String? in
+                if case let .ready(revision) = status { return revision }
+                return nil
+            }
+            status = revisions.count == statuses.count
+                ? .ready(revision: revisions.sorted().joined(separator: "+"))
+                : .unavailable
+        }
+    }
+
+    public func status(for kind: NativeGeoKind) -> NativeGeoDatabaseStatus {
+        providers[kind]?.status ?? .unavailable
+    }
+
+    public func matches(kind: NativeGeoKind, value: String, context: FlowContext) -> Bool {
+        providers[kind]?.matches(kind: kind, value: value, context: context) ?? false
+    }
 }
 
 public enum NativeGeoDatabaseStatus: Equatable, Sendable {
@@ -76,10 +137,52 @@ public enum NativeGeoCapabilityGate {
             throw NativeGeoCapabilityError.providerNotReady(providerStatus ?? .unavailable)
         }
     }
+
+    public static func validate(
+        plan: CompiledRuntimePlan,
+        provider: (any NativeGeoDatabaseProvider)?,
+        enforce: Bool
+    ) throws {
+        guard enforce else { return }
+        for kind in requiredKinds(in: plan) {
+            guard let provider,
+                  provider.supportedKinds.contains(kind),
+                  case .ready = provider.status(for: kind) else {
+                throw NativeGeoCapabilityError.requiredKindNotReady(
+                    kind,
+                    provider?.status(for: kind) ?? .unavailable
+                )
+            }
+        }
+    }
+
+    private static func requiredKinds(in plan: CompiledRuntimePlan) -> Set<NativeGeoKind> {
+        var result = Set<NativeGeoKind>()
+        for rule in plan.rules {
+            for matcher in rule.matchers {
+                switch matcher {
+                case .geoIP, .geoIP6: result.insert(.ip)
+                case .geoSite: result.insert(.site)
+                default: break
+                }
+            }
+        }
+        for ruleSet in plan.ruleSets {
+            for raw in ruleSet.rules {
+                switch raw.split(separator: ",", maxSplits: 1).first?.uppercased() {
+                case "GEOIP", "GEOIP6": result.insert(.ip)
+                case "GEOSITE": result.insert(.site)
+                default: break
+                }
+            }
+        }
+        return result
+    }
 }
 
 public enum NativeGeoCapabilityError: Error, Equatable, Sendable {
     case providerNotReady(NativeGeoDatabaseStatus)
+    case requiredKindNotReady(NativeGeoKind, NativeGeoDatabaseStatus)
 }
 
 extension NativeGeoCapabilityError: LocalizedError {
@@ -87,6 +190,8 @@ extension NativeGeoCapabilityError: LocalizedError {
         switch self {
         case let .providerNotReady(status):
             return "Native GEO rules require a ready database provider; current status: \(status)."
+        case let .requiredKindNotReady(kind, status):
+            return "Native \(kind.rawValue.uppercased()) rules require a ready database provider; current status: \(status)."
         }
     }
 }
@@ -128,7 +233,11 @@ public enum NativeRuleSetFileLoader {
     }
 
     public static func load(_ ruleSet: RuleSet) throws -> [String] {
-        guard ruleSet.sourceURL == nil, ruleSet.format == .text else {
+        // A refreshed remote set intentionally retains its sourceURL for
+        // provenance while pointing at the atomically written local cache.
+        // Once a usable path is present, load the cache regardless of that
+        // metadata; rejecting the pair makes every refreshed set unusable.
+        guard ruleSet.format == .text else {
             throw Error.unsupportedSource
         }
         guard let rawPath = ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines),

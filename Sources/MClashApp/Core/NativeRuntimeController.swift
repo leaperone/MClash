@@ -118,7 +118,10 @@ extension CoreSupervisor {
             listenerStates: [:],
             connectorCapabilities: [],
             unsupportedConnectors: [],
-            geoDatabaseStatus: .unavailable
+            geoDatabaseStatus: .unavailable,
+            geoDatabaseStatuses: Dictionary(uniqueKeysWithValues: NativeGeoKind.allCases.map {
+                ($0, .unavailable)
+            })
         )
     }
 

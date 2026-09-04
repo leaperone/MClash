@@ -307,7 +307,11 @@ struct NativeRuntimeControllerTests {
             port: 18_080
         )
         let registry = try MClashListenerRegistry(listeners: [listener])
-        let engine = try NativeRuntimeEngine(plan: plan, listeners: registry)
+        let engine = try NativeRuntimeEngine(
+            plan: plan,
+            listeners: registry,
+            geoProvider: RuntimeTestGeoProvider(kinds: Set(NativeGeoKind.allCases))
+        )
 
         let state = await engine.nativeSessionState()
         #expect(state?.plan == plan)
@@ -348,7 +352,11 @@ struct NativeRuntimeControllerTests {
             port: 18_081
         )
         let initialRegistry = try MClashListenerRegistry(listeners: [initialListener])
-        let engine = try NativeRuntimeEngine(plan: plan, listeners: initialRegistry)
+        let engine = try NativeRuntimeEngine(
+            plan: plan,
+            listeners: initialRegistry,
+            geoProvider: RuntimeTestGeoProvider(kinds: Set(NativeGeoKind.allCases))
+        )
         let root = FileManager.default.temporaryDirectory
             .appending(path: "mclash-native-policy-update-\(UUID().uuidString)",
                        directoryHint: .isDirectory)
@@ -390,7 +398,11 @@ struct NativeRuntimeControllerTests {
             port: try LocalPortProbe().availableTCPPort()
         )
         let registry = try MClashListenerRegistry(listeners: [listener])
-        let engine = try NativeRuntimeEngine(plan: plan, listeners: registry)
+        let engine = try NativeRuntimeEngine(
+            plan: plan,
+            listeners: registry,
+            geoProvider: RuntimeTestGeoProvider(kinds: Set(NativeGeoKind.allCases))
+        )
         let root = FileManager.default.temporaryDirectory
             .appending(path: "mclash-native-stable-reload-\(UUID().uuidString)")
         try await engine.start(CoreLaunchConfiguration(
@@ -430,7 +442,11 @@ struct NativeRuntimeControllerTests {
             enabled: true
         )
         let registry = try MClashListenerRegistry(listeners: [http, app])
-        let engine = try NativeRuntimeEngine(plan: plan, listeners: registry)
+        let engine = try NativeRuntimeEngine(
+            plan: plan,
+            listeners: registry,
+            geoProvider: RuntimeTestGeoProvider(kinds: Set(NativeGeoKind.allCases))
+        )
 
         let before = await engine.nativeListenerHandles()
         #expect(before.count == 2)
@@ -526,6 +542,46 @@ struct NativeRuntimeControllerTests {
             .externalRuleSetRequiresLoader(ruleSet.id)) {
             _ = try NativeRuntimeEngine(plan: plan, listeners: MClashListenerRegistry())
         }
+    }
+
+    @Test("Native activation rejects a plan when one required GEO database is missing")
+    func nativeActivationRejectsMissingGeoKindWithoutReplacingSession() async throws {
+        let base = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let safePlan = CompiledRuntimePlan(
+            workspaceID: base.workspaceID,
+            workspaceRevision: 41,
+            nodes: base.nodes,
+            proxyGroups: base.proxyGroups,
+            rules: base.rules,
+            ruleSets: [],
+            dnsPolicy: base.dnsPolicy,
+            entrances: base.entrances,
+            routingMode: base.routingMode,
+            globalProxyGroupID: base.globalProxyGroupID,
+            diagnostics: base.diagnostics
+        )
+        let engine = try NativeRuntimeEngine(
+            plan: safePlan,
+            listeners: MClashListenerRegistry(),
+            geoProvider: RuntimeTestGeoProvider(kinds: [.ip])
+        )
+
+        await #expect(throws: NativeGeoCapabilityError.requiredKindNotReady(
+            .site,
+            .unavailable
+        )) {
+            try await engine.configure(
+                plan: base,
+                listeners: MClashListenerRegistry()
+            )
+        }
+        #expect(await engine.nativeSessionState()?.plan.workspaceRevision == 41)
+        let diagnostics = await engine.diagnostics()
+        #expect(diagnostics.geoDatabaseStatuses[.ip] == .ready(revision: "test"))
+        #expect(diagnostics.geoDatabaseStatuses[.site] == .unavailable)
+        #expect(diagnostics.sessionValidationError?.contains("SITE") == true)
     }
 
     @Test("Native engine evaluates policy and resolves connector-neutral node target")
@@ -706,5 +762,18 @@ struct NativeRuntimeControllerTests {
         }
 
         #expect(await controller.state() == .stopped)
+    }
+}
+
+private struct RuntimeTestGeoProvider: NativeGeoDatabaseProvider {
+    let supportedKinds: Set<NativeGeoKind>
+    let status: NativeGeoDatabaseStatus = .ready(revision: "test")
+
+    init(kinds: Set<NativeGeoKind>) {
+        supportedKinds = kinds
+    }
+
+    func matches(kind: NativeGeoKind, value: String, context: FlowContext) -> Bool {
+        supportedKinds.contains(kind)
     }
 }

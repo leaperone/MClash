@@ -21,6 +21,33 @@ struct NativeRuleEngineProjectionTests {
         try NativeGeoCapabilityGate.validate(plan: plan, providerStatus: nil, enforce: false)
     }
 
+    @Test("native GEO capability gate checks every required database kind")
+    func nativeGeoCapabilityGateChecksKinds() throws {
+        let runtime = plan(
+            groups: [],
+            rules: [
+                RoutingRule(priority: 1, matchers: [.geoIP("CN")], action: .direct),
+                RoutingRule(priority: 2, matchers: [.geoSite("gfw")], action: .direct),
+            ]
+        )
+        let ipOnly = TestGeoProvider(kinds: [.ip])
+        #expect(throws: NativeGeoCapabilityError.requiredKindNotReady(.site, .unavailable)) {
+            try NativeGeoCapabilityGate.validate(
+                plan: runtime,
+                provider: ipOnly,
+                enforce: true
+            )
+        }
+        try NativeGeoCapabilityGate.validate(
+            plan: runtime,
+            provider: NativeGeoDatabaseProviderSet(providers: [
+                ipOnly,
+                TestGeoProvider(kinds: [.site]),
+            ]),
+            enforce: true
+        )
+    }
+
     @Test("v2fly GeoIP protobuf fixture matches country CIDR")
     func geoIPProtobufFixture() throws {
         let cidr = Data([0x0a, 0x04, 192, 0, 2, 0, 0x10, 0x08])
@@ -35,14 +62,69 @@ struct NativeRuleEngineProjectionTests {
     func geoSiteProtobufFixture() throws {
         func field(_ n: UInt8, _ payload: Data) -> Data { Data([n << 3 | 2, UInt8(payload.count)]) + payload }
         func domain(_ type: UInt8, _ value: String) -> Data { Data([0x08, type]) + field(2, Data(value.utf8)) }
-        let domains = field(2, domain(2, "example.com")) + field(2, domain(3, "exact.example"))
+        let domains = field(2, domain(0, "keyword"))
+            + field(2, domain(1, #"^regex\d+\.example$"#))
+            + field(2, domain(2, "example.com"))
+            + field(2, domain(3, "exact.example"))
         let entry = field(1, Data("CN".utf8)) + domains
         let data = field(1, entry)
         let provider = try NativeGeoSiteDatabaseProvider(data: data)
         let suffix = try context("www.example.com")
         let exact = try context("exact.example")
+        let plain = try context("contains-keyword.example")
+        let regex = try context("regex42.example")
         #expect(provider.matches(kind: .site, value: "cn", context: suffix))
         #expect(provider.matches(kind: .site, value: "cn", context: exact))
+        #expect(provider.matches(kind: .site, value: "cn", context: plain))
+        #expect(provider.matches(kind: .site, value: "cn", context: regex))
+    }
+
+    @Test("GeoSite decoder merges duplicate categories and skips fixed unknown fields")
+    func geoSiteDuplicateCategoriesAndUnknownFields() throws {
+        func field(_ n: UInt8, _ payload: Data) -> Data {
+            Data([n << 3 | 2, UInt8(payload.count)]) + payload
+        }
+        func entry(_ value: String) -> Data {
+            field(1, Data("CN".utf8))
+                + field(2, Data([0x08, 0x02]) + field(2, Data(value.utf8)))
+        }
+        let fixed64 = Data([0x19]) + Data(repeating: 0xaa, count: 8)
+        let fixed32 = Data([0x25]) + Data(repeating: 0xbb, count: 4)
+        let data = fixed64
+            + field(1, entry("first.example"))
+            + fixed32
+            + field(1, entry("second.example"))
+        let provider = try NativeGeoSiteDatabaseProvider(data: data)
+
+        #expect(provider.domainCount == 2)
+        #expect(provider.matches(kind: .site, value: "CN", context: try context("first.example")))
+        #expect(provider.matches(kind: .site, value: "CN", context: try context("second.example")))
+    }
+
+    @Test("GeoSite decoder rejects malformed UTF-8")
+    func geoSiteRejectsMalformedUTF8() {
+        func field(_ n: UInt8, _ payload: Data) -> Data {
+            Data([n << 3 | 2, UInt8(payload.count)]) + payload
+        }
+        let domain = Data([0x08, 0x02]) + field(2, Data("example.com".utf8))
+        let entry = field(1, Data([0xff])) + field(2, domain)
+        #expect(throws: NativeGeoSiteDatabaseError.malformed) {
+            _ = try NativeGeoSiteDatabaseProvider(data: field(1, entry))
+        }
+    }
+
+    @Test("bundled v2fly GeoSite data parses and matches a real category")
+    func bundledGeoSiteData() throws {
+        guard let path = ProcessInfo.processInfo.environment["MCLASH_GEOSITE_DAT_PATH"] else {
+            return
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
+        let provider = try NativeGeoSiteDatabaseProvider(data: data)
+        let googleContext = try context("www.google.com")
+        let missingCategoryContext = try context("not-a-real-category.example")
+        #expect(provider.domainCount > 200_000)
+        #expect(provider.matches(kind: .site, value: "gfw", context: googleContext))
+        #expect(!provider.matches(kind: .site, value: "gfw", context: missingCategoryContext))
     }
 
     @Test("bundled v2fly GeoIP data parses when an integration fixture is supplied")
@@ -87,6 +169,22 @@ struct NativeRuleEngineProjectionTests {
         #expect(throws: NativeRuleSetFileLoader.Error.unsupportedSource) {
             try NativeRuleSetFileLoader.load(RuleSet(name: "yaml", format: .yaml, path: url.path))
         }
+    }
+
+    @Test("native text loader accepts a cached remote set with source metadata")
+    func loadsCachedRemoteTextRuleSet() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mclash-cached-rules-\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("cached.example\n".utf8).write(to: url)
+
+        let set = RuleSet(
+            name: "cached-remote",
+            sourceURL: URL(string: "https://rules.example/set"),
+            format: .text,
+            path: url.path
+        )
+        #expect(try NativeRuleSetFileLoader.load(set) == ["DOMAIN-SUFFIX,cached.example"])
     }
 
     @Test("native text refresher accepts HTTPS only and atomically caches content")
@@ -231,5 +329,18 @@ struct NativeRuleEngineProjectionTests {
             destination: try FlowDestination(hostname: hostname, port: 443),
             transportProtocol: .tcp
         )
+    }
+}
+
+private struct TestGeoProvider: NativeGeoDatabaseProvider {
+    let supportedKinds: Set<NativeGeoKind>
+    let status: NativeGeoDatabaseStatus = .ready(revision: "test")
+
+    init(kinds: Set<NativeGeoKind>) {
+        supportedKinds = kinds
+    }
+
+    func matches(kind: NativeGeoKind, value: String, context: FlowContext) -> Bool {
+        supportedKinds.contains(kind)
     }
 }

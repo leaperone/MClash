@@ -48,6 +48,9 @@ struct NativeRuntimeDiagnostics: Equatable, Sendable {
     /// support so a policy author can distinguish "no match" from "database
     /// unavailable" without inspecting implementation logs.
     let geoDatabaseStatus: NativeGeoDatabaseStatus
+    /// Per-kind status prevents a ready GeoIP database from hiding a missing
+    /// GeoSite database (and vice versa).
+    let geoDatabaseStatuses: [NativeGeoKind: NativeGeoDatabaseStatus]
 }
 
 /// A connector-neutral explanation for a node that the native data plane
@@ -257,6 +260,11 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         ensureGeoProviderIfNeeded(for: plan)
         let state: NativeRuntimeSessionState
         do {
+            try NativeGeoCapabilityGate.validate(
+                plan: plan,
+                provider: geoProvider,
+                enforce: true
+            )
             state = try NativeRuntimeSessionState(plan: plan, listeners: listeners)
         } catch {
             sessionValidationError = error.localizedDescription
@@ -421,7 +429,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     func state() async -> CoreRunState { currentState }
 
     func diagnostics() async -> NativeRuntimeDiagnostics {
-        NativeRuntimeDiagnostics(
+        if let sessionState {
+            ensureGeoProviderIfNeeded(for: sessionState.plan)
+        }
+        return NativeRuntimeDiagnostics(
             state: currentState,
             capabilities: runtimeCapabilities,
             backend: "native",
@@ -439,7 +450,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             listenerStates: listenerHandles.mapValues(\.state),
             connectorCapabilities: Self.connectorCapabilityMatrix(in: outboundNodeTargets),
             unsupportedConnectors: Self.unsupportedConnectors(in: outboundNodeTargets),
-            geoDatabaseStatus: geoProvider?.status ?? .unavailable
+            geoDatabaseStatus: geoProvider?.status ?? .unavailable,
+            geoDatabaseStatuses: Dictionary(uniqueKeysWithValues: NativeGeoKind.allCases.map {
+                ($0, geoProvider?.status(for: $0) ?? .unavailable)
+            })
         )
     }
 
@@ -517,6 +531,14 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
 
     private func validateConfiguration(_ configuration: CoreLaunchConfiguration) async throws {
         try Task.checkCancellation()
+        if let sessionState {
+            ensureGeoProviderIfNeeded(for: sessionState.plan)
+            try NativeGeoCapabilityGate.validate(
+                plan: sessionState.plan,
+                provider: geoProvider,
+                enforce: true
+            )
+        }
         guard !configuration.secret.isEmpty else {
             throw CoreSupervisorError.configurationInvalid("The native runtime secret cannot be empty.")
         }
@@ -699,7 +721,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         guard !geoProviderLoadAttempted,
               NativeGeoCapabilityGate.requiresProvider(plan) else { return }
         geoProviderLoadAttempted = true
-        geoProvider = Self.loadBundledGeoIPProvider()
+        geoProvider = Self.loadBundledGeoDataProvider()
         if let provider = geoProvider {
             geoMatcher = { kind, value, context in
                 provider.matches(kind: kind, value: value, context: context)
@@ -723,18 +745,32 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         })
     }
 
-    private static func loadBundledGeoIPProvider() -> (any NativeGeoDatabaseProvider)? {
-        let candidates = [
+    private static func loadBundledGeoDataProvider() -> (any NativeGeoDatabaseProvider)? {
+        var providers: [any NativeGeoDatabaseProvider] = []
+        let geoIPCandidates = [
             ProcessInfo.processInfo.environment["MCLASH_GEOIP_DAT_PATH"].map { URL(fileURLWithPath: $0) },
             Bundle.main.url(forResource: "GeoIP", withExtension: "dat"),
             Bundle.main.url(forResource: "GeoIP", withExtension: "dat", subdirectory: "GeoData")
         ].compactMap { $0 }
-        for url in candidates {
+        for url in geoIPCandidates {
             if let provider = NativeGeoIPProviderCache.shared.load(url: url) {
-                return provider
+                providers.append(provider)
+                break
             }
         }
-        return nil
+        let geoSiteCandidates = [
+            ProcessInfo.processInfo.environment["MCLASH_GEOSITE_DAT_PATH"].map { URL(fileURLWithPath: $0) },
+            Bundle.main.url(forResource: "GeoSite", withExtension: "dat"),
+            Bundle.main.url(forResource: "GeoSite", withExtension: "dat", subdirectory: "GeoData")
+        ].compactMap { $0 }
+        for url in geoSiteCandidates {
+            if let provider = NativeGeoSiteProviderCache.shared.load(url: url) {
+                providers.append(provider)
+                break
+            }
+        }
+        guard !providers.isEmpty else { return nil }
+        return NativeGeoDatabaseProviderSet(providers: providers)
     }
 
     private static func socketShapesOverlap(
@@ -838,6 +874,26 @@ private final class NativeGeoIPProviderCache: @unchecked Sendable {
         if let cached = providers[key] { return cached }
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               let provider = try? NativeGeoIPDatabaseProvider(data: data) else {
+            return nil
+        }
+        providers[key] = provider
+        return provider
+    }
+}
+
+private final class NativeGeoSiteProviderCache: @unchecked Sendable {
+    static let shared = NativeGeoSiteProviderCache()
+
+    private let lock = NSLock()
+    private var providers: [String: any NativeGeoDatabaseProvider] = [:]
+
+    func load(url: URL) -> (any NativeGeoDatabaseProvider)? {
+        let key = url.standardizedFileURL.path
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = providers[key] { return cached }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              let provider = try? NativeGeoSiteDatabaseProvider(data: data) else {
             return nil
         }
         providers[key] = provider

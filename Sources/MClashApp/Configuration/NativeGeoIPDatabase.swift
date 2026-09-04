@@ -9,6 +9,7 @@ public struct NativeGeoIPDatabaseProvider: NativeGeoDatabaseProvider {
     private let networksByCountry: [String: [IPNetwork]]
     public let entryCount: Int
     public let status: NativeGeoDatabaseStatus
+    public let supportedKinds: Set<NativeGeoKind> = [.ip]
 
     public init(data: Data) throws {
         guard data.count <= 32 * 1024 * 1024 else { throw NativeGeoIPDatabaseError.tooLarge }

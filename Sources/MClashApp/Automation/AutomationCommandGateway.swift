@@ -1843,25 +1843,31 @@ final class AutomationCommandGateway {
             } ?? .null
             return AutomationJSONValue.object(object)
         }
-        let geoDatabase: AutomationJSONValue = switch value.geoDatabaseStatus {
-        case .unavailable:
-            .object(["status": .string("unavailable")])
-        case let .installedButUnsupportedFormat(format):
-            .object([
-                "status": .string("installedButUnsupportedFormat"),
-                "format": .string(displaySafe(format, maximumLength: 32)),
-            ])
-        case let .ready(revision):
-            .object([
-                "status": .string("ready"),
-                "revision": .string(displaySafe(revision, maximumLength: 64)),
-            ])
-        case let .failed(reason):
-            .object([
-                "status": .string("failed"),
-                "reason": .string(redactedDiagnosticText(reason)),
-            ])
+        let encodeGeoStatus: (NativeGeoDatabaseStatus) -> AutomationJSONValue = { status in
+            switch status {
+            case .unavailable:
+                return .object(["status": .string("unavailable")])
+            case let .installedButUnsupportedFormat(format):
+                return .object([
+                    "status": .string("installedButUnsupportedFormat"),
+                    "format": .string(self.displaySafe(format, maximumLength: 32)),
+                ])
+            case let .ready(revision):
+                return .object([
+                    "status": .string("ready"),
+                    "revision": .string(self.displaySafe(revision, maximumLength: 64)),
+                ])
+            case let .failed(reason):
+                return .object([
+                    "status": .string("failed"),
+                    "reason": .string(redactedDiagnosticText(reason)),
+                ])
+            }
         }
+        let geoDatabase = encodeGeoStatus(value.geoDatabaseStatus)
+        let geoDatabases = Dictionary(uniqueKeysWithValues: NativeGeoKind.allCases.map {
+            ($0.rawValue, encodeGeoStatus(value.geoDatabaseStatuses[$0] ?? .unavailable))
+        })
         return .object([
             "backend": .string(value.backend == "native" ? "native" : "mihomo"),
             "state": .string(state),
@@ -1884,6 +1890,7 @@ final class AutomationCommandGateway {
             "connectorCapabilities": .array(connectorCapabilities),
             "unsupportedConnectors": .array(unsupported),
             "geoDatabase": geoDatabase,
+            "geoDatabases": .object(geoDatabases),
             "sessionValidationError": value.sessionValidationError.map {
                 .string(redactedDiagnosticText($0))
             } ?? .null,
