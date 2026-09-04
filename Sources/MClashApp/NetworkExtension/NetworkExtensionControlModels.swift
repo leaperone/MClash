@@ -6,11 +6,6 @@ enum MClashNetworkExtensionIdentifiers {
     static let localizedDescription = "MClash Application Proxy"
 }
 
-enum NetworkCaptureBackend: String, Codable, Equatable, Sendable {
-    case legacy
-    case native
-}
-
 struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     let revision: UInt64
     let activationIdentifier: UUID
