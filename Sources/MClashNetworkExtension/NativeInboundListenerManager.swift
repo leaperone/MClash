@@ -528,9 +528,16 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
         completion: @escaping @Sendable (Error?, Data) -> Void
     ) {
         guard case let .proxy(routeKey) = route,
-              let entry = catalog.entries.first(where: { $0.route.stableSortKey == routeKey }),
-              entry.target.protocolName == "http" else {
+              let entry = catalog.entries.first(where: { $0.route.stableSortKey == routeKey }) else {
             establish(connection, to: destination, route: route) { error in completion(error, Data()) }
+            return
+        }
+        if entry.target.protocolName != "http" {
+            if entry.target.protocolName == "socks5" {
+                establishSOCKSWithInitialPayload(connection, destination: destination, target: entry.target, completion: completion)
+            } else {
+                establish(connection, to: destination, route: route) { error in completion(error, Data()) }
+            }
             return
         }
         do {
@@ -564,6 +571,54 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
                 guard headerEnd <= HTTPProxyCodec.maximumHeaderBytes else { throw NativeInboundSOCKS5HandshakeError.truncatedResponse }
                 _ = try HTTPProxyCodec.decodeConnectResponse(Data(next[..<headerEnd]))
                 completion(nil, Data(next[headerEnd...]))
+            } catch { completion(error, Data()); connection.cancel() }
+        }
+    }
+
+    private func establishSOCKSWithInitialPayload(_ connection: NWConnection, destination: MClashInboundDestination, target: OutboundNodeTarget, completion: @escaping @Sendable (Error?, Data) -> Void) {
+        let user = target.parameters["username"] ?? target.parameters["user"]
+        let pass = target.parameters["password"] ?? target.parameters["pass"]
+        do {
+            let methods: [SOCKS5AuthenticationMethod] = user != nil && pass != nil ? [.usernamePassword] : [.noAuthenticationRequired]
+            send(try SOCKS5Codec.encodeGreeting(methods: methods), on: connection) { [self] error in
+                if let error { completion(error, Data()); return }
+                receiveExact(2, from: connection, buffer: Data()) { methodData, error in
+                    do {
+                        if let error { throw error }; let selected = try SOCKS5Codec.decodeMethodSelection(methodData)
+                        guard selected.method == (user != nil && pass != nil ? .usernamePassword : .noAuthenticationRequired) else { throw NativeInboundSOCKS5HandshakeError.serverSelectedUnexpectedMethod(selected.method.rawValue) }
+                        if let user, let pass {
+                            let auth = try SOCKS5Codec.encodeUsernamePasswordRequest(credentials: SOCKS5UsernamePasswordCredentials(username: user, password: pass))
+                            self.send(auth, on: connection) { error in
+                                if let error { completion(error, Data()); return }
+                                self.receiveExact(2, from: connection, buffer: Data()) { authData, error in
+                                    do { if let error { throw error }; try SOCKS5Codec.decodeUsernamePasswordResponse(authData).requireSuccess(); try self.sendCommandWithInitialPayload(destination, on: connection, completion: completion) }
+                                    catch { completion(error, Data()); connection.cancel() }
+                                }
+                            }
+                        } else { try self.sendCommandWithInitialPayload(destination, on: connection, completion: completion) }
+                    } catch { completion(error, Data()); connection.cancel() }
+                }
+            }
+        } catch { completion(error, Data()); connection.cancel() }
+    }
+
+    private func sendCommandWithInitialPayload(_ destination: MClashInboundDestination, on connection: NWConnection, completion: @escaping @Sendable (Error?, Data) -> Void) throws {
+        let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
+        send(try SOCKS5Codec.encodeCommandRequest(SOCKS5CommandRequest(command: .connect, endpoint: endpoint)), on: connection) { [self] error in
+            if let error { completion(error, Data()); return }
+            receiveReplyWithPayload(from: connection, buffer: Data(), completion: completion)
+        }
+    }
+
+    private func receiveReplyWithPayload(from connection: NWConnection, buffer: Data, completion: @escaping @Sendable (Error?, Data) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: SOCKS5Limits.maximumStreamInputBytes) { [self] data, _, complete, error in
+            var next = buffer; if let data { next.append(data) }
+            do {
+                if let error { throw error }
+                guard let length = try SOCKS5Codec.commandReplyFrameLength(Array(next)) else { if complete { throw NativeInboundSOCKS5HandshakeError.truncatedResponse }; receiveReplyWithPayload(from: connection, buffer: next, completion: completion); return }
+                guard next.count >= length else { if complete { throw NativeInboundSOCKS5HandshakeError.truncatedResponse }; receiveReplyWithPayload(from: connection, buffer: next, completion: completion); return }
+                try SOCKS5Codec.decodeCommandReply(Data(next.prefix(length))).requireSuccess()
+                completion(nil, Data(next.dropFirst(length)))
             } catch { completion(error, Data()); connection.cancel() }
         }
     }

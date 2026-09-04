@@ -179,6 +179,10 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
         completion: @escaping @Sendable (Error?, Data) -> Void
     ) {
         guard case let .proxy(key) = route, let target = target(for: key), target.protocolName == "http" else {
+            if case let .proxy(key) = route, let target = target(for: key), target.protocolName == "socks5" {
+                establishSOCKSWithInitialPayload(connection, destination: destination, target: target, completion: completion)
+                return
+            }
             establish(connection, to: destination, route: route) { error in completion(error, Data()) }
             return
         }
@@ -196,6 +200,64 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
 
     private func target(for key: String) -> OutboundNodeTarget? {
         catalog?.entries.first { $0.route.stableSortKey == key }?.target
+    }
+
+    private func establishSOCKSWithInitialPayload(_ connection: NWConnection, destination: MClashInboundDestination, target: OutboundNodeTarget, completion: @escaping @Sendable (Error?, Data) -> Void) {
+        let user = target.parameters["username"] ?? target.parameters["user"]
+        let pass = target.parameters["password"] ?? target.parameters["pass"]
+        do {
+            let methods: [SOCKS5AuthenticationMethod] = user != nil && pass != nil ? [.usernamePassword] : [.noAuthenticationRequired]
+            connection.send(content: try SOCKS5Codec.encodeGreeting(methods: methods), completion: .contentProcessed { [self] error in
+                if let error { completion(error, Data()); return }
+                readSOCKSMethodWithInitialPayload(connection, destination: destination, target: target, completion: completion)
+            })
+        } catch { completion(error, Data()) }
+    }
+
+    private func readSOCKSMethodWithInitialPayload(_ connection: NWConnection, destination: MClashInboundDestination, target: OutboundNodeTarget, decoder: SOCKS5MethodSelectionDecoder = .init(), completion: @escaping @Sendable (Error?, Data) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 2) { [self] data, _, complete, error in
+            do {
+                if let error { throw error }; var decoder = decoder
+                guard let data else { throw NativeAppCatalogConnectorError.truncatedResponse }
+                guard let selection = try decoder.append(data) else { if complete { throw NativeAppCatalogConnectorError.truncatedResponse }; readSOCKSMethodWithInitialPayload(connection, destination: destination, target: target, decoder: decoder, completion: completion); return }
+                if selection.method == .usernamePassword {
+                    guard let user = target.parameters["username"] ?? target.parameters["user"], let pass = target.parameters["password"] ?? target.parameters["pass"] else { throw NativeAppCatalogConnectorError.missingCredentials }
+                    let auth = try SOCKS5Codec.encodeUsernamePasswordRequest(credentials: SOCKS5UsernamePasswordCredentials(username: user, password: pass))
+                    connection.send(content: auth, completion: .contentProcessed { [self] error in
+                        if let error { completion(error, Data()); return }; readSOCKSAuthWithInitialPayload(connection, destination: destination, completion: completion)
+                    })
+                } else { try sendSOCKSCommandWithInitialPayload(connection, destination: destination, completion: completion) }
+            } catch { completion(error, Data()); connection.cancel() }
+        }
+    }
+
+    private func readSOCKSAuthWithInitialPayload(_ connection: NWConnection, destination: MClashInboundDestination, decoder: SOCKS5UsernamePasswordResponseDecoder = .init(), completion: @escaping @Sendable (Error?, Data) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 2) { [self] data, _, complete, error in
+            do {
+                if let error { throw error }; var decoder = decoder; guard let data else { throw NativeAppCatalogConnectorError.truncatedResponse }
+                guard let response = try decoder.append(data) else { if complete { throw NativeAppCatalogConnectorError.truncatedResponse }; readSOCKSAuthWithInitialPayload(connection, destination: destination, decoder: decoder, completion: completion); return }
+                try response.requireSuccess(); try sendSOCKSCommandWithInitialPayload(connection, destination: destination, completion: completion)
+            } catch { completion(error, Data()); connection.cancel() }
+        }
+    }
+
+    private func sendSOCKSCommandWithInitialPayload(_ connection: NWConnection, destination: MClashInboundDestination, completion: @escaping @Sendable (Error?, Data) -> Void) throws {
+        let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
+        let request = try SOCKS5Codec.encodeCommandRequest(SOCKS5CommandRequest(command: .connect, endpoint: endpoint))
+        connection.send(content: request, completion: .contentProcessed { [self] error in
+            if let error { completion(error, Data()); return }
+            readSOCKSCommandWithInitialPayload(connection, completion: completion)
+        })
+    }
+
+    private func readSOCKSCommandWithInitialPayload(_ connection: NWConnection, decoder: SOCKS5CommandReplyDecoder = .init(), completion: @escaping @Sendable (Error?, Data) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: SOCKS5Limits.maximumStreamInputBytes) { [self] data, _, complete, error in
+            do {
+                if let error { throw error }; var decoder = decoder; guard let data else { throw NativeAppCatalogConnectorError.truncatedResponse }
+                guard let reply = try decoder.append(data) else { if complete { throw NativeAppCatalogConnectorError.truncatedResponse }; readSOCKSCommandWithInitialPayload(connection, decoder: decoder, completion: completion); return }
+                try reply.requireSuccess(); completion(nil, decoder.remainingData)
+            } catch { completion(error, Data()); connection.cancel() }
+        }
     }
 
     private func webSocketUpgrade(
