@@ -8,7 +8,7 @@ public struct RealityConfiguration: Codable, Equatable, Sendable {
     public let serverName: String
     public let fingerprint: String?
     public let flow: String?
-    public let spiderX: String?
+    public let spiderX: String
 
     public init(parameters: [String: String]) throws {
         let values = Dictionary(uniqueKeysWithValues: parameters.map {
@@ -24,14 +24,15 @@ public struct RealityConfiguration: Codable, Equatable, Sendable {
         let shortID = values["short-id"] ?? nested("short-id")
         let serverName = values["servername"] ?? values["server-name"] ?? values["sni"]
         guard let publicKey, Self.isValidPublicKey(publicKey) else { throw RealityConfigurationError.invalidPublicKey }
-        guard let shortID, Self.isValidShortID(shortID) else { throw RealityConfigurationError.invalidShortID }
+        let shortID = shortID ?? ""
+        guard Self.isValidShortID(shortID) else { throw RealityConfigurationError.invalidShortID }
         guard let serverName, !serverName.isEmpty, serverName.utf8.count <= 255 else { throw RealityConfigurationError.invalidServerName }
         let fingerprint = values["fingerprint"] ?? values["client-fingerprint"]
         if let fingerprint, !Self.allowedFingerprints.contains(fingerprint.lowercased()) { throw RealityConfigurationError.invalidFingerprint }
         let flow = values["flow"]
         if let flow, !Self.allowedFlows.contains(flow.lowercased()) { throw RealityConfigurationError.invalidFlow }
-        let spiderX = values["spiderx"] ?? values["spider-x"]
-        if let spiderX, spiderX.contains(where: { $0 == "\r" || $0 == "\n" }) { throw RealityConfigurationError.invalidSpiderX }
+        let spiderX = values["spiderx"] ?? values["spider-x"] ?? "/"
+        if !spiderX.hasPrefix("/") || spiderX.contains(where: { $0 == "\r" || $0 == "\n" }) { throw RealityConfigurationError.invalidSpiderX }
         self.publicKey = publicKey; self.shortID = shortID; self.serverName = serverName
         self.fingerprint = fingerprint; self.flow = flow; self.spiderX = spiderX
     }
@@ -40,11 +41,14 @@ public struct RealityConfiguration: Codable, Equatable, Sendable {
     static let allowedFlows: Set<String> = ["", "xtls-rprx-vision", "xtls-rprx-vision-udp443", "xtls-rprx-direct"]
     static func isValidShortID(_ value: String) -> Bool {
         let chars = Array(value.lowercased())
-        return chars.count <= 32 && chars.count % 2 == 0 && !chars.isEmpty && chars.allSatisfy { $0.isHexDigit }
+        return chars.count <= 16 && chars.count % 2 == 0 && chars.allSatisfy { $0.isHexDigit }
     }
     static func isValidPublicKey(_ value: String) -> Bool {
-        if let data = Data(base64Encoded: value), data.count == 32 { return true }
-        let chars = Array(value); return chars.count == 64 && chars.allSatisfy { $0.isHexDigit }
+        guard value.count == 43,
+              !value.contains("=") else { return false }
+        var padded = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        padded += String(repeating: "=", count: (4 - padded.count % 4) % 4)
+        return Data(base64Encoded: padded)?.count == 32
     }
 }
 

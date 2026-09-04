@@ -6,9 +6,9 @@ import Testing
 struct OutboundConnectorCapabilityMatrixTests {
     @Test("Validates Reality material but never advertises native TLS")
     func realityBoundary() throws {
-        let key = String(repeating: "a", count: 64)
+        let key = String(repeating: "A", count: 43) // base64.RawURLEncoding(32 zero bytes)
         let target = try OutboundNodeTarget(protocolName: "vless", host: "reality.example", port: 443, parameters: [
-            "security": "reality", "public-key": key, "short-id": "a1b2", "sni": "www.example.com", "fingerprint": "chrome", "flow": "xtls-rprx-vision"
+            "security": "reality", "public-key": key, "short-id": "", "sni": "www.example.com", "fingerprint": "chrome", "flow": "xtls-rprx-vision"
         ])
         let reality = try RealityConfiguration(parameters: target.parameters)
         #expect(reality.serverName == "www.example.com")
