@@ -213,95 +213,22 @@ final class VLESSPlainStreamCodec: NativeStreamCodec, MClashInboundBridgeCodec, 
 /// masked.  We intentionally reject fragmented/control frames here rather
 /// than silently delivering malformed data to the VLESS codec.
 final class VLESSWebSocketStreamCodec: NativeStreamCodec, MClashInboundBridgeCodec, @unchecked Sendable {
-    private var receiveBuffer = Data()
-    private var responseDecoder = VLESSResponseDecoder()
-    private let destination: Data
+    private let codec: VLESSWebSocketTunnelCodec
 
     init(target: OutboundNodeTarget, destination: SOCKS5Endpoint) throws {
-        let uuid = target.parameters["uuid"] ?? ""
-        let host = destination.address.domain
-            ?? destination.address.ipAddress?.presentation
-            ?? ""
-        self.destination = try VLESSCodec.encodeTCPRequest(
-            uuid: uuid, host: host, port: destination.port
+        codec = try VLESSWebSocketTunnelCodec(
+            target: target,
+            destination: destination
         )
     }
 
-    func encodeDestination() throws -> Data { try Self.frame(destination, mask: true) }
-    func encode(_ payload: Data) throws -> Data { try Self.frame(payload, mask: true) }
-
-    func decode(_ input: Data) throws -> [Data] {
-        guard input.count <= Self.maximumPayload,
-              receiveBuffer.count <= Self.maximumPayload + 10 - input.count else {
-            throw VLESSWebSocketCodecError.messageTooLarge
-        }
-        receiveBuffer.append(input)
-        var output: [Data] = []
-        while true {
-            guard receiveBuffer.count >= 2 else { break }
-            let first = receiveBuffer[receiveBuffer.startIndex]
-            let second = receiveBuffer[receiveBuffer.startIndex + 1]
-            let fin = first & 0x80 != 0
-            let opcode = first & 0x0f
-            let masked = second & 0x80 != 0
-            var length = Int(second & 0x7f)
-            var headerLength = 2
-            guard first & 0x70 == 0, fin, opcode == 0x2, !masked else {
-                throw VLESSWebSocketCodecError.invalidFrame
-            }
-            if length == 126 {
-                guard receiveBuffer.count >= 4 else { break }
-                length = Int(receiveBuffer[receiveBuffer.startIndex + 2]) << 8
-                    | Int(receiveBuffer[receiveBuffer.startIndex + 3])
-                headerLength = 4
-            } else if length == 127 {
-                guard receiveBuffer.count >= 10 else { break }
-                var value: UInt64 = 0
-                for offset in 0..<8 { value = (value << 8) | UInt64(receiveBuffer[receiveBuffer.startIndex + 2 + offset]) }
-                guard value <= UInt64(Self.maximumPayload), value <= UInt64(Int.max) else {
-                    throw VLESSWebSocketCodecError.messageTooLarge
-                }
-                length = Int(value)
-                headerLength = 10
-            }
-            guard length <= Self.maximumPayload else { throw VLESSWebSocketCodecError.messageTooLarge }
-            guard receiveBuffer.count >= headerLength + length else { break }
-            let bodyStart = receiveBuffer.startIndex + headerLength
-            let body = Data(receiveBuffer[bodyStart..<(bodyStart + length)])
-            output.append(contentsOf: try responseDecoder.append(body))
-            receiveBuffer.removeFirst(headerLength + length)
-        }
-        return output
-    }
-
-    private static func frame(_ payload: Data, mask: Bool) throws -> Data {
-        guard payload.count <= Self.maximumPayload else { throw VLESSWebSocketCodecError.messageTooLarge }
-        var result = Data([0x82])
-        let flag: UInt8 = mask ? 0x80 : 0
-        if payload.count < 126 {
-            result.append(flag | UInt8(payload.count))
-        } else if payload.count <= 65_535 {
-            result.append(flag | 126)
-            result.append(UInt8(payload.count >> 8)); result.append(UInt8(payload.count & 0xff))
-        } else {
-            result.append(flag | 127)
-            for shift in stride(from: 56, through: 0, by: -8) { result.append(UInt8((UInt64(payload.count) >> UInt64(shift)) & 0xff)) }
-        }
-        if mask {
-            var generator = SystemRandomNumberGenerator()
-            let key = (0..<4).map { _ in UInt8.random(in: 0...UInt8.max, using: &generator) }
-            result.append(contentsOf: key)
-            for (index, byte) in payload.enumerated() { result.append(byte ^ key[index % 4]) }
-        } else { result.append(payload) }
-        return result
-    }
-
-    private static let maximumPayload = 16 * 1024 * 1024
+    func encodeDestination() throws -> Data { try codec.encodeDestination() }
+    func encode(_ payload: Data) throws -> Data { try codec.encode(payload) }
+    func decode(_ input: Data) throws -> [Data] { try codec.decode(input) }
 }
 
 enum VLESSWebSocketCodecError: Error, Equatable, Sendable {
     case invalidFrame
-    case messageTooLarge
     case upgradeRequiresTwoPhaseHandshake
 }
 

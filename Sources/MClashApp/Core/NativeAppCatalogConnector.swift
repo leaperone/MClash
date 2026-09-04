@@ -1,0 +1,354 @@
+import CryptoKit
+import Foundation
+@preconcurrency import Network
+import MClashNetworkShared
+
+/// App-process outbound connector for the socket entrances.  It intentionally
+/// implements only transports whose wire handshake is available in the app
+/// target; unsupported node protocols fail closed during the route decision.
+struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
+    let catalog: OutboundNodeTargetCatalog?
+
+    static func supports(_ target: OutboundNodeTarget) -> Bool {
+        switch target.protocolName {
+        case "http", "socks5":
+            true
+        case "vless":
+            target.parameters["uuid"] != nil
+                && {
+                    let network = target.parameters["network"]?.lowercased() ?? "tcp"
+                    return network == "tcp"
+                        || network == "ws" && target.vlessWebSocketOptions != nil
+                }()
+        case "trojan":
+            (target.parameters["network"]?.lowercased() ?? "tcp") == "tcp"
+                && (target.parameters["password"] ?? target.parameters["passwd"]) != nil
+        default:
+            false
+        }
+    }
+
+    func makeBridgeCodec(
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute
+    ) throws -> (any MClashInboundBridgeCodec)? {
+        guard case let .proxy(key) = route,
+              let target = target(for: key),
+              target.protocolName == "vless" else { return nil }
+        let endpoint = try SOCKS5Endpoint(
+            address: SOCKS5Address(domain: destination.host),
+            port: destination.port
+        )
+        if target.parameters["network"]?.lowercased() == "ws" {
+            return try NativeAppVLESSWebSocketBridge(
+                target: target,
+                destination: endpoint
+            )
+        }
+        return NativeAppVLESSPlainBridge()
+    }
+
+    func connect(to _: MClashInboundDestination, route: MClashInboundRoute) -> NWConnection {
+        guard case let .proxy(key) = route,
+              let target = target(for: key),
+              Self.supports(target) else {
+            return NWConnection(host: NWEndpoint.Host("127.0.0.1"), port: 1, using: .tcp)
+        }
+        let usesTLS = target.protocolName == "trojan"
+            || target.protocolName == "vless"
+                && ["true", "1", "yes", "on"].contains(
+                    target.parameters["tls"]?.lowercased() ?? "false"
+                )
+        let parameters: NWParameters
+        if usesTLS {
+            let tls = NWProtocolTLS.Options()
+            let serverName = target.parameters["sni"]
+                ?? target.parameters["servername"]
+                ?? target.host
+            serverName.withCString {
+                sec_protocol_options_set_tls_server_name(
+                    tls.securityProtocolOptions,
+                    $0
+                )
+            }
+            parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+        } else {
+            parameters = .tcp
+        }
+        return NWConnection(
+            host: NWEndpoint.Host(target.connectionHost),
+            port: NWEndpoint.Port(rawValue: target.port)!,
+            using: parameters
+        )
+    }
+
+    func establish(
+        _ connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        guard case let .proxy(key) = route,
+              let target = target(for: key) else {
+            completion(nil); return
+        }
+        do {
+            if target.protocolName == "http" {
+                let request = try HTTPProxyCodec.encodeConnectRequest(
+                    host: destination.host,
+                    port: destination.port,
+                    username: target.parameters["username"],
+                    password: target.parameters["password"]
+                )
+                connection.send(content: request, completion: .contentProcessed { error in
+                    if let error { completion(error); return }
+                    self.readHTTPResponse(connection, buffer: Data(), completion: completion)
+                })
+            } else if target.protocolName == "socks5" {
+                let username = target.parameters["username"] ?? target.parameters["user"]
+                let password = target.parameters["password"] ?? target.parameters["pass"]
+                let methods: [SOCKS5AuthenticationMethod] = username != nil && password != nil
+                    ? [.usernamePassword] : [.noAuthenticationRequired]
+                let greeting = try SOCKS5Codec.encodeGreeting(methods: methods)
+                connection.send(content: greeting, completion: .contentProcessed { error in
+                    if let error { completion(error); return }
+                    self.readSOCKSMethod(connection, destination: destination, target: target, completion: completion)
+                })
+            } else if target.protocolName == "vless" {
+                let endpoint = try SOCKS5Endpoint(
+                    address: SOCKS5Address(domain: destination.host),
+                    port: destination.port
+                )
+                if target.parameters["network"]?.lowercased() == "ws" {
+                    let upgrade = try webSocketUpgrade(target: target)
+                    connection.send(
+                        content: upgrade.request,
+                        completion: .contentProcessed { error in
+                            if let error { completion(error); return }
+                            self.readWebSocketResponse(
+                                connection,
+                                target: target,
+                                destination: endpoint,
+                                expectedAccept: upgrade.expectedAccept,
+                                buffer: Data(),
+                                completion: completion
+                            )
+                        }
+                    )
+                } else {
+                    guard let uuid = target.parameters["uuid"] else {
+                        throw VLESSCodecError.invalidUUID
+                    }
+                    let request = try VLESSCodec.encodeTCPRequest(
+                        uuid: uuid,
+                        host: destination.host,
+                        port: destination.port
+                    )
+                    connection.send(
+                        content: request,
+                        completion: .contentProcessed(completion)
+                    )
+                }
+            } else if target.protocolName == "trojan" {
+                guard let password = target.parameters["password"]
+                    ?? target.parameters["passwd"] else {
+                    throw TrojanCodecError.invalidPassword
+                }
+                let request = try TrojanCodec.encodeTCPRequest(
+                    password: password,
+                    host: destination.host,
+                    port: destination.port
+                )
+                connection.send(
+                    content: request,
+                    completion: .contentProcessed(completion)
+                )
+            } else {
+                completion(NativeAppCatalogConnectorError.unsupportedProtocol(target.protocolName))
+            }
+        } catch { completion(error) }
+    }
+
+    private func target(for key: String) -> OutboundNodeTarget? {
+        catalog?.entries.first { $0.route.stableSortKey == key }?.target
+    }
+
+    private func webSocketUpgrade(
+        target: OutboundNodeTarget
+    ) throws -> (request: Data, expectedAccept: String) {
+        guard target.parameters["uuid"] != nil,
+              let options = target.vlessWebSocketOptions else {
+            throw NativeAppCatalogConnectorError.unsupportedProtocol("vless websocket")
+        }
+        let key = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
+            .base64EncodedString()
+        let expectedAccept = Data(Insecure.SHA1.hash(
+            data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8)
+        )).base64EncodedString()
+        let configuredHost = options.headers.first {
+            $0.key.caseInsensitiveCompare("Host") == .orderedSame
+        }?.value
+        var headers: [(String, String)] = [
+            ("Host", configuredHost ?? target.parameters["ws-host"] ?? target.host),
+            ("Upgrade", "websocket"),
+            ("Connection", "Upgrade"),
+            ("Sec-WebSocket-Version", "13"),
+            ("Sec-WebSocket-Key", key)
+        ]
+        let reserved = Set(headers.map { $0.0.lowercased() })
+        headers.append(contentsOf: options.headers.compactMap { name, value in
+            reserved.contains(name.lowercased()) ? nil : (name, value)
+        })
+        var request = "GET \(options.path) HTTP/1.1\r\n"
+        request += headers.map { "\($0.0): \($0.1)\r\n" }.joined()
+        request += "\r\n"
+        return (Data(request.utf8), expectedAccept)
+    }
+
+    private func readWebSocketResponse(
+        _ connection: NWConnection,
+        target: OutboundNodeTarget,
+        destination: SOCKS5Endpoint,
+        expectedAccept: String,
+        buffer: Data,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        connection.receive(
+            minimumIncompleteLength: 1,
+            maximumLength: max(1, HTTPProxyCodec.maximumHeaderBytes - buffer.count)
+        ) { [self] data, _, complete, error in
+            if let error { completion(error); return }
+            var next = buffer
+            if let data { next.append(data) }
+            guard next.count <= HTTPProxyCodec.maximumHeaderBytes else {
+                completion(NativeAppCatalogConnectorError.truncatedResponse)
+                connection.cancel()
+                return
+            }
+            if let end = next.range(of: Data("\r\n\r\n".utf8)) {
+                do {
+                    try validateWebSocketResponse(
+                        Data(next[..<end.upperBound]),
+                        expectedAccept: expectedAccept
+                    )
+                    let frame = try VLESSWebSocketTunnelCodec(
+                        target: target,
+                        destination: destination
+                    ).encodeDestination()
+                    connection.send(
+                        content: frame,
+                        completion: .contentProcessed(completion)
+                    )
+                } catch {
+                    completion(error)
+                    connection.cancel()
+                }
+            } else if complete {
+                completion(NativeAppCatalogConnectorError.truncatedResponse)
+                connection.cancel()
+            } else {
+                readWebSocketResponse(
+                    connection,
+                    target: target,
+                    destination: destination,
+                    expectedAccept: expectedAccept,
+                    buffer: next,
+                    completion: completion
+                )
+            }
+        }
+    }
+
+    private func validateWebSocketResponse(
+        _ response: Data,
+        expectedAccept: String
+    ) throws {
+        guard let text = String(data: response, encoding: .utf8) else {
+            throw NativeAppCatalogConnectorError.invalidWebSocketUpgrade
+        }
+        let lines = text.components(separatedBy: "\r\n")
+        guard lines.first?.hasPrefix("HTTP/1.1 101 ") == true else {
+            throw NativeAppCatalogConnectorError.invalidWebSocketUpgrade
+        }
+        var values: [String: String] = [:]
+        for line in lines.dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            values[String(line[..<colon]).lowercased()] = String(
+                line[line.index(after: colon)...]
+            ).trimmingCharacters(in: .whitespaces)
+        }
+        guard values["upgrade"]?.lowercased() == "websocket",
+              values["connection"]?.lowercased().contains("upgrade") == true,
+              values["sec-websocket-accept"] == expectedAccept else {
+            throw NativeAppCatalogConnectorError.invalidWebSocketUpgrade
+        }
+    }
+
+    private func readHTTPResponse(_ connection: NWConnection, buffer: Data, completion: @escaping @Sendable (Error?) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: HTTPProxyCodec.maximumHeaderBytes) { [self] data, _, complete, error in
+            var next = buffer; if let data { next.append(data) }
+            if let error { completion(error); return }
+            if next.range(of: Data("\r\n\r\n".utf8)) != nil {
+                do { _ = try HTTPProxyCodec.decodeConnectResponse(next); completion(nil) }
+                catch { completion(error); connection.cancel() }
+            } else if complete || next.count >= HTTPProxyCodec.maximumHeaderBytes {
+                completion(NativeAppCatalogConnectorError.truncatedResponse); connection.cancel()
+            } else { readHTTPResponse(connection, buffer: next, completion: completion) }
+        }
+    }
+
+    private func readSOCKSMethod(_ connection: NWConnection, destination: MClashInboundDestination, target: OutboundNodeTarget, completion: @escaping @Sendable (Error?) -> Void) {
+        connection.receive(minimumIncompleteLength: 2, maximumLength: 2) { [self] data, _, complete, error in
+            guard let data, data.count == 2, error == nil, !complete else { completion(error ?? NativeAppCatalogConnectorError.truncatedResponse); return }
+            do {
+                let method = try SOCKS5Codec.decodeMethodSelection(data).method
+                if method == .usernamePassword {
+                    guard let username = target.parameters["username"] ?? target.parameters["user"], let password = target.parameters["password"] ?? target.parameters["pass"] else { throw NativeAppCatalogConnectorError.missingCredentials }
+                    let auth = try SOCKS5Codec.encodeUsernamePasswordRequest(credentials: SOCKS5UsernamePasswordCredentials(username: username, password: password))
+                    connection.send(content: auth, completion: .contentProcessed { error in
+                        if let error { completion(error); return }
+                        connection.receive(minimumIncompleteLength: 2, maximumLength: 2) { data, _, _, error in
+                            do { if let error { throw error }; guard let data else { throw NativeAppCatalogConnectorError.truncatedResponse }; try SOCKS5Codec.decodeUsernamePasswordResponse(data).requireSuccess(); try self.sendSOCKSCommand(connection, destination: destination, completion: completion) }
+                            catch { completion(error); connection.cancel() }
+                        }
+                    })
+                } else {
+                    try sendSOCKSCommand(connection, destination: destination, completion: completion)
+                }
+            } catch { completion(error); connection.cancel() }
+        }
+    }
+
+    private func sendSOCKSCommand(_ connection: NWConnection, destination: MClashInboundDestination, completion: @escaping @Sendable (Error?) -> Void) throws {
+        let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
+        connection.send(content: try SOCKS5Codec.encodeCommandRequest(SOCKS5CommandRequest(command: .connect, endpoint: endpoint)), completion: .contentProcessed { error in
+            if let error { completion(error); return }
+            connection.receive(minimumIncompleteLength: 1, maximumLength: SOCKS5Limits.maximumStreamInputBytes) { data, _, _, error in
+                do { if let error { throw error }; guard let data, let length = try SOCKS5Codec.commandReplyFrameLength(Array(data)), data.count >= length else { throw NativeAppCatalogConnectorError.truncatedResponse }; try SOCKS5Codec.decodeCommandReply(Data(data.prefix(length))).requireSuccess(); completion(nil) }
+                catch { completion(error); connection.cancel() }
+            }
+        })
+    }
+}
+
+private final class NativeAppVLESSPlainBridge: MClashInboundBridgeCodec, @unchecked Sendable {
+    private var responseDecoder = VLESSResponseDecoder()
+    func encode(_ payload: Data) throws -> Data { payload }
+    func decode(_ input: Data) throws -> [Data] { try responseDecoder.append(input) }
+}
+
+private final class NativeAppVLESSWebSocketBridge: MClashInboundBridgeCodec, @unchecked Sendable {
+    private let codec: VLESSWebSocketTunnelCodec
+    init(target: OutboundNodeTarget, destination: SOCKS5Endpoint) throws {
+        codec = try VLESSWebSocketTunnelCodec(target: target, destination: destination)
+    }
+    func encode(_ payload: Data) throws -> Data { try codec.encode(payload) }
+    func decode(_ input: Data) throws -> [Data] { try codec.decode(input) }
+}
+
+enum NativeAppCatalogConnectorError: Error, Equatable, Sendable {
+    case unsupportedProtocol(String)
+    case truncatedResponse
+    case missingCredentials
+    case invalidWebSocketUpgrade
+}

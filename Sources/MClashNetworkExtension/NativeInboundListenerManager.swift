@@ -126,6 +126,7 @@ final class NativeInboundListenerManager: @unchecked Sendable {
             guard let kind else { continue }
             let listener = try MClashInboundListener(
                 kind: kind,
+                bindAddress: spec.bindAddress,
                 port: port,
                 route: { [routeResolver, routeForListener] destination in
                     // The catalog check above is performed transactionally

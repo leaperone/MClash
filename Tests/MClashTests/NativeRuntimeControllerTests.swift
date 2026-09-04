@@ -279,7 +279,42 @@ struct NativeRuntimeControllerTests {
         #expect(await engine.stop())
     }
 
-    @Test("Native engine manages listener handles without binding production sockets")
+    @Test("Native policy reload keeps an unchanged listener socket bound")
+    func nativePolicyReloadDoesNotRebindStableSocket() async throws {
+        let plan = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let listener = try MClashListenerSpec(
+            name: "Stable HTTP",
+            kind: .http,
+            enabled: true,
+            port: try LocalPortProbe().availableTCPPort()
+        )
+        let registry = try MClashListenerRegistry(listeners: [listener])
+        let engine = try NativeRuntimeEngine(plan: plan, listeners: registry)
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "mclash-native-stable-reload-\(UUID().uuidString)")
+        try await engine.start(CoreLaunchConfiguration(
+            binaryURL: root.appending(path: "must-not-launch"),
+            homeDirectory: root.appending(path: "home"),
+            configURL: root.appending(path: "missing.yaml"),
+            controllerPort: 19_103,
+            secret: "native-stable-reload-secret"
+        ))
+        for _ in 0..<100 {
+            if await engine.nativeListenerHandles().first?.socketBound == true { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        try await engine.configure(plan: plan, listeners: registry)
+
+        let handles = await engine.nativeListenerHandles()
+        #expect(handles.first?.state == .running)
+        #expect(handles.first?.socketBound == true)
+        #expect(await engine.stop())
+    }
+
+    @Test("Native engine binds and stops app-owned listener sockets")
     func nativeListenerLifecycleUsesSafeHandles() async throws {
         let plan = try ConfigurationCompiler().compileRuntimePlan(
             document: ConfigurationDocument.mclashDefault()
@@ -288,7 +323,7 @@ struct NativeRuntimeControllerTests {
             name: "Native HTTP",
             kind: .http,
             enabled: true,
-            port: 18_181
+            port: try LocalPortProbe().availableTCPPort()
         )
         let app = try MClashListenerSpec(
             name: "Native App Routing",
@@ -315,8 +350,14 @@ struct NativeRuntimeControllerTests {
         )
         try await engine.start(configuration)
 
-        let running = await engine.nativeListenerHandles()
+        var running = await engine.nativeListenerHandles()
+        for _ in 0..<100
+        where running.first(where: { $0.id == http.id })?.state != .running {
+            try await Task.sleep(for: .milliseconds(10))
+            running = await engine.nativeListenerHandles()
+        }
         #expect(running.first(where: { $0.id == http.id })?.state == .running)
+        #expect(running.first(where: { $0.id == http.id })?.socketBound == true)
         #expect(running.first(where: { $0.id == app.id })?.state == .stopped)
         let diagnostics = await engine.diagnostics()
         #expect(diagnostics.listenerStates[http.id] == .running)
@@ -327,6 +368,7 @@ struct NativeRuntimeControllerTests {
         #expect(await engine.stop())
         let stopped = await engine.nativeListenerHandles()
         #expect(stopped.allSatisfy { $0.state == .stopped })
+        #expect(stopped.allSatisfy { !$0.socketBound })
     }
 
     @Test("Native session rejects invalid policy before storing it")

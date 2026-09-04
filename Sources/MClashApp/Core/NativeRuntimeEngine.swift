@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import Network
 import MClashNetworkShared
 
 /// Capabilities exposed by a runtime controller. These values describe the
@@ -69,18 +70,14 @@ enum NativeListenerLifecycleState: Equatable, Sendable {
     case failed(String)
 }
 
-/// A safe handle for a listener owned by the native runtime.  The first
-/// lifecycle slice intentionally models binding rather than opening sockets:
-/// the Network Extension owns the actual listener transport. Keeping this
-/// handle in the engine makes start/stop transactional and observable without
-/// touching user ports during migration tests.
+/// A handle for an entrance owned and bound by the app-process runtime.
 struct NativeListenerHandle: Equatable, Sendable {
     let id: UUID
     let name: String
     let kind: MClashListenerKind
-    let endpoint: String?
+    var endpoint: String?
     let route: MClashListenerRoute
-    let socketBound: Bool
+    var socketBound: Bool
     var state: NativeListenerLifecycleState
 
     init(spec: MClashListenerSpec, state: NativeListenerLifecycleState = .stopped) {
@@ -147,12 +144,7 @@ extension CoreRunState {
 
 /// In-process runtime lifecycle for the native control plane.
 ///
-/// This first slice intentionally owns lifecycle and diagnostics only. It
-/// does not spawn a process, bind a listener, or pretend that the configured
-/// controller endpoint is reachable. Native inbound listeners/connectors are
-/// added behind this seam in subsequent migrations. Keeping this object
-/// usable now lets tests prove that selecting native runtime cannot launch
-/// Mihomo as a side effect.
+/// The app process owns its HTTP/SOCKS5 entrances; Mihomo is never started.
 final actor NativeRuntimeEngine: ProfileRuntimeSession {
     nonisolated let events: AsyncStream<CoreEvent>
     nonisolated let runtimeCapabilities: Set<NativeRuntimeCapability> = [
@@ -177,6 +169,8 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     private var sessionValidationError: String?
     private var listenerHandles: [UUID: NativeListenerHandle] = [:]
     private var outboundNodeTargets: OutboundNodeTargetCatalog?
+    private var inboundListeners: [UUID: MClashInboundListener] = [:]
+    private var listenerGeneration: UInt64 = 0
 
     init() {
         let pair = AsyncStream<CoreEvent>.makeStream(
@@ -219,16 +213,58 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             sessionValidationError = error.localizedDescription
             throw error
         }
+        var catalog = Self.makeOutboundNodeTargetCatalog(from: plan)
+        if let unresolvedCatalog = catalog,
+           let bootstrap = Self.nativeDNSBootstrap(from: plan) {
+            catalog = await NativeHostnameResolver(
+                bootstrap: bootstrap
+            ).resolving(unresolvedCatalog)
+        }
+        if currentState.isRunning,
+           Self.socketShape(of: sessionState?.listeners)
+            == Self.socketShape(of: listeners) {
+            let route = makeRouteResolver(plan: plan, catalog: catalog)
+            let connector = NativeAppCatalogConnector(catalog: catalog)
+            for listener in inboundListeners.values {
+                listener.reconfigure(route: route, connector: connector)
+            }
+            let previousHandles = listenerHandles
+            sessionState = state
+            listenerHandles = Self.makeListenerHandles(for: listeners)
+            for id in listenerHandles.keys {
+                guard var handle = listenerHandles[id],
+                      let previous = previousHandles[id] else { continue }
+                handle.state = previous.state
+                handle.socketBound = previous.socketBound
+                handle.endpoint = previous.endpoint
+                listenerHandles[id] = handle
+            }
+            outboundNodeTargets = catalog
+            sessionValidationError = nil
+            lastError = nil
+            continuation.yield(.log(CoreLogLine(
+                stream: .supervisor,
+                message: "Native runtime policy reloaded without rebinding listener sockets."
+            )))
+            return
+        }
+        if currentState.isRunning,
+           Self.socketShapesOverlap(sessionState?.listeners, listeners) {
+            throw CoreSupervisorError.configurationInvalid(
+                "Native listener endpoints changed in place; reconnect to apply the new socket layout."
+            )
+        }
+        // Construct every socket object before replacing the current session;
+        // invalid reloads leave the last-known-good listeners untouched.
+        let replacements = try makeInboundListeners(registry: listeners, plan: plan, catalog: catalog)
+        let oldListeners = inboundListeners
+        listenerGeneration &+= 1
         sessionState = state
         listenerHandles = Self.makeListenerHandles(for: listeners)
-        outboundNodeTargets = Self.makeOutboundNodeTargetCatalog(from: plan)
-        // A policy reload may occur while the native runtime is active. The
-        // Network Extension owns actual sockets, so refreshing the safe
-        // handles is enough here; mirror the current running state for
-        // enabled entrances without binding anything in this process.
-        if currentState.isRunning {
-            beginListeners()
-        }
+        outboundNodeTargets = catalog
+        inboundListeners = replacements
+        oldListeners.values.forEach { $0.stop() }
+        if currentState.isRunning { beginListeners() }
         sessionValidationError = nil
         lastError = nil
         continuation.yield(.log(CoreLogLine(
@@ -242,7 +278,34 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     /// NativeRuntimeController seam stays source-compatible with the legacy
     /// Mihomo adapter during migration.
     func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) async {
-        outboundNodeTargets = catalog
+        guard let state = sessionState else {
+            outboundNodeTargets = catalog
+            return
+        }
+        if currentState.isRunning {
+            let route = makeRouteResolver(plan: state.plan, catalog: catalog)
+            let connector = NativeAppCatalogConnector(catalog: catalog)
+            for listener in inboundListeners.values {
+                listener.reconfigure(route: route, connector: connector)
+            }
+            outboundNodeTargets = catalog
+            lastError = nil
+            return
+        }
+        do {
+            let replacements = try makeInboundListeners(
+                registry: state.listeners,
+                plan: state.plan,
+                catalog: catalog
+            )
+            listenerGeneration &+= 1
+            inboundListeners.values.forEach { $0.stop() }
+            inboundListeners = replacements
+            outboundNodeTargets = catalog
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
     }
 
     /// Evaluate one flow using MClash's rule projection and resolve its
@@ -330,6 +393,14 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             throw CoreSupervisorError.alreadyRunning
         }
         try await validateConfiguration(configuration)
+        if inboundListeners.isEmpty, let state = sessionState {
+            inboundListeners = try makeInboundListeners(
+                registry: state.listeners,
+                plan: state.plan,
+                catalog: outboundNodeTargets
+            )
+            listenerGeneration &+= 1
+        }
         transition(to: .starting)
         beginListeners()
         let now = Date()
@@ -448,6 +519,21 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         return try? OutboundNodeTargetCatalog(entries: entries)
     }
 
+    private static func nativeDNSBootstrap(
+        from plan: CompiledRuntimePlan
+    ) -> DNSUpstreamBootstrap? {
+        guard let policy = plan.dnsPolicy else { return nil }
+        var seen = Set<MClashNetworkShared.IPAddress>()
+        let endpoints = (policy.nameservers + policy.fallbackNameservers).compactMap {
+            raw -> DNSUpstreamEndpoint? in
+            guard let address = try? MClashNetworkShared.IPAddress(raw), seen.insert(address).inserted else {
+                return nil
+            }
+            return try? DNSUpstreamEndpoint(address: address, transport: .udp)
+        }
+        return try? DNSUpstreamBootstrap(endpoints: endpoints)
+    }
+
     private func beginListeners() {
         guard let registry = sessionState?.listeners else { return }
         for spec in registry.listeners {
@@ -455,21 +541,125 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             handle.state = spec.enabled ? .starting : .stopped
             listenerHandles[spec.id] = handle
         }
-        // Binding is deliberately represented by a handle only. Actual TCP
-        // sockets are started by the Network Extension listener owner.
         for spec in registry.enabledListeners {
-            guard var handle = listenerHandles[spec.id] else { continue }
-            handle.state = .running
+            guard let listener = inboundListeners[spec.id], var handle = listenerHandles[spec.id] else { continue }
+            handle.state = .starting
             listenerHandles[spec.id] = handle
+            listener.start()
         }
     }
 
     private func stopListeners() {
+        listenerGeneration &+= 1
+        inboundListeners.values.forEach { $0.stop() }
+        inboundListeners.removeAll()
         for id in listenerHandles.keys {
             guard var handle = listenerHandles[id] else { continue }
             handle.state = .stopped
+            handle.socketBound = false
             listenerHandles[id] = handle
         }
+    }
+
+    private func makeInboundListeners(
+        registry: MClashListenerRegistry,
+        plan: CompiledRuntimePlan,
+        catalog: OutboundNodeTargetCatalog?
+    ) throws -> [UUID: MClashInboundListener] {
+        let generation = listenerGeneration &+ 1
+        let route = makeRouteResolver(plan: plan, catalog: catalog)
+        var result: [UUID: MClashInboundListener] = [:]
+        for spec in registry.enabledListeners where spec.kind.requiresSocketEndpoint {
+            guard let port = spec.port else { continue }
+            let kind: MClashInboundListener.Kind = spec.kind == .http ? .httpConnect : .socks5
+            let listener = try MClashInboundListener(
+                kind: kind,
+                bindAddress: spec.bindAddress,
+                port: port,
+                route: route,
+                connector: NativeAppCatalogConnector(catalog: catalog),
+                stateHandler: { [weak self] ready, actualPort in
+                    guard let self else { return }
+                    Task { await self.listenerDidChange(id: spec.id, bindAddress: spec.bindAddress, generation: generation, ready: ready, port: actualPort) }
+                }
+            )
+            result[spec.id] = listener
+        }
+        return result
+    }
+
+    private func makeRouteResolver(
+        plan: CompiledRuntimePlan,
+        catalog: OutboundNodeTargetCatalog?
+    ) -> @Sendable (MClashInboundDestination) -> MClashInboundRoute {
+        let projection = NativeRuleEngineProjection(plan: plan)
+        return { destination in
+            guard let flowDestination = try? FlowDestination(
+                hostname: destination.host,
+                port: destination.port
+            ) else { return .reject }
+            let context = FlowContext(
+                source: FlowSource(
+                    processIdentifier: 0,
+                    auditToken: Data(),
+                    userID: 0
+                ),
+                destination: flowDestination,
+                transportProtocol: .tcp
+            )
+            switch projection.evaluate(context).action {
+            case .direct:
+                return .direct
+            case .reject:
+                return .reject
+            case let .outbound(groupID):
+                guard let group = plan.proxyGroups.first(where: { $0.id == groupID }),
+                      let target = catalog?.target(for: .group(group.name)),
+                      NativeAppCatalogConnector.supports(target) else {
+                    return .reject
+                }
+                return .proxy(OutboundRoute.group(group.name).stableSortKey)
+            }
+        }
+    }
+
+    private static func socketShape(
+        of registry: MClashListenerRegistry?
+    ) -> [UUID: String] {
+        guard let registry else { return [:] }
+        return Dictionary(uniqueKeysWithValues: registry.enabledListeners.compactMap {
+            spec -> (UUID, String)? in
+            guard spec.kind.requiresSocketEndpoint, let port = spec.port else { return nil }
+            return (
+                spec.id,
+                "\(spec.kind.rawValue):\(spec.bindAddress):\(port)"
+            )
+        })
+    }
+
+    private static func socketShapesOverlap(
+        _ current: MClashListenerRegistry?,
+        _ replacement: MClashListenerRegistry
+    ) -> Bool {
+        let currentEndpoints = Set(
+            current?.enabledListeners.compactMap(\.endpoint) ?? []
+        )
+        let replacementEndpoints = Set(
+            replacement.enabledListeners.compactMap(\.endpoint)
+        )
+        return !currentEndpoints.isDisjoint(with: replacementEndpoints)
+    }
+
+    private func listenerDidChange(id: UUID, bindAddress: String, generation: UInt64, ready: Bool, port: UInt16?) {
+        guard generation == listenerGeneration, var handle = listenerHandles[id] else { return }
+        handle.state = ready ? .running : .failed("Native listener socket failed")
+        handle.socketBound = ready
+        if let port {
+            let host = bindAddress.contains(":") ? "[\(bindAddress)]" : bindAddress
+            handle.endpoint = "\(host):\(port)"
+        }
+        listenerHandles[id] = handle
+        if !ready { lastError = "Native listener \(id) failed to bind." }
     }
 
     private func emitLog(_ message: String) {

@@ -1,11 +1,11 @@
 import Foundation
 @preconcurrency import Network
-import MClashNetworkShared
 
 /// A destination presented by an MClash-owned TCP entrance.
-struct MClashInboundDestination: Equatable, Sendable {
-    let host: String
-    let port: UInt16
+public struct MClashInboundDestination: Equatable, Sendable {
+    public let host: String
+    public let port: UInt16
+    public init(host: String, port: UInt16) { self.host = host; self.port = port }
 }
 
 private extension SOCKS5Endpoint {
@@ -17,7 +17,7 @@ private extension SOCKS5Endpoint {
     var networkPort: NWEndpoint.Port? { NWEndpoint.Port(rawValue: port) }
 }
 
-enum MClashInboundRoute: Equatable, Sendable {
+public enum MClashInboundRoute: Equatable, Sendable {
     case direct
     case reject
     case proxy(String)
@@ -26,7 +26,7 @@ enum MClashInboundRoute: Equatable, Sendable {
 /// Outbound connection boundary for the MClash-owned listener.  The listener
 /// never knows whether a proxy connection is backed by Mihomo, Xray, or a
 /// future native connector.
-protocol MClashInboundOutboundConnector: Sendable {
+public protocol MClashInboundOutboundConnector: Sendable {
     func connect(to destination: MClashInboundDestination, route: MClashInboundRoute) -> NWConnection
 
     /// Returns the per-upstream transport codec used after establishment. A
@@ -53,12 +53,12 @@ protocol MClashInboundOutboundConnector: Sendable {
 /// nil means the transport is a plain byte stream. Implementations must own
 /// their mutable decoder state and must be safe to use from the listener's
 /// serial queue only.
-protocol MClashInboundBridgeCodec: AnyObject, Sendable {
+public protocol MClashInboundBridgeCodec: AnyObject, Sendable {
     func encode(_ payload: Data) throws -> Data
     func decode(_ input: Data) throws -> [Data]
 }
 
-extension MClashInboundOutboundConnector {
+public extension MClashInboundOutboundConnector {
     func makeBridgeCodec(
         to _: MClashInboundDestination,
         route _: MClashInboundRoute
@@ -78,27 +78,34 @@ extension MClashInboundOutboundConnector {
 /// Minimal HTTP CONNECT/SOCKS5 TCP server owned by MClash.  It deliberately
 /// contains no routing policy: callers supply `route` and a connector. This
 /// makes the protocol surface independently testable before AppModel wiring.
-final class MClashInboundListener: @unchecked Sendable {
-    enum Kind: Sendable { case httpConnect, socks5 }
+public final class MClashInboundListener: @unchecked Sendable {
+    public enum Kind: Sendable { case httpConnect, socks5 }
 
     let kind: Kind
     private let queue: DispatchQueue
-    private let route: @Sendable (MClashInboundDestination) -> MClashInboundRoute
-    private let connector: MClashInboundOutboundConnector
+    private let routing: MClashInboundRoutingState
     private let stateHandler: (@Sendable (Bool, UInt16?) -> Void)?
     private let failureHandler: (@Sendable (String) -> Void)?
     private var listener: NWListener?
     private var connections = [ObjectIdentifier: NWConnection]()
-    private(set) var port: UInt16?
+    public private(set) var port: UInt16?
 
-    init(kind: Kind, port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector, stateHandler: (@Sendable (Bool, UInt16?) -> Void)? = nil, failureHandler: (@Sendable (String) -> Void)? = nil) throws {
-        self.kind = kind; self.queue = queue; self.route = route; self.connector = connector; self.stateHandler = stateHandler; self.failureHandler = failureHandler
-        let nwListener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+    public init(kind: Kind, bindAddress: String = "127.0.0.1", port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector, stateHandler: (@Sendable (Bool, UInt16?) -> Void)? = nil, failureHandler: (@Sendable (String) -> Void)? = nil) throws {
+        self.kind = kind; self.queue = queue; routing = MClashInboundRoutingState(route: route, connector: connector); self.stateHandler = stateHandler; self.failureHandler = failureHandler
+        guard MClashListenerSpec.isLoopback(bindAddress) else {
+            throw MClashListenerRegistryError.nonLoopbackBindAddress(bindAddress)
+        }
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(
+            host: NWEndpoint.Host(bindAddress),
+            port: NWEndpoint.Port(rawValue: port)!
+        )
+        let nwListener = try NWListener(using: parameters)
         listener = nwListener
         nwListener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
     }
 
-    func start() {
+    public func start() {
         queue.async(execute: DispatchWorkItem { [weak self] in
             guard let self, let listener = self.listener else { return }
             listener.stateUpdateHandler = { [weak self] state in
@@ -117,7 +124,17 @@ final class MClashInboundListener: @unchecked Sendable {
         })
     }
 
-    func stop() {
+    /// Atomically changes policy and connector selection without rebinding the
+    /// listening socket. Existing flows retain their captured connector while
+    /// newly accepted flows use the new runtime-plan generation.
+    public func reconfigure(
+        route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute,
+        connector: MClashInboundOutboundConnector
+    ) {
+        routing.update(route: route, connector: connector)
+    }
+
+    public func stop() {
         queue.async(execute: DispatchWorkItem { [weak self] in
             guard let self else { return }
             listener?.cancel(); listener = nil
@@ -182,7 +199,9 @@ final class MClashInboundListener: @unchecked Sendable {
     }
 
     private func open(_ client: NWConnection, destination: MClashInboundDestination, response: Data) {
-        let decision = route(destination)
+        let routing = routing.snapshot()
+        let decision = routing.route(destination)
+        let connector = routing.connector
         guard decision != .reject else {
             let rejection = response.starts(with: Data("HTTP/".utf8)) ? HTTPProxyCodec.encodeFailureResponse(status: 403, reason: "Forbidden") : Self.socksReply(.connectionNotAllowed)
             client.send(content: rejection, completion: .contentProcessed { _ in client.cancel() }); return
@@ -196,7 +215,7 @@ final class MClashInboundListener: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
-                self.connector.establish(
+                connector.establish(
                     upstream,
                     to: destination,
                     route: decision
@@ -208,7 +227,7 @@ final class MClashInboundListener: @unchecked Sendable {
                     client.send(content: response, completion: .contentProcessed { error in
                         guard error == nil else { client.cancel(); upstream.cancel(); return }
                         do {
-                            let codec = try self.connector.makeBridgeCodec(
+                            let codec = try connector.makeBridgeCodec(
                                 to: destination,
                                 route: decision
                             )
@@ -293,4 +312,30 @@ final class MClashInboundListener: @unchecked Sendable {
     }
 
     private static func socksReply(_ code: SOCKS5ReplyCode) -> Data { Data([5, code.rawValue, 0, 1, 0, 0, 0, 0, 0, 0]) }
+}
+
+private final class MClashInboundRoutingState: @unchecked Sendable {
+    typealias Route = @Sendable (MClashInboundDestination) -> MClashInboundRoute
+
+    private let lock = NSLock()
+    private var route: Route
+    private var connector: MClashInboundOutboundConnector
+
+    init(route: @escaping Route, connector: MClashInboundOutboundConnector) {
+        self.route = route
+        self.connector = connector
+    }
+
+    func update(route: @escaping Route, connector: MClashInboundOutboundConnector) {
+        lock.lock()
+        self.route = route
+        self.connector = connector
+        lock.unlock()
+    }
+
+    func snapshot() -> (route: Route, connector: MClashInboundOutboundConnector) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (route, connector)
+    }
 }
