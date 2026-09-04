@@ -16,6 +16,13 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
         self.connector = connector
     }
 
+    /// Explicit preparation hook used by the opt-in interoperability probe to
+    /// distinguish QUIC/TLS reachability from HTTP/3 authentication framing.
+    /// Production callers continue to use the lazy protocol interface.
+    func prepareConnection() async throws {
+        _ = try await connect()
+    }
+
     func authenticate() async throws -> Bool {
         let connection = try await connect()
         let stream = try await connection.openStream()
