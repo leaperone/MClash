@@ -288,29 +288,45 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
         connection.receive(minimumIncompleteLength: 1, maximumLength: HTTPProxyCodec.maximumHeaderBytes) { [self] data, _, complete, error in
             var next = buffer; if let data { next.append(data) }
             if let error { completion(error); return }
-            if next.range(of: Data("\r\n\r\n".utf8)) != nil {
-                do { _ = try HTTPProxyCodec.decodeConnectResponse(next); completion(nil) }
-                catch { completion(error); connection.cancel() }
-            } else if complete || next.count >= HTTPProxyCodec.maximumHeaderBytes {
-                completion(NativeAppCatalogConnectorError.truncatedResponse); connection.cancel()
-            } else { readHTTPResponse(connection, buffer: next, completion: completion) }
+            do {
+                var parser = NativeHTTPConnectResponseParser(buffer: next)
+                if let result = try parser.append(Data()) {
+                    // The parser deliberately separates the header from any
+                    // bytes coalesced with it. The trailing bytes are retained
+                    // in the parser result instead of being fed to the HTTP
+                    // header decoder (or silently interpreted as headers).
+                    _ = result.trailing
+                    completion(nil)
+                } else if complete {
+                    completion(NativeAppCatalogConnectorError.truncatedResponse)
+                    connection.cancel()
+                } else {
+                    readHTTPResponse(connection, buffer: next, completion: completion)
+                }
+            } catch {
+                completion(error); connection.cancel()
+            }
         }
     }
 
-    private func readSOCKSMethod(_ connection: NWConnection, destination: MClashInboundDestination, target: OutboundNodeTarget, completion: @escaping @Sendable (Error?) -> Void) {
+    private func readSOCKSMethod(_ connection: NWConnection, destination: MClashInboundDestination, target: OutboundNodeTarget, decoder: SOCKS5MethodSelectionDecoder = .init(), completion: @escaping @Sendable (Error?) -> Void) {
         connection.receive(minimumIncompleteLength: 2, maximumLength: 2) { [self] data, _, complete, error in
-            guard let data, data.count == 2, error == nil, !complete else { completion(error ?? NativeAppCatalogConnectorError.truncatedResponse); return }
             do {
-                let method = try SOCKS5Codec.decodeMethodSelection(data).method
+                if let error { throw error }
+                var decoder = decoder
+                guard let data else { throw NativeAppCatalogConnectorError.truncatedResponse }
+                guard let selection = try decoder.append(data) else {
+                    if complete { throw NativeAppCatalogConnectorError.truncatedResponse }
+                    self.readSOCKSMethod(connection, destination: destination, target: target, decoder: decoder, completion: completion)
+                    return
+                }
+                let method = selection.method
                 if method == .usernamePassword {
                     guard let username = target.parameters["username"] ?? target.parameters["user"], let password = target.parameters["password"] ?? target.parameters["pass"] else { throw NativeAppCatalogConnectorError.missingCredentials }
                     let auth = try SOCKS5Codec.encodeUsernamePasswordRequest(credentials: SOCKS5UsernamePasswordCredentials(username: username, password: password))
                     connection.send(content: auth, completion: .contentProcessed { error in
                         if let error { completion(error); return }
-                        connection.receive(minimumIncompleteLength: 2, maximumLength: 2) { data, _, _, error in
-                            do { if let error { throw error }; guard let data else { throw NativeAppCatalogConnectorError.truncatedResponse }; try SOCKS5Codec.decodeUsernamePasswordResponse(data).requireSuccess(); try self.sendSOCKSCommand(connection, destination: destination, completion: completion) }
-                            catch { completion(error); connection.cancel() }
-                        }
+                        self.readSOCKSAuthentication(connection, destination: destination, completion: completion)
                     })
                 } else {
                     try sendSOCKSCommand(connection, destination: destination, completion: completion)
@@ -323,11 +339,58 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
         let endpoint = try SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port)
         connection.send(content: try SOCKS5Codec.encodeCommandRequest(SOCKS5CommandRequest(command: .connect, endpoint: endpoint)), completion: .contentProcessed { error in
             if let error { completion(error); return }
-            connection.receive(minimumIncompleteLength: 1, maximumLength: SOCKS5Limits.maximumStreamInputBytes) { data, _, _, error in
-                do { if let error { throw error }; guard let data, let length = try SOCKS5Codec.commandReplyFrameLength(Array(data)), data.count >= length else { throw NativeAppCatalogConnectorError.truncatedResponse }; try SOCKS5Codec.decodeCommandReply(Data(data.prefix(length))).requireSuccess(); completion(nil) }
-                catch { completion(error); connection.cancel() }
-            }
+            self.readSOCKSCommandResponse(connection, completion: completion)
         })
+    }
+
+    private func readSOCKSAuthentication(_ connection: NWConnection, destination: MClashInboundDestination, decoder: SOCKS5UsernamePasswordResponseDecoder = .init(), completion: @escaping @Sendable (Error?) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 2) { [self] data, _, complete, error in
+            do {
+                if let error { throw error }; var decoder = decoder
+                guard let data else { throw NativeAppCatalogConnectorError.truncatedResponse }
+                guard let response = try decoder.append(data) else {
+                    if complete { throw NativeAppCatalogConnectorError.truncatedResponse }
+                    self.readSOCKSAuthentication(connection, destination: destination, decoder: decoder, completion: completion); return
+                }
+                try response.requireSuccess(); try self.sendSOCKSCommand(connection, destination: destination, completion: completion)
+            } catch { completion(error); connection.cancel() }
+        }
+    }
+
+    private func readSOCKSCommandResponse(_ connection: NWConnection, decoder: SOCKS5CommandReplyDecoder = .init(), completion: @escaping @Sendable (Error?) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: SOCKS5Limits.maximumStreamInputBytes) { [self] data, _, complete, error in
+            do {
+                if let error { throw error }; var decoder = decoder
+                guard let data else { throw NativeAppCatalogConnectorError.truncatedResponse }
+                guard let reply = try decoder.append(data) else {
+                    if complete { throw NativeAppCatalogConnectorError.truncatedResponse }
+                    self.readSOCKSCommandResponse(connection, decoder: decoder, completion: completion); return
+                }
+                try reply.requireSuccess()
+                // decoder.remainingData is intentionally preserved by the
+                // incremental parser for the listener's subsequent bridge.
+                completion(nil)
+            } catch { completion(error); connection.cancel() }
+        }
+    }
+}
+
+/// Incremental HTTP CONNECT response parser. It validates only the bounded
+/// header and returns bytes received after CRLFCRLF separately.
+struct NativeHTTPConnectResponseParser: Sendable {
+    private var buffer: Data
+    init(buffer: Data = Data()) { self.buffer = buffer }
+    mutating func append(_ data: Data) throws -> (status: Int, trailing: Data)? {
+        guard buffer.count + data.count <= SOCKS5Limits.maximumStreamInputBytes else {
+            throw NativeAppCatalogConnectorError.truncatedResponse
+        }
+        buffer.append(data)
+        guard let end = buffer.range(of: Data("\r\n\r\n".utf8)) else { return nil }
+        let headerEnd = end.upperBound
+        guard headerEnd <= HTTPProxyCodec.maximumHeaderBytes else {
+            throw NativeAppCatalogConnectorError.truncatedResponse
+        }
+        return (try HTTPProxyCodec.decodeConnectResponse(Data(buffer[..<headerEnd])), Data(buffer[headerEnd...]))
     }
 }
 
