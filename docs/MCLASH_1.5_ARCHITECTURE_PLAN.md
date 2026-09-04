@@ -574,6 +574,32 @@ and can be tested without producing a Mihomo YAML document.
   Hysteria2 also remains a prototype until independent QUIC streams, complete
   HTTP/3 control/QPACK behavior and real TCP/UDP endpoint interoperability are
   proven; neither is claimed native for 1.5.0 yet.
+- `6b78864` and `52e1aed` validate Reality metadata against Xray-core
+  `cd4ce973`: a 32-byte unpadded Base64URL public key, optional short ID of at
+  most 16 hex characters, and slash-prefixed spider path. Reality/Vision still
+  reports an explicit custom-uTLS compatibility requirement and can never fall
+  through the plain VLESS TLS connector.
+- `c64e08c`, `846271b`, and `ae65d69` introduce a testable Hysteria2 transport
+  boundary with one authenticated provider, independent bidirectional streams
+  and a distinct datagram channel. Fake transport tests pass, but there is no
+  production Network.framework adapter or real endpoint proof, so the
+  capability remains legacy fallback.
+- `a636b7c` through `359cae4` connect App-owned listener observations to the
+  existing FlowLedger. The bounded broadcast store survives reconnects without
+  iterator races; each flow records entrance, destination, selected route,
+  accepted/delivered byte counts and terminal state. HTTP/SOCKS bridges now
+  preserve TCP half-close, emit bounded failure stages, and send/consume RFC
+  6455 Close/Pong control frames for VLESS WebSocket.
+- The final local harness for this slice passes 532 App tests, all 35 Shared
+  and 12 Network Extension file targets, six automation tests and release
+  preflight. The opt-in current-profile test additionally returned Google HTTP
+  204 through the App-owned CUNOE VLESS WebSocket route and proved a completed
+  observation with the selected group plus non-zero upload/download bytes.
+- Standard run `33841001339` failed only in the legacy integration fixture:
+  attaching a node catalog had incorrectly switched a legacy session to the
+  native provider contract. `359cae4` now selects native only from explicit
+  native ingress/DNS ownership and includes a regression test; a new standard
+  `macos-26` run is required for the fix-forward HEAD.
 
 ### Definition of done
 
