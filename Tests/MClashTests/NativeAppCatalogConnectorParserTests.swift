@@ -1,4 +1,5 @@
 import Foundation
+import MClashNetworkShared
 import Testing
 @testable import MClashApp
 
@@ -8,7 +9,8 @@ struct NativeAppCatalogConnectorParserTests {
     func httpFragmentationAndTrailingBytes() throws {
         var parser = NativeHTTPConnectResponseParser()
         #expect(try parser.append(Data("HTTP/1.1 200 Connection".utf8)) == nil)
-        let result = try #require(parser.append(Data(" Established\r\n\r\nhello".utf8)))
+        let parsed = try parser.append(Data(" Established\r\n\r\nhello".utf8))
+        let result = try #require(parsed)
         #expect(result.status == 200)
         #expect(result.trailing == Data("hello".utf8))
     }
