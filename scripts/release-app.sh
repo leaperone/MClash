@@ -256,7 +256,7 @@ sign_application() {
     sign_path "${sparkle}"
   fi
 
-  if [[ "${MCLASH_NATIVE_ONLY}" != "1" ]] && [[ ! -f "${core}" ]]; then
+  if [[ "$MCLASH_NATIVE_ONLY" != "1" ]] && [[ ! -f "${core}" ]]; then
     print -u2 "Bundled core is missing: ${core}"
     exit 1
   fi
@@ -302,7 +302,7 @@ export MCLASH_VERSION="${version}"
 export MCLASH_BUNDLE_VERSION="${bundle_version}"
 export MCLASH_BUILD_NUMBER="${build_number}"
 export CODE_SIGN_IDENTITY="${identity}"
-if [[ "${version}" == 1.5.* || "${MCLASH_NATIVE_ONLY:-0}" == "1" ]]; then
+if [[ "$version" == 1.5.* || "${MCLASH_NATIVE_ONLY:-0}" == "1" ]]; then
   export MCLASH_NATIVE_ONLY=1
 else
   export MCLASH_NATIVE_ONLY=0
