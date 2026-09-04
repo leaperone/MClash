@@ -500,6 +500,15 @@ struct ConfigurationEntrancesView: View {
             }
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, MClashLayout.compactPagePadding)
+            // System Proxy and App Routing are both entrances. Keep their
+            // active switches at the top of this page so users do not have to
+            // hunt through Settings or infer that App Routing is a rule type.
+            VStack(alignment: .leading, spacing: MClashLayout.compactSpacing) {
+                systemProxyEntranceControl
+                appRoutingEntranceControl
+            }
+            .padding(.horizontal, MClashLayout.pagePadding)
+            .padding(.bottom, MClashLayout.compactPagePadding)
             Divider()
             ConfigurationWorkbench(
                 title: AppLocalization.string("Entrances"),
@@ -545,7 +554,15 @@ struct ConfigurationEntrancesView: View {
     }
 
     private var entranceWorkbenchItems: [ConfigurationWorkbenchSection: [ConfigurationWorkbenchItem]] {
-        model.configurationWorkbenchItems
+        var result = model.configurationWorkbenchItems
+        // App Routing has a dedicated entrance control above the list. Keep
+        // TUN and named HTTP/SOCKS entrances in the editable workbench.
+        result[.entrances] = result[.entrances, default: []].filter { item in
+            model.configurationDocument.entrances.first {
+                $0.id.rawValue == item.id
+            }?.kind != .appRouting
+        }
+        return result
     }
 
     private var appRoutingEntranceControl: some View {
