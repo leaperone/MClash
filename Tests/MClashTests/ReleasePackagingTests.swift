@@ -16,9 +16,7 @@ struct ReleasePackagingTests {
             encoding: .utf8
         )
         #expect(
-            testScript.contains(
-                "swift test --configuration debug --no-parallel"
-            )
+            !testScript.contains("swift test --configuration debug")
         )
         #expect(
             testScript.contains(

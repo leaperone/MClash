@@ -184,8 +184,14 @@ swiftc \
 # singletons. The Command Line Tools Testing runtime can otherwise race while
 # formatting those opaque Objective-C values after a test completes, producing
 # a false null-pointer abort before the remaining suites run.
-SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
-  "${build_dir}/MClashPackageTests"
+app_test_exit=0
+if SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+  "${build_dir}/MClashPackageTests"; then
+  app_test_exit=0
+else
+  app_test_exit=$?
+  print -u2 "Application test target exited with ${app_test_exit}; continuing network and automation tests."
+fi
 
 # The Command Line Tools Swift Testing runtime can abort while formatting
 # framework values after several suites (for example with signal 5 or the
@@ -309,6 +315,9 @@ if (( automation_test_exit != 0 )); then
   print -u2 "Automation test target exited with ${automation_test_exit}."
 fi
 run_release_script_tests
+if (( app_test_exit != 0 )); then
+  exit "${app_test_exit}"
+fi
 if (( shared_test_exit != 0 )); then
   exit "${shared_test_exit}"
 fi
