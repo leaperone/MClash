@@ -121,12 +121,14 @@ public final class MClashInboundListener: @unchecked Sendable {
     private let routing: MClashInboundRoutingState
     private let stateHandler: (@Sendable (Bool, UInt16?) -> Void)?
     private let failureHandler: (@Sendable (String) -> Void)?
+    private let observationHandler: (@Sendable (FlowRelayObservation) -> Void)?
+    private let entranceName: String
     private var listener: NWListener?
     private var connections = [ObjectIdentifier: NWConnection]()
     public private(set) var port: UInt16?
 
-    public init(kind: Kind, bindAddress: String = "127.0.0.1", port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector, stateHandler: (@Sendable (Bool, UInt16?) -> Void)? = nil, failureHandler: (@Sendable (String) -> Void)? = nil) throws {
-        self.kind = kind; self.queue = queue; routing = MClashInboundRoutingState(route: route, connector: connector); self.stateHandler = stateHandler; self.failureHandler = failureHandler
+    public init(kind: Kind, bindAddress: String = "127.0.0.1", port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector, stateHandler: (@Sendable (Bool, UInt16?) -> Void)? = nil, failureHandler: (@Sendable (String) -> Void)? = nil, entranceName: String = "MClash", observationHandler: (@Sendable (FlowRelayObservation) -> Void)? = nil) throws {
+        self.kind = kind; self.queue = queue; routing = MClashInboundRoutingState(route: route, connector: connector); self.stateHandler = stateHandler; self.failureHandler = failureHandler; self.entranceName = entranceName; self.observationHandler = observationHandler
         guard MClashListenerSpec.isLoopback(bindAddress) else {
             throw MClashListenerRegistryError.nonLoopbackBindAddress(bindAddress)
         }
@@ -237,7 +239,9 @@ public final class MClashInboundListener: @unchecked Sendable {
         let routing = routing.snapshot()
         let decision = routing.route(destination)
         let connector = routing.connector
+        let flowID = UUID().uuidString
         guard decision != .reject else {
+            observationHandler?(FlowRelayObservation(id: flowID, startedAt: Date(), endedAt: Date(), network: kind == .httpConnect ? "tcp/http" : "tcp/socks5", destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, connector: "native", state: .rejected, route: .rejected))
             let rejection = response.starts(with: Data("HTTP/".utf8)) ? HTTPProxyCodec.encodeFailureResponse(status: 403, reason: "Forbidden") : Self.socksReply(.connectionNotAllowed)
             client.send(content: rejection, completion: .contentProcessed { _ in client.cancel() }); return
         }
@@ -267,6 +271,7 @@ public final class MClashInboundListener: @unchecked Sendable {
                                 to: destination,
                                 route: decision
                             )
+                            self.observationHandler?(FlowRelayObservation(id: flowID, startedAt: Date(), network: self.kind == .httpConnect ? "tcp/http" : "tcp/socks5", destinationHost: destination.host, destinationPort: destination.port, inboundName: self.entranceName, connector: "native", state: .active, route: decision == .direct ? .direct : .relay))
                             self.bridge(client, upstream, codec: codec, initialUpstreamPayload: initialPayload)
                         } catch {
                             self.reportFailure(error, context: "bridge setup")

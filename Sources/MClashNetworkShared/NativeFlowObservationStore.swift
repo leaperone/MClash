@@ -2,7 +2,8 @@ import Foundation
 
 /// Bounded native observation fan-out. The store is intentionally connector
 /// neutral and retains only the latest observation per flow, preventing a
-/// busy listener from growing memory without bound.
+/// busy listener from growing memory without bound. `stream` is a single
+/// consumer feed; snapshots are safe for independent read-only inspection.
 public actor NativeFlowObservationStore {
     public let stream: AsyncStream<FlowRelayObservation>
     private let continuation: AsyncStream<FlowRelayObservation>.Continuation
@@ -20,7 +21,10 @@ public actor NativeFlowObservationStore {
     }
 
     public func receive(_ observation: FlowRelayObservation) {
-        if values[observation.id] == nil { order.append(observation.id) }
+        if values[observation.id] != nil {
+            order.removeAll { $0 == observation.id }
+        }
+        order.append(observation.id)
         values[observation.id] = observation
         while order.count > capacity {
             values.removeValue(forKey: order.removeFirst())

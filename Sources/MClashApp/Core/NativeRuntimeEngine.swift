@@ -593,6 +593,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
                 stateHandler: { [weak self] ready, actualPort in
                     guard let self else { return }
                     Task { await self.listenerDidChange(id: spec.id, bindAddress: spec.bindAddress, generation: generation, ready: ready, port: actualPort) }
+                },
+                entranceName: spec.name,
+                observationHandler: { [flowObservations] observation in
+                    Task { await flowObservations.receive(observation) }
                 }
             )
             result[spec.id] = listener
