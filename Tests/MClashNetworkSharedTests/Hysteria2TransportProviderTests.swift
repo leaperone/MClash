@@ -13,16 +13,36 @@ struct Hysteria2TransportProviderTests {
         try await transport.send(Data("one".utf8), on: first)
         try await transport.send(Data("two".utf8), on: second)
         #expect(await fake.sent.count == 2)
+        #expect(try await transport.receive(on: first) == Data("response".utf8))
         await transport.closeStream(first); await transport.close(); #expect(await fake.closed)
+    }
+
+    @Test("Uses a distinct datagram channel and rejects work after close")
+    func datagramLifecycle() async throws {
+        let fake = FakeProvider()
+        let transport = Hysteria2MultiplexedTransport(provider: fake)
+        try await transport.sendDatagram(Data("udp".utf8))
+        #expect(try await transport.receiveDatagram() == Data("reply".utf8))
+        #expect(await fake.datagrams == [Data("udp".utf8)])
+        #expect(await fake.authentications == 1)
+
+        await transport.close()
+        await #expect(throws: Hysteria2TransportError.closed) {
+            _ = try await transport.openStream()
+        }
+        await #expect(throws: Hysteria2TransportError.closed) {
+            try await transport.sendDatagram(Data("late".utf8))
+        }
     }
 }
 
 private actor FakeProvider: Hysteria2TransportProvider {
-    var authentications = 0; var opened = 0; var sent: [Data] = []; var closed = false
+    var authentications = 0; var opened = 0; var sent: [Data] = []
+    var datagrams: [Data] = []; var closed = false
     func authenticate() async throws -> Bool { authentications += 1; return true }
     func openBidirectionalStream() async throws -> any Hysteria2StreamTransport { opened += 1; return FakeStream(owner: self) }
-    func sendDatagram(_ data: Data) async throws { sent.append(data) }
-    func receiveDatagram() async throws -> Data? { nil }
+    func sendDatagram(_ data: Data) async throws { datagrams.append(data) }
+    func receiveDatagram() async throws -> Data? { Data("reply".utf8) }
     func close() async { closed = true }
     func record(_ data: Data) { sent.append(data) }
 }
