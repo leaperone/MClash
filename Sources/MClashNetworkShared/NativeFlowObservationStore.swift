@@ -2,22 +2,31 @@ import Foundation
 
 /// Bounded native observation fan-out. The store is intentionally connector
 /// neutral and retains only the latest observation per flow, preventing a
-/// busy listener from growing memory without bound. `stream` is a single
-/// consumer feed; snapshots are safe for independent read-only inspection.
+/// busy listener from growing memory without bound. Each consumer receives an
+/// independent bounded stream so reconnecting a runtime cannot race a cancelled
+/// iterator left over from the previous session.
 public actor NativeFlowObservationStore {
-    public let stream: AsyncStream<FlowRelayObservation>
-    private let continuation: AsyncStream<FlowRelayObservation>.Continuation
     private var values: [String: FlowRelayObservation] = [:]
     private var order: [String] = []
+    private var subscribers: [
+        UUID: AsyncStream<FlowRelayObservation>.Continuation
+    ] = [:]
     public let capacity: Int
 
     public init(capacity: Int = 500) {
         self.capacity = max(1, capacity)
+    }
+
+    public func makeStream() -> AsyncStream<FlowRelayObservation> {
+        let identifier = UUID()
         let pair = AsyncStream<FlowRelayObservation>.makeStream(
-            bufferingPolicy: .bufferingNewest(max(1, capacity))
+            bufferingPolicy: .bufferingNewest(capacity)
         )
-        stream = pair.stream
-        continuation = pair.continuation
+        subscribers[identifier] = pair.continuation
+        pair.continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeSubscriber(identifier) }
+        }
+        return pair.stream
     }
 
     public func receive(_ observation: FlowRelayObservation) {
@@ -29,12 +38,22 @@ public actor NativeFlowObservationStore {
         while order.count > capacity {
             values.removeValue(forKey: order.removeFirst())
         }
-        continuation.yield(observation)
+        for continuation in subscribers.values {
+            continuation.yield(observation)
+        }
     }
 
     public func snapshot() -> [FlowRelayObservation] {
         order.compactMap { values[$0] }
     }
 
-    public func finish() { continuation.finish() }
+    public func finish() {
+        let continuations = subscribers.values
+        subscribers.removeAll()
+        for continuation in continuations { continuation.finish() }
+    }
+
+    private func removeSubscriber(_ identifier: UUID) {
+        subscribers.removeValue(forKey: identifier)
+    }
 }

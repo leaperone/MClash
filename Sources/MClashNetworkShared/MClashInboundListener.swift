@@ -72,6 +72,11 @@ public protocol MClashInboundOutboundConnector: Sendable {
 public protocol MClashInboundBridgeCodec: AnyObject, Sendable {
     func encode(_ payload: Data) throws -> Data
     func decode(_ input: Data) throws -> [Data]
+    func finishEncoding() throws -> Data?
+}
+
+public extension MClashInboundBridgeCodec {
+    func finishEncoding() throws -> Data? { nil }
 }
 
 public extension MClashInboundOutboundConnector {
@@ -125,6 +130,7 @@ public final class MClashInboundListener: @unchecked Sendable {
     private let entranceName: String
     private var listener: NWListener?
     private var connections = [ObjectIdentifier: NWConnection]()
+    private var flowMeters = [ObjectIdentifier: NativeFlowObservationMeter]()
     public private(set) var port: UInt16?
 
     public init(kind: Kind, bindAddress: String = "127.0.0.1", port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector, stateHandler: (@Sendable (Bool, UInt16?) -> Void)? = nil, failureHandler: (@Sendable (String) -> Void)? = nil, entranceName: String = "MClash", observationHandler: (@Sendable (FlowRelayObservation) -> Void)? = nil) throws {
@@ -175,6 +181,8 @@ public final class MClashInboundListener: @unchecked Sendable {
         queue.async(execute: DispatchWorkItem { [weak self] in
             guard let self else { return }
             listener?.cancel(); listener = nil
+            flowMeters.values.forEach { $0.finishOnCancellation() }
+            flowMeters.removeAll()
             connections.values.forEach { $0.cancel() }; connections.removeAll(); port = nil
             stateHandler?(false, nil)
         })
@@ -185,8 +193,25 @@ public final class MClashInboundListener: @unchecked Sendable {
             guard let self else { connection.cancel(); return }
             connections[ObjectIdentifier(connection)] = connection
             connection.stateUpdateHandler = { [weak self, weak connection] state in
-                guard case .failed = state, let self, let connection else { return }
-                self.queue.async { self.connections.removeValue(forKey: ObjectIdentifier(connection)) }
+                guard let self, let connection else { return }
+                switch state {
+                case .failed:
+                    self.queue.async {
+                        let identifier = ObjectIdentifier(connection)
+                        self.flowMeters.removeValue(forKey: identifier)?
+                            .fail(reason: "Entrance connection failed")
+                        self.connections.removeValue(forKey: identifier)
+                    }
+                case .cancelled:
+                    self.queue.async {
+                        let identifier = ObjectIdentifier(connection)
+                        self.flowMeters.removeValue(forKey: identifier)?
+                            .finishOnCancellation()
+                        self.connections.removeValue(forKey: identifier)
+                    }
+                default:
+                    break
+                }
             }
             connection.start(queue: queue)
             switch kind { case .httpConnect: self.readHTTP(connection, buffer: Data()); case .socks5: self.readSOCKSGreeting(connection, buffer: Data()) }
@@ -246,6 +271,7 @@ public final class MClashInboundListener: @unchecked Sendable {
             let rejection = response.starts(with: Data("HTTP/".utf8)) ? HTTPProxyCodec.encodeFailureResponse(status: 403, reason: "Forbidden") : Self.socksReply(.connectionNotAllowed)
             client.send(content: rejection, completion: .contentProcessed { _ in client.cancel() }); return
         }
+        flowMeters[ObjectIdentifier(client)] = meter
         let upstream: NWConnection
         switch decision { case .direct: upstream = NWConnection(host: NWEndpoint.Host(destination.host), port: NWEndpoint.Port(rawValue: destination.port)!, using: .tcp); case .proxy: upstream = connector.connect(to: destination, route: decision); case .reject: return }
         // Establish the upstream before acknowledging CONNECT/ SOCKS5. This
@@ -261,12 +287,12 @@ public final class MClashInboundListener: @unchecked Sendable {
                     route: decision
                 ) { error, initialPayload in
                     guard error == nil else {
-                        meter.emit(state: .failed)
+                        meter.fail(reason: "Outbound establishment failed")
                         self.reportFailure(error, context: "outbound establishment")
                         client.cancel(); upstream.cancel(); return
                     }
                     client.send(content: response, completion: .contentProcessed { error in
-                        guard error == nil else { meter.emit(state: .failed); client.cancel(); upstream.cancel(); return }
+                        guard error == nil else { meter.fail(reason: "Entrance response failed"); client.cancel(); upstream.cancel(); return }
                         do {
                             let codec = try connector.makeBridgeCodec(
                                 for: upstream,
@@ -276,18 +302,18 @@ public final class MClashInboundListener: @unchecked Sendable {
                             meter.emit(state: .active)
                             self.bridge(client, upstream, codec: codec, initialUpstreamPayload: initialPayload, meter: meter)
                         } catch {
-                            meter.emit(state: .failed)
+                            meter.fail(reason: "Bridge setup failed")
                             self.reportFailure(error, context: "bridge setup")
                             client.cancel(); upstream.cancel()
                         }
                     })
                 }
             case let .failed(error):
-                meter.emit(state: .failed)
+                meter.fail(reason: "Upstream connection failed")
                 self.reportFailure(error, context: "upstream connection")
                 client.cancel()
             case .cancelled:
-                meter.emit(state: .failed)
+                meter.finishOnCancellation()
                 client.cancel()
             default:
                 break
@@ -303,19 +329,38 @@ public final class MClashInboundListener: @unchecked Sendable {
         initialUpstreamPayload: Data = Data(),
         meter: NativeFlowObservationMeter
     ) {
+        let completion = NativeBridgeCompletionState(
+            client: a,
+            upstream: b,
+            meter: meter
+        )
         let upstreamToClient: @Sendable () -> Void = {
             self.pump(from: b, to: a, transform: { data in
                 guard let codec else { return [data] }
                 return try codec.decode(data)
-            }, delivered: { meter.addDownload($0) }, terminal: { meter.markClosed(download: true) })
+            }, deliveredByteCount: { _, chunks in
+                chunks.reduce(0) { $0 + $1.count }
+            }, delivered: { meter.addDownload($0) }, terminal: {
+                completion.halfClose(target: a, download: true)
+            }, failure: completion.fail)
         }
         if !initialUpstreamPayload.isEmpty {
             do {
                 let chunks = try codec.map { try $0.decode(initialUpstreamPayload) } ?? [initialUpstreamPayload]
-                send(chunks, index: 0, from: b, to: a, transform: { data in [data] }, then: upstreamToClient, delivered: { meter.addDownload($0) })
+                send(
+                    chunks,
+                    index: 0,
+                    from: b,
+                    to: a,
+                    transform: { data in [data] },
+                    then: upstreamToClient,
+                    delivered: { meter.addDownload($0) },
+                    failure: completion.fail
+                )
             } catch {
                 reportFailure(error, context: "initial bridge transform")
-                a.cancel(); b.cancel(); return
+                completion.fail(error)
+                return
             }
         } else {
             upstreamToClient()
@@ -323,30 +368,69 @@ public final class MClashInboundListener: @unchecked Sendable {
         pump(from: a, to: b, transform: { data in
             guard let codec else { return [data] }
             return [try codec.encode(data)]
-        }, delivered: { meter.addUpload($0) }, terminal: { meter.markClosed(download: false) })
+        }, deliveredByteCount: { input, _ in input.count }, delivered: {
+            meter.addUpload($0)
+        }, terminal: {
+            do {
+                completion.halfClose(
+                    target: b,
+                    download: false,
+                    finalPayload: try codec?.finishEncoding()
+                )
+            } catch {
+                completion.fail(error)
+            }
+        }, failure: completion.fail)
     }
     private func pump(
         from source: NWConnection,
         to target: NWConnection,
         transform: @escaping @Sendable (Data) throws -> [Data],
+        deliveredByteCount: @escaping @Sendable (Data, [Data]) -> Int,
         delivered: (@Sendable (Int) -> Void)? = nil,
-        terminal: (@Sendable () -> Void)? = nil
+        terminal: (@Sendable () -> Void)? = nil,
+        failure: (@Sendable (Error) -> Void)? = nil
     ) {
         source.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, error in
-            guard let self, error == nil, let data, !data.isEmpty else {
-                if complete { terminal?(); target.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in target.cancel() }) }
-                else if let error { source.cancel(); target.cancel(); _ = error }
+            guard let self else { return }
+            if let error {
+                failure?(error)
+                return
+            }
+            guard let data, !data.isEmpty else {
+                if complete {
+                    terminal?()
+                } else {
+                    self.pump(
+                        from: source,
+                        to: target,
+                        transform: transform,
+                        deliveredByteCount: deliveredByteCount,
+                        delivered: delivered,
+                        terminal: terminal,
+                        failure: failure
+                    )
+                }
                 return
             }
             do {
                 let transformed = try transform(data)
+                let byteCount = max(0, deliveredByteCount(data, transformed))
                 send(transformed, index: 0, from: source, to: target, transform: transform, then: {
-                    delivered?(data.count)
-                    self.pump(from: source, to: target, transform: transform, delivered: delivered, terminal: terminal)
-                })
+                    delivered?(byteCount)
+                    self.pump(
+                        from: source,
+                        to: target,
+                        transform: transform,
+                        deliveredByteCount: deliveredByteCount,
+                        delivered: delivered,
+                        terminal: terminal,
+                        failure: failure
+                    )
+                }, failure: failure)
             } catch {
                 reportFailure(error, context: "bridge transform")
-                source.cancel(); target.cancel()
+                failure?(error)
             }
         }
     }
@@ -369,21 +453,32 @@ public final class MClashInboundListener: @unchecked Sendable {
         transform: @escaping @Sendable (Data) throws -> [Data],
         then completion: (@Sendable () -> Void)? = nil,
         delivered: (@Sendable (Int) -> Void)? = nil,
-        terminal: (@Sendable () -> Void)? = nil
+        terminal: (@Sendable () -> Void)? = nil,
+        failure: (@Sendable (Error) -> Void)? = nil
     ) {
         guard index < chunks.count else {
             delivered?(chunks.reduce(0) { $0 + $1.count })
             if let completion { completion() } else {
-                pump(from: source, to: target, transform: transform, delivered: delivered, terminal: terminal)
+                pump(
+                    from: source,
+                    to: target,
+                    transform: transform,
+                    deliveredByteCount: { input, _ in input.count },
+                    delivered: delivered,
+                    terminal: terminal,
+                    failure: failure
+                )
             }
             return
         }
         target.send(content: chunks[index], completion: .contentProcessed { [weak self] error in
             guard let self, error == nil else {
                 if let error { self?.reportFailure(error, context: "bridge send") }
-                source.cancel(); target.cancel(); return
+                if let error { failure?(error) }
+                else { source.cancel(); target.cancel() }
+                return
             }
-            self.send(chunks, index: index + 1, from: source, to: target, transform: transform, then: completion, delivered: delivered, terminal: terminal)
+            self.send(chunks, index: index + 1, from: source, to: target, transform: transform, then: completion, delivered: delivered, terminal: terminal, failure: failure)
         })
     }
 
@@ -400,9 +495,8 @@ private final class NativeFlowObservationMeter: @unchecked Sendable {
     private let lock = NSLock()
     private var upload: UInt64 = 0
     private var download: UInt64 = 0
-    private var uploadClosed = false
-    private var downloadClosed = false
     private var terminalState: FlowRelayObservation.State?
+    private var activeStarted = false
     private let id: String
     private let startedAt: Date
     private let network: String
@@ -416,18 +510,151 @@ private final class NativeFlowObservationMeter: @unchecked Sendable {
     }
     func addUpload(_ count: Int) { update(upload: count, download: 0) }
     func addDownload(_ count: Int) { update(upload: 0, download: count) }
-    func markClosed(download: Bool) {
-        lock.lock()
-        if download { downloadClosed = true } else { uploadClosed = true }
-        let complete = uploadClosed && downloadClosed
-        lock.unlock()
-        if complete { emit(state: .completed) }
-    }
     func emit(state: FlowRelayObservation.State) {
-        lock.lock(); if terminalState != nil && state == .active { lock.unlock(); return }; if state != .active { guard terminalState == nil else { lock.unlock(); return }; terminalState = state }; let up = upload, down = download; lock.unlock()
+        lock.lock(); if terminalState != nil && state == .active { lock.unlock(); return }; if state == .active { activeStarted = true } else { guard terminalState == nil else { lock.unlock(); return }; terminalState = state }; let up = upload, down = download; lock.unlock()
         emitHandler?(FlowRelayObservation(id: id, startedAt: startedAt, endedAt: state == .active ? nil : Date(), network: network, destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, routeChain: routeChain, connector: "native", uploadBytes: up, downloadBytes: down, state: state, route: route))
     }
-    private func update(upload: Int, download: Int) { lock.lock(); guard terminalState == nil else { lock.unlock(); return }; self.upload &+= UInt64(max(0, upload)); self.download &+= UInt64(max(0, download)); let up = self.upload, down = self.download; lock.unlock(); emitHandler?(FlowRelayObservation(id: id, startedAt: startedAt, network: network, destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, routeChain: routeChain, connector: "native", uploadBytes: up, downloadBytes: down, state: .active, route: route)) }
+    func finishOnCancellation() {
+        lock.lock()
+        let state: FlowRelayObservation.State = activeStarted ? .completed : .failed
+        lock.unlock()
+        emit(state: state)
+    }
+    func fail(reason: String) {
+        emit(state: .failed, failureReason: reason)
+    }
+    private func emit(
+        state: FlowRelayObservation.State,
+        failureReason: String?
+    ) {
+        lock.lock(); if terminalState != nil && state == .active { lock.unlock(); return }; if state == .active { activeStarted = true } else { guard terminalState == nil else { lock.unlock(); return }; terminalState = state }; let up = upload, down = download; lock.unlock()
+        emitHandler?(FlowRelayObservation(id: id, startedAt: startedAt, endedAt: state == .active ? nil : Date(), network: network, destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, routeChain: routeChain, connector: "native", uploadBytes: up, downloadBytes: down, state: state, route: route, failureReason: failureReason))
+    }
+    private func update(upload: Int, download: Int) {
+        lock.lock()
+        guard terminalState == nil else { lock.unlock(); return }
+        self.upload = Self.saturatingAdd(self.upload, UInt64(max(0, upload)))
+        self.download = Self.saturatingAdd(self.download, UInt64(max(0, download)))
+        let up = self.upload, down = self.download
+        lock.unlock()
+        emitHandler?(FlowRelayObservation(id: id, startedAt: startedAt, network: network, destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, routeChain: routeChain, connector: "native", uploadBytes: up, downloadBytes: down, state: .active, route: route))
+    }
+    private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? .max : value
+    }
+}
+
+private final class NativeBridgeCompletionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private let client: NWConnection
+    private let upstream: NWConnection
+    private let meter: NativeFlowObservationMeter
+    private var uploadClosed = false
+    private var downloadClosed = false
+    private var terminal = false
+
+    init(
+        client: NWConnection,
+        upstream: NWConnection,
+        meter: NativeFlowObservationMeter
+    ) {
+        self.client = client
+        self.upstream = upstream
+        self.meter = meter
+    }
+
+    func halfClose(
+        target: NWConnection,
+        download: Bool,
+        finalPayload: Data? = nil
+    ) {
+        if let finalPayload, !finalPayload.isEmpty {
+            target.send(
+                content: finalPayload,
+                completion: .contentProcessed { [weak self] error in
+                    guard let self else { return }
+                    if let error { self.fail(error) }
+                    else { self.sendFinalMessage(target: target, download: download) }
+                }
+            )
+        } else {
+            sendFinalMessage(target: target, download: download)
+        }
+    }
+
+    private func sendFinalMessage(target: NWConnection, download: Bool) {
+        target.send(
+            content: nil,
+            contentContext: .finalMessage,
+            isComplete: true,
+            completion: .contentProcessed { [weak self] error in
+                guard let self else { return }
+                if let error {
+                    self.fail(error)
+                    return
+                }
+                self.lock.lock()
+                if download { self.downloadClosed = true }
+                else { self.uploadClosed = true }
+                let finished = self.uploadClosed && self.downloadClosed && !self.terminal
+                if finished { self.terminal = true }
+                self.lock.unlock()
+                if finished {
+                    self.meter.emit(state: .completed)
+                    self.client.cancel()
+                    self.upstream.cancel()
+                }
+            }
+        )
+    }
+
+    func fail(_ error: Error) {
+        if Self.isGracefulTransportClosure(error) {
+            finishAfterTransportClosure()
+            return
+        }
+        lock.lock()
+        guard !terminal else { lock.unlock(); return }
+        terminal = true
+        lock.unlock()
+        meter.fail(
+            reason: "Bridge transport failed (\(Self.safeErrorCode(error)))"
+        )
+        client.cancel()
+        upstream.cancel()
+    }
+
+    private func finishAfterTransportClosure() {
+        lock.lock()
+        guard !terminal else { lock.unlock(); return }
+        terminal = true
+        lock.unlock()
+        meter.finishOnCancellation()
+        client.cancel()
+        upstream.cancel()
+    }
+
+    private static func isGracefulTransportClosure(_ error: Error) -> Bool {
+        guard let networkError = error as? NWError else { return false }
+        guard case let .posix(code) = networkError else { return false }
+        return code == .ECANCELED
+            || code == .ECONNRESET
+            || code == .EPIPE
+            || code == .ENOTCONN
+    }
+
+    private static func safeErrorCode(_ error: Error) -> String {
+        guard let networkError = error as? NWError else {
+            return String(describing: type(of: error))
+        }
+        switch networkError {
+        case let .posix(code): return "POSIX:\(code.rawValue)"
+        case let .dns(code): return "DNS:\(code)"
+        case let .tls(code): return "TLS:\(code)"
+        default: return "Network"
+        }
+    }
 }
 
 private final class MClashInboundRoutingState: @unchecked Sendable {

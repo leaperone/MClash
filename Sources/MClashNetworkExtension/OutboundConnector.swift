@@ -225,6 +225,7 @@ final class VLESSWebSocketStreamCodec: NativeStreamCodec, MClashInboundBridgeCod
     func encodeDestination() throws -> Data { try codec.encodeDestination() }
     func encode(_ payload: Data) throws -> Data { try codec.encode(payload) }
     func decode(_ input: Data) throws -> [Data] { try codec.decode(input) }
+    func finishEncoding() throws -> Data? { try codec.encodeClose() }
 }
 
 enum VLESSWebSocketCodecError: Error, Equatable, Sendable {

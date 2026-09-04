@@ -71,7 +71,7 @@ struct NativeAppRealEndpointInteropTests {
         ))
         do {
             var ready = false
-            for _ in 0..<200 {
+            for _ in 0..<1_000 {
                 let handles = await engine.nativeListenerHandles()
                 if handles.first?.socketBound == true {
                     ready = true
@@ -83,11 +83,25 @@ struct NativeAppRealEndpointInteropTests {
             let responseCode = try Self.curl(proxyPort: port)
             #expect(responseCode == "204")
             #expect(await engine.diagnostics().unsupportedConnectors.isEmpty)
+            #expect(await engine.stop())
+            var observation: FlowRelayObservation?
+            for _ in 0..<200 {
+                observation = await engine.flowObservations.snapshot().last
+                if observation?.state == .completed { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(
+                observation?.state == .completed,
+                "Native observation failed at \(observation?.failureReason ?? "unknown stage")"
+            )
+            #expect(observation?.route == .relay)
+            #expect(observation?.routeChain == [OutboundRoute.group(group.name).stableSortKey])
+            #expect((observation?.uploadBytes ?? 0) > 0)
+            #expect((observation?.downloadBytes ?? 0) > 0)
         } catch {
             _ = await engine.stop()
             throw error
         }
-        #expect(await engine.stop())
     }
 
     private static func loadDocument(_ url: URL) throws -> ConfigurationDocument {

@@ -212,10 +212,6 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             ?? Self.makeOutboundNodeTargetCatalog(from: plan)
     }
 
-    /// Read-only native telemetry seam; callers consume the stream or ask the
-    /// bounded store for a stable snapshot without touching connector state.
-    nonisolated func nativeFlowObservations() -> NativeFlowObservationStore { flowObservations }
-
     func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
         let state: NativeRuntimeSessionState
         do {

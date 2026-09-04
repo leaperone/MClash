@@ -9180,10 +9180,16 @@ final class AppModel {
         case let .stateChanged(state):
             if isConnected {
                 switch state {
-                case .validating, .starting, .stopped:
+                case .validating, .starting:
                     // `start` performs a validation pass before launching.
                     // Its buffered transitional events may arrive after the
                     // direct start call has already established a live session.
+                    return
+                case .stopped where !usesNativeRuntime:
+                    // The legacy validator can publish a buffered stopped
+                    // state after its process has already reached running.
+                    // NativeRuntimeEngine does not emit that validation event
+                    // from start(), so its stopped event is authoritative.
                     return
                 default:
                     break
@@ -9481,7 +9487,7 @@ final class AppModel {
             activeControllerEndpoint = session.endpoint
             controllerGeneration &+= 1
             controllerState = .ready
-            startNativeFlowObservationConsumptionIfNeeded()
+            await startNativeFlowObservationConsumptionIfNeeded()
             errorMessage = nil
             appendSupervisorLog("Native runtime is ready; no legacy controller was contacted.")
             return
@@ -9508,10 +9514,11 @@ final class AppModel {
         }
     }
 
-    private func startNativeFlowObservationConsumptionIfNeeded() {
+    private func startNativeFlowObservationConsumptionIfNeeded() async {
         guard usesNativeRuntime, nativeFlowObservationTask == nil,
               let store = supervisor.nativeFlowObservations else { return }
-        nativeFlowObservationTask = Task { [weak self, stream = store.stream] in
+        let stream = await store.makeStream()
+        nativeFlowObservationTask = Task { [weak self, stream] in
             for await observation in stream {
                 guard !Task.isCancelled else { break }
                 await MainActor.run {

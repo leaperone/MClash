@@ -219,6 +219,31 @@ struct NetworkExtensionMihomoListenerTests {
         #expect(catalog.map(\.port) == [17_885, 17_886])
     }
 
+    @Test("A node catalog does not silently switch a legacy capture session")
+    func legacyCaptureRemainsExplicitWithNodeCatalog() throws {
+        let listener = try NetworkExtensionMihomoListenerConfiguration(port: 17_887)
+        let target = try OutboundNodeTarget(
+            protocolName: "vless",
+            host: "node.example.com",
+            port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001"]
+        )
+        let nodeCatalog = try OutboundNodeTargetCatalog(entries: [
+            .init(route: .profileRules, target: target)
+        ])
+        let runtime = try NetworkExtensionRuntimeConfiguration(
+            preferences: .defaults(),
+            mihomoListener: listener,
+            outboundNodeTargetCatalog: nodeCatalog,
+            nativeInboundListenersEnabled: false
+        )
+
+        #expect(runtime.captureBackend == .legacy)
+        #expect(runtime.encodedOutboundConnectorCatalog != nil)
+        #expect(runtime.encodedOutboundNodeTargetCatalog != nil)
+        #expect(runtime.providerConfiguration["mihomoSOCKSPort"] != nil)
+    }
+
     @Test("Internal listener composes with scalar, DNS, and rule overrides")
     func coexistsWithRuntimeOverrides() throws {
         let profile = Data(

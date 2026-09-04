@@ -21,8 +21,35 @@ struct NativeFlowObservationStoreTests {
     @Test("Observation values do not carry connector credentials")
     func noSecrets() async throws {
         let store = NativeFlowObservationStore(capacity: 1)
-        await store.receive(FlowRelayObservation(id: "flow", connector: "socks5", routeChain: ["group"]))
+        await store.receive(FlowRelayObservation(
+            id: "flow",
+            routeChain: ["group"],
+            connector: "socks5"
+        ))
         let value = try #require(await store.snapshot().first)
         #expect(!String(describing: value).contains("password"))
+    }
+
+    @Test("Each reconnecting subscriber receives its own bounded feed")
+    func reconnectingSubscribersDoNotCompete() async throws {
+        let store = NativeFlowObservationStore(capacity: 2)
+        let first = await store.makeStream()
+        let firstTask = Task { () -> FlowRelayObservation? in
+            var iterator = first.makeAsyncIterator()
+            return await iterator.next()
+        }
+        await store.receive(FlowRelayObservation(id: "first"))
+        #expect(await firstTask.value?.id == "first")
+
+        firstTask.cancel()
+        let second = await store.makeStream()
+        let secondTask = Task { () -> FlowRelayObservation? in
+            var iterator = second.makeAsyncIterator()
+            return await iterator.next()
+        }
+        await store.receive(FlowRelayObservation(id: "second"))
+        #expect(await secondTask.value?.id == "second")
+        secondTask.cancel()
+        await store.finish()
     }
 }

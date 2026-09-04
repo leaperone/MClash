@@ -21,10 +21,10 @@ public struct RealityConfiguration: Codable, Equatable, Sendable {
                 .flatMap { $0.split(separator: "=", maxSplits: 1).dropFirst().first.map(String.init) }
         }
         let publicKey = values["public-key"] ?? nested("public-key")
-        let shortID = values["short-id"] ?? nested("short-id")
+        let rawShortID = values["short-id"] ?? nested("short-id")
         let serverName = values["servername"] ?? values["server-name"] ?? values["sni"]
         guard let publicKey, Self.isValidPublicKey(publicKey) else { throw RealityConfigurationError.invalidPublicKey }
-        let shortID = shortID ?? ""
+        let shortID = rawShortID ?? ""
         guard Self.isValidShortID(shortID) else { throw RealityConfigurationError.invalidShortID }
         guard let serverName, !serverName.isEmpty, serverName.utf8.count <= 255 else { throw RealityConfigurationError.invalidServerName }
         let fingerprint = values["fingerprint"] ?? values["client-fingerprint"]
@@ -37,7 +37,10 @@ public struct RealityConfiguration: Codable, Equatable, Sendable {
         self.fingerprint = fingerprint; self.flow = flow; self.spiderX = spiderX
     }
 
-    static let allowedFingerprints: Set<String> = ["chrome", "firefox", "safari", "ios", "android", "edge", "qq", "random"]
+    static let allowedFingerprints: Set<String> = [
+        "chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq",
+        "random", "randomized", "randomizednoalpn",
+    ]
     static let allowedFlows: Set<String> = ["", "xtls-rprx-vision", "xtls-rprx-vision-udp443", "xtls-rprx-direct"]
     static func isValidShortID(_ value: String) -> Bool {
         let chars = Array(value.lowercased())

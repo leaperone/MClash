@@ -89,7 +89,12 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         failOpen = preferences.failOpen
         self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = preferences.enabled
-        captureBackend = (outboundNodeTargetCatalog != nil || nativeInboundListenersEnabled || dnsUpstreamMode == .native) ? .native : .legacy
+        // A connector-neutral catalog may be attached to a legacy session for
+        // diagnostics and migration. Only an explicitly native ingress/DNS
+        // path selects the native provider contract.
+        captureBackend = (nativeInboundListenersEnabled || dnsUpstreamMode == .native)
+            ? .native
+            : .legacy
         self.encodedCaptureSnapshot = encodedSnapshot
         let nativeDataPlane = captureBackend == .native
         let endpoints = nativeDataPlane

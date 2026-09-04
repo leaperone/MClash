@@ -88,11 +88,15 @@ public final class VLESSWebSocketTunnelCodec: @unchecked Sendable {
     }
 
     public func encodeDestination() throws -> Data {
-        try Self.frame(destination, mask: true)
+        try Self.frame(destination, opcode: 0x2, mask: true)
     }
 
     public func encode(_ payload: Data) throws -> Data {
-        try Self.frame(payload, mask: true)
+        try Self.frame(payload, opcode: 0x2, mask: true)
+    }
+
+    public func encodeClose() throws -> Data {
+        try Self.frame(Data([0x03, 0xE8]), opcode: 0x8, mask: true)
     }
 
     public func decode(_ input: Data) throws -> [Data] {
@@ -109,7 +113,8 @@ public final class VLESSWebSocketTunnelCodec: @unchecked Sendable {
             let fin = first & 0x80 != 0
             let opcode = first & 0x0f
             let masked = second & 0x80 != 0
-            guard first & 0x70 == 0, fin, opcode == 0x2, !masked else {
+            guard first & 0x70 == 0, fin, !masked,
+                  opcode == 0x2 || opcode == 0x8 || opcode == 0xA else {
                 throw VLESSWebSocketTunnelError.invalidFrame
             }
             var length = Int(second & 0x7f)
@@ -140,6 +145,9 @@ public final class VLESSWebSocketTunnelCodec: @unchecked Sendable {
             guard length <= Self.maximumPayload else {
                 throw VLESSWebSocketTunnelError.messageTooLarge
             }
+            if opcode == 0x8 || opcode == 0xA, length > 125 {
+                throw VLESSWebSocketTunnelError.invalidFrame
+            }
             guard receiveBuffer.count >= headerLength + length else { break }
             let bodyStart = receiveBuffer.index(
                 receiveBuffer.startIndex,
@@ -147,17 +155,26 @@ public final class VLESSWebSocketTunnelCodec: @unchecked Sendable {
             )
             let bodyEnd = receiveBuffer.index(bodyStart, offsetBy: length)
             let body = Data(receiveBuffer[bodyStart..<bodyEnd])
-            output.append(contentsOf: try responseDecoder.append(body))
+            if opcode == 0x2 {
+                output.append(contentsOf: try responseDecoder.append(body))
+            }
             receiveBuffer.removeFirst(headerLength + length)
         }
         return output
     }
 
-    private static func frame(_ payload: Data, mask: Bool) throws -> Data {
+    private static func frame(
+        _ payload: Data,
+        opcode: UInt8,
+        mask: Bool
+    ) throws -> Data {
         guard payload.count <= Self.maximumPayload else {
             throw VLESSWebSocketTunnelError.messageTooLarge
         }
-        var result = Data([0x82])
+        guard opcode == 0x2 || opcode == 0x8 else {
+            throw VLESSWebSocketTunnelError.invalidFrame
+        }
+        var result = Data([0x80 | opcode])
         let flag: UInt8 = mask ? 0x80 : 0
         if payload.count < 126 {
             result.append(flag | UInt8(payload.count))

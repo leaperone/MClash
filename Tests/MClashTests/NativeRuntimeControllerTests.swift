@@ -169,6 +169,105 @@ struct NativeRuntimeControllerTests {
         #expect(await controller.state() == .stopped)
     }
 
+    @Test("Native observations feed the ledger after reconnect")
+    @MainActor
+    func nativeObservationsFeedLedgerAcrossReconnect() async throws {
+        let engine = NativeRuntimeEngine()
+        let model = makeTestAppModel(supervisor: engine)
+        model.selection = .connections
+        model.setMainWindowPresentationTelemetryVisible(true)
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "mclash-native-observation-\(UUID().uuidString)")
+        let configuration = CoreLaunchConfiguration(
+            binaryURL: root.appending(path: "must-not-launch"),
+            homeDirectory: root.appending(path: "home"),
+            configURL: root.appending(path: "missing.yaml"),
+            controllerPort: 19_098,
+            secret: "native-observation-secret"
+        )
+
+        try await engine.start(configuration)
+        for _ in 0..<100 where model.controllerState != .ready {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let active = FlowRelayObservation(
+            id: "native-ledger",
+            destinationHost: "example.com",
+            destinationPort: 443,
+            inboundName: "HTTP",
+            routeChain: ["group:Node Selection"],
+            uploadBytes: 4,
+            downloadBytes: 8,
+            state: .active,
+            route: .relay
+        )
+        await engine.flowObservations.receive(active)
+        for _ in 0..<100 where !model.flowLedger.entries.contains(where: {
+            $0.id == .native("native-ledger")
+        }) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(model.flowLedger.entries.first(where: {
+            $0.id == .native("native-ledger")
+        })?.state == .active)
+
+        await engine.flowObservations.receive(FlowRelayObservation(
+            id: "native-ledger",
+            endedAt: Date(),
+            destinationHost: "example.com",
+            destinationPort: 443,
+            inboundName: "HTTP",
+            routeChain: ["group:Node Selection"],
+            uploadBytes: 7,
+            downloadBytes: 11,
+            state: .completed,
+            route: .relay
+        ))
+        for _ in 0..<100 where model.flowLedger.entries.first(where: {
+            $0.id == .native("native-ledger")
+        })?.state != .completed {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(model.flowLedger.entries.filter {
+            $0.id == .native("native-ledger")
+        }.count == 1)
+        #expect(model.flowLedger.entries.first(where: {
+            $0.id == .native("native-ledger")
+        })?.upload == .exact(7))
+
+        #expect(await engine.stop())
+        for _ in 0..<350 where model.flowLedger.entries.contains(where: {
+            $0.id == .native("native-ledger")
+        }) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!model.flowLedger.entries.contains(where: {
+            $0.id == .native("native-ledger")
+        }))
+
+        try await engine.start(configuration)
+        for _ in 0..<100 where model.controllerState != .ready {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await engine.flowObservations.receive(FlowRelayObservation(
+            id: "native-after-reconnect",
+            destinationHost: "reconnected.example",
+            destinationPort: 443,
+            inboundName: "HTTP",
+            state: .active,
+            route: .direct
+        ))
+        for _ in 0..<100 where !model.flowLedger.entries.contains(where: {
+            $0.id == .native("native-after-reconnect")
+        }) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(model.flowLedger.entries.contains(where: {
+            $0.id == .native("native-after-reconnect")
+        }))
+        #expect(await engine.stop())
+    }
+
     @Test("Native engine starts without a Mihomo YAML or process")
     func nativeEngineStartsWithoutLegacyConfiguration() async throws {
         let root = FileManager.default.temporaryDirectory

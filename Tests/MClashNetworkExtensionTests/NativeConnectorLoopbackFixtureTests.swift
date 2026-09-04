@@ -161,6 +161,12 @@ struct NativeConnectorLoopbackFixtureTests {
             decoded.append(contentsOf: try codec.decode(LoopbackTCPFixture.read(client, atLeast: 1)))
         }
         #expect(decoded == [Data("pong".utf8), Data("again".utf8)])
+        #expect(try codec.decode(Data([0x88, 0x02, 0x03, 0xE8])).isEmpty)
+        #expect(try codec.decode(Data([0x8A, 0x00])).isEmpty)
+        let encodedClose = try codec.finishEncoding()
+        let close = try #require(encodedClose)
+        #expect(close.first == 0x88)
+        #expect(close[close.index(after: close.startIndex)] & 0x80 != 0)
         client.cancel()
     }
 

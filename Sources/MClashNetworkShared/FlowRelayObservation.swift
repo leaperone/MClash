@@ -39,6 +39,7 @@ public struct FlowRelayObservation: Codable, Equatable, Hashable, Sendable, Iden
     public let downloadBytes: UInt64
     public let state: State
     public let route: Route
+    public let failureReason: String?
 
     public init(
         id: String,
@@ -59,7 +60,8 @@ public struct FlowRelayObservation: Codable, Equatable, Hashable, Sendable, Iden
         uploadBytes: UInt64 = 0,
         downloadBytes: UInt64 = 0,
         state: State = .active,
-        route: Route = .unknown
+        route: Route = .unknown,
+        failureReason: String? = nil
     ) {
         self.id = id
         self.startedAt = startedAt
@@ -80,6 +82,7 @@ public struct FlowRelayObservation: Codable, Equatable, Hashable, Sendable, Iden
         self.downloadBytes = downloadBytes
         self.state = state
         self.route = route
+        self.failureReason = failureReason.map { String($0.prefix(256)) }
     }
 }
 

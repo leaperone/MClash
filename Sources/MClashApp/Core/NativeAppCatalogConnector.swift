@@ -542,6 +542,7 @@ private final class NativeAppVLESSWebSocketBridge: MClashInboundBridgeCodec, @un
     }
     func encode(_ payload: Data) throws -> Data { try codec.encode(payload) }
     func decode(_ input: Data) throws -> [Data] { try codec.decode(input) }
+    func finishEncoding() throws -> Data? { try codec.encodeClose() }
 }
 
 enum NativeAppCatalogConnectorError: Error, Equatable, Sendable {

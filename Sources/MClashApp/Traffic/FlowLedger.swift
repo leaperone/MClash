@@ -644,7 +644,7 @@ struct FlowLedger: Sendable {
         case .active: .active
         case .completed: .completed
         case .rejected: .rejected
-        case .failed: .failed(message: nil)
+        case .failed: .failed(message: nonEmpty(observation.failureReason))
         }
         let upload: FlowLedgerByteMeasurement = switch observation.route {
         case .rejected: .notApplicable

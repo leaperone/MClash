@@ -7,7 +7,7 @@ import MClashNetworkShared
 /// Objective-C wrapper outside an entitled application host.
 @MainActor
 func makeTestAppModel(
-    supervisor: CoreSupervisor = CoreSupervisor(),
+    supervisor: any NativeRuntimeController = CoreSupervisor(),
     binaryLocator: CoreBinaryLocator = CoreBinaryLocator(),
     secretStore: any CoreSecretProviding = EphemeralCoreSecretProvider(),
     systemProxyManager: SystemProxyManager = SystemProxyManager(),
