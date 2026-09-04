@@ -499,6 +499,35 @@ struct NativeRuntimeControllerTests {
         }
     }
 
+    @Test("Native session rejects external rule sets without a loader")
+    func nativeSessionRejectsExternalRuleSetWithoutLoader() throws {
+        let base = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let ruleSet = RuleSet(
+            name: "remote-gfw",
+            sourceURL: URL(string: "https://rules.example/gfw.list")
+        )
+        let plan = CompiledRuntimePlan(
+            workspaceID: base.workspaceID,
+            workspaceRevision: base.workspaceRevision,
+            nodes: base.nodes,
+            proxyGroups: base.proxyGroups,
+            rules: base.rules,
+            ruleSets: [ruleSet],
+            dnsPolicy: base.dnsPolicy,
+            entrances: base.entrances,
+            routingMode: base.routingMode,
+            globalProxyGroupID: base.globalProxyGroupID,
+            diagnostics: base.diagnostics
+        )
+
+        #expect(throws: NativeRuntimeSessionValidationError
+            .externalRuleSetRequiresLoader(ruleSet.id)) {
+            _ = try NativeRuntimeEngine(plan: plan, listeners: MClashListenerRegistry())
+        }
+    }
+
     @Test("Native engine evaluates policy and resolves connector-neutral node target")
     func nativeRouteEvaluationResolvesTarget() async throws {
         let group = ProxyGroup(name: "CUNOE-Proxy")
