@@ -1837,6 +1837,10 @@ final class AutomationCommandGateway {
                 "protocol": .string(displaySafe(item.protocolName, maximumLength: 32)),
                 "transport": .string(displaySafe(item.transport, maximumLength: 32)),
                 "support": .string(item.support.rawValue),
+                "nativeTCP": .bool(item.nativeTCP),
+                "nativeUDP": .bool(item.nativeUDP),
+                "inboundTCP": .bool(item.inboundTCP),
+                "inboundUDP": .bool(item.inboundUDP),
             ]
             object["reason"] = item.reason.map {
                 .string(redactedDiagnosticText($0))

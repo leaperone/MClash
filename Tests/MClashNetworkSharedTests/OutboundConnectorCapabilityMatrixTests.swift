@@ -81,4 +81,43 @@ struct OutboundConnectorCapabilityMatrixTests {
         let decoded = try JSONDecoder().decode(OutboundConnectorCapabilityMatrixEntry.self, from: data)
         #expect(decoded == entry)
     }
+
+    @Test("Reports transport dimensions without overstating ingress support")
+    func transportDimensions() throws {
+        let targets = [
+            try OutboundNodeTarget(protocolName: "socks5", host: "socks.example", port: 1080),
+            try OutboundNodeTarget(protocolName: "vless", host: "vless.example", port: 443),
+            try OutboundNodeTarget(protocolName: "trojan", host: "trojan.example", port: 443),
+            try OutboundNodeTarget(protocolName: "shadowsocks", host: "ss.example", port: 443, parameters: ["method": "aes-256-gcm", "password": "secret"]),
+            try OutboundNodeTarget(protocolName: "hysteria2", host: "h.example", port: 443)
+        ]
+        let catalog = try OutboundNodeTargetCatalog(entries: targets.enumerated().map {
+            .init(route: .group("d\($0.offset)"), target: $0.element)
+        })
+        let entries = OutboundConnectorCapabilityMatrix.entries(for: catalog)
+        let socks = try #require(entries.first { $0.protocolName == "socks5" })
+        #expect(socks.nativeTCP && socks.nativeUDP)
+        #expect(socks.inboundTCP && !socks.inboundUDP)
+        for protocolName in ["vless", "trojan", "shadowsocks"] {
+            let entry = try #require(entries.first { $0.protocolName == protocolName })
+            #expect(entry.nativeTCP)
+            #expect(!entry.nativeUDP && entry.inboundTCP && !entry.inboundUDP)
+        }
+        let hysteria = try #require(entries.first { $0.protocolName == "hysteria2" })
+        #expect(!hysteria.nativeTCP && !hysteria.nativeUDP && !hysteria.inboundTCP && !hysteria.inboundUDP)
+    }
+
+    @Test("Decodes pre-dimension matrix payloads")
+    func decodesLegacyPayload() throws {
+        let target = try OutboundNodeTarget(protocolName: "socks5", host: "socks.example", port: 1080)
+        let original = try #require(OutboundConnectorCapabilityMatrix.entries(for: OutboundNodeTargetCatalog(entries: [.init(route: .global, target: target)])).first)
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        object.removeValue(forKey: "nativeTCP")
+        object.removeValue(forKey: "nativeUDP")
+        object.removeValue(forKey: "inboundTCP")
+        object.removeValue(forKey: "inboundUDP")
+        let entry = try JSONDecoder().decode(OutboundConnectorCapabilityMatrixEntry.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(entry.support == .native)
+        #expect(entry.nativeTCP && !entry.nativeUDP && entry.inboundTCP && !entry.inboundUDP)
+    }
 }
