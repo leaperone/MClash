@@ -5,6 +5,8 @@ struct ConfigurationEditorSheet: View {
     let section: ConfigurationWorkbenchSection
     let id: UUID
     let isNew: Bool
+    let isEmbedded: Bool
+    let onSaved: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
@@ -43,43 +45,67 @@ struct ConfigurationEditorSheet: View {
         model: AppModel,
         section: ConfigurationWorkbenchSection,
         id: UUID,
-        isNew: Bool = false
+        isNew: Bool = false,
+        isEmbedded: Bool = false,
+        onSaved: (() -> Void)? = nil
     ) {
         self.model = model
         self.section = section
         self.id = id
         self.isNew = isNew
+        self.isEmbedded = isEmbedded
+        self.onSaved = onSaved
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                editorForm
-            }
-            .formStyle(.grouped)
-            .navigationTitle(
-                AppLocalization.format(
-                    isNew ? "New %@" : "Edit %@",
-                    AppLocalization.string(section.presentationSingularTitle)
-                )
-            )
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(AppLocalization.string("Cancel")) { dismiss() }
+        Group {
+            if isEmbedded {
+                VStack(spacing: 0) {
+                    HStack(spacing: 10) {
+                        Text(editorTitle)
+                            .font(.headline)
+                        Spacer(minLength: 0)
+                        if section != .rules {
+                            Button(AppLocalization.string("Save")) { save() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding(.horizontal, MClashLayout.pagePadding)
+                    .padding(.vertical, 10)
+                    Divider()
+                    Form {
+                        editorForm
+                    }
+                    .formStyle(.grouped)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                if section != .rules {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button(AppLocalization.string("Save")) { save() }
-                            .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                NavigationStack {
+                    Form {
+                        editorForm
+                    }
+                    .formStyle(.grouped)
+                    .navigationTitle(editorTitle)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button(AppLocalization.string("Cancel")) { dismiss() }
+                        }
+                        if section != .rules {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button(AppLocalization.string("Save")) { save() }
+                                    .buttonStyle(.borderedProminent)
+                            }
+                        }
                     }
                 }
+                .frame(
+                    minWidth: section == .proxyGroups ? 760 : section == .ruleSets ? 620 : 460,
+                    minHeight: section == .proxyGroups ? 680 : section == .ruleSets ? 560 : 420
+                )
             }
-            .task { load() }
         }
-        .frame(
-            minWidth: section == .proxyGroups ? 760 : section == .ruleSets ? 620 : 460,
-            minHeight: section == .proxyGroups ? 680 : section == .ruleSets ? 560 : 420
-        )
+        .task { load() }
         .alert(
             AppLocalization.string("Could Not Save Configuration"),
             isPresented: errorIsPresented
@@ -90,6 +116,13 @@ struct ConfigurationEditorSheet: View {
         } message: {
             Text(errorMessage ?? "")
         }
+    }
+
+    private var editorTitle: String {
+        AppLocalization.format(
+            isNew ? "New %@" : "Edit %@",
+            AppLocalization.string(section.presentationSingularTitle)
+        )
     }
 
     @ViewBuilder
@@ -890,7 +923,10 @@ struct ConfigurationEditorSheet: View {
         Task {
             do {
                 try await model.saveConfigurationDocument(document)
-                dismiss()
+                onSaved?()
+                if !isEmbedded {
+                    dismiss()
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }
