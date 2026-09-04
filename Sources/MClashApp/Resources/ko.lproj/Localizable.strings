@@ -2428,3 +2428,6 @@
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "App Routing 실시간 업데이트가 거부되었습니다. 런타임을 재시작하지 않고 이전 규칙을 복원했습니다.";
 "Native runtime is ready; no legacy controller was contacted." = "네이티브 런타임이 준비되었습니다. 레거시 컨트롤러에는 연결하지 않았습니다.";
 "Pin selected %@" = "선택한 %@개 고정";
+"Refresh native text rule set" = "네이티브 텍스트 규칙 세트 새로 고침";
+"The HTTPS source is fetched into MClash's private cache and used on the next policy revision." = "HTTPS 소스를 MClash의 비공개 캐시에 가져와 다음 정책 리비전에서 사용합니다.";
+"Inline entries are one routing rule per line. Native mode supports local classical text sets; URL, YAML and MRS sources need an explicit compatible loader." = "인라인 항목은 한 줄에 하나의 라우팅 규칙입니다. 네이티브 모드는 로컬 classical 텍스트 세트를 지원하며 URL, YAML, MRS에는 호환 로더가 필요합니다.";

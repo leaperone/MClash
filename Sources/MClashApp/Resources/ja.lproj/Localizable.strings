@@ -2429,3 +2429,6 @@
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "App Routing のライブ更新は拒否されました。以前のルールはランタイムを再起動せずに復元されました。";
 "Native runtime is ready; no legacy controller was contacted." = "ネイティブランタイムの準備が完了しました。レガシーコントローラには接続していません。";
 "Pin selected %@" = "選択した%@件を固定";
+"Refresh native text rule set" = "ネイティブテキストルールセットを更新";
+"The HTTPS source is fetched into MClash's private cache and used on the next policy revision." = "HTTPS ソースを MClash のプライベートキャッシュに取得し、次のポリシーリビジョンで使用します。";
+"Inline entries are one routing rule per line. Native mode supports local classical text sets; URL, YAML and MRS sources need an explicit compatible loader." = "インライン項目は1行に1つのルーティングルールです。ネイティブモードはローカル classical テキストセットをサポートします。URL、YAML、MRS には互換ローダーが必要です。";

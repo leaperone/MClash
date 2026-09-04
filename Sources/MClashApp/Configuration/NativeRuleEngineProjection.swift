@@ -52,7 +52,8 @@ public enum NativeRuleSetSupport: Equatable, Sendable {
            ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             return .inline
         }
-        if ruleSet.sourceURL == nil, ruleSet.format == .text {
+        if ruleSet.format == .text,
+           ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             return .localText
         }
         return .externalRequiresLoader
@@ -152,7 +153,18 @@ public actor NativeTextRuleSetRefresher {
         try data.write(to: cachePath, options: .atomic)
         let now = Date()
         status = .fresh(now)
-        return RuleSet(id: ruleSet.id, name: ruleSet.name, rules: [], defaultAction: ruleSet.defaultAction, behavior: .classical, format: .text, path: cachePath.path, enabled: ruleSet.enabled, revision: ruleSet.revision + 1)
+        return RuleSet(
+            id: ruleSet.id,
+            name: ruleSet.name,
+            sourceURL: ruleSet.sourceURL,
+            rules: [],
+            defaultAction: ruleSet.defaultAction,
+            behavior: .classical,
+            format: .text,
+            path: cachePath.path,
+            enabled: ruleSet.enabled,
+            revision: ruleSet.revision + 1
+        )
     }
 }
 

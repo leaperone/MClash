@@ -2427,3 +2427,6 @@
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "应用分流实时更新被拒绝；已在不重启运行时的情况下恢复之前的规则。";
 "Native runtime is ready; no legacy controller was contacted." = "原生运行时已就绪；未联系兼容控制器。";
 "Pin selected %@" = "固定选中的 %@ 个";
+"Refresh native text rule set" = "刷新原生文本规则集";
+"The HTTPS source is fetched into MClash's private cache and used on the next policy revision." = "HTTPS 来源会下载到 MClash 的私有缓存，并在下一次策略版本更新时使用。";
+"Inline entries are one routing rule per line. Native mode supports local classical text sets; URL, YAML and MRS sources need an explicit compatible loader." = "内联条目每行一条路由规则。原生模式支持本地 classical 文本规则集；URL、YAML 和 MRS 来源需要专用兼容加载器。";

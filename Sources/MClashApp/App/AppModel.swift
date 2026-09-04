@@ -511,6 +511,10 @@ final class AppModel {
         }
     }
     private(set) var compiledConfiguration: CompiledConfiguration?
+    /// Last explicit refresh outcome for each MClash-owned native text rule
+    /// set. This is operational state only; the source URL and policy remain
+    /// in `configurationDocument`.
+    private(set) var nativeRuleSetRefreshStatuses: [RuleSetID: NativeRuleSetRefreshStatus] = [:]
     /// Native connector endpoints after MClash DNS resolution. Original
     /// hostnames remain in each target for SNI/Host/protocol semantics.
     private var resolvedNativeOutboundNodeTargetCatalog: OutboundNodeTargetCatalog?
@@ -2783,6 +2787,86 @@ final class AppModel {
         await supervisor.configureOutboundTargets(
             resolvedNativeOutboundNodeTargetCatalog
         )
+    }
+
+    /// Refreshes one explicitly configured HTTPS classical text rule set into
+    /// MClash's own cache, then recompiles the active workspace when needed.
+    /// The source URL remains metadata; native policy consumes only the
+    /// atomically written local snapshot. Any compile/runtime failure restores
+    /// the previous document and compiled policy before surfacing the error.
+    @discardableResult
+    func refreshConfigurationRuleSet(
+        _ ruleSetID: RuleSetID
+    ) async throws -> NativeRuleSetRefreshStatus {
+        guard begin(.changeRuntimeSettings) else {
+            throw ConfigurationAutomationError.operationInProgress
+        }
+        defer { end(.changeRuntimeSettings) }
+        guard let profileLayout else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        guard let current = configurationDocument.ruleSets.first(where: {
+            $0.id == ruleSetID
+        }), current.sourceURL != nil, current.format == .text else {
+            throw ConfigurationAutomationError.invalidInput(
+                "Only HTTPS classical text rule sets can be refreshed natively."
+            )
+        }
+
+        let refresher = NativeTextRuleSetRefresher(
+            cacheDirectory: profileLayout.ruleSetsDirectory
+        )
+        do {
+            let refreshed = try await refresher.refresh(current)
+            var candidate = configurationDocument
+            guard let index = candidate.ruleSets.firstIndex(where: {
+                $0.id == ruleSetID
+            }) else {
+                throw ConfigurationAutomationError.invalidInput(
+                    "The selected rule set no longer exists."
+                )
+            }
+            candidate.ruleSets[index] = refreshed
+            for workspaceIndex in candidate.workspaces.indices
+            where candidate.workspaces[workspaceIndex].ruleSetIDs.contains(ruleSetID) {
+                candidate.workspaces[workspaceIndex].revision += 1
+            }
+
+            let previousDocument = configurationDocument
+            let previousCompiled = compiledConfiguration
+            try await persistConfigurationDocument(candidate)
+            do {
+                if unifiedConfigurationEnabled {
+                    let compiled = try compileConfiguration()
+                    try await synchronizeCompiledCaptureState(compiled)
+                    compiledConfiguration = compiled
+                }
+            } catch {
+                try? await persistConfigurationDocument(previousDocument)
+                if let previousCompiled, unifiedConfigurationEnabled {
+                    try? await synchronizeCompiledCaptureState(previousCompiled)
+                    compiledConfiguration = previousCompiled
+                }
+                throw error
+            }
+            let status = await refresher.status
+            nativeRuleSetRefreshStatuses[ruleSetID] = status
+            return status
+        } catch {
+            let status = NativeRuleSetRefreshStatus.stale(
+                nil,
+                String(error.localizedDescription.prefix(256))
+            )
+            nativeRuleSetRefreshStatuses[ruleSetID] = status
+            throw error
+        }
+    }
+
+    func isManagedNativeRuleSetCachePath(_ path: String) -> Bool {
+        guard let profileLayout else { return false }
+        let candidate = URL(fileURLWithPath: path).standardizedFileURL.path
+        let root = profileLayout.ruleSetsDirectory.standardizedFileURL.path
+        return candidate == root || candidate.hasPrefix(root + "/")
     }
 
     func saveConfigurationDocument(_ document: ConfigurationDocument) async throws {

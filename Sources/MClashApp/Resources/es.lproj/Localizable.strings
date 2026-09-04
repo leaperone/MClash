@@ -2429,3 +2429,6 @@
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "Se rechazó la actualización en vivo de App Routing; las reglas anteriores se restauraron sin reiniciar el entorno de ejecución.";
 "Native runtime is ready; no legacy controller was contacted." = "El entorno de ejecución nativo está listo; no se contactó con ningún controlador heredado.";
 "Pin selected %@" = "Fijar %@ seleccionados";
+"Refresh native text rule set" = "Actualizar conjunto de reglas de texto nativo";
+"The HTTPS source is fetched into MClash's private cache and used on the next policy revision." = "La fuente HTTPS se descarga en la caché privada de MClash y se usa en la siguiente revisión de la política.";
+"Inline entries are one routing rule per line. Native mode supports local classical text sets; URL, YAML and MRS sources need an explicit compatible loader." = "Las entradas en línea contienen una regla de enrutamiento por línea. El modo nativo admite conjuntos de texto classical locales; las fuentes URL, YAML y MRS requieren un cargador compatible explícito.";

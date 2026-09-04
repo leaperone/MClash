@@ -99,6 +99,13 @@ public struct ProfileDirectoryLayout: Equatable, Sendable {
         configurationDirectory.appendingPathComponent("Snapshots", isDirectory: true)
     }
 
+    /// MClash-owned local caches for explicitly added remote rule sets. These
+    /// files are derived data, never imported Profile policy, and can be
+    /// replaced atomically by the native rule-set refresher.
+    public var ruleSetsDirectory: URL {
+        configurationDirectory.appendingPathComponent("RuleSets", isDirectory: true)
+    }
+
     public var configurationManifestURL: URL {
         configurationDirectory.appendingPathComponent("manifest.json", isDirectory: false)
     }
@@ -143,6 +150,7 @@ public struct ProfileDirectoryLayout: Equatable, Sendable {
             nodeCatalogDirectory,
             workspacesDirectory,
             snapshotsDirectory,
+            ruleSetsDirectory,
             configurationStagingDirectory,
             runtimeDirectory,
             runtimeStagingDirectory,

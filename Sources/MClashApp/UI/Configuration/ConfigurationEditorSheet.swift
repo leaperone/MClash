@@ -37,6 +37,7 @@ struct ConfigurationEditorSheet: View {
     @State private var ruleSetSourceURLText = ""
     @State private var ruleSetPathText = ""
     @State private var ruleSetRulesText = ""
+    @State private var isRefreshingRuleSet = false
     @State private var errorMessage: String?
 
     init(
@@ -170,7 +171,38 @@ struct ConfigurationEditorSheet: View {
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 150)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
-                Text(AppLocalization.string("Optional local entries, one routing rule per line. A remote source is loaded into the selected cache path."))
+                if !isNew, ruleSetSourceURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   ruleSetFormat == .text {
+                    Button {
+                        isRefreshingRuleSet = true
+                        Task {
+                            defer { isRefreshingRuleSet = false }
+                            do {
+                                _ = try await model.refreshConfigurationRuleSet(
+                                    RuleSetID(rawValue: id)
+                                )
+                                load()
+                            } catch {
+                                errorMessage = error.localizedDescription
+                            }
+                        }
+                    } label: {
+                        if isRefreshingRuleSet {
+                            ProgressView().controlSize(.small)
+                        }
+                        Label(
+                            AppLocalization.string("Refresh native text rule set"),
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isRefreshingRuleSet)
+                    Text(AppLocalization.string("The HTTPS source is fetched into MClash's private cache and used on the next policy revision."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(AppLocalization.string("Inline entries are one routing rule per line. Native mode supports local classical text sets; URL, YAML and MRS sources need an explicit compatible loader."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -698,6 +730,7 @@ struct ConfigurationEditorSheet: View {
             }
             let pathText = ruleSetPathText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !pathText.isEmpty,
+               !model.isManagedNativeRuleSetCachePath(pathText),
                (pathText.hasPrefix("/") || pathText.contains("..") || pathText.contains(where: { $0 == "\n" || $0 == "\r" || $0 == "\\" || $0 == ":" })) {
                 errorMessage = AppLocalization.string("Rule set path must be a relative safe path without line breaks or parent-directory segments.")
                 return
