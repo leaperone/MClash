@@ -201,8 +201,9 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     private var outboundNodeTargets: OutboundNodeTargetCatalog?
     private var inboundListeners: [UUID: MClashInboundListener] = [:]
     private var listenerGeneration: UInt64 = 0
-    private let geoProvider: (any NativeGeoDatabaseProvider)?
-    private let geoMatcher: NativeGeoMatcher?
+    private var geoProvider: (any NativeGeoDatabaseProvider)?
+    private var geoMatcher: NativeGeoMatcher?
+    private var geoProviderLoadAttempted = false
 
     init() {
         let pair = AsyncStream<CoreEvent>.makeStream(
@@ -215,10 +216,9 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         sessionState = nil
         sessionValidationError = nil
         outboundNodeTargets = nil
-        geoProvider = Self.loadBundledGeoIPProvider()
-        if let provider = geoProvider {
-            geoMatcher = { kind, value, context in provider.matches(kind: kind, value: value, context: context) }
-        } else { geoMatcher = nil }
+        geoProvider = nil
+        geoMatcher = nil
+        geoProviderLoadAttempted = false
     }
 
     /// Creates an engine with a validated, MClash-owned policy snapshot.
@@ -242,13 +242,19 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         listenerHandles = Self.makeListenerHandles(for: listeners)
         self.outboundNodeTargets = outboundNodeTargets
             ?? Self.makeOutboundNodeTargetCatalog(from: plan)
-        self.geoProvider = geoProvider ?? Self.loadBundledGeoIPProvider()
-        if let provider = self.geoProvider {
-            self.geoMatcher = { kind, value, context in provider.matches(kind: kind, value: value, context: context) }
-        } else { self.geoMatcher = nil }
+        self.geoProvider = geoProvider
+        if let provider = geoProvider {
+            self.geoMatcher = { kind, value, context in
+                provider.matches(kind: kind, value: value, context: context)
+            }
+        } else {
+            self.geoMatcher = nil
+        }
+        self.geoProviderLoadAttempted = geoProvider != nil
     }
 
     func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
+        ensureGeoProviderIfNeeded(for: plan)
         let state: NativeRuntimeSessionState
         do {
             state = try NativeRuntimeSessionState(plan: plan, listeners: listeners)
@@ -325,6 +331,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             outboundNodeTargets = catalog
             return
         }
+        ensureGeoProviderIfNeeded(for: state.plan)
         if currentState.isRunning {
             let route = makeRouteResolver(plan: state.plan, catalog: catalog)
             let connector = NativeAppCatalogConnector(catalog: catalog)
@@ -369,6 +376,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             )
         }
 
+        ensureGeoProviderIfNeeded(for: sessionState.plan)
         let decision = NativeRuleEngineProjection(plan: sessionState.plan, geoMatcher: geoMatcher).evaluate(context)
         guard case let .outbound(groupID) = decision.action,
               let group = sessionState.plan.proxyGroups.first(where: { $0.id == groupID }) else {
@@ -404,7 +412,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     func nativeSessionState() -> NativeRuntimeSessionState? { sessionState }
 
     func nativeGeoDatabaseStatus() -> NativeGeoDatabaseStatus {
-        geoProvider?.status ?? .unavailable
+        if let sessionState {
+            ensureGeoProviderIfNeeded(for: sessionState.plan)
+        }
+        return geoProvider?.status ?? .unavailable
     }
 
     func state() async -> CoreRunState { currentState }
@@ -681,6 +692,20 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
                 }
                 return .proxy(OutboundRoute.group(group.name).stableSortKey)
             }
+        }
+    }
+
+    private func ensureGeoProviderIfNeeded(for plan: CompiledRuntimePlan) {
+        guard !geoProviderLoadAttempted,
+              NativeGeoCapabilityGate.requiresProvider(plan) else { return }
+        geoProviderLoadAttempted = true
+        geoProvider = Self.loadBundledGeoIPProvider()
+        if let provider = geoProvider {
+            geoMatcher = { kind, value, context in
+                provider.matches(kind: kind, value: value, context: context)
+            }
+        } else {
+            geoMatcher = nil
         }
     }
 
