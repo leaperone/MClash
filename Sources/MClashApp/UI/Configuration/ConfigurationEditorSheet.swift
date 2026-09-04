@@ -549,11 +549,8 @@ struct ConfigurationEditorSheet: View {
                         if value { selectedEntranceIDs.insert(entrance.id) } else { selectedEntranceIDs.remove(entrance.id) }
                     }
                 )) {
-                    Text(entrance.kind == .appRouting
-                        ? AppLocalization.string("Application traffic")
-                        : entrance.kind.localizedTitle)
+                    Text(entrance.kind.localizedTitle)
                 }
-                .disabled(entrance.kind == .appRouting)
             }
         }
     }
@@ -860,12 +857,8 @@ struct ConfigurationEditorSheet: View {
             }
             document.workspaces[index].ruleIDs = Array(selectedRuleIDs).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
             document.workspaces[index].ruleSetIDs = Array(selectedRuleSetIDs).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
-            let appRoutingEntranceIDs = document.entrances
-                .filter { $0.kind == .appRouting }
-                .map(\.id)
-            document.workspaces[index].entranceIDs = Array(
-                selectedEntranceIDs.union(appRoutingEntranceIDs)
-            ).sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
+            document.workspaces[index].entranceIDs = selectedEntranceIDs
+                .sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
             document.workspaces[index].revision += 1
         case .entrances:
             let existingIndex = document.entrances.firstIndex(where: { $0.id.rawValue == id })

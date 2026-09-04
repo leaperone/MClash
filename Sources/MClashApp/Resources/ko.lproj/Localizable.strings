@@ -2293,7 +2293,7 @@
 "No MClash configuration" = "No MClash configuration";
 "MClash workspace · %@" = "MClash workspace · %@";
 "MClash workspace · %@ · source %@" = "MClash workspace · %@ · source %@";
-"Application Routing is a system entrance. Its matching rules are managed on the Rules page." = "Application Routing is a system entrance. Its matching rules are managed on the Rules page.";
+"Application Routing is a system entrance. Its matching rules are managed on the Rules page." = "앱 라우팅은 시스템 진입점입니다. 일치 규칙은 규칙 페이지에서 관리합니다.";
 "Rule mode evaluates the MClash rule list, then sends traffic to its selected strategy group." = "Rule mode evaluates the MClash rule list, then sends traffic to its selected strategy group.";
 "Global mode sends every entrance to the selected Global exit group; rules are not evaluated." = "Global mode sends every entrance to the selected Global exit group; rules are not evaluated.";
 "Direct mode bypasses proxy groups and connects through the system network." = "Direct mode bypasses proxy groups and connects through the system network.";
@@ -2356,11 +2356,11 @@
 "A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable Mihomo proxy group %@.";
 "An enabled entrance bind address cannot contain line breaks." = "An enabled entrance bind address cannot contain line breaks.";
 "Entrance names beginning with mclash- are reserved for internal listeners." = "Entrance names beginning with mclash- are reserved for internal listeners.";
-"Switch" = "Switch";
+"Switch" = "스위치";
 "application" = "application";
 "Use Node Selection as the stable parent when rules should follow regional or automatic groups." = "Use Node Selection as the stable parent when rules should follow regional or automatic groups.";
 "Unavailable group (choose another)" = "Unavailable group (choose another)";
-"TUN is not supported by this macOS runtime. Use HTTP, SOCKS5, or App Routing instead." = "TUN is not supported by this macOS runtime. Use HTTP, SOCKS5, or App Routing instead.";
+"TUN is not supported by this macOS runtime. Use HTTP, SOCKS5, or App Routing instead." = "이 macOS 런타임에서는 TUN을 지원하지 않습니다. HTTP, SOCKS5 또는 앱 라우팅을 사용하세요.";
 "Fallback checks members from top to bottom and uses the first healthy option. Move members to set priority." = "Fallback checks members from top to bottom and uses the first healthy option. Move members to set priority.";
 "Select one member manually. Nested groups keep the order shown." = "Select one member manually. Nested groups keep the order shown.";
 "URL Test chooses the member with the best recent health check." = "URL Test chooses the member with the best recent health check.";

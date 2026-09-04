@@ -696,12 +696,11 @@ struct ConfigurationEntrancesView: View {
             }
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, MClashLayout.compactPagePadding)
-            // System Proxy and App Routing are both entrances. Keep their
-            // active switches at the top of this page so users do not have to
-            // hunt through Settings or infer that App Routing is a rule type.
+            // System Proxy is host-level state, so keep its recovery-aware
+            // control visible above the editable entrance objects. App
+            // Routing is represented by the same workbench as HTTP/SOCKS5.
             VStack(alignment: .leading, spacing: MClashLayout.compactSpacing) {
                 systemProxyEntranceControl
-                appRoutingEntranceControl
             }
             .padding(.horizontal, MClashLayout.pagePadding)
             .padding(.bottom, MClashLayout.compactPagePadding)
@@ -750,54 +749,12 @@ struct ConfigurationEntrancesView: View {
     }
 
     private var entranceWorkbenchItems: [ConfigurationWorkbenchSection: [ConfigurationWorkbenchItem]] {
-        var result = model.configurationWorkbenchItems
-        // App Routing has a dedicated entrance control above the list. Keep
-        // TUN and named HTTP/SOCKS entrances in the editable workbench.
-        result[.entrances] = result[.entrances, default: []].filter { item in
-            model.configurationDocument.entrances.first {
-                $0.id.rawValue == item.id
-            }?.kind != .appRouting
-        }
-        return result
+        model.configurationWorkbenchItems
     }
 
-    private var appRoutingEntranceControl: some View {
-        let hasEntrance = model.configurationDocument.entrances.contains { $0.kind == .appRouting }
-        return HStack(spacing: 12) {
-            Image(systemName: "app.badge")
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(AppLocalization.string("App Routing"))
-                    .font(.headline)
-                Text(AppLocalization.string("Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            Toggle(
-                AppLocalization.string("App Routing"),
-                isOn: Binding(
-                    get: { hasEntrance && model.appRoutingCapabilityEnabled },
-                    set: { enabled in
-                        Task { await model.setNetworkCaptureEnabled(enabled) }
-                    }
-                )
-            )
-            .labelsHidden()
-            .disabled(!hasEntrance || !model.canPerform(.changeNetworkCapture))
-            .accessibilityLabel(AppLocalization.string("App Routing"))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(MClashLayout.compactPagePadding)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    /// macOS System Proxy is a capture entrance, not a configuration or
-    /// advanced setting. It is displayed beside App Routing while retaining
-    /// its distinct system-level semantics and recovery state.
+    /// macOS System Proxy is a host-level capture entrance, not a named
+    /// configuration object. Keep its distinct system-level semantics and
+    /// recovery state visible here.
     private var systemProxyEntranceControl: some View {
         HStack(spacing: 12) {
             Image(systemName: "macbook.and.iphone")
