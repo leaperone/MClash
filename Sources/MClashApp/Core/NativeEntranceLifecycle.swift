@@ -20,6 +20,32 @@ struct NativeEntranceActivation: Equatable, Sendable {
     var appRoutingEnabled: Bool { enabled.contains(.appRouting) }
 }
 
+/// Complete native entrance transaction passed to the side-effect boundary.
+/// It is intentionally not Equatable or printable: the embedded runtime
+/// configuration may contain connector credentials. Rollback data is opaque
+/// and never included in diagnostics.
+struct NativeEntranceTransaction: Sendable {
+    let activation: NativeEntranceActivation
+    let runtimeConfiguration: NetworkExtensionRuntimeConfiguration?
+    let systemProxyEndpoints: LocalSystemProxyEndpoints?
+    let systemProxySnapshot: SystemProxySnapshot?
+    let rollbackToken: Data?
+
+    init(
+        activation: NativeEntranceActivation,
+        runtimeConfiguration: NetworkExtensionRuntimeConfiguration? = nil,
+        systemProxyEndpoints: LocalSystemProxyEndpoints? = nil,
+        systemProxySnapshot: SystemProxySnapshot? = nil,
+        rollbackToken: Data? = nil
+    ) {
+        self.activation = activation
+        self.runtimeConfiguration = runtimeConfiguration
+        self.systemProxyEndpoints = systemProxyEndpoints
+        self.systemProxySnapshot = systemProxySnapshot
+        self.rollbackToken = rollbackToken
+    }
+}
+
 enum NativeEntranceLifecycleState: Equatable, Sendable {
     case inactive
     case activating(NativeEntranceActivation)
@@ -58,8 +84,8 @@ enum NativeEntranceLifecycleError: Error, Equatable, LocalizedError, Sendable {
 /// by NetworkExtension/SystemConfiguration, while tests use an in-memory
 /// backend. No implementation is allowed to invoke a Mihomo controller.
 protocol NativeEntranceLifecycleBackend: Sendable {
-    func apply(_ activation: NativeEntranceActivation) async throws
-    func deactivate(_ activation: NativeEntranceActivation) async throws
+    func apply(_ transaction: NativeEntranceTransaction) async throws
+    func deactivate(_ transaction: NativeEntranceTransaction) async throws
 }
 
 /// Transactional lifecycle owner for native capture entrances.
@@ -77,10 +103,12 @@ actor NativeEntranceLifecycleCoordinator {
     /// must not make a previously working capture session disappear from the
     /// lifecycle model.
     private var committedActivation: NativeEntranceActivation?
+    private var committedTransaction: NativeEntranceTransaction?
 
     init(backend: any NativeEntranceLifecycleBackend) {
         self.backend = backend
         committedActivation = nil
+        committedTransaction = nil
     }
 
     @discardableResult
@@ -105,8 +133,9 @@ actor NativeEntranceLifecycleCoordinator {
         )
         state = .activating(activation)
         do {
-            try await backend.apply(activation)
+            try await backend.apply(NativeEntranceTransaction(activation: activation))
             committedActivation = activation
+            committedTransaction = NativeEntranceTransaction(activation: activation)
             state = .active(activation)
             return activation
         } catch {
@@ -115,6 +144,29 @@ actor NativeEntranceLifecycleCoordinator {
             } else {
                 state = .failed(error.localizedDescription)
             }
+            throw error
+        }
+    }
+
+    @discardableResult
+    func activate(_ transaction: NativeEntranceTransaction) async throws -> NativeEntranceActivation {
+        let activation = transaction.activation
+        guard activation.revision > 0 else { throw NativeEntranceLifecycleError.invalidRevision }
+        guard !activation.enabled.isEmpty else { throw NativeEntranceLifecycleError.noEnabledEntrance }
+        if let current = state.activation, activation.revision < current.revision {
+            throw NativeEntranceLifecycleError.staleRevision(current: current.revision, requested: activation.revision)
+        }
+        generation = max(generation &+ 1, activation.generation)
+        state = .activating(activation)
+        do {
+            try await backend.apply(transaction)
+            committedActivation = activation
+            committedTransaction = transaction
+            state = .active(activation)
+            return activation
+        } catch {
+            if let committedActivation { state = .active(committedActivation) }
+            else { state = .failed(error.localizedDescription) }
             throw error
         }
     }
@@ -128,8 +180,13 @@ actor NativeEntranceLifecycleCoordinator {
         }
         state = .deactivating(current)
         do {
-            try await backend.deactivate(current)
+            if let committedTransaction {
+                try await backend.deactivate(committedTransaction)
+            } else {
+                try await backend.deactivate(NativeEntranceTransaction(activation: current))
+            }
             committedActivation = nil
+            committedTransaction = nil
             state = .inactive
         } catch {
             state = .active(current)

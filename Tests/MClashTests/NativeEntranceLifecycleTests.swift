@@ -19,7 +19,7 @@ struct NativeEntranceLifecycleTests {
         #expect(activation.appRoutingEnabled)
         #expect(await coordinator.state == .active(activation))
         #expect(await backend.applied.count == 1)
-        #expect(await backend.applied.first == activation)
+        #expect(await backend.applied.first?.activation == activation)
     }
 
     @Test("Failed replacement preserves no half-active state and can be retried")
@@ -48,7 +48,7 @@ struct NativeEntranceLifecycleTests {
         }
 
         #expect(await coordinator.state == .active(initial))
-        #expect(await backend.applied == [initial])
+        #expect(await backend.applied.map(\.activation) == [initial])
     }
 
     @Test("Deactivation is idempotent and calls the backend once")
@@ -79,20 +79,20 @@ struct NativeEntranceLifecycleTests {
 }
 
 private actor RecordingEntranceBackend: NativeEntranceLifecycleBackend {
-    var applied: [NativeEntranceActivation] = []
-    var deactivated: [NativeEntranceActivation] = []
+    var applied: [NativeEntranceTransaction] = []
+    var deactivated: [NativeEntranceTransaction] = []
     private var shouldFail = false
 
-    func apply(_ activation: NativeEntranceActivation) async throws {
+    func apply(_ transaction: NativeEntranceTransaction) async throws {
         if shouldFail {
             shouldFail = false
             throw RecordingEntranceError.applyFailed
         }
-        applied.append(activation)
+        applied.append(transaction)
     }
 
-    func deactivate(_ activation: NativeEntranceActivation) async throws {
-        deactivated.append(activation)
+    func deactivate(_ transaction: NativeEntranceTransaction) async throws {
+        deactivated.append(transaction)
     }
 
     func failNextApply() { shouldFail = true }
