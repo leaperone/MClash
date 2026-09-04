@@ -4,6 +4,25 @@ import Testing
 
 @Suite("Outbound connector capability matrix")
 struct OutboundConnectorCapabilityMatrixTests {
+    @Test("Validates Reality material but never advertises native TLS")
+    func realityBoundary() throws {
+        let key = String(repeating: "a", count: 64)
+        let target = try OutboundNodeTarget(protocolName: "vless", host: "reality.example", port: 443, parameters: [
+            "security": "reality", "public-key": key, "short-id": "a1b2", "sni": "www.example.com", "fingerprint": "chrome", "flow": "xtls-rprx-vision"
+        ])
+        let reality = try RealityConfiguration(parameters: target.parameters)
+        #expect(reality.serverName == "www.example.com")
+        let entry = try #require(OutboundConnectorCapabilityMatrix.entries(for: OutboundNodeTargetCatalog(entries: [.init(route: .global, target: target)])).first)
+        #expect(entry.support == .legacyFallback)
+        #expect(entry.reason?.contains("uTLS") == true)
+    }
+
+    @Test("Rejects malformed Reality public key and short id")
+    func invalidRealityMaterial() {
+        #expect(throws: RealityConfigurationError.invalidPublicKey) {
+            try RealityConfiguration(parameters: ["public-key": "bad", "short-id": "aa", "sni": "example.com"])
+        }
+    }
     @Test("Reports every catalog entry in stable route order")
     func reportsEveryEntry() throws {
         let catalog = try OutboundNodeTargetCatalog(entries: [

@@ -104,7 +104,10 @@ public enum OutboundConnectorCapabilityMatrix {
                 || parameters["reality"]?.isTruthy == true || parameters["xtls"]?.isTruthy == true
                 || !(parameters["flow"] ?? "").isEmpty || parameters["security"] == "reality"
                 || parameters["public-key"] != nil || parameters["short-id"] != nil {
-                return (.legacyFallback, "VLESS Reality/XTLS transport is not implemented by the native connector.")
+                if (try? RealityConfiguration(parameters: target.parameters)) == nil {
+                    return (.legacyFallback, "VLESS Reality configuration is invalid; native TLS/uTLS is unavailable.")
+                }
+                return (.legacyFallback, "VLESS Reality/XTLS requires a compatible custom TLS/uTLS connector.")
             }
             return (.native, nil)
         case "shadowsocks":
