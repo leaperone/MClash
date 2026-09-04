@@ -109,7 +109,7 @@ SOCKS5, System Proxy or App Routing.
       `REJECT`/拦截. They are selectable targets, not user-created groups.
 - [x] In Rule mode evaluate the ordered rule table; Global sends proxy flows
       to the GLOBAL group; Direct returns flows to the native network path.
-- [ ] Ensure a direct or rejected decision terminates at MClash and never
+- [x] Ensure a direct or rejected decision terminates at MClash and never
       opens a Mihomo relay. Emit the selected mode and disposition in telemetry.
 - [x] Define deterministic behavior for missing/empty GLOBAL and failed group
       selection, with a safe Direct/Reject policy rather than an implicit core
@@ -255,7 +255,7 @@ and can be tested without producing a Mihomo YAML document.
       the supported 1.5 contract; no unchecked item is presented as native.
 - [ ] Mihomo is absent from the default control/data path, or the release notes
       clearly identify the remaining connector-only compatibility boundary.
-- [ ] Clean checkout build succeeds on the standard free `macos-26` runner.
+- [x] Clean checkout build succeeds on the standard free `macos-26` runner.
       Do not use `macos-26-xlarge`, `macos-15-xlarge` or other larger runners.
 - [ ] Full static/unit/integration/shadow/protocol/CLI evidence is attached to
       the release candidate. Package, sign, notarize and inspect the DMG/ZIP.
@@ -496,6 +496,25 @@ and can be tested without producing a Mihomo YAML document.
   and Trojan for the explicit 飞鸟云 group. `unsupportedConnectors` was empty.
   This proves binary-free plan/lifecycle and selection startup, not yet
   external protocol interoperability.
+- `bafe6fd` fixes two Swift 6 safety defects exposed by the standard runner:
+  HTTP/3 incremental parsing now respects non-zero `Data.startIndex`, and QUIC
+  varint/session fields use explicit truncating byte conversion rather than a
+  trapping integer cast. The process-split direct harness subsequently passed
+  every App (518), shared (32 files), Network Extension (12 files), automation
+  and release-preflight test.
+- Standard free runner acceptance
+  [33826783019](https://github.com/leaperone/MClash/actions/runs/33826783019)
+  passed on `macos-26` at commit `74ccd63`; no sized runner was used.
+- `74ccd63` corrects native VLESS to Xray-core wire version zero, strips the
+  incremental VLESS response header, preserves `ws-opts.headers.Host` across
+  resolved socket addresses, and keeps WebSocket framing for the full stream.
+  An opt-in real-endpoint test then carried HTTPS through an MClash HTTP
+  entrance and the current CUNOE VLESS WebSocket node to Google (`204`).
+- `bc82739` and `bde7829` add bounded MClash-owned A/AAAA resolution through
+  literal native DNS upstreams, validate questions/owners/compression, preserve
+  original hostnames for TLS SNI and WebSocket Host, and repeat the same real
+  CUNOE VLESS interoperability proof using `119.29.29.29` rather than the
+  unstable macOS resolver. No credential or subscription URL was logged.
 
 ### Definition of done
 
