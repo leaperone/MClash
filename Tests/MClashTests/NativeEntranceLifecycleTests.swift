@@ -169,6 +169,61 @@ struct NativeEntranceLifecycleTests {
         ])
     }
 
+    @Test("System Proxy to App Routing restores the exact snapshot before activation")
+    func systemProxyToAppRoutingIsTransactional() async throws {
+        let control = RecordingEntranceNetworkExtensionControl()
+        let proxy = RecordingSystemProxyBoundary()
+        let backend = NativeNetworkExtensionEntranceBackend(control: control, systemProxy: proxy)
+        let snapshotURL = URL(fileURLWithPath: "/tmp/mclash-test-snapshot.json")
+        let endpoints = try LocalSystemProxyEndpoints(mixedPort: 18_901)
+        let system = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(revision: 1, enabled: [.systemProxy], generation: 1),
+            systemProxyConfiguration: NativeSystemProxyConfiguration(
+                endpoints: endpoints, bypassDomains: ["localhost"], snapshotURL: snapshotURL
+            )
+        )
+        _ = try await backend.apply(system, replacing: nil)
+
+        let runtime = NetworkExtensionRuntimeConfiguration(revision: 2, dnsEnabled: false)
+        let app = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(revision: 2, enabled: [.appRouting], generation: 2),
+            runtimeConfiguration: runtime
+        )
+        _ = try await backend.apply(app, replacing: system)
+
+        #expect(await proxy.restoredURLs == [snapshotURL])
+        #expect(await control.enabledConfigurations == [runtime])
+    }
+
+    @Test("App Routing to System Proxy failure restores the previous connector")
+    func appRoutingToSystemProxyRollsBack() async throws {
+        let control = RecordingEntranceNetworkExtensionControl()
+        let proxy = RecordingSystemProxyBoundary()
+        let backend = NativeNetworkExtensionEntranceBackend(control: control, systemProxy: proxy)
+        let runtime = NetworkExtensionRuntimeConfiguration(revision: 3, dnsEnabled: false)
+        let app = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(revision: 3, enabled: [.appRouting], generation: 3),
+            runtimeConfiguration: runtime
+        )
+        _ = try await backend.apply(app, replacing: nil)
+
+        await proxy.failNextActivation()
+        let system = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(revision: 4, enabled: [.systemProxy], generation: 4),
+            systemProxyConfiguration: NativeSystemProxyConfiguration(
+                endpoints: try LocalSystemProxyEndpoints(mixedPort: 18_902),
+                bypassDomains: nil,
+                snapshotURL: URL(fileURLWithPath: "/tmp/mclash-test-snapshot-2.json")
+            )
+        )
+        await #expect(throws: RecordingSystemProxyError.activationFailed) {
+            _ = try await backend.apply(system, replacing: app)
+        }
+
+        #expect(await control.disableCount == 1)
+        #expect(await control.enabledConfigurations == [runtime])
+    }
+
     @Test("Native lifecycle can commit an explicit same-revision rollback")
     func nativeLifecycleCommitsExplicitRollback() async throws {
         let control = RecordingEntranceNetworkExtensionControl()
@@ -260,6 +315,29 @@ private actor RecordingEntranceBackend: NativeEntranceLifecycleBackend {
     func returnRequiresReboot() { nextOutcome = .requiresReboot }
 }
 
+private actor RecordingSystemProxyBoundary: NativeSystemProxySideEffectBoundary {
+    private(set) var activations: [NativeSystemProxyConfiguration] = []
+    private(set) var restoredURLs: [URL] = []
+    private(set) var deactivatedURLs: [URL?] = []
+    private var shouldFailActivation = false
+
+    func activate(_ configuration: NativeSystemProxyConfiguration) async throws {
+        if shouldFailActivation {
+            shouldFailActivation = false
+            throw RecordingSystemProxyError.activationFailed
+        }
+        activations.append(configuration)
+    }
+
+    func restore(snapshotAt url: URL) async throws { restoredURLs.append(url) }
+    func deactivate(snapshotAt url: URL?) async throws { deactivatedURLs.append(url) }
+    func failNextActivation() { shouldFailActivation = true }
+}
+
+private enum RecordingSystemProxyError: Error, Equatable {
+    case activationFailed
+}
+
 private enum RecordingEntranceError: Error, Equatable, LocalizedError {
     case applyFailed
 
@@ -275,6 +353,7 @@ private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControll
     private var nextEnableOutcome: NetworkExtensionEnableOutcome = .running
     private var shouldFailNextUpdate = false
     private(set) var updatedConfigurations: [NetworkExtensionRuntimeConfiguration] = []
+    private(set) var enabledConfigurations: [NetworkExtensionRuntimeConfiguration] = []
     private(set) var disableCount = 0
 
     func returnRequiresRebootOnEnable() {
@@ -291,7 +370,7 @@ private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControll
             NetworkExtensionEnableProgress
         ) -> Void
     ) async throws -> NetworkExtensionEnableOutcome {
-        _ = configuration
+        enabledConfigurations.append(configuration)
         reportProgress(.awaitingSystemExtensionApproval)
         let outcome = nextEnableOutcome
         nextEnableOutcome = .running

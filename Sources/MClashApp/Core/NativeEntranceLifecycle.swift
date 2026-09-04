@@ -30,6 +30,15 @@ struct NativeEntranceActivationResult: Equatable, Sendable {
     let outcome: NativeEntranceApplyOutcome
 }
 
+/// MClash-owned inputs for the host System Proxy side effect. The snapshot
+/// URL is deliberately part of the transaction so a replacement can restore
+/// the exact pre-activation state after a later stage fails.
+struct NativeSystemProxyConfiguration: Sendable {
+    let endpoints: LocalSystemProxyEndpoints
+    let bypassDomains: [String]?
+    let snapshotURL: URL
+}
+
 /// Complete native entrance transaction passed to the side-effect boundary.
 /// It is intentionally not Equatable or printable: the embedded runtime
 /// configuration may contain connector credentials. Rollback data is opaque
@@ -40,20 +49,42 @@ struct NativeEntranceTransaction: Sendable {
     let systemProxyEndpoints: LocalSystemProxyEndpoints?
     let systemProxySnapshot: SystemProxySnapshot?
     let rollbackToken: Data?
+    let systemProxyConfiguration: NativeSystemProxyConfiguration?
 
     init(
         activation: NativeEntranceActivation,
         runtimeConfiguration: NetworkExtensionRuntimeConfiguration? = nil,
         systemProxyEndpoints: LocalSystemProxyEndpoints? = nil,
         systemProxySnapshot: SystemProxySnapshot? = nil,
-        rollbackToken: Data? = nil
+        rollbackToken: Data? = nil,
+        systemProxyConfiguration: NativeSystemProxyConfiguration? = nil,
+        systemProxyBypassDomains: [String]? = nil,
+        systemProxySnapshotURL: URL? = nil
     ) {
         self.activation = activation
         self.runtimeConfiguration = runtimeConfiguration
         self.systemProxyEndpoints = systemProxyEndpoints
         self.systemProxySnapshot = systemProxySnapshot
         self.rollbackToken = rollbackToken
+        self.systemProxyConfiguration = systemProxyConfiguration ?? {
+            guard let endpoints = systemProxyEndpoints,
+                  let snapshotURL = systemProxySnapshotURL else { return nil }
+            return NativeSystemProxyConfiguration(
+                endpoints: endpoints,
+                bypassDomains: systemProxyBypassDomains,
+                snapshotURL: snapshotURL
+            )
+        }()
     }
+}
+
+/// Injectable boundary for SystemConfiguration/System Proxy side effects.
+/// Production wiring may implement this with SystemProxyManager; tests use a
+/// recording fake. No native entrance backend calls privileged APIs directly.
+protocol NativeSystemProxySideEffectBoundary: Sendable {
+    func activate(_ configuration: NativeSystemProxyConfiguration) async throws
+    func restore(snapshotAt url: URL) async throws
+    func deactivate(snapshotAt url: URL?) async throws
 }
 
 enum NativeEntranceLifecycleState: Equatable, Sendable {
@@ -116,8 +147,15 @@ final class NativeNetworkExtensionEntranceBackend: NativeEntranceLifecycleBacken
     private let control: any NetworkExtensionControlling
     private let lock = NSLock()
     private var progressHandler: (@Sendable (NetworkExtensionEnableProgress) -> Void)?
+    private let systemProxy: (any NativeSystemProxySideEffectBoundary)?
 
-    init(control: any NetworkExtensionControlling) { self.control = control }
+    init(
+        control: any NetworkExtensionControlling,
+        systemProxy: (any NativeSystemProxySideEffectBoundary)? = nil
+    ) {
+        self.control = control
+        self.systemProxy = systemProxy
+    }
 
     func setProgressHandler(
         _ handler: (@Sendable (NetworkExtensionEnableProgress) -> Void)?
@@ -138,8 +176,30 @@ final class NativeNetworkExtensionEntranceBackend: NativeEntranceLifecycleBacken
         _ transaction: NativeEntranceTransaction,
         replacing previous: NativeEntranceTransaction?
     ) async throws -> NativeEntranceApplyOutcome {
+        if transaction.activation.systemProxyEnabled {
+            guard let systemProxy, let configuration = transaction.systemProxyConfiguration else {
+                throw NativeEntranceBackendError.missingSystemProxyConfiguration
+            }
+            if let previous, previous.activation.appRoutingEnabled {
+                try await control.disable()
+            }
+            do {
+                try await systemProxy.activate(configuration)
+                return .running
+            } catch {
+                if let previousConfiguration = previous?.runtimeConfiguration {
+                    _ = try? await control.enable(previousConfiguration) { _ in }
+                }
+                throw error
+            }
+        }
         guard let configuration = transaction.runtimeConfiguration else {
             throw NativeEntranceBackendError.missingRuntimeConfiguration
+        }
+        if let previous, previous.activation.systemProxyEnabled,
+           let snapshotURL = previous.systemProxyConfiguration?.snapshotURL {
+            guard let systemProxy else { throw NativeEntranceBackendError.missingSystemProxyConfiguration }
+            try await systemProxy.restore(snapshotAt: snapshotURL)
         }
         let outcome: NetworkExtensionEnableOutcome
         if let previousConfiguration = previous?.runtimeConfiguration {
@@ -150,6 +210,11 @@ final class NativeNetworkExtensionEntranceBackend: NativeEntranceLifecycleBacken
                     _ = try await control.updateRuntimeConfiguration(previousConfiguration)
                 } catch {
                     throw NativeEntranceBackendError.rollbackFailed
+                }
+                if let previous, previous.activation.systemProxyEnabled,
+                   let snapshotURL = previous.systemProxyConfiguration?.snapshotURL,
+                   let systemProxy {
+                    try? await systemProxy.restore(snapshotAt: snapshotURL)
                 }
                 throw error
             }
@@ -165,19 +230,28 @@ final class NativeNetworkExtensionEntranceBackend: NativeEntranceLifecycleBacken
     }
 
     func deactivate(_ transaction: NativeEntranceTransaction) async throws {
-        _ = transaction
-        try await control.disable()
+        if transaction.activation.systemProxyEnabled {
+            guard let systemProxy else { throw NativeEntranceBackendError.missingSystemProxyConfiguration }
+            try await systemProxy.deactivate(
+                snapshotAt: transaction.systemProxyConfiguration?.snapshotURL
+            )
+        } else {
+            try await control.disable()
+        }
     }
 }
 
 enum NativeEntranceBackendError: Error, Equatable, LocalizedError, Sendable {
     case missingRuntimeConfiguration
+    case missingSystemProxyConfiguration
     case rollbackFailed
 
     var errorDescription: String? {
         switch self {
         case .missingRuntimeConfiguration:
             "Native App Routing activation is missing its runtime configuration."
+        case .missingSystemProxyConfiguration:
+            "Native System Proxy activation is missing its side-effect configuration."
         case .rollbackFailed:
             "Native App Routing update failed and the previous provider configuration could not be restored."
         }
