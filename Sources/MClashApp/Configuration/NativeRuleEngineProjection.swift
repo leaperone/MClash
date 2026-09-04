@@ -141,12 +141,24 @@ public actor NativeTextRuleSetRefresher {
         }
         var request = URLRequest(url: sourceURL)
         request.setValue("text/plain", forHTTPHeaderField: "Accept")
-        let (data, response) = try await session.data(for: request)
+        request.timeoutInterval = 20
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NativeRuleSetFileLoader.Error.unreadable
         }
-        guard data.count <= NativeRuleSetFileLoader.maximumBytes else {
+        if http.expectedContentLength > Int64(NativeRuleSetFileLoader.maximumBytes) {
             throw NativeRuleSetFileLoader.Error.tooLarge
+        }
+        var data = Data()
+        if http.expectedContentLength > 0 {
+            data.reserveCapacity(Int(http.expectedContentLength))
+        }
+        for try await byte in bytes {
+            guard data.count < NativeRuleSetFileLoader.maximumBytes else {
+                throw NativeRuleSetFileLoader.Error.tooLarge
+            }
+            data.append(byte)
         }
         try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         let cachePath = cacheDirectory.appendingPathComponent("\(ruleSet.id.rawValue.uuidString.lowercased()).txt")
