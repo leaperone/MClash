@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "release_version": "1.5.0",
+  "commit": "c282323e79b0e1ef6781cbfca77b79593c875674",
+  "status": "passed",
+  "backend": "native",
+  "capabilities": [
+    "nativeRuntime",
+    "nativeRouting",
+    "nativeDNS"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh",
+    "MCLASH_APP_PATH=.build/native-only-final/MClash.app MCLASH_SHADOW_SOURCE_ROOT=~/Library/Application Support/MClash MCLASH_SHADOW_AUTO_CONNECT=1 ./scripts/smoke-test-native-runtime-cli.sh"
+  ],
+  "validation_summary": {
+    "application_tests": 532,
+    "shared_targets": 35,
+    "network_extension_targets": 12,
+    "automation_tests": 6,
+    "native_shadow": {
+      "backend": "native",
+      "workspace_revision": 30,
+      "listener_count": 5,
+      "enabled_listener_count": 4,
+      "enabled_socket_listener_count": 3,
+      "running_socket_listener_count": 3,
+      "control_plane_available": false,
+      "unsupported_connectors": []
+    }
+  }
+}
