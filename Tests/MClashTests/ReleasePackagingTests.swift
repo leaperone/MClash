@@ -327,6 +327,7 @@ struct ReleasePackagingTests {
         #expect(smokeScript.contains("reserved = set()"))
         #expect(smokeScript.contains("entrance[\"port\"] = port"))
         #expect(smokeScript.contains("enabledSocketListenerCount"))
+        #expect(smokeScript.contains("is not bound only to IPv4 loopback"))
         #expect(smokeScript.contains("native shadow listeners are not all ready"))
     }
 

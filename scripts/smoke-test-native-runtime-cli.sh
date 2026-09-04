@@ -28,6 +28,7 @@ automation_directory="$(mktemp -d "${TMPDIR:-/tmp}/mclash-native-cli.XXXXXX")"
 namespace="mclash-native-cli-${RANDOM}-$$"
 application_support_identifier="${namespace}"
 shadow_application_support=""
+shadow_manifest=""
 skip_auto_connect=1
 if [[ "${MCLASH_SHADOW_AUTO_CONNECT:-0}" == "1" ]]; then
   skip_auto_connect=0
@@ -236,6 +237,37 @@ if sys.argv[3] == "1":
             f"native shadow listeners are not all ready ({running_count}/{enabled_count})"
         )
 PY
+
+if [[ "${MCLASH_SHADOW_AUTO_CONNECT:-0}" == "1" ]] && \
+   [[ -n "${shadow_manifest}" && -f "${shadow_manifest}" ]]; then
+  socket_ports=("${(@f)$(/usr/bin/python3 - "${shadow_manifest}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    document = json.load(stream)
+for entrance in document.get("entrances", []):
+    if not isinstance(entrance, dict) or not entrance.get("enabled"):
+        continue
+    if str(entrance.get("kind", "")).lower() not in {"http", "socks5"}:
+        continue
+    port = entrance.get("port")
+    if isinstance(port, int):
+        print(port)
+PY
+)}")
+  for port in "${socket_ports[@]}"; do
+    [[ -n "${port}" ]] || continue
+    socket_listing="$(/usr/sbin/lsof -nP -a -p "${app_pid}" \
+      -iTCP:"${port}" -sTCP:LISTEN -F n 2>/dev/null || true)"
+    if ! print -r -- "${socket_listing}" | \
+      /usr/bin/grep -Fxq "n127.0.0.1:${port}"; then
+      print -u2 "Native shadow socket ${port} is not bound only to IPv4 loopback."
+      print -u2 -- "${socket_listing}"
+      exit 1
+    fi
+  done
+fi
 
 print "Native runtime CLI smoke passed (namespace=${namespace})."
 if [[ "${MCLASH_KEEP_SHADOW:-0}" == "1" ]]; then
