@@ -788,6 +788,8 @@ final class AppModel {
     private var flowLedgerPresentationRefreshPending = false
     private var flowLedgerAccountingRefreshPending = false
     private var flowLedgerActiveBuildNeedsAccounting = false
+    private var nativeFlowObservationTask: Task<Void, Never>?
+    private var nativeFlowObservationsByID: [String: FlowRelayObservation] = [:]
     private var prepared = false
     private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
     private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
@@ -1305,6 +1307,20 @@ final class AppModel {
             for await event in events {
                 guard !Task.isCancelled else { break }
                 self?.receive(event)
+            }
+        }
+        if let nativeStore = supervisor.nativeFlowObservations {
+            nativeFlowObservationTask = Task { [weak self, stream = nativeStore.stream] in
+                for await observation in stream {
+                    guard !Task.isCancelled else { break }
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.nativeFlowObservationsByID[observation.id] = observation
+                        self.flowLedgerRevision &+= 1
+                        self.flowLedgerPresentationRefreshPending = true
+                        self.startFlowLedgerRefreshIfNeeded()
+                    }
+                }
             }
         }
     }
@@ -9189,6 +9205,9 @@ final class AppModel {
             }
             coreState = state
             if case let .failed(message) = state {
+                nativeFlowObservationTask?.cancel()
+                nativeFlowObservationTask = nil
+                nativeFlowObservationsByID.removeAll()
                 errorMessage = message
                 if notificationsEnabled {
                     Task { [notificationCenter] in
@@ -9211,6 +9230,9 @@ final class AppModel {
                 }
             }
             if case .stopped = state {
+                nativeFlowObservationTask?.cancel()
+                nativeFlowObservationTask = nil
+                nativeFlowObservationsByID.removeAll()
                 shouldReenableSystemProxyAfterCrash = false
                 stopControllerStreams()
                 if networkCaptureIsActive {
@@ -11894,12 +11916,14 @@ final class AppModel {
                 FlowLedgerClosedConnection(connection: $0.connection, closedAt: $0.closedAt)
             }
             let activities = appRoutingActivities
+            let nativeObservations = Array(nativeFlowObservationsByID.values)
             let defaultProfileID = activeProfileID
             let worker = Task.detached(priority: .utility) {
                 FlowLedger(
                     activeConnections: activeConnections,
                     recentlyClosedConnections: closedConnections,
                     appRoutingActivities: activities,
+                    flowRelayObservations: nativeObservations,
                     defaultProfileID: defaultProfileID
                 )
             }

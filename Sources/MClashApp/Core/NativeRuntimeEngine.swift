@@ -151,6 +151,7 @@ extension CoreRunState {
 final actor NativeRuntimeEngine: ProfileRuntimeSession {
     nonisolated let events: AsyncStream<CoreEvent>
     nonisolated let flowObservations: NativeFlowObservationStore
+    nonisolated var nativeFlowObservations: NativeFlowObservationStore? { flowObservations }
     nonisolated let runtimeCapabilities: Set<NativeRuntimeCapability> = [
         .nativeRuntime,
         .nativeRouting,

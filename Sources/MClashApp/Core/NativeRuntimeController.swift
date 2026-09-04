@@ -7,6 +7,7 @@ import MClashNetworkShared
 /// but keeping this boundary independent of its name lets the control plane
 /// move to native connectors without changing AppModel's lifecycle code.
 protocol NativeRuntimeController: AnyObject, Sendable {
+    nonisolated var nativeFlowObservations: NativeFlowObservationStore? { get }
     var events: AsyncStream<CoreEvent> { get }
     /// The control-plane implementation behind this lifecycle surface. This
     /// is deliberately observable so the UI/diagnostics can distinguish a
@@ -87,6 +88,7 @@ protocol ProfileRuntimeSession: NativeRuntimeController {
 extension CoreSupervisor: ProfileRuntimeSession {}
 
 extension CoreSupervisor {
+    nonisolated var nativeFlowObservations: NativeFlowObservationStore? { nil }
     nonisolated var metadata: ProfileRuntimeSessionMetadata {
         ProfileRuntimeSessionMetadata(
             backend: .legacyConnector,
@@ -135,6 +137,7 @@ extension CoreSupervisor {
 /// CoreSupervisor verbatim. It is intentionally a separate type so a native
 /// runtime can replace it at the AppModel boundary in a later migration.
 final actor MihomoRuntimeControllerAdapter: ProfileRuntimeSession {
+    nonisolated var nativeFlowObservations: NativeFlowObservationStore? { nil }
     nonisolated let events: AsyncStream<CoreEvent>
     nonisolated var runtimeCapabilities: Set<NativeRuntimeCapability> {
         [.legacyCore, .legacyController]
