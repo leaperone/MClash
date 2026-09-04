@@ -24,19 +24,20 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
             let headers = try connector.authHeaders()
             let fields = try QPACKEncoder.encodeLiteralFields(headers)
             try await stream.send(HTTP3FrameCodec.encode(HTTP3Frame(type: .headers, payload: fields)))
-            let message = try await stream.receive(atLeast: 1, atMost: 64 * 1024)
             var decoder = HTTP3FrameDecoder()
-            let frames = try decoder.append(message.content)
-            for frame in frames where frame.type == .headers {
-                let fields = try QPACKDecoder.decodeLiteralFields(frame.payload)
-                let status = Int(fields.first { $0.0 == ":status" }?.1.split(separator: " ").first ?? "") ?? 0
-                let headers = Dictionary(fields.filter { !$0.0.hasPrefix(":") }, uniquingKeysWith: { _, last in last })
-                _ = try Hysteria2Codec.decodeAuthResponse(statusCode: status, headers: headers)
-                return true
+            while true {
+                let message = try await stream.receive(atLeast: 1, atMost: 64 * 1024)
+                for frame in try decoder.append(message.content) where frame.type == .headers {
+                    let fields = try QPACKDecoder.decodeLiteralFields(frame.payload)
+                    let status = Int(fields.first { $0.0 == ":status" }?.1.split(separator: " ").first ?? "") ?? 0
+                    let headers = Dictionary(fields.filter { !$0.0.hasPrefix(":") }, uniquingKeysWith: { _, last in last })
+                    _ = try Hysteria2Codec.decodeAuthResponse(statusCode: status, headers: headers)
+                    return true
+                }
             }
-            throw Hysteria2CodecError.invalidResponse
         } catch {
-            stream.cancel()
+            stream.streamApplicationErrorCode = 0x100
+            try? await stream.send(Data(), endOfStream: true)
             authStream = nil
             throw error
         }
@@ -58,7 +59,7 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
     func close() async {
         authStream?.cancel()
         authStream = nil
-        connection?.cancel()
+        connection?.applicationError = Network.NWProtocolQUIC.ApplicationError(code: 0x100, reason: "closed")
         connection = nil
     }
 
@@ -94,7 +95,7 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
                 }
             }
         } onCancel: {
-            connection.cancel()
+            connection.applicationError = Network.NWProtocolQUIC.ApplicationError(code: 0x100, reason: "cancelled")
         }
     }
 }
@@ -122,6 +123,7 @@ private final class NativeHysteria2QUICStream: Hysteria2StreamTransport, @unchec
     }
 
     func close() async {
-        stream.cancel()
+        stream.streamApplicationErrorCode = 0x100
+        try? await stream.send(Data(), endOfStream: true)
     }
 }
