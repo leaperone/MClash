@@ -34,6 +34,39 @@ struct Hysteria2TransportProviderTests {
             try await transport.sendDatagram(Data("late".utf8))
         }
     }
+
+    @Test("Keeps a half-closed stream readable and bounds stream writes")
+    func halfCloseAndBounds() async throws {
+        let fake = FakeProvider()
+        let transport = Hysteria2MultiplexedTransport(
+            provider: fake,
+            maxConcurrentStreams: 1,
+            maxPayloadSize: 8
+        )
+        let stream = try await transport.openStream()
+        await transport.closeStream(stream, halfClose: true)
+        #expect(try await transport.receive(on: stream) == Data("response".utf8))
+        await #expect(throws: Hysteria2TransportError.halfClosed) {
+            try await transport.send(Data("late".utf8), on: stream)
+        }
+        await #expect(throws: Hysteria2TransportError.payloadTooLarge) {
+            try await transport.send(Data(repeating: 0, count: 9), on: stream)
+        }
+        await transport.closeStream(stream)
+        await #expect(throws: Hysteria2TransportError.closed) {
+            try await transport.send(Data("x".utf8), on: stream)
+        }
+    }
+
+    @Test("Rejects a second stream at the configured limit")
+    func streamLimit() async throws {
+        let fake = FakeProvider()
+        let transport = Hysteria2MultiplexedTransport(provider: fake, maxConcurrentStreams: 1)
+        _ = try await transport.openStream()
+        await #expect(throws: Hysteria2TransportError.streamLimitReached) {
+            _ = try await transport.openStream()
+        }
+    }
 }
 
 private actor FakeProvider: Hysteria2TransportProvider {
