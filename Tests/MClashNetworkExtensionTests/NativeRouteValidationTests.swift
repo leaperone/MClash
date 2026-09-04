@@ -52,7 +52,7 @@ struct NativeRouteValidationTests {
         #expect(NetworkExtensionFlowDecisionCoordinator().validates(configuration: configuration))
     }
 
-    @Test("Native catalog remains authoritative over a legacy Mihomo rescue")
+    @Test("Native catalog remains authoritative alongside a legacy catalog")
     func nativeCatalogCannotBeRescuedByLegacyRoute() throws {
         let snapshot = try CaptureConfigurationSnapshot(revision: 2, rules: [])
         let unsupported = try OutboundNodeTarget(protocolName: "quic", host: "node.example.com", port: 443)
@@ -68,6 +68,59 @@ struct NativeRouteValidationTests {
             ProviderConfigurationKey.outboundNodeTargetCatalog: try native.encoded(),
             ProviderConfigurationKey.mihomoRouteProxyCatalog: legacy
         ]
-        #expect(!NetworkExtensionFlowDecisionCoordinator().validates(configuration: configuration))
+        let coordinator = NetworkExtensionFlowDecisionCoordinator()
+        #expect(coordinator.validates(configuration: configuration))
+        coordinator.load(configuration: configuration)
+        #expect(coordinator.outboundNodeTarget(for: .profileRules) == unsupported)
+    }
+
+    @Test("Native flow normalization terminates Direct, Reject, and unavailable routes")
+    func nativeFlowNormalizationFailsClosed() throws {
+        let direct = FlowTrafficDecision(
+            disposition: .direct,
+            reason: .rule(.defaultDirect)
+        )
+        let reject = FlowTrafficDecision(
+            disposition: .reject,
+            reason: .rule(.defaultDirect)
+        )
+        let outbound = FlowTrafficDecision(
+            disposition: .outbound(.profileRules),
+            reason: .rule(.matchedRule("native-route"))
+        )
+        let supported = try OutboundNodeTarget(
+            protocolName: "vless",
+            host: "node.example.com",
+            port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001"]
+        )
+        let unsupported = try OutboundNodeTarget(
+            protocolName: "quic",
+            host: "node.example.com",
+            port: 443
+        )
+
+        #expect(NetworkExtensionFlowDecisionCoordinator.normalizedNativeDecision(
+            direct, target: nil, transportProtocol: .tcp
+        ) == direct)
+        #expect(NetworkExtensionFlowDecisionCoordinator.normalizedNativeDecision(
+            reject, target: nil, transportProtocol: .tcp
+        ) == reject)
+        #expect(NetworkExtensionFlowDecisionCoordinator.normalizedNativeDecision(
+            outbound, target: supported, transportProtocol: .tcp
+        ) == outbound)
+
+        for target in [nil, unsupported] as [OutboundNodeTarget?] {
+            let normalized = NetworkExtensionFlowDecisionCoordinator.normalizedNativeDecision(
+                outbound,
+                target: target,
+                transportProtocol: .tcp
+            )
+            #expect(normalized.disposition == .reject)
+            #expect(normalized.reason == .outboundUnavailable(
+                rule: .matchedRule("native-route"),
+                fallback: .reject
+            ))
+        }
     }
 }

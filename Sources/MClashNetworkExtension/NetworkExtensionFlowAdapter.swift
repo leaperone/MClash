@@ -321,7 +321,11 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             .unsupported
         }
         let nativeDecision = currentState.nativeMode
-            ? normalizedNativeDecision(outcome.decision, target: nativeTarget, transportProtocol: .tcp)
+            ? Self.normalizedNativeDecision(
+                outcome.decision,
+                target: nativeTarget,
+                transportProtocol: .tcp
+            )
             : outcome.decision
         return TCPFlowInterceptionPlan(
             decision: nativeDecision,
@@ -571,7 +575,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     /// Native mode has no Mihomo rescue path. An outbound rule without a
     /// concrete supported target is converted to an explicit reject while
     /// retaining the rule evidence and unavailable reason for diagnostics.
-    private func normalizedNativeDecision(
+    static func normalizedNativeDecision(
         _ decision: FlowTrafficDecision,
         target: OutboundNodeTarget?,
         transportProtocol: TransportProtocol
@@ -615,7 +619,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let routePlan: ProviderSOCKSFlowPlan?
         let nativeRoute: OutboundRoute? = if case let .outbound(route) = outcome.decision.disposition { route } else { nil }
         let nativeDecision = currentState.nativeMode
-            ? normalizedNativeDecision(
+            ? Self.normalizedNativeDecision(
                 outcome.decision,
                 target: nativeRoute.flatMap { currentState.outboundNodeTargets?.target(for: $0) },
                 transportProtocol: .udp
