@@ -326,6 +326,7 @@ struct ReleasePackagingTests {
         )
         #expect(smokeScript.contains("reserved = set()"))
         #expect(smokeScript.contains("entrance[\"port\"] = port"))
+        #expect(smokeScript.contains("native shadow listeners are not all ready"))
     }
 
     @Test("CI unit failures publish a bounded check annotation")

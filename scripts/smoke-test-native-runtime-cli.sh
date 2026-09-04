@@ -218,6 +218,13 @@ if sys.argv[2]:
 if sys.argv[3] == "1":
     if diagnostics.get("state") != "running" or not diagnostics.get("startedAt"):
         raise SystemExit("native shadow auto-connect did not reach a running state")
+    listener_states = diagnostics.get("listenerStates", {})
+    enabled_count = diagnostics.get("enabledListenerCount", 0)
+    running_count = sum(value == "running" for value in listener_states.values())
+    if running_count < enabled_count:
+        raise SystemExit(
+            f"native shadow listeners are not all ready ({running_count}/{enabled_count})"
+        )
 PY
 
 print "Native runtime CLI smoke passed (namespace=${namespace})."
