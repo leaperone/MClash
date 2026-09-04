@@ -103,8 +103,14 @@ public enum Hysteria2Codec: Sendable {
         }
         guard payload.count <= 65_535 else { throw Hysteria2CodecError.oversized }
         var result = Data([
-            UInt8(sessionID >> 24), UInt8(sessionID >> 16), UInt8(sessionID >> 8), UInt8(sessionID),
-            UInt8(packetID >> 8), UInt8(packetID), fragmentID, fragmentCount,
+            UInt8(truncatingIfNeeded: sessionID >> 24),
+            UInt8(truncatingIfNeeded: sessionID >> 16),
+            UInt8(truncatingIfNeeded: sessionID >> 8),
+            UInt8(truncatingIfNeeded: sessionID),
+            UInt8(truncatingIfNeeded: packetID >> 8),
+            UInt8(truncatingIfNeeded: packetID),
+            fragmentID,
+            fragmentCount,
         ])
         result.append(encodeVarint(UInt64(address.utf8.count)))
         result.append(contentsOf: address.utf8)
@@ -193,10 +199,26 @@ public enum Hysteria2Codec: Sendable {
 
     private static func encodeVarint(_ value: UInt64) -> Data {
         if value < (1 << 6) { return Data([UInt8(value)]) }
-        if value < (1 << 14) { let v = UInt16(value) | 0x4000; return Data([UInt8(v >> 8), UInt8(v)]) }
-        if value < (1 << 30) { let v = UInt32(value) | 0x80000000; return Data([UInt8(v >> 24), UInt8(v >> 16), UInt8(v >> 8), UInt8(v)]) }
+        if value < (1 << 14) {
+            let v = UInt16(value) | 0x4000
+            return Data([
+                UInt8(truncatingIfNeeded: v >> 8),
+                UInt8(truncatingIfNeeded: v)
+            ])
+        }
+        if value < (1 << 30) {
+            let v = UInt32(value) | 0x80000000
+            return Data([
+                UInt8(truncatingIfNeeded: v >> 24),
+                UInt8(truncatingIfNeeded: v >> 16),
+                UInt8(truncatingIfNeeded: v >> 8),
+                UInt8(truncatingIfNeeded: v)
+            ])
+        }
         let v = value | 0xc000000000000000
-        return Data((0..<8).reversed().map { UInt8(v >> (UInt64($0) * 8)) })
+        return Data((0..<8).reversed().map {
+            UInt8(truncatingIfNeeded: v >> (UInt64($0) * 8))
+        })
     }
 
     private static func decodeVarint(_ data: Data, offset: inout Int) throws -> UInt64 {

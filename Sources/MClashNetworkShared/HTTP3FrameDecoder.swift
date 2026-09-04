@@ -37,11 +37,15 @@ public struct HTTP3FrameDecoder: Sendable {
 
     private func decodeVarintIfComplete(_ data: Data, offset: Int) throws -> (UInt64, Int)? {
         guard offset < data.count else { return nil }
-        let first = data[offset]
+        let firstIndex = data.index(data.startIndex, offsetBy: offset)
+        let first = data[firstIndex]
         let length = 1 << Int(first >> 6)
         guard offset + length <= data.count else { return nil }
         var value = UInt64(first & 0x3f)
-        for index in 1..<length { value = (value << 8) | UInt64(data[offset + index]) }
+        for index in 1..<length {
+            let byteIndex = data.index(firstIndex, offsetBy: index)
+            value = (value << 8) | UInt64(data[byteIndex])
+        }
         return (value, length)
     }
 }

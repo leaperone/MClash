@@ -39,30 +39,44 @@ public enum HTTP3FrameCodec: Sendable {
         guard let frameType = HTTP3FrameType(rawValue: type) else {
             throw HTTP3FrameCodecError.unsupportedType(type)
         }
-        return HTTP3Frame(type: frameType, payload: Data(data[offset...]))
+        let payloadStart = data.index(data.startIndex, offsetBy: offset)
+        return HTTP3Frame(type: frameType, payload: Data(data[payloadStart...]))
     }
 
     private static func encodeVarint(_ value: UInt64) -> Data {
         if value < (1 << 6) { return Data([UInt8(value)]) }
         if value < (1 << 14) {
             let encoded = UInt16(value) | 0x4000
-            return Data([UInt8(encoded >> 8), UInt8(encoded)])
+            return Data([
+                UInt8(truncatingIfNeeded: encoded >> 8),
+                UInt8(truncatingIfNeeded: encoded)
+            ])
         }
         if value < (1 << 30) {
             let encoded = UInt32(value) | 0x80000000
-            return Data([UInt8(encoded >> 24), UInt8(encoded >> 16), UInt8(encoded >> 8), UInt8(encoded)])
+            return Data([
+                UInt8(truncatingIfNeeded: encoded >> 24),
+                UInt8(truncatingIfNeeded: encoded >> 16),
+                UInt8(truncatingIfNeeded: encoded >> 8),
+                UInt8(truncatingIfNeeded: encoded)
+            ])
         }
         let encoded = value | 0xc000000000000000
-        return Data((0..<8).reversed().map { UInt8(encoded >> (UInt64($0) * 8)) })
+        return Data((0..<8).reversed().map {
+            UInt8(truncatingIfNeeded: encoded >> (UInt64($0) * 8))
+        })
     }
 
     private static func decodeVarint(_ data: Data, offset: inout Int) throws -> UInt64 {
         guard offset < data.count else { throw HTTP3FrameCodecError.truncated }
-        let first = data[offset]
+        let firstIndex = data.index(data.startIndex, offsetBy: offset)
+        let first = data[firstIndex]
         let length = 1 << Int(first >> 6)
         guard offset + length <= data.count else { throw HTTP3FrameCodecError.truncated }
         var value = UInt64(first & 0x3f)
-        for index in 1..<length { value = (value << 8) | UInt64(data[offset + index]) }
+        for index in 1..<length {
+            value = (value << 8) | UInt64(data[data.index(firstIndex, offsetBy: index)])
+        }
         offset += length
         return value
     }

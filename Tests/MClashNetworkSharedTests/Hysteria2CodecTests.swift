@@ -11,10 +11,18 @@ struct Hysteria2CodecTests {
             receiveRate: 1_000_000,
             padding: "pad"
         )
-        #expect(headers.contains { $0.0 == ":method" && $0.1 == "POST" })
-        #expect(headers.contains { $0.0 == ":path" && $0.1 == "/auth" })
-        #expect(headers.contains { $0.0 == "Hysteria-Auth" && $0.1 == "secret" })
-        #expect(headers.contains { $0.0 == "Hysteria-CC-RX" && $0.1 == "1000000" })
+        if !headers.contains(where: { $0.0 == ":method" && $0.1 == "POST" }) {
+            Issue.record("Hysteria2 authentication is missing the POST method")
+        }
+        if !headers.contains(where: { $0.0 == ":path" && $0.1 == "/auth" }) {
+            Issue.record("Hysteria2 authentication is missing the /auth path")
+        }
+        if !headers.contains(where: { $0.0 == "Hysteria-Auth" && $0.1 == "secret" }) {
+            Issue.record("Hysteria2 authentication is missing its credential header")
+        }
+        if !headers.contains(where: { $0.0 == "Hysteria-CC-RX" && $0.1 == "1000000" }) {
+            Issue.record("Hysteria2 authentication is missing its receive-rate header")
+        }
         let frame = try Hysteria2Codec.encodeAuthHeadersFrame(password: "secret")
         #expect(try HTTP3FrameCodec.decode(frame).type == .headers)
     }
@@ -59,8 +67,8 @@ struct Hysteria2CodecTests {
             payload: Data([0xde, 0xad])
         )
         #expect(Array(data.prefix(8)) == [1, 2, 3, 4, 5, 6, 1, 2])
-        #expect(data[8] == 0x0f)
-        #expect(String(decoding: data[9..<24], as: UTF8.self) == "example.com:53")
+        #expect(data[8] == 0x0e)
+        #expect(String(decoding: data[9..<23], as: UTF8.self) == "example.com:53")
         #expect(Array(data.suffix(2)) == [0xde, 0xad])
         let decoded = try Hysteria2Codec.decodeUDPMessage(data)
         #expect(decoded.sessionID == 0x01020304)

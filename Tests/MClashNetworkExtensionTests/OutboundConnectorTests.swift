@@ -235,7 +235,9 @@ struct OutboundConnectorTests {
         let hasAuthentication = headers.contains {
             $0.0 == "Hysteria-Auth" && $0.1 == "secret"
         }
-        #expect(hasAuthentication)
+        if !hasAuthentication {
+            Issue.record("Native Hysteria2 connector omitted its authentication header")
+        }
         let destination = try SOCKS5Endpoint(address: SOCKS5Address(domain: "example.com"), port: 443)
         let tcpRequest = try connector.tcpRequest(for: destination)
         let udpMessage = try connector.udpMessage(
