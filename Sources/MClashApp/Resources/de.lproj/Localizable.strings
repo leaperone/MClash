@@ -2428,3 +2428,4 @@
 "Waiting for associated connection telemetry" = "Zugehörige Verbindungstelemetrie ausstehend";
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "Das Live-Update des App-Routings wurde abgelehnt; die vorherigen Regeln wurden ohne Neustart der Laufzeit wiederhergestellt.";
 "Native runtime is ready; no legacy controller was contacted." = "Die native Laufzeit ist bereit; es wurde kein Legacy-Controller kontaktiert.";
+"Pin selected %@" = "Ausgewählte %@ anheften";

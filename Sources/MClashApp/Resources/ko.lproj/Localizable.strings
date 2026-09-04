@@ -2427,3 +2427,4 @@
 "Waiting for associated connection telemetry" = "연결된 텔레메트리 대기 중";
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "App Routing 실시간 업데이트가 거부되었습니다. 런타임을 재시작하지 않고 이전 규칙을 복원했습니다.";
 "Native runtime is ready; no legacy controller was contacted." = "네이티브 런타임이 준비되었습니다. 레거시 컨트롤러에는 연결하지 않았습니다.";
+"Pin selected %@" = "선택한 %@개 고정";

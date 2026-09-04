@@ -2427,3 +2427,4 @@
 "Waiting for associated connection telemetry" = "Waiting for associated connection telemetry";
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "The App Routing live update was rejected; the previous rules were restored without restarting the runtime.";
 "Native runtime is ready; no legacy controller was contacted." = "Native runtime is ready; no legacy controller was contacted.";
+"Pin selected %@" = "Pin selected %@";

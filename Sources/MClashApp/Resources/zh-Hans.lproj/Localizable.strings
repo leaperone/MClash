@@ -2426,3 +2426,4 @@
 "Waiting for associated connection telemetry" = "正在等待关联的连接遥测";
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "应用分流实时更新被拒绝；已在不重启运行时的情况下恢复之前的规则。";
 "Native runtime is ready; no legacy controller was contacted." = "原生运行时已就绪；未联系兼容控制器。";
+"Pin selected %@" = "固定选中的 %@ 个";

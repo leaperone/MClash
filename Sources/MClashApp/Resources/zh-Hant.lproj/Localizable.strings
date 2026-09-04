@@ -2428,3 +2428,4 @@
 "Waiting for associated connection telemetry" = "正在等待關聯的連線遙測";
 "The App Routing live update was rejected; the previous rules were restored without restarting the runtime." = "應用程式分流即時更新遭拒；已在不重新啟動執行階段的情況下還原先前的規則。";
 "Native runtime is ready; no legacy controller was contacted." = "原生執行階段已就緒；未聯絡相容性控制器。";
+"Pin selected %@" = "固定選取的 %@ 個";

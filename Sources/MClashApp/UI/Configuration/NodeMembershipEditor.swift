@@ -23,6 +23,7 @@ struct NodeMembershipEditor: View {
     @State private var excludeHostContains = ""
     @State private var fixedSearch = ""
     @State private var librarySearch = ""
+    @State private var librarySelectedIDs: Set<NodeID> = []
     @State private var isLoading = false
     @State private var advancedConditionsExpanded = false
     @FocusState private var librarySearchFocused: Bool
@@ -78,14 +79,13 @@ struct NodeMembershipEditor: View {
 
     private var availableLibraryNodes: [Node] {
         let query = librarySearch.trimmed
-        guard !query.isEmpty else { return [] }
         return nodes.filter { node in
             !selectedNodeIDs.contains(node.id)
                 && ((node.userAlias ?? node.displayName).localizedCaseInsensitiveContains(query)
                     || node.host.localizedCaseInsensitiveContains(query)
                     || node.proto.rawValue.localizedCaseInsensitiveContains(query)
                     || node.tags.contains { $0.localizedCaseInsensitiveContains(query) })
-        }.sorted(by: stableNodeOrder)
+        }.sorted(by: stableNodeOrder).prefix(200).map { $0 }
     }
 
     private var remainingFixedNodeCapacity: Int {
@@ -448,17 +448,25 @@ struct NodeMembershipEditor: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(pinCount == 0)
+                    let selectedCount = librarySelectedIDs.intersection(Set(availableLibraryNodes.map(\.id))).count
+                    Button(AppLocalization.format("Pin selected %@", AppLocalization.number(selectedCount))) {
+                        pinSelectedLibraryNodes()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(selectedCount == 0)
                 }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         ForEach(availableLibraryNodes.prefix(100)) { node in
                             Button {
-                                togglePin(node.id, pinned: true)
+                                if librarySelectedIDs.contains(node.id) { librarySelectedIDs.remove(node.id) }
+                                else { librarySelectedIDs.insert(node.id) }
                             } label: {
                                 nodeRow(
                                     node,
-                                    symbol: "plus.circle",
-                                    tint: Color.secondary
+                                    symbol: librarySelectedIDs.contains(node.id) ? "checkmark.circle.fill" : "circle",
+                                    tint: librarySelectedIDs.contains(node.id) ? Color.accentColor : Color.secondary
                                 )
                             }
                             .buttonStyle(.plain)
@@ -692,6 +700,14 @@ struct NodeMembershipEditor: View {
             selectedNodeIDs.insert(id)
             if !orderedNodeIDs.contains(id) { orderedNodeIDs.append(id) }
         }
+    }
+
+    private func pinSelectedLibraryNodes() {
+        let ids = librarySelectedIDs.intersection(Set(availableLibraryNodes.map(\.id)))
+        for id in ids.prefix(remainingFixedNodeCapacity) {
+            togglePin(id, pinned: true)
+        }
+        librarySelectedIDs.subtract(ids)
     }
 
     private func selectorMatchCount(_ selector: NodeSelector) -> Int {
