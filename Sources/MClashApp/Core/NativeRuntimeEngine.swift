@@ -705,8 +705,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             Bundle.main.url(forResource: "GeoIP", withExtension: "dat", subdirectory: "GeoData")
         ].compactMap { $0 }
         for url in candidates {
-            if let data = try? Data(contentsOf: url),
-               let provider = try? NativeGeoIPDatabaseProvider(data: data) {
+            if let provider = NativeGeoIPProviderCache.shared.load(url: url) {
                 return provider
             }
         }
@@ -793,5 +792,30 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     ) -> [OutboundConnectorCapabilityMatrixEntry] {
         guard let catalog else { return [] }
         return OutboundConnectorCapabilityMatrix.entries(for: catalog)
+    }
+}
+
+/// Parsing the bundled GeoIP protobuf is intentionally done once per source
+/// path. NativeRuntimeEngine instances are cheap and frequently constructed by
+/// tests, reconnects, or auxiliary lifecycle probes; reparsing an 18 MB file
+/// for each instance would starve unrelated operations and make timeouts look
+/// like network failures.
+private final class NativeGeoIPProviderCache: @unchecked Sendable {
+    static let shared = NativeGeoIPProviderCache()
+
+    private let lock = NSLock()
+    private var providers: [String: any NativeGeoDatabaseProvider] = [:]
+
+    func load(url: URL) -> (any NativeGeoDatabaseProvider)? {
+        let key = url.standardizedFileURL.path
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = providers[key] { return cached }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              let provider = try? NativeGeoIPDatabaseProvider(data: data) else {
+            return nil
+        }
+        providers[key] = provider
+        return provider
     }
 }
