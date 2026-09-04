@@ -8,7 +8,7 @@ struct NativeRuleEngineProjectionTests {
     func ruleSetSupportGate() {
         #expect(NativeRuleSetSupport.assess(RuleSet(name: "inline", rules: ["DOMAIN,example.com"])) == .inline)
         #expect(NativeRuleSetSupport.assess(RuleSet(name: "remote", sourceURL: URL(string: "https://rules.example/set"))) == .externalRequiresLoader)
-        #expect(NativeRuleSetSupport.assess(RuleSet(name: "file", path: "/tmp/rules.txt")) == .localText)
+        #expect(NativeRuleSetSupport.assess(RuleSet(name: "file", format: .text, path: "/tmp/rules.txt")) == .localText)
     }
 
     @Test("native text rule-set loader strips comments and blank lines")

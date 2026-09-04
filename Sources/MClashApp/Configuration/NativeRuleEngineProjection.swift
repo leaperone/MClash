@@ -141,7 +141,7 @@ public struct NativeRuleEngineProjection: Sendable {
             uniquingKeysWith: { first, _ in first }
         )
         self.externalRuleSetEntries = Dictionary(uniqueKeysWithValues: plan.ruleSets.compactMap { ruleSet in
-            guard NativeRuleSetSupport.assess(ruleSet) == .externalRequiresLoader,
+            guard NativeRuleSetSupport.assess(ruleSet) == .localText,
                   let entries = try? NativeRuleSetFileLoader.load(ruleSet) else { return nil }
             return (ruleSet.id, entries)
         })
