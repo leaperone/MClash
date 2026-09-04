@@ -1210,8 +1210,7 @@ private extension ConfigurationWorkbenchItem {
                 subtitle: [
                     entrance.kind.localizedTitle,
                     entrance.port.map { "\(entrance.bindAddress):\($0)" }
-                        ?? AppLocalization.string("Switch")
-                ].joined(separator: " · "),
+                ].compactMap { $0 }.joined(separator: " · "),
                 symbol: entrance.kind == .appRouting ? "app.badge" : "arrow.triangle.branch",
                 detail: entrance.kind == .appRouting
                     ? AppLocalization.string(
@@ -1223,7 +1222,11 @@ private extension ConfigurationWorkbenchItem {
                 metadata: [
                     (
                         AppLocalization.string("Status"),
-                        AppLocalization.string(entrance.enabled ? "Enabled" : "Disabled")
+                        AppLocalization.string(
+                            entrance.kind == .tun
+                                ? "Unavailable"
+                                : entrance.enabled ? "Enabled" : "Disabled"
+                        )
                     ),
                     (AppLocalization.string("Bind Address"), entrance.bindAddress),
                     (
@@ -1236,7 +1239,7 @@ private extension ConfigurationWorkbenchItem {
                     ),
                     (AppLocalization.string("Type"), entrance.kind.localizedTitle),
                 ],
-                isEnabled: entrance.enabled
+                isEnabled: entrance.kind == .tun ? nil : entrance.enabled
             )
         }
         return [

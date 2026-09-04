@@ -312,6 +312,7 @@ struct ConfigurationEditorSheet: View {
                         Text(kind.localizedTitle).tag(kind)
                     }
                 }
+                .disabled(!isNew)
                 if entranceKind == .appRouting {
                     Text(AppLocalization.string("App Routing is an entrance. Its matching rules are managed on the Rules page."))
                         .font(.caption)
@@ -335,6 +336,7 @@ struct ConfigurationEditorSheet: View {
                     }
                 }
                 Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
+                    .disabled(entranceKind == .tun)
             }
         case .dns:
             Section(AppLocalization.string("DNS")) {
@@ -696,6 +698,7 @@ struct ConfigurationEditorSheet: View {
 
     private func save() {
         var document = model.configurationDocument
+        var appRoutingEnableAfterSave: Bool?
         switch section {
         case .nodes:
             guard let index = document.nodes.firstIndex(where: { $0.id.rawValue == id }) else { return }
@@ -862,6 +865,17 @@ struct ConfigurationEditorSheet: View {
             document.workspaces[index].revision += 1
         case .entrances:
             let existingIndex = document.entrances.firstIndex(where: { $0.id.rawValue == id })
+            let persistedEnabled: Bool
+            if entranceKind == .tun {
+                persistedEnabled = false
+            } else if entranceKind == .appRouting {
+                appRoutingEnableAfterSave = enabled
+                persistedEnabled = existingIndex.map {
+                    document.entrances[$0].enabled
+                } ?? false
+            } else {
+                persistedEnabled = enabled
+            }
             let normalizedAddress = bindAddress.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedAddress.isEmpty else { errorMessage = AppLocalization.string("Bind address is required."); return }
             let normalizedPort = portText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -900,13 +914,13 @@ struct ConfigurationEditorSheet: View {
                 document.entrances[index].defaultAction = entranceAction.routingAction
                 document.entrances[index].bindAddress = normalizedAddress
                 document.entrances[index].port = port
-                document.entrances[index].enabled = enabled
+                document.entrances[index].enabled = persistedEnabled
             } else if isNew {
                 let entrance = Entrance(
                     id: savedID,
                     name: normalizedName,
                     kind: entranceKind,
-                    enabled: enabled,
+                    enabled: persistedEnabled,
                     bindAddress: normalizedAddress,
                     port: port,
                     defaultAction: entranceAction.routingAction
@@ -970,6 +984,15 @@ struct ConfigurationEditorSheet: View {
         Task {
             do {
                 try await model.saveConfigurationDocument(document)
+                if let appRoutingEnableAfterSave {
+                    await model.setNetworkCaptureEnabled(appRoutingEnableAfterSave)
+                    guard model.appRoutingCapabilityEnabled == appRoutingEnableAfterSave else {
+                        errorMessage = model.errorMessage ?? AppLocalization.string(
+                            "App Routing did not reach a verified running state."
+                        )
+                        return
+                    }
+                }
                 onSaved?()
                 if !isEmbedded {
                     dismiss()
