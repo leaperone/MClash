@@ -115,7 +115,7 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
                 // Install the handler before starting.  Starting first can
                 // transition through ready before the callback is attached,
                 // leaving a continuation suspended forever.
-                connection.start()
+                _ = connection.start()
                 switch connection.state {
                 case .ready:
                     completionGate.resume { continuation.resume() }
