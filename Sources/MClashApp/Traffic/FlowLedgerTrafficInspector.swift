@@ -96,7 +96,18 @@ struct FlowLedgerTrafficInspector: Hashable, Sendable {
         if let path = nonEmpty(application.executablePath) {
             drafts.append(.init(kind: .processPath, matcher: .processPath(path), value: path))
         }
+        // Keep the inspector menu stable while live observations arrive. A
+        // destination can provide overlapping evidence (for example a host
+        // and an attributed process path); deduplicate by draft identity and
+        // use an explicit semantic order rather than dictionary/set order.
+        var seen = Set<String>()
         return drafts
+            .filter { seen.insert($0.id).inserted }
+            .sorted {
+                let left = ($0.kind.rawValue, $0.value.lowercased())
+                let right = ($1.kind.rawValue, $1.value.lowercased())
+                return left < right
+            }
     }
 
     init(entry: FlowLedgerEntry, dnsPath: FlowTrafficDNSPath = .unknown) {

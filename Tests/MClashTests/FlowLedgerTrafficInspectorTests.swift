@@ -39,10 +39,10 @@ struct FlowLedgerTrafficInspectorTests {
         #expect(inspector.dnsPath.identifier == "remote:native-dns")
         #expect(inspector.evidence.contains("rule-payload=api.example.com"))
         #expect(inspector.quickRuleDrafts.map(\.kind) == [
+            .application,
             .exactDomain,
             .domainSuffix,
             .ipAddress,
-            .application,
             .processPath
         ])
         #expect(
