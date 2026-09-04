@@ -256,7 +256,7 @@ sign_application() {
     sign_path "${sparkle}"
   fi
 
-  if [[ ! -f "${core}" ]]; then
+  if [[ "${MCLASH_NATIVE_ONLY}" != "1" ]] && [[ ! -f "${core}" ]]; then
     print -u2 "Bundled core is missing: ${core}"
     exit 1
   fi
@@ -280,7 +280,9 @@ sign_application() {
     "${system_extension}/Contents/embedded.provisionprofile"
 
   sign_path "${automation_cli}" --entitlements "${cli_devid_entitlements}"
-  sign_path "${core}"
+  if [[ "${MCLASH_NATIVE_ONLY}" != "1" ]]; then
+    sign_path "${core}"
+  fi
   sign_path "${system_extension}" --entitlements "${network_extension_devid_entitlements}"
   sign_path "${app}" --entitlements "${host_devid_entitlements}"
 
