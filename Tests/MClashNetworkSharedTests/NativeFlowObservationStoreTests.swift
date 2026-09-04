@@ -52,4 +52,26 @@ struct NativeFlowObservationStoreTests {
         secondTask.cancel()
         await store.finish()
     }
+
+    @Test("Finishing the runtime closes active observations exactly once")
+    func finishActiveIsTerminal() async throws {
+        let store = NativeFlowObservationStore(capacity: 4)
+        await store.receive(FlowRelayObservation(
+            id: "active",
+            uploadBytes: 12,
+            downloadBytes: 8,
+            state: .active,
+            route: .relay
+        ))
+        await store.receive(FlowRelayObservation(
+            id: "done",
+            state: .completed,
+            route: .relay
+        ))
+
+        #expect(await store.finishActive() == 1)
+        let snapshot = await store.snapshot()
+        #expect(snapshot.first(where: { $0.id == "active" })?.state == .completed)
+        #expect(await store.finishActive() == 0)
+    }
 }

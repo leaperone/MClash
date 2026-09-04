@@ -448,6 +448,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     @discardableResult
     func stop() async -> Bool {
         stopListeners()
+        // Close any observation that did not receive a transport callback
+        // while listeners were being cancelled. This keeps Traffic/Flow
+        // Ledger consistent with the runtime lifecycle.
+        _ = await flowObservations.finishActive()
         startedAt = nil
         lastError = nil
         transition(to: .stopped)

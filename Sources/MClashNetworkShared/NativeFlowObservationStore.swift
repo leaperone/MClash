@@ -47,6 +47,48 @@ public actor NativeFlowObservationStore {
         order.compactMap { values[$0] }
     }
 
+    /// Gracefully terminally closes observations when the owning runtime is
+    /// stopped. Network callbacks can arrive after a listener has been
+    /// cancelled (or not arrive at all), so relying only on the transport
+    /// callback would leave the monitor showing a flow as live forever.
+    @discardableResult
+    public func finishActive() -> Int {
+        var finished = 0
+        for identifier in order {
+            guard let current = values[identifier], current.state == .active else {
+                continue
+            }
+            let terminal = FlowRelayObservation(
+                id: current.id,
+                startedAt: current.startedAt,
+                endedAt: Date(),
+                network: current.network,
+                destinationHost: current.destinationHost,
+                destinationIP: current.destinationIP,
+                destinationPort: current.destinationPort,
+                process: current.process,
+                processPath: current.processPath,
+                inboundName: current.inboundName,
+                rule: current.rule,
+                rulePayload: current.rulePayload,
+                routeChain: current.routeChain,
+                providerChain: current.providerChain,
+                connector: current.connector,
+                uploadBytes: current.uploadBytes,
+                downloadBytes: current.downloadBytes,
+                state: .completed,
+                route: current.route,
+                failureReason: current.failureReason
+            )
+            values[identifier] = terminal
+            for continuation in subscribers.values {
+                continuation.yield(terminal)
+            }
+            finished += 1
+        }
+        return finished
+    }
+
     public func finish() {
         let continuations = subscribers.values
         subscribers.removeAll()
