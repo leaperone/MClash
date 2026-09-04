@@ -515,6 +515,26 @@ and can be tested without producing a Mihomo YAML document.
   original hostnames for TLS SNI and WebSocket Host, and repeat the same real
   CUNOE VLESS interoperability proof using `119.29.29.29` rather than the
   unstable macOS resolver. No credential or subscription URL was logged.
+- `b8639d1` through `0be45fb` move HTTP/SOCKS listener ownership into the App
+  process, distinguish socket readiness from App Routing/TUN capabilities, and
+  preserve HTTP CONNECT and SOCKS5 payload bytes coalesced with fragmented
+  handshake responses. The clean direct harness now passes 523 App tests, all
+  33 Shared and 12 Network Extension file targets, six automation tests, and
+  release preflight.
+- The native-only `1.5.0 (150012)` copied-profile shadow reports revision 28,
+  three enabled socket entrances all running, App Routing as a non-socket
+  stopped capability, no unsupported selected connectors, and no Mihomo
+  control plane. Its smoke gate also proves every listening port belongs to
+  the isolated process and is bound only to `127.0.0.1`.
+- `f9d3f6b`, `d8632c9`, and `77f313b` make the App Routing flow adapter treat a
+  native node catalog as authoritative: legacy Mihomo SOCKS routes cannot
+  rescue native mode, Direct/Reject remain terminal, and missing or unsupported
+  TCP/UDP targets reject with explicit unavailable evidence. The App-owned
+  real CUNOE VLESS WebSocket path again returned Google HTTP 204 at this HEAD.
+- Standard free runner acceptance
+  [33829275876](https://github.com/leaperone/MClash/actions/runs/33829275876)
+  also passed at `bde7829`; the newer commits still require the same runner gate
+  before release evidence can be finalized.
 
 ### Definition of done
 
