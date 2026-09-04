@@ -86,12 +86,13 @@ final class MClashInboundListener: @unchecked Sendable {
     private let route: @Sendable (MClashInboundDestination) -> MClashInboundRoute
     private let connector: MClashInboundOutboundConnector
     private let stateHandler: (@Sendable (Bool, UInt16?) -> Void)?
+    private let failureHandler: (@Sendable (String) -> Void)?
     private var listener: NWListener?
     private var connections = [ObjectIdentifier: NWConnection]()
     private(set) var port: UInt16?
 
-    init(kind: Kind, port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector, stateHandler: (@Sendable (Bool, UInt16?) -> Void)? = nil) throws {
-        self.kind = kind; self.queue = queue; self.route = route; self.connector = connector; self.stateHandler = stateHandler
+    init(kind: Kind, port: UInt16 = 0, queue: DispatchQueue = DispatchQueue(label: "one.leaper.mclash.inbound"), route: @escaping @Sendable (MClashInboundDestination) -> MClashInboundRoute, connector: MClashInboundOutboundConnector, stateHandler: (@Sendable (Bool, UInt16?) -> Void)? = nil, failureHandler: (@Sendable (String) -> Void)? = nil) throws {
+        self.kind = kind; self.queue = queue; self.route = route; self.connector = connector; self.stateHandler = stateHandler; self.failureHandler = failureHandler
         let nwListener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
         listener = nwListener
         nwListener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
@@ -200,7 +201,10 @@ final class MClashInboundListener: @unchecked Sendable {
                     to: destination,
                     route: decision
                 ) { error in
-                    guard error == nil else { client.cancel(); upstream.cancel(); return }
+                    guard error == nil else {
+                        self.reportFailure(error, context: "outbound establishment")
+                        client.cancel(); upstream.cancel(); return
+                    }
                     client.send(content: response, completion: .contentProcessed { error in
                         guard error == nil else { client.cancel(); upstream.cancel(); return }
                         do {
@@ -210,11 +214,15 @@ final class MClashInboundListener: @unchecked Sendable {
                             )
                             self.bridge(client, upstream, codec: codec)
                         } catch {
+                            self.reportFailure(error, context: "bridge setup")
                             client.cancel(); upstream.cancel()
                         }
                     })
                 }
-            case .failed, .cancelled:
+            case let .failed(error):
+                self.reportFailure(error, context: "upstream connection")
+                client.cancel()
+            case .cancelled:
                 client.cancel()
             default:
                 break
@@ -252,6 +260,7 @@ final class MClashInboundListener: @unchecked Sendable {
                 let transformed = try transform(data)
                 send(transformed, index: 0, from: source, to: target, transform: transform)
             } catch {
+                reportFailure(error, context: "bridge transform")
                 source.cancel(); target.cancel()
             }
         }
@@ -269,9 +278,18 @@ final class MClashInboundListener: @unchecked Sendable {
             return
         }
         target.send(content: chunks[index], completion: .contentProcessed { [weak self] error in
-            guard let self, error == nil else { source.cancel(); target.cancel(); return }
+            guard let self, error == nil else {
+                if let error { self?.reportFailure(error, context: "bridge send") }
+                source.cancel(); target.cancel(); return
+            }
             self.send(chunks, index: index + 1, from: source, to: target, transform: transform)
         })
+    }
+
+    private func reportFailure(_ error: Error?, context: String) {
+        guard let error else { return }
+        let detail = "\(context): \(String(reflecting: error))"
+        failureHandler?(String(detail.prefix(512)))
     }
 
     private static func socksReply(_ code: SOCKS5ReplyCode) -> Data { Data([5, code.rawValue, 0, 1, 0, 0, 0, 0, 0, 0]) }

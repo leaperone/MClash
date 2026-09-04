@@ -112,7 +112,7 @@ struct OutboundConnectorTests {
             port: 443
         )
         let handshake = try connector.handshake(for: destination)
-        #expect(handshake.first == 0x01)
+        #expect(handshake.first == VLESSCodec.version)
         #expect(handshake.contains(0x02))
     }
 
@@ -138,11 +138,11 @@ struct OutboundConnectorTests {
     @Test("VLESS WebSocket sends HTTP upgrade before its binary request")
     func vlessWebSocketTwoPhaseHandshake() throws {
         let target = try OutboundNodeTarget(
-            protocolName: "vless", host: "node.example.com", port: 443,
+            protocolName: "vless", host: "203.0.113.8", port: 443,
             parameters: [
                 "uuid": "00000000-0000-0000-0000-000000000001",
-                "network": "ws", "ws-path": "/vless",
-                "ws-host": "cdn.example.com"
+                "network": "ws",
+                "ws-opts": #"{"path":"/vless","headers":{"Host":"cdn.example.com"}}"#
             ]
         )
         let destination = try SOCKS5Endpoint(
@@ -152,6 +152,7 @@ struct OutboundConnectorTests {
         let upgrade = try connector.responseHandshake(for: destination)
         let request = String(decoding: upgrade, as: UTF8.self)
         #expect(request.hasPrefix("GET /vless HTTP/1.1\r\n"))
+        #expect(request.contains("Host: cdn.example.com\r\n"))
         #expect(!upgrade.contains(0x01), "VLESS bytes must not precede HTTP 101")
         let headers = request.split(separator: "\r\n")
         let keyLine = try #require(headers.first(where: { $0.lowercased().hasPrefix("sec-websocket-key:") }))
@@ -182,7 +183,7 @@ struct OutboundConnectorTests {
         let encoded = try codec.encode(Data("hello".utf8))
         #expect(encoded[0] == 0x82)
         #expect(encoded[1] & 0x80 == 0x80)
-        let serverFrame = Data([0x82, 0x05]) + Data("world".utf8)
+        let serverFrame = Data([0x82, 0x07, 0x00, 0x00]) + Data("world".utf8)
         #expect(try codec.decode(serverFrame) == [Data("world".utf8)])
     }
 
@@ -371,8 +372,11 @@ struct OutboundConnectorTests {
             parameters: ["uuid": "00000000-0000-0000-0000-000000000001"]
         )
         let plan = try NativeConnectorFactory.makeTCPPlan(target: target, destination: destination)
-        #expect(plan.initialPayload?.first == 0x01)
+        #expect(plan.initialPayload == nil)
         #expect(!plan.usesSOCKS5Handshake)
+        let codec = try #require(plan.streamCodec)
+        #expect(try codec.encodeDestination().first == VLESSCodec.version)
+        #expect(try codec.decode(Data([VLESSCodec.version, 0]) + Data("ok".utf8)) == [Data("ok".utf8)])
         plan.connection.cancel()
     }
 

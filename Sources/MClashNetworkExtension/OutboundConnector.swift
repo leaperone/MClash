@@ -182,12 +182,39 @@ struct NativeVLESSOutboundConnector: Sendable {
     }
 }
 
+/// VLESS is a byte stream after its request/response headers. This codec sends
+/// the request once, forwards application payload unchanged, and removes the
+/// incrementally delivered response header before exposing server bytes.
+final class VLESSPlainStreamCodec: NativeStreamCodec, MClashInboundBridgeCodec, @unchecked Sendable {
+    private let destination: Data
+    private var responseDecoder = VLESSResponseDecoder()
+
+    init(target: OutboundNodeTarget, destination: SOCKS5Endpoint) throws {
+        guard let uuid = target.parameters["uuid"] else {
+            throw VLESSCodecError.invalidUUID
+        }
+        let host = destination.address.domain
+            ?? destination.address.ipAddress?.presentation
+            ?? ""
+        self.destination = try VLESSCodec.encodeTCPRequest(
+            uuid: uuid,
+            host: host,
+            port: destination.port
+        )
+    }
+
+    func encodeDestination() throws -> Data { destination }
+    func encode(_ payload: Data) throws -> Data { payload }
+    func decode(_ input: Data) throws -> [Data] { try responseDecoder.append(input) }
+}
+
 /// Minimal RFC 6455 binary framing used by VLESS over WebSocket.  VLESS WS
 /// is a byte tunnel: client frames must be masked, server frames must not be
 /// masked.  We intentionally reject fragmented/control frames here rather
 /// than silently delivering malformed data to the VLESS codec.
 final class VLESSWebSocketStreamCodec: NativeStreamCodec, MClashInboundBridgeCodec, @unchecked Sendable {
     private var receiveBuffer = Data()
+    private var responseDecoder = VLESSResponseDecoder()
     private let destination: Data
 
     init(target: OutboundNodeTarget, destination: SOCKS5Endpoint) throws {
@@ -240,7 +267,8 @@ final class VLESSWebSocketStreamCodec: NativeStreamCodec, MClashInboundBridgeCod
             guard length <= Self.maximumPayload else { throw VLESSWebSocketCodecError.messageTooLarge }
             guard receiveBuffer.count >= headerLength + length else { break }
             let bodyStart = receiveBuffer.startIndex + headerLength
-            output.append(Data(receiveBuffer[bodyStart..<(bodyStart + length)]))
+            let body = Data(receiveBuffer[bodyStart..<(bodyStart + length)])
+            output.append(contentsOf: try responseDecoder.append(body))
             receiveBuffer.removeFirst(headerLength + length)
         }
         return output
@@ -312,8 +340,11 @@ struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHa
         handshakeState.expectedAccept = Data(Insecure.SHA1.hash(
             data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8)
         )).base64EncodedString()
+        let configuredHost = options.headers.first {
+            $0.key.caseInsensitiveCompare("Host") == .orderedSame
+        }?.value
         var headers: [(String, String)] = [
-            ("Host", target.parameters["ws-host"] ?? target.host),
+            ("Host", configuredHost ?? target.parameters["ws-host"] ?? target.host),
             ("Upgrade", "websocket"), ("Connection", "Upgrade"),
             ("Sec-WebSocket-Version", "13"), ("Sec-WebSocket-Key", key)
         ]
@@ -824,11 +855,15 @@ enum NativeConnectorFactory {
             )
         case .vless:
             let connector = NativeVLESSOutboundConnector(target: target)
+            let codec = try VLESSPlainStreamCodec(
+                target: target,
+                destination: destination
+            )
             return NativeTCPConnectionPlan(
                 connection: connector.makeConnection(),
-                initialPayload: try connector.handshake(for: destination),
+                initialPayload: nil,
                 usesSOCKS5Handshake: false,
-                streamCodec: nil
+                streamCodec: codec
             )
         case .trojan:
             let connector = NativeTrojanOutboundConnector(target: target)

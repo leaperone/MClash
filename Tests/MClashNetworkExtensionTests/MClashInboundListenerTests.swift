@@ -433,7 +433,10 @@ struct MClashInboundListenerTests {
 
         // Multiple server frames may arrive in one TCP read. The listener
         // decodes both and forwards only their application payloads.
-        try upstream.send(Data([0x82, 0x04]) + Data("pong".utf8) + Data([0x82, 0x05]) + Data("again".utf8))
+        try upstream.send(
+            Data([0x82, 0x06, 0x00, 0x00]) + Data("pong".utf8)
+                + Data([0x82, 0x05]) + Data("again".utf8)
+        )
         let decoded = ReceiveOnce()
         receiveOnce(from: client, into: decoded)
         for _ in 0..<50 where decoded.data == nil { try await Task.sleep(for: .milliseconds(20)) }

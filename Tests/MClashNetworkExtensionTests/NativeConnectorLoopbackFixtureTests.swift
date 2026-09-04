@@ -153,7 +153,8 @@ struct NativeConnectorLoopbackFixtureTests {
 
         // Send two unmasked binary frames in one TCP write, then feed the
         // decoder in small segments to prove framing is independent of reads.
-        let serverFrames = Data([0x82, 0x04]) + Data("pong".utf8) + Data([0x82, 0x05]) + Data("again".utf8)
+        let serverFrames = Data([0x82, 0x06, 0x00, 0x00]) + Data("pong".utf8)
+            + Data([0x82, 0x05]) + Data("again".utf8)
         try server.send(serverFrames)
         var decoded = [Data]()
         for _ in 0..<20 where decoded.count < 2 {

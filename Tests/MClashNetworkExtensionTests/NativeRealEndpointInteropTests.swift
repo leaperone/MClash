@@ -16,7 +16,8 @@ struct NativeRealEndpointInteropTests {
             ?? "🇺🇸 美国|us|9929|ws|private"
         let target = try Self.loadVLESSWebSocketTarget(
             manifestURL: URL(fileURLWithPath: manifestPath),
-            nameContains: nodeHint
+            nameContains: nodeHint,
+            resolvedAddress: environment["MCLASH_REAL_NODE_ADDRESS"]
         )
         guard OutboundConnectorCapabilityMatrix.support(for: target) == .native else {
             throw RealEndpointProbeError.nodeIsNotNativeVLESSWebSocket
@@ -32,7 +33,8 @@ struct NativeRealEndpointInteropTests {
             port: 0,
             route: { _ in .proxy(route.stableSortKey) },
             connector: NativeInboundCatalogConnector(catalog: catalog),
-            stateHandler: { ready, port in readiness.update(ready: ready, port: port) }
+            stateHandler: { ready, port in readiness.update(ready: ready, port: port) },
+            failureHandler: { message in readiness.fail(message) }
         )
         listener.start()
         defer { listener.stop() }
@@ -76,7 +78,12 @@ struct NativeRealEndpointInteropTests {
             ).trimmingCharacters(in: .whitespacesAndNewlines)
             throw RealEndpointProbeError.curlFailed(
                 status: status,
-                detail: String(detail.prefix(512))
+                detail: String(
+                    [detail, readiness.lastError]
+                        .compactMap { $0 }
+                        .joined(separator: " | ")
+                        .prefix(512)
+                )
             )
         }
         #expect(responseCode == "204")
@@ -84,7 +91,8 @@ struct NativeRealEndpointInteropTests {
 
     private static func loadVLESSWebSocketTarget(
         manifestURL: URL,
-        nameContains hint: String
+        nameContains hint: String,
+        resolvedAddress: String?
     ) throws -> OutboundNodeTarget {
         let data = try Data(contentsOf: manifestURL, options: .mappedIfSafe)
         guard data.count <= 32 * 1_024 * 1_024,
@@ -101,16 +109,26 @@ struct NativeRealEndpointInteropTests {
                   let port = UInt16(exactly: portNumber.intValue),
                   let rawParameters = node["parameters"] as? [String: Any]
             else { continue }
-            let parameters = rawParameters.reduce(into: [String: String]()) {
+            var parameters = rawParameters.reduce(into: [String: String]()) {
                 result, element in
                 if let value = element.value as? String {
                     result[element.key] = value
                 }
             }
             guard parameters["network"]?.lowercased() == "ws" else { continue }
+            let connectionHost: String
+            if let resolvedAddress,
+               (try? IPAddress(resolvedAddress)) != nil {
+                connectionHost = resolvedAddress
+                if parameters["sni"] == nil, parameters["servername"] == nil {
+                    parameters["sni"] = host
+                }
+            } else {
+                connectionHost = host
+            }
             return try OutboundNodeTarget(
                 protocolName: "vless",
-                host: host,
+                host: connectionHost,
                 port: port,
                 parameters: parameters
             )
@@ -122,6 +140,7 @@ struct NativeRealEndpointInteropTests {
 private final class ListenerReadiness: @unchecked Sendable {
     private let lock = NSLock()
     private var value: UInt16?
+    private var failure: String?
 
     var port: UInt16? {
         lock.lock()
@@ -129,9 +148,21 @@ private final class ListenerReadiness: @unchecked Sendable {
         return value
     }
 
+    var lastError: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return failure
+    }
+
     func update(ready: Bool, port: UInt16?) {
         lock.lock()
         value = ready ? port : nil
+        lock.unlock()
+    }
+
+    func fail(_ message: String) {
+        lock.lock()
+        failure = message
         lock.unlock()
     }
 }

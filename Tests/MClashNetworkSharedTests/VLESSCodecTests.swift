@@ -11,7 +11,7 @@ struct VLESSCodecTests {
             host: "example.com",
             port: 443
         )
-        #expect(data[0] == 0x01)
+        #expect(data[0] == 0x00)
         #expect(data[17] == 0x00) // addons length
         #expect(data[18] == 0x01) // TCP command
         #expect(data[19] == 0x01 && data[20] == 0xbb)
@@ -19,7 +19,7 @@ struct VLESSCodecTests {
         #expect(data[22] == UInt8("example.com".utf8.count))
         #expect(String(decoding: data.dropFirst(23), as: UTF8.self) == "example.com")
         let hex = data.map { String(format: "%02x", $0) }.joined()
-        #expect(hex.hasPrefix("0100000000000000000000000000000001000101bb020b6578616d706c652e636f6d"))
+        #expect(hex.hasPrefix("0000000000000000000000000000000001000101bb020b6578616d706c652e636f6d"))
     }
 
     @Test("Rejects invalid UUID, host, and port")
@@ -32,6 +32,23 @@ struct VLESSCodecTests {
         }
         #expect(throws: VLESSCodecError.invalidPort) {
             try VLESSCodec.encodeTCPRequest(uuid: "00000000-0000-0000-0000-000000000001", host: "example.com", port: 0)
+        }
+    }
+
+    @Test("Strips a segmented VLESS response header before payload")
+    func decodesResponseHeader() throws {
+        var decoder = VLESSResponseDecoder()
+        #expect(try decoder.append(Data([0x00])).isEmpty)
+        #expect(try decoder.append(Data([0x02, 0xaa])).isEmpty)
+        #expect(try decoder.append(Data([0xbb]) + Data("hello".utf8)) == [Data("hello".utf8)])
+        #expect(try decoder.append(Data("world".utf8)) == [Data("world".utf8)])
+    }
+
+    @Test("Rejects an unexpected VLESS response version")
+    func rejectsResponseVersion() {
+        #expect(throws: VLESSCodecError.invalidResponseVersion(1)) {
+            var decoder = VLESSResponseDecoder()
+            _ = try decoder.append(Data([0x01, 0x00]))
         }
     }
 }
