@@ -47,7 +47,7 @@ struct FlowTrafficQuickRuleDraft: Hashable, Sendable, Identifiable {
     let matcher: RoutingMatcher
     let value: String
 
-    var id: String { "(kind.rawValue):(value)" }
+    var id: String { "\(kind.rawValue):\(value)" }
 }
 
 /// All evidence needed to answer “why is this traffic here?” in one place.

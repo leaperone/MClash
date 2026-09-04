@@ -45,6 +45,10 @@ struct FlowLedgerTrafficInspectorTests {
             .application,
             .processPath
         ])
+        #expect(
+            Set(inspector.quickRuleDrafts.map(\.id)).count
+                == inspector.quickRuleDrafts.count
+        )
     }
 
     @Test("Direct and rejected decisions explain themselves and remain actionable")
