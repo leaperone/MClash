@@ -37,6 +37,23 @@ public enum NativeGeoKind: String, Codable, Hashable, Sendable {
     case site
 }
 
+/// Describes whether a rule set has data that the native projection can
+/// evaluate synchronously.  Remote providers and file-backed sets need an
+/// explicit loader/matcher; treating their absent cache as an empty set would
+/// silently change routing policy.
+public enum NativeRuleSetSupport: Equatable, Sendable {
+    case inline
+    case externalRequiresLoader
+
+    public static func assess(_ ruleSet: RuleSet) -> NativeRuleSetSupport {
+        if ruleSet.sourceURL == nil,
+           ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            return .inline
+        }
+        return .externalRequiresLoader
+    }
+}
+
 /// Evaluates a compiled, workspace-scoped plan before any outbound connector
 /// is selected. Rule sets are evaluated in plan order, followed by explicit
 /// rules, matching the policy order emitted by the compiler.  Compatibility

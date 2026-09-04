@@ -4,6 +4,13 @@ import Testing
 @testable import MClashApp
 
 struct NativeRuleEngineProjectionTests {
+    @Test("native rule-set support distinguishes inline data from external providers")
+    func ruleSetSupportGate() {
+        #expect(NativeRuleSetSupport.assess(RuleSet(name: "inline", rules: ["DOMAIN,example.com"])) == .inline)
+        #expect(NativeRuleSetSupport.assess(RuleSet(name: "remote", sourceURL: URL(string: "https://rules.example/set"))) == .externalRequiresLoader)
+        #expect(NativeRuleSetSupport.assess(RuleSet(name: "file", path: "/tmp/rules.txt")) == .externalRequiresLoader)
+    }
+
     @Test("native projection honors direct and reject actions")
     func directAndReject() throws {
         let group = ProxyGroup(name: "Proxy")

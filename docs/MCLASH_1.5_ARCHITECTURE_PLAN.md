@@ -520,6 +520,9 @@ and can be tested without producing a Mihomo YAML document.
   `GLOBAL` and named groups) instead of always applying the rule-set default.
   This covers deterministic policy evaluation only; external GEO databases and
   remote rule-set fetching remain separate native-runtime work.
+- Native rule-set capability assessment now distinguishes inline entries from
+  URL/file-backed sets that require an explicit native loader; an unpopulated
+  external cache is never presented as an empty successful set.
 - `b8639d1` through `0be45fb` move HTTP/SOCKS listener ownership into the App
   process, distinguish socket readiness from App Routing/TUN capabilities, and
   preserve HTTP CONNECT and SOCKS5 payload bytes coalesced with fragmented
