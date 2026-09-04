@@ -518,33 +518,34 @@ and can be tested without producing a Mihomo YAML document.
 - The native projection now preserves explicit targets in native inline
   rule sets (`GEOSITE`/`GEOIP`/`IP-CIDR` entries, including `DIRECT`, `REJECT`,
   `GLOBAL` and named groups) instead of always applying the rule-set default.
-  This covers deterministic policy evaluation only; external GEO databases and
-  remote rule-set fetching remain separate native-runtime work.
+  This covers deterministic policy evaluation; the bundled v2fly GeoIP and
+  GeoSite databases plus cached HTTPS text rule sets are now native inputs.
 - Native rule-set capability assessment now distinguishes inline entries from
   URL/file-backed sets that require an explicit native loader; an unpopulated
   external cache is never presented as an empty successful set.
-- Native GEO capability now has an explicit provider/status boundary. When
-  native GEO enforcement is requested, plans containing GEOIP/GEOSITE entries
-  are rejected unless a provider reports `ready`; unavailable/unsupported
-  bundled formats are actionable diagnostics, not false non-matches. The gate
-  is opt-in until a real bundled database reader is integrated.
+- Native GEO capability now has an explicit per-kind provider/status boundary.
+  Native activation rejects a GEOIP or GEOSITE plan unless that exact database
+  kind reports `ready`, retaining the prior session instead of turning a
+  missing database into a false non-match. Diagnostics expose both `ip` and
+  `site` status while preserving the aggregate field for compatibility.
 - A bounded pure-Swift reader now supports the official v2fly `GeoIP.dat`
   protobuf country/CIDR entries and conforms to `NativeGeoDatabaseProvider`.
-  It is limited to GeoIP matching; GeoSite, `geoip.metadb`, and MaxMind
-  readers remain unsupported and must report capability limitations.
+  `geoip.metadb` and MaxMind readers remain unsupported and report capability
+  limitations rather than silently changing policy.
 - A bounded reader also supports the official v2fly `GeoSite.dat` protobuf
   domain types Plain, RootDomain, Full and Regex with per-database size and
-  regex limits. Domain attributes are intentionally ignored; metadb/MRS remain
-  unsupported.
+  regex limits. Regexes are compiled once; malformed UTF-8 is rejected, legal
+  fixed-width unknown protobuf fields are skipped, and repeated categories are
+  merged. Domain attributes and MRS remain unsupported.
 - Native mode now loads MClash-owned local `.text` rule sets through a bounded
   4 MiB line loader, stripping comments and blank lines before the existing
   classical matcher runs. URL, YAML and MRS providers remain explicitly
   unsupported and require a future parser/refresh subsystem.
 - An HTTPS-only asynchronous text-set refresher now validates 2xx responses,
   enforces the same 4 MiB limit, atomically replaces a per-rule-set cache and
-  exposes fresh/stale status. Workspace activation must explicitly refresh and
-  attach its returned cached path; URL/YAML/MRS/GEO database support remains
-  gated and is not silently enabled.
+  exposes fresh/stale status. The refreshed set retains its HTTPS source as
+  provenance while native activation reads only the returned local cache path.
+  YAML and MRS providers remain gated and are not silently enabled.
 - `b8639d1` through `0be45fb` move HTTP/SOCKS listener ownership into the App
   process, distinguish socket readiness from App Routing/TUN capabilities, and
   preserve HTTP CONNECT and SOCKS5 payload bytes coalesced with fragmented
