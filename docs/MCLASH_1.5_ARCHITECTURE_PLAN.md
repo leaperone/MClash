@@ -515,6 +515,11 @@ and can be tested without producing a Mihomo YAML document.
   original hostnames for TLS SNI and WebSocket Host, and repeat the same real
   CUNOE VLESS interoperability proof using `119.29.29.29` rather than the
   unstable macOS resolver. No credential or subscription URL was logged.
+- The native projection now preserves explicit targets in native inline
+  rule sets (`GEOSITE`/`GEOIP`/`IP-CIDR` entries, including `DIRECT`, `REJECT`,
+  `GLOBAL` and named groups) instead of always applying the rule-set default.
+  This covers deterministic policy evaluation only; external GEO databases and
+  remote rule-set fetching remain separate native-runtime work.
 - `b8639d1` through `0be45fb` move HTTP/SOCKS listener ownership into the App
   process, distinguish socket readiness from App Routing/TUN capabilities, and
   preserve HTTP CONNECT and SOCKS5 payload bytes coalesced with fragmented

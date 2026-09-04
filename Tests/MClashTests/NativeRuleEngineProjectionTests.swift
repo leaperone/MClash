@@ -61,6 +61,32 @@ struct NativeRuleEngineProjectionTests {
         #expect(decision.matchedRuleSetID == wrapper.id)
     }
 
+    @Test("native rule sets preserve explicit GEO targets and no-resolve parameters")
+    func ruleSetExplicitTargets() throws {
+        let proxy = ProxyGroup(name: "Proxy")
+        let geo = RuleSet(
+            name: "domestic",
+            rules: [
+                "GEOSITE,cn,DIRECT",
+                "GEOIP,CN,Proxy,no-resolve"
+            ],
+            defaultAction: .proxyGroup(proxy.id)
+        )
+        let runtime = plan(groups: [proxy], ruleSets: [geo])
+        let matcher: NativeGeoMatcher = { kind, value, context in
+            (kind == .site && value == "cn" && context.destination.hostname == "cn.example")
+                || (kind == .ip && value == "CN" && context.destination.ipAddress?.description == "203.0.113.8")
+        }
+        let projection = NativeRuleEngineProjection(plan: runtime, geoMatcher: matcher)
+        #expect(projection.evaluate(try context("cn.example")).action == .direct)
+        let ipContext = FlowContext(
+            source: FlowSource(processIdentifier: 1, auditToken: Data(), userID: 501),
+            destination: try FlowDestination(ipAddress: IPAddress("203.0.113.8"), port: 443),
+            transportProtocol: .tcp
+        )
+        #expect(projection.evaluate(ipContext).action == .outbound(proxy.id))
+    }
+
     private func plan(
         groups: [ProxyGroup],
         rules: [RoutingRule] = [],

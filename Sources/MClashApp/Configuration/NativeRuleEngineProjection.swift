@@ -79,9 +79,9 @@ public struct NativeRuleEngineProjection: Sendable {
 
         // Rule-set entries precede explicit rules in the authoritative plan.
         for ruleSet in plan.ruleSets where ruleSet.enabled {
-            if matches(ruleSet: ruleSet, context: context, visited: []) {
+            if let ruleSetAction = ruleSetAction(ruleSet: ruleSet, context: context, visited: []) {
                 return NativeRouteDecision(
-                    action: action(ruleSet.defaultAction),
+                    action: ruleSetAction,
                     matchedRuleSetID: ruleSet.id
                 )
             }
@@ -152,21 +152,55 @@ public struct NativeRuleEngineProjection: Sendable {
         }
     }
 
-    private func matches(ruleSet: RuleSet, context: FlowContext, visited: Set<RuleSetID>) -> Bool {
-        guard !visited.contains(ruleSet.id) else { return false }
-        if let ruleSetMatcher, ruleSetMatcher(ruleSet, context) { return true }
+    /// Evaluates inline rule-set entries and preserves an explicit target when
+    /// one is present. This is important for native mode: a downloaded
+    /// classical rule set may contain `GEOSITE,gfw,REJECT` or
+    /// `GEOIP,CN,DIRECT,no-resolve`, and silently replacing that target with
+    /// the rule-set default would change policy semantics.
+    private func ruleSetAction(
+        ruleSet: RuleSet,
+        context: FlowContext,
+        visited: Set<RuleSetID>
+    ) -> NativeRouteAction? {
+        guard !visited.contains(ruleSet.id) else { return nil }
+        if let ruleSetMatcher, ruleSetMatcher(ruleSet, context) {
+            return action(ruleSet.defaultAction)
+        }
         var nextVisited = visited
         nextVisited.insert(ruleSet.id)
-        return ruleSet.rules.contains { raw in
+        for raw in ruleSet.rules {
             let parts = raw.split(separator: ",", omittingEmptySubsequences: false).map {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            guard let kind = parts.first?.uppercased(), parts.count >= 2 else { return false }
+            guard let kind = parts.first?.uppercased(), parts.count >= 2 else { continue }
+            let explicitTarget = parts.dropFirst(2).first(where: { actionToken($0) != nil })
             if kind == "RULE-SET", let name = parts.dropFirst().first?.lowercased(),
                let nested = plan.ruleSets.first(where: { $0.enabled && $0.name.lowercased() == name }) {
-                return matches(ruleSet: nested, context: context, visited: nextVisited)
+                guard let nestedAction = ruleSetAction(
+                    ruleSet: nested,
+                    context: context,
+                    visited: nextVisited
+                ) else { continue }
+                return explicitTarget.flatMap(actionToken) ?? nestedAction
             }
-            return matchesRuleSetEntry(kind: kind, value: parts[1], context: context)
+            guard matchesRuleSetEntry(kind: kind, value: parts[1], context: context) else {
+                continue
+            }
+            return explicitTarget.flatMap(actionToken) ?? action(ruleSet.defaultAction)
+        }
+        return nil
+    }
+
+    private func actionToken(_ token: String) -> NativeRouteAction? {
+        switch token.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+        case "DIRECT": return .direct
+        case "REJECT": return .reject
+        case "GLOBAL": return globalAction()
+        default:
+            guard let id = groupNames[token.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()] else {
+                return nil
+            }
+            return groups.contains(id) ? .outbound(id) : nil
         }
     }
 
