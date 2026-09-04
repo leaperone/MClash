@@ -168,6 +168,63 @@ struct NativeEntranceLifecycleTests {
             initialConfiguration,
         ])
     }
+
+    @Test("Native lifecycle can commit an explicit same-revision rollback")
+    func nativeLifecycleCommitsExplicitRollback() async throws {
+        let control = RecordingEntranceNetworkExtensionControl()
+        let coordinator = NativeEntranceLifecycleCoordinator(
+            backend: NativeNetworkExtensionEntranceBackend(control: control)
+        )
+        let initialConfiguration = NetworkExtensionRuntimeConfiguration(
+            revision: 20,
+            dnsEnabled: false
+        )
+        let initial = NativeEntranceActivation(
+            revision: 20,
+            enabled: [.appRouting],
+            generation: 20
+        )
+        _ = try await coordinator.activate(NativeEntranceTransaction(
+            activation: initial,
+            runtimeConfiguration: initialConfiguration
+        ))
+
+        let candidateConfiguration = NetworkExtensionRuntimeConfiguration(
+            revision: 21,
+            dnsEnabled: false
+        )
+        let candidate = NativeEntranceActivation(
+            revision: 21,
+            enabled: [.appRouting],
+            generation: 21
+        )
+        _ = try await coordinator.activate(NativeEntranceTransaction(
+            activation: candidate,
+            runtimeConfiguration: candidateConfiguration
+        ))
+
+        // Runtime payload revision 20 is restored while lifecycle revision 21
+        // remains monotonic. This is the shape AppModel uses after a later
+        // stage rejects an otherwise successful live provider update.
+        let rollback = NativeEntranceActivation(
+            revision: 21,
+            enabled: [.appRouting],
+            generation: 22
+        )
+        _ = try await coordinator.activate(NativeEntranceTransaction(
+            activation: rollback,
+            runtimeConfiguration: initialConfiguration
+        ))
+
+        #expect(await control.updatedConfigurations == [
+            candidateConfiguration,
+            initialConfiguration,
+        ])
+        #expect(await coordinator.state == .active(rollback))
+        try await coordinator.deactivate()
+        #expect(await control.disableCount == 1)
+        #expect(await coordinator.state == .inactive)
+    }
 }
 
 private actor RecordingEntranceBackend: NativeEntranceLifecycleBackend {
@@ -218,6 +275,7 @@ private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControll
     private var nextEnableOutcome: NetworkExtensionEnableOutcome = .running
     private var shouldFailNextUpdate = false
     private(set) var updatedConfigurations: [NetworkExtensionRuntimeConfiguration] = []
+    private(set) var disableCount = 0
 
     func returnRequiresRebootOnEnable() {
         nextEnableOutcome = .requiresReboot
@@ -251,7 +309,7 @@ private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControll
         return .running
     }
 
-    func disable() async throws {}
+    func disable() async throws { disableCount += 1 }
     func uninstall() async throws -> NetworkExtensionUninstallOutcome { .uninstalled }
     func currentState() async -> NetworkExtensionControlState { .inactive }
     func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus {

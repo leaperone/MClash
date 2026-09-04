@@ -1509,7 +1509,9 @@ final class AppModel {
                     // between persisting "disabled" and stopping the provider.
                     // Quiesce persisted managers before allocating new core
                     // ports or listener credentials.
-                    try await networkExtensionControl.disable()
+                    try await deactivateNetworkCaptureBackend(
+                        quiesceUntrackedProvider: true
+                    )
                     networkCaptureState = .off
                 }
                 await refreshActiveProfileListenerPorts()
@@ -7373,6 +7375,7 @@ final class AppModel {
             return true
         }()
         let attemptedLiveUpdate = canAttemptLiveUpdate
+        var nativeLifecycleRevisionFloor: UInt64 = 0
         do {
             if let candidateCompiledConfiguration {
                 compiledConfiguration = candidateCompiledConfiguration
@@ -7400,6 +7403,15 @@ final class AppModel {
                         candidateConfigurationDocument
                     )
                 }
+            }
+            if usesNativeRuntime, let candidateCompiledConfiguration {
+                // The Network Extension and the app-owned HTTP/SOCKS listeners
+                // must consume the same candidate plan. Persisting capture
+                // preferences alone would leave a running native engine on the
+                // previous workspace revision.
+                try await synchronizeNativeRuntimePolicy(
+                    candidateCompiledConfiguration
+                )
             }
             if !enabled {
                 networkExtensionMihomoListener = nil
@@ -7457,8 +7469,16 @@ final class AppModel {
                     inboundListenerRegistry: configuredNativeInboundListenerRegistry,
                     nativeInboundListenersEnabled: usesNativeRuntime
                 )
-                let updateOutcome = try await networkExtensionControl
-                    .updateRuntimeConfiguration(configuration)
+                let updateOutcome: NetworkExtensionEnableOutcome
+                if usesNativeRuntime {
+                    nativeLifecycleRevisionFloor = configuration.revision
+                    updateOutcome = try await activateNativeAppRoutingBackend(
+                        configuration
+                    )
+                } else {
+                    updateOutcome = try await networkExtensionControl
+                        .updateRuntimeConfiguration(configuration)
+                }
                 guard updateOutcome == .running else {
                     throw AppModelError.profileActivationFailed(
                         AppLocalization.string(
@@ -7610,6 +7630,21 @@ final class AppModel {
                 )
             }
 
+            if usesNativeRuntime, let previousCompiledConfiguration {
+                do {
+                    try await synchronizeNativeRuntimePolicy(
+                        previousCompiledConfiguration
+                    )
+                } catch {
+                    rollbackFailures.append(
+                        AppLocalization.format(
+                            "MClash could not synchronize the refreshed runtime configuration: %@",
+                            error.localizedDescription
+                        )
+                    )
+                }
+            }
+
             if attemptedLiveUpdate {
                 guard rollbackFailures.isEmpty else {
                     let transactionError = NetworkCaptureTransactionFailure(
@@ -7651,8 +7686,19 @@ final class AppModel {
                         inboundListenerRegistry: configuredNativeInboundListenerRegistry,
                         nativeInboundListenersEnabled: usesNativeRuntime
                     )
-                    let rollbackOutcome = try await networkExtensionControl
-                        .updateRuntimeConfiguration(rollbackConfiguration)
+                    let rollbackOutcome: NetworkExtensionEnableOutcome
+                    if usesNativeRuntime {
+                        rollbackOutcome = try await activateNativeAppRoutingBackend(
+                            rollbackConfiguration,
+                            lifecycleRevision: max(
+                                nativeLifecycleRevisionFloor,
+                                rollbackConfiguration.revision
+                            )
+                        )
+                    } else {
+                        rollbackOutcome = try await networkExtensionControl
+                            .updateRuntimeConfiguration(rollbackConfiguration)
+                    }
                     guard rollbackOutcome == .running else {
                         throw AppModelError.profileActivationFailed(
                             AppLocalization.string(
@@ -7964,22 +8010,7 @@ final class AppModel {
                     }
                 }
                 defer { nativeEntranceBackend.setProgressHandler(nil) }
-                let enabled: Set<NativeEntranceCapability> = [.appRouting]
-                let activation = NativeEntranceActivation(
-                    revision: configuration.revision,
-                    enabled: enabled,
-                    generation: configuration.revision
-                )
-                let result = try await nativeEntranceLifecycle.activate(
-                    NativeEntranceTransaction(
-                        activation: activation,
-                        runtimeConfiguration: configuration
-                    )
-                )
-                outcome = switch result.outcome {
-                case .running: .running
-                case .requiresReboot: .requiresReboot
-                }
+                outcome = try await activateNativeAppRoutingBackend(configuration)
             } else {
                 outcome = try await networkExtensionControl.enable(
                     configuration,
@@ -7995,7 +8026,7 @@ final class AppModel {
                 )
             }
             guard !shutdownInProgress else {
-                try? await networkExtensionControl.disable()
+                try? await deactivateNetworkCaptureBackend()
                 networkCaptureState = .off
                 return
             }
@@ -8067,11 +8098,7 @@ final class AppModel {
         networkCaptureState = .disabling
         stopAppRoutingActivityMonitor()
         do {
-            if usesNativeRuntime {
-                try await nativeEntranceLifecycle.deactivate()
-            } else {
-                try await networkExtensionControl.disable()
-            }
+            try await deactivateNetworkCaptureBackend()
             // An explicit App Routing shutdown is also the end of the coupled
             // DNS lifecycle. Clear a prior runtime failure so the next enable
             // performs a fresh DNS activation instead of displaying stale state.
@@ -8095,6 +8122,46 @@ final class AppModel {
                 appRoutingMonitorsPausedForSleep = false
             }
             return false
+        }
+    }
+
+    private func activateNativeAppRoutingBackend(
+        _ configuration: NetworkExtensionRuntimeConfiguration,
+        lifecycleRevision: UInt64? = nil
+    ) async throws -> NetworkExtensionEnableOutcome {
+        let revision = max(configuration.revision, lifecycleRevision ?? 0)
+        let activation = NativeEntranceActivation(
+            revision: revision,
+            enabled: [.appRouting],
+            generation: revision
+        )
+        let result = try await nativeEntranceLifecycle.activate(
+            NativeEntranceTransaction(
+                activation: activation,
+                runtimeConfiguration: configuration
+            )
+        )
+        return switch result.outcome {
+        case .running: .running
+        case .requiresReboot: .requiresReboot
+        }
+    }
+
+    /// Stops the capture provider through the same lifecycle owner that
+    /// activated it. Startup may encounter a provider left enabled by an older
+    /// process while this coordinator has no in-memory transaction; only that
+    /// recovery path is allowed to quiesce an untracked provider directly.
+    private func deactivateNetworkCaptureBackend(
+        quiesceUntrackedProvider: Bool = false
+    ) async throws {
+        guard usesNativeRuntime else {
+            try await networkExtensionControl.disable()
+            return
+        }
+        if await nativeEntranceLifecycle.state.activation != nil {
+            try await nativeEntranceLifecycle.deactivate()
+        } else if quiesceUntrackedProvider {
+            try await networkExtensionControl.disable()
         }
     }
 
@@ -8739,9 +8806,12 @@ final class AppModel {
         networkCaptureActivationOperation?.task.cancel()
         networkCaptureDeactivationOperation?.task.cancel()
 
-        let extensionDisable = Task { [networkExtensionControl] in
+        let extensionDisable = Task { @MainActor [weak self] in
+            guard let self else { return false }
             do {
-                try await networkExtensionControl.disable()
+                try await self.deactivateNetworkCaptureBackend(
+                    quiesceUntrackedProvider: true
+                )
                 return true
             } catch {
                 return false
@@ -11635,7 +11705,7 @@ final class AppModel {
                 generation: dnsMonitorGeneration,
                 expectedRevision: expectedRevision
             ) else { return }
-            try await networkExtensionControl.disable()
+            try await deactivateNetworkCaptureBackend()
             guard dnsProxyMonitorShouldContinue(generation: dnsMonitorGeneration) else {
                 return
             }
