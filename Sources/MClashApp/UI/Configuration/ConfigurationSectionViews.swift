@@ -450,7 +450,7 @@ struct ConfigurationProxyGroupsView: View {
                         isCreating = false
                     }
                 )
-                .id("\(selectedID.uuidString):\(isCreating)")
+                .id(editorInstanceID)
             } else {
                 ContentUnavailableView(
                     AppLocalization.string("Select an item"),
@@ -460,6 +460,28 @@ struct ConfigurationProxyGroupsView: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
+    }
+
+    private var editorInstanceID: String {
+        guard let selectedID else { return "empty" }
+        if isCreating {
+            return "new:\(selectedID.uuidString)"
+        }
+        guard let group = model.configurationDocument.proxyGroups.first(where: {
+            $0.id.rawValue == selectedID
+        }) else {
+            return "missing:\(selectedID.uuidString)"
+        }
+        // Identity includes persisted membership so an in-place rewrite
+        // (Install setup, automation) remounts the editor before Save.
+        return [
+            group.id.rawValue.uuidString,
+            group.name,
+            group.type.rawValue,
+            group.enabled ? "1" : "0",
+            group.members.map { String(describing: $0) }.joined(separator: ","),
+            group.memberSelectors.map(\.id.uuidString).joined(separator: ",")
+        ].joined(separator: "|")
     }
 
     private var selectedGroupBinding: Binding<UUID?> {
