@@ -4,6 +4,23 @@ import Testing
 @testable import MClashApp
 
 struct NativeRuleEngineProjectionTests {
+    @Test("native GEO capability gate rejects GEO rules without a ready provider")
+    func nativeGeoCapabilityGate() throws {
+        let plan = plan(
+            groups: [],
+            rules: [RoutingRule(priority: 1, matchers: [.geoSite("gfw")], action: .direct)]
+        )
+        #expect(throws: NativeGeoCapabilityError.providerNotReady(.unavailable)) {
+            try NativeGeoCapabilityGate.validate(plan: plan, providerStatus: nil, enforce: true)
+        }
+        try NativeGeoCapabilityGate.validate(
+            plan: plan,
+            providerStatus: .ready(revision: "fixture"),
+            enforce: true
+        )
+        try NativeGeoCapabilityGate.validate(plan: plan, providerStatus: nil, enforce: false)
+    }
+
     @Test("native rule-set support distinguishes inline data from external providers")
     func ruleSetSupportGate() {
         #expect(NativeRuleSetSupport.assess(RuleSet(name: "inline", rules: ["DOMAIN,example.com"])) == .inline)

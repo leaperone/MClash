@@ -523,6 +523,11 @@ and can be tested without producing a Mihomo YAML document.
 - Native rule-set capability assessment now distinguishes inline entries from
   URL/file-backed sets that require an explicit native loader; an unpopulated
   external cache is never presented as an empty successful set.
+- Native GEO capability now has an explicit provider/status boundary. When
+  native GEO enforcement is requested, plans containing GEOIP/GEOSITE entries
+  are rejected unless a provider reports `ready`; unavailable/unsupported
+  bundled formats are actionable diagnostics, not false non-matches. The gate
+  is opt-in until a real bundled database reader is integrated.
 - Native mode now loads MClash-owned local `.text` rule sets through a bounded
   4 MiB line loader, stripping comments and blank lines before the existing
   classical matcher runs. URL, YAML and MRS providers remain explicitly

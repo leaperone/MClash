@@ -37,6 +37,60 @@ public enum NativeGeoKind: String, Codable, Hashable, Sendable {
     case site
 }
 
+public protocol NativeGeoDatabaseProvider: Sendable {
+    var status: NativeGeoDatabaseStatus { get }
+    func matches(kind: NativeGeoKind, value: String, context: FlowContext) -> Bool
+}
+
+public enum NativeGeoDatabaseStatus: Equatable, Sendable {
+    case unavailable
+    case installedButUnsupportedFormat(String)
+    case ready(revision: String)
+    case failed(String)
+}
+
+public enum NativeGeoCapabilityGate {
+    public static func requiresProvider(_ plan: CompiledRuntimePlan) -> Bool {
+        plan.rules.contains { rule in
+            rule.matchers.contains { matcher in
+                if case .geoIP = matcher { return true }
+                if case .geoIP6 = matcher { return true }
+                if case .geoSite = matcher { return true }
+                return false
+            }
+        } || plan.ruleSets.contains { ruleSet in
+            ruleSet.rules.contains { raw in
+                let kind = raw.split(separator: ",", maxSplits: 1).first?.uppercased()
+                return kind == "GEOIP" || kind == "GEOIP6" || kind == "GEOSITE"
+            }
+        }
+    }
+
+    public static func validate(
+        plan: CompiledRuntimePlan,
+        providerStatus: NativeGeoDatabaseStatus?,
+        enforce: Bool
+    ) throws {
+        guard enforce, requiresProvider(plan) else { return }
+        guard case .ready = providerStatus else {
+            throw NativeGeoCapabilityError.providerNotReady(providerStatus ?? .unavailable)
+        }
+    }
+}
+
+public enum NativeGeoCapabilityError: Error, Equatable, Sendable {
+    case providerNotReady(NativeGeoDatabaseStatus)
+}
+
+extension NativeGeoCapabilityError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .providerNotReady(status):
+            return "Native GEO rules require a ready database provider; current status: \(status)."
+        }
+    }
+}
+
 /// Describes whether a rule set has data that the native projection can
 /// evaluate synchronously. Remote providers and non-text formats need an
 /// explicit loader/matcher; treating their absent cache as an empty set would
