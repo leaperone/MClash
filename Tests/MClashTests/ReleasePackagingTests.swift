@@ -350,6 +350,8 @@ struct ReleasePackagingTests {
 
         #expect(runnerWorkflow.contains("./scripts/run-ci-unit-tests.sh"))
         #expect(releaseWorkflow.contains("./scripts/run-ci-unit-tests.sh"))
+        #expect(runnerWorkflow.contains("MCLASH_NETWORK_TEST_CHUNK_SIZE: 4"))
+        #expect(releaseWorkflow.contains("MCLASH_NETWORK_TEST_CHUNK_SIZE: 4"))
         #expect(diagnosticScript.contains("::error file=scripts/test-direct.sh"))
         #expect(diagnosticScript.contains("[:7000]"))
         #expect(FileManager.default.isExecutableFile(

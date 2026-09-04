@@ -103,6 +103,12 @@ jobs:
     # Do not replace this with a paid runner label.
     runs-on: macos-26
     timeout-minutes: 25
+    env:
+      # Keep process isolation for the Swift Testing runtime while avoiding 48
+      # separate compiler/link invocations on every patch release. Four test
+      # files per child process remains bounded and is exercised by the same
+      # direct harness locally before changing the release gate.
+      MCLASH_NETWORK_TEST_CHUNK_SIZE: 4
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
