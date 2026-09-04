@@ -115,6 +115,47 @@ public enum NativeRuleSetFileLoader {
     }
 }
 
+public enum NativeRuleSetRefreshStatus: Equatable, Sendable {
+    case fresh(Date)
+    case stale(Date?, String)
+}
+
+/// HTTPS-only refresher for classical text sets. The returned set points at
+/// an atomically replaced local cache, so the synchronous native projection
+/// can consume it on the next workspace activation.
+public actor NativeTextRuleSetRefresher {
+    public let cacheDirectory: URL
+    public private(set) var status: NativeRuleSetRefreshStatus = .stale(nil, "Not refreshed")
+    private let session: URLSession
+
+    public init(cacheDirectory: URL, session: URLSession = .shared) {
+        self.cacheDirectory = cacheDirectory
+        self.session = session
+    }
+
+    public func refresh(_ ruleSet: RuleSet) async throws -> RuleSet {
+        guard ruleSet.format == .text, let sourceURL = ruleSet.sourceURL,
+              sourceURL.scheme?.lowercased() == "https" else {
+            throw NativeRuleSetFileLoader.Error.unsupportedSource
+        }
+        var request = URLRequest(url: sourceURL)
+        request.setValue("text/plain", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NativeRuleSetFileLoader.Error.unreadable
+        }
+        guard data.count <= NativeRuleSetFileLoader.maximumBytes else {
+            throw NativeRuleSetFileLoader.Error.tooLarge
+        }
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let cachePath = cacheDirectory.appendingPathComponent("\(ruleSet.id.rawValue.uuidString.lowercased()).txt")
+        try data.write(to: cachePath, options: .atomic)
+        let now = Date()
+        status = .fresh(now)
+        return RuleSet(id: ruleSet.id, name: ruleSet.name, rules: [], defaultAction: ruleSet.defaultAction, behavior: .classical, format: .text, path: cachePath.path, enabled: ruleSet.enabled, revision: ruleSet.revision + 1)
+    }
+}
+
 /// Evaluates a compiled, workspace-scoped plan before any outbound connector
 /// is selected. Rule sets are evaluated in plan order, followed by explicit
 /// rules, matching the policy order emitted by the compiler.  Compatibility

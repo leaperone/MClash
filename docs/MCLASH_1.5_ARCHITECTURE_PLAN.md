@@ -527,6 +527,11 @@ and can be tested without producing a Mihomo YAML document.
   4 MiB line loader, stripping comments and blank lines before the existing
   classical matcher runs. URL, YAML and MRS providers remain explicitly
   unsupported and require a future parser/refresh subsystem.
+- An HTTPS-only asynchronous text-set refresher now validates 2xx responses,
+  enforces the same 4 MiB limit, atomically replaces a per-rule-set cache and
+  exposes fresh/stale status. Workspace activation must explicitly refresh and
+  attach its returned cached path; URL/YAML/MRS/GEO database support remains
+  gated and is not silently enabled.
 - `b8639d1` through `0be45fb` move HTTP/SOCKS listener ownership into the App
   process, distinguish socket readiness from App Routing/TUN capabilities, and
   preserve HTTP CONNECT and SOCKS5 payload bytes coalesced with fragmented

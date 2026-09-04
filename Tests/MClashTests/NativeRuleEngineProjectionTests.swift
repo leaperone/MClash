@@ -28,6 +28,17 @@ struct NativeRuleEngineProjectionTests {
         }
     }
 
+    @Test("native text refresher accepts HTTPS only and atomically caches content")
+    func textRefresherHTTPSGate() async throws {
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("mclash-cache-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let httpSet = RuleSet(name: "http", sourceURL: URL(string: "http://rules.example/set"), format: .text)
+        let refresher = NativeTextRuleSetRefresher(cacheDirectory: cache)
+        await #expect(throws: NativeRuleSetFileLoader.Error.unsupportedSource) {
+            try await refresher.refresh(httpSet)
+        }
+    }
+
     @Test("native projection evaluates a local text rule set")
     func evaluatesLocalTextRuleSet() throws {
         let url = FileManager.default.temporaryDirectory
