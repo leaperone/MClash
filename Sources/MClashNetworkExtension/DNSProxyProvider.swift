@@ -180,6 +180,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             return
         }
         flowDecisionCoordinator.load(configuration: dataPlane.routingConfiguration)
+        DNSResolutionAssociationRegistry.shared.clear()
 
         do {
             let reporter = try DNSProxyRuntimeReporter(
@@ -380,6 +381,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let nativeDNSRelays = self.nativeDNSRelays.values
         self.nativeDNSRelays = [:]
         flowDecisionCoordinator.quiesce()
+        DNSResolutionAssociationRegistry.shared.clear()
         if let liveUpdaterToken {
             DNSProxyRuntimeRegistry.shared.unregisterLiveUpdater(liveUpdaterToken)
         }
@@ -442,6 +444,9 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 endpoint: endpoint,
                 endpointSelector: { query in
                     nativeBootstrap?.endpoint(forQuery: query, transport: .tcp)
+                },
+                exchangeObserver: { [weak self] query, response in
+                    self?.associateDNSResolution(query: query, response: response, flow: tcpFlow)
                 },
                 completion: { [weak self] in self?.releaseNativeDNSRelay(identifier) }
             )
@@ -713,6 +718,9 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 endpointSelector: { query in
                     nativeBootstrap?.endpoint(forQuery: query, transport: .udp)
                 },
+                exchangeObserver: { [weak self] query, response in
+                    self?.associateDNSResolution(query: query, response: response, flow: flow)
+                },
                 completion: { [weak self] in self?.releaseNativeDNSRelay(parentIdentifier) }
             )
             backendProbeLock.lock()
@@ -934,6 +942,52 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         backendProbeLock.unlock()
     }
 
+    private func associateDNSResolution(
+        query: Data,
+        response: Data,
+        flow: NEAppProxyFlow
+    ) {
+        guard let queryName = Self.dnsQuestionName(query),
+              let record = try? DNSResolutionRecordParser.parse(response),
+              queryName == record.hostname,
+              !record.addresses.isEmpty,
+              let context = flowDecisionCoordinator.dnsAssociationContext(for: flow) else {
+            return
+        }
+        DNSResolutionAssociationRegistry.shared.store.associate(
+            hostname: queryName,
+            addresses: record.addresses,
+            sourceIdentity: context.source,
+            configurationRevision: context.revision,
+            generation: context.generation,
+            ttl: record.ttl
+        )
+    }
+
+    /// Parse only the question section of a DNS query. Queries emitted by the
+    /// system resolver use uncompressed QNAMEs; compressed or malformed names
+    /// are rejected so an untrusted packet cannot create an association.
+    private static func dnsQuestionName(_ message: Data) -> String? {
+        guard message.count >= 17,
+              UInt16(message[4]) << 8 | UInt16(message[5]) == 1 else { return nil }
+        var offset = 12
+        var labels: [String] = []
+        while offset < message.count {
+            let length = Int(message[offset]); offset += 1
+            if length == 0 { break }
+            guard length <= 63, offset + length <= message.count,
+                  let label = String(data: message[offset..<(offset + length)], encoding: .utf8),
+                  !label.isEmpty else { return nil }
+            labels.append(label.lowercased())
+            offset += length
+        }
+        guard !labels.isEmpty, offset + 4 <= message.count,
+              (UInt16(message[offset]) << 8 | UInt16(message[offset + 1]) == 1
+               || UInt16(message[offset]) << 8 | UInt16(message[offset + 1]) == 28),
+              UInt16(message[offset + 2]) << 8 | UInt16(message[offset + 3]) == 1 else { return nil }
+        return labels.joined(separator: ".")
+    }
+
     private func applyLiveBootstrap(
         _ bootstrap: DNSProxyBootstrapConfiguration
     ) -> Bool {
@@ -973,6 +1027,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         // data plane is replaced; existing relays retain the proxy and
         // reporter captured when they started.
         flowDecisionCoordinator.load(configuration: dataPlane.routingConfiguration)
+        DNSResolutionAssociationRegistry.shared.clear()
         backendProbeGeneration &+= 1
         consecutiveBackendProbeFailures = 0
         let previousTimer = backendProbeTimer

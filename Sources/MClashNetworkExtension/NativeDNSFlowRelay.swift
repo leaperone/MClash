@@ -6,12 +6,14 @@ import MClashNetworkShared
 /// upstream. This is deliberately opt-in; the existing Mihomo SOCKS relay is
 /// retained as the default until native DNS is enabled by a host bootstrap.
 final class NativeDNSFlowRelay: @unchecked Sendable {
+    typealias ExchangeObserver = @Sendable (_ query: Data, _ response: Data) -> Void
     private let queue = DispatchQueue(label: "one.leaper.mclash.native-dns-relay")
     private let tcpFlow: NEAppProxyTCPFlow?
     private let udpFlow: NEAppProxyUDPFlow?
     private let endpoint: DNSUpstreamEndpoint
     private let endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)?
     private let completion: @Sendable () -> Void
+    private let exchangeObserver: ExchangeObserver?
     private var buffer = Data()
     private var stopped = false
     private var completionCalled = false
@@ -21,12 +23,14 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         udpFlow: NEAppProxyUDPFlow? = nil,
         endpoint: DNSUpstreamEndpoint,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
+        exchangeObserver: ExchangeObserver? = nil,
         completion: @escaping @Sendable () -> Void
     ) {
         self.tcpFlow = tcpFlow
         self.udpFlow = udpFlow
         self.endpoint = endpoint
         self.endpointSelector = endpointSelector
+        self.exchangeObserver = exchangeObserver
         self.completion = completion
     }
 
@@ -34,12 +38,14 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         flow: NEAppProxyTCPFlow,
         endpoint: DNSUpstreamEndpoint,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
+        exchangeObserver: ExchangeObserver? = nil,
         completion: @escaping @Sendable () -> Void
     ) -> NativeDNSFlowRelay {
         let relay = NativeDNSFlowRelay(
             tcpFlow: flow,
             endpoint: endpoint,
             endpointSelector: endpointSelector,
+            exchangeObserver: exchangeObserver,
             completion: completion
         )
         relay.queue.async { relay.openTCP() }
@@ -50,12 +56,14 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         flow: NEAppProxyUDPFlow,
         endpoint: DNSUpstreamEndpoint,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
+        exchangeObserver: ExchangeObserver? = nil,
         completion: @escaping @Sendable () -> Void
     ) -> NativeDNSFlowRelay {
         let relay = NativeDNSFlowRelay(
             udpFlow: flow,
             endpoint: endpoint,
             endpointSelector: endpointSelector,
+            exchangeObserver: exchangeObserver,
             completion: completion
         )
         relay.queue.async { relay.openUDP() }
@@ -107,6 +115,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
                         guard let self else { return }
                         do {
                             let response = try await self.exchange(query: query)
+                            self.exchangeObserver?(query, response)
                             let output = try DNSWireMessage.tcpFrame(for: response)
                             self.queue.async {
                                 guard !self.stopped else { return }
@@ -158,6 +167,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
             guard let self else { return }
             do {
                 let response = try await self.exchange(query: datagram.payload)
+                self.exchangeObserver?(datagram.payload, response)
                 self.queue.async {
                     guard !self.stopped else { return }
                     UDPAppProxyFlowCompatibility.write(

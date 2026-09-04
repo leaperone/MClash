@@ -3,6 +3,16 @@ import MClashNetworkShared
 import Network
 import NetworkExtension
 
+/// Process-wide, bounded DNS attribution state shared by the DNS and
+/// transparent providers. The store is memory-only and is cleared whenever a
+/// provider lifecycle or capture generation changes.
+final class DNSResolutionAssociationRegistry: @unchecked Sendable {
+    static let shared = DNSResolutionAssociationRegistry()
+    let store = DNSResolutionAssociationStore()
+    private init() {}
+    func clear() { store.removeAll() }
+}
+
 enum InitialFlowOwnershipPolicy {
     static func shouldEvaluate(metadataSigningIdentifier: String) -> Bool {
         !TrustedMClashComponentPolicy().contains(
@@ -79,6 +89,7 @@ enum DNSProfileRoutingRulePolicy {
 final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     private struct State: Sendable {
         var revision: UInt64 = 0
+        var generation: UUID = UUID()
         var captureEnabled = false
         var preparedConfiguration = PreparedCaptureConfiguration(
             .failOpen(.missingEncodedSnapshot)
@@ -133,6 +144,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
 
         lock.lock()
         state.revision = Self.uint64(configuration?[ProviderConfigurationKey.revision]) ?? 0
+        state.generation = loadResult.snapshot?.generationID ?? UUID()
         state.captureEnabled = captureEnabled
         state.preparedConfiguration = preparedConfiguration
         state.dnsPreparedConfiguration = PreparedCaptureConfiguration(
@@ -511,6 +523,17 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         snapshotState().revision
     }
 
+    /// Returns the exact capture identity used to scope DNS attribution.
+    /// Signing identity is intentionally taken from kernel metadata and is
+    /// never inferred from a mutable process path.
+    func dnsAssociationContext(for flow: NEAppProxyFlow) -> (source: String, revision: UInt64, generation: UUID)? {
+        let source = flow.metaData.sourceAppSigningIdentifier
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return nil }
+        let state = snapshotState()
+        return (source, state.revision, state.generation)
+    }
+
     @available(macOS, introduced: 14.0, obsoleted: 15.0)
     func decideLegacyUDPFlow(
         _ flow: NEAppProxyUDPFlow,
@@ -557,9 +580,23 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             || trustedComponentPolicy.contains(
                 metadataSigningIdentifier: applicationMetadata.sourceAppSigningIdentifier
             )
+        let suppliedHostname = remoteHostname ?? flow.remoteHostname
+        let associatedHostname: String? = {
+            let supplied = suppliedHostname?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let suppliedIsLiteralIP = supplied.flatMap { try? IPAddress($0) } != nil
+            guard let address = try? IPAddress(endpoint.host),
+                  (supplied == nil || supplied?.isEmpty == true || suppliedIsLiteralIP),
+                  !applicationMetadata.sourceAppSigningIdentifier.isEmpty else { return nil }
+            return DNSResolutionAssociationRegistry.shared.store.hostname(
+                for: address,
+                sourceIdentity: applicationMetadata.sourceAppSigningIdentifier,
+                configurationRevision: currentState.revision,
+                generation: currentState.generation
+            )
+        }()
         let context = contextBuilder.resolve(
             endpoint: endpoint,
-            remoteHostname: remoteHostname ?? flow.remoteHostname,
+            remoteHostname: associatedHostname ?? suppliedHostname,
             metadata: applicationMetadata,
             identityResolution: identityResolution,
             transportProtocol: transportProtocol,

@@ -53,6 +53,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
 
         runtime.start(configuration: configuration)
         flowDecisionCoordinator.load(configuration: configuration)
+        DNSResolutionAssociationRegistry.shared.clear()
         Self.prepareDNSRegistry(from: configuration)
         if let error = configureNativeInboundListeners(from: configuration) {
             nativeInboundListeners.stop()
@@ -80,6 +81,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
         hysteria2Relays.cancelAll()
         udpSessions.cancelAll()
         nativeInboundListeners.stop()
+        DNSResolutionAssociationRegistry.shared.clear()
         runtime.stop()
         completionHandler()
     }
@@ -564,6 +566,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
                 response = runtime.apply(request)
                 if response.accepted {
                     flowDecisionCoordinator.load(configuration: configuration)
+                    DNSResolutionAssociationRegistry.shared.clear()
                     Self.prepareDNSRegistry(from: configuration)
                     _ = configureNativeInboundListeners(from: configuration)
                 }
