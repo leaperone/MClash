@@ -191,8 +191,39 @@ struct NativeEntranceLifecycleTests {
         )
         _ = try await backend.apply(app, replacing: system)
 
-        #expect(await proxy.restoredURLs == [snapshotURL])
+        #expect(await proxy.deactivatedURLs == [snapshotURL])
         #expect(await control.enabledConfigurations == [runtime])
+    }
+
+    @Test("System Proxy is restored when App Routing activation fails")
+    func systemProxyToAppRoutingRollsBack() async throws {
+        let control = RecordingEntranceNetworkExtensionControl()
+        let proxy = RecordingSystemProxyBoundary()
+        let backend = NativeNetworkExtensionEntranceBackend(control: control, systemProxy: proxy)
+        let snapshotURL = URL(fileURLWithPath: "/tmp/mclash-test-snapshot-rollback.json")
+        let systemConfiguration = NativeSystemProxyConfiguration(
+            endpoints: try LocalSystemProxyEndpoints(mixedPort: 18_903),
+            bypassDomains: ["localhost"],
+            snapshotURL: snapshotURL
+        )
+        let system = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(revision: 5, enabled: [.systemProxy], generation: 5),
+            systemProxyConfiguration: systemConfiguration
+        )
+        _ = try await backend.apply(system, replacing: nil)
+
+        await control.failNextEnable()
+        let app = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(revision: 6, enabled: [.appRouting], generation: 6),
+            runtimeConfiguration: NetworkExtensionRuntimeConfiguration(revision: 6, dnsEnabled: false)
+        )
+        await #expect(throws: EntranceNetworkExtensionError.enableFailed) {
+            _ = try await backend.apply(app, replacing: system)
+        }
+
+        #expect(await proxy.deactivatedURLs == [snapshotURL])
+        #expect(await proxy.activations.count == 2)
+        #expect(await proxy.activations.last?.snapshotURL == snapshotURL)
     }
 
     @Test("App Routing to System Proxy failure restores the previous connector")
@@ -221,7 +252,34 @@ struct NativeEntranceLifecycleTests {
         }
 
         #expect(await control.disableCount == 1)
-        #expect(await control.enabledConfigurations == [runtime])
+        #expect(await control.enabledConfigurations == [runtime, runtime])
+    }
+
+    @Test("A failed App Routing rollback is surfaced explicitly")
+    func appRoutingToSystemProxyRollbackFailureIsExplicit() async throws {
+        let control = RecordingEntranceNetworkExtensionControl()
+        let proxy = RecordingSystemProxyBoundary()
+        let backend = NativeNetworkExtensionEntranceBackend(control: control, systemProxy: proxy)
+        let runtime = NetworkExtensionRuntimeConfiguration(revision: 7, dnsEnabled: false)
+        let app = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(revision: 7, enabled: [.appRouting], generation: 7),
+            runtimeConfiguration: runtime
+        )
+        _ = try await backend.apply(app, replacing: nil)
+
+        await proxy.failNextActivation()
+        await control.failNextEnable()
+        let system = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(revision: 8, enabled: [.systemProxy], generation: 8),
+            systemProxyConfiguration: NativeSystemProxyConfiguration(
+                endpoints: try LocalSystemProxyEndpoints(mixedPort: 18_904),
+                bypassDomains: nil,
+                snapshotURL: URL(fileURLWithPath: "/tmp/mclash-test-snapshot-3.json")
+            )
+        )
+        await #expect(throws: NativeEntranceBackendError.rollbackFailed) {
+            _ = try await backend.apply(system, replacing: app)
+        }
     }
 
     @Test("Native lifecycle can commit an explicit same-revision rollback")
@@ -352,6 +410,7 @@ private actor EntranceProgressRecorder {
 private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControlling {
     private var nextEnableOutcome: NetworkExtensionEnableOutcome = .running
     private var shouldFailNextUpdate = false
+    private var shouldFailNextEnable = false
     private(set) var updatedConfigurations: [NetworkExtensionRuntimeConfiguration] = []
     private(set) var enabledConfigurations: [NetworkExtensionRuntimeConfiguration] = []
     private(set) var disableCount = 0
@@ -364,6 +423,10 @@ private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControll
         shouldFailNextUpdate = true
     }
 
+    func failNextEnable() {
+        shouldFailNextEnable = true
+    }
+
     func enable(
         _ configuration: NetworkExtensionRuntimeConfiguration,
         progress reportProgress: @escaping @Sendable (
@@ -371,6 +434,10 @@ private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControll
         ) -> Void
     ) async throws -> NetworkExtensionEnableOutcome {
         enabledConfigurations.append(configuration)
+        if shouldFailNextEnable {
+            shouldFailNextEnable = false
+            throw EntranceNetworkExtensionError.enableFailed
+        }
         reportProgress(.awaitingSystemExtensionApproval)
         let outcome = nextEnableOutcome
         nextEnableOutcome = .running
@@ -410,6 +477,7 @@ private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControll
 }
 
 private enum EntranceNetworkExtensionError: Error, Equatable {
+    case enableFailed
     case updateFailed
     case unavailable
 }

@@ -1069,7 +1069,8 @@ final class AppModel {
                 : NetworkExtensionControlService.live())
         self.networkExtensionControl = selectedNetworkExtensionControl
         let nativeEntranceBackend = NativeNetworkExtensionEntranceBackend(
-            control: selectedNetworkExtensionControl
+            control: selectedNetworkExtensionControl,
+            systemProxy: systemProxyManager
         )
         self.nativeEntranceBackend = nativeEntranceBackend
         self.nativeEntranceLifecycle = NativeEntranceLifecycleCoordinator(
@@ -8237,7 +8238,7 @@ final class AppModel {
             )
             return
         }
-        guard isConnected, runtimeConfig != nil else {
+        guard isConnected else {
             errorMessage = AppLocalization.string(
                 "Connect the core before enabling the macOS system proxy."
             )
@@ -8266,11 +8267,41 @@ final class AppModel {
                 socks: SystemProxyEndpoint(port: socksPort)
             )
             let snapshotURL = systemProxySnapshotURL(layout: profileLayout)
-            try await systemProxyManager.activate(
-                endpoints: endpoints,
-                bypassDomains: systemProxyPreferences.effectiveBypassDomains,
-                savingSnapshotTo: snapshotURL
-            )
+            if usesNativeRuntime {
+                let currentRevision = await nativeEntranceLifecycle.state
+                    .activation?.revision ?? 0
+                let workspaceRevision = UInt64(max(
+                    1,
+                    configurationDocument.currentWorkspace?.revision ?? 1
+                ))
+                let revision = max(
+                    currentRevision,
+                    max(
+                        networkCapturePreferences.snapshot.revision,
+                        workspaceRevision
+                    )
+                )
+                _ = try await nativeEntranceLifecycle.activate(
+                    NativeEntranceTransaction(
+                        activation: NativeEntranceActivation(
+                            revision: revision,
+                            enabled: [.systemProxy],
+                            generation: revision
+                        ),
+                        systemProxyConfiguration: NativeSystemProxyConfiguration(
+                            endpoints: endpoints,
+                            bypassDomains: systemProxyPreferences.effectiveBypassDomains,
+                            snapshotURL: snapshotURL
+                        )
+                    )
+                )
+            } else {
+                try await systemProxyManager.activate(
+                    endpoints: endpoints,
+                    bypassDomains: systemProxyPreferences.effectiveBypassDomains,
+                    savingSnapshotTo: snapshotURL
+                )
+            }
             guard try await systemProxyManager.configurationMatches(
                 endpoints: endpoints,
                 bypassDomains: systemProxyPreferences.effectiveBypassDomains
@@ -8672,7 +8703,11 @@ final class AppModel {
         systemProxyGuardRepairCount = 0
         systemProxyState = .disabling
         do {
-            if FileManager.default.fileExists(atPath: snapshotURL.path) {
+            if usesNativeRuntime,
+               await nativeEntranceLifecycle.state.activation?
+                    .systemProxyEnabled == true {
+                try await nativeEntranceLifecycle.deactivate()
+            } else if FileManager.default.fileExists(atPath: snapshotURL.path) {
                 try await systemProxyManager.restoreSnapshotAndRemove(from: snapshotURL)
             }
             systemProxyState = .off

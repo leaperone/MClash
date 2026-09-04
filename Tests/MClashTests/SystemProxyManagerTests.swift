@@ -203,6 +203,41 @@ struct SystemProxyManagerTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test("Native entrance boundary activates, verifies, and restores System Proxy")
+    func nativeEntranceBoundaryRoundTrip() async throws {
+        let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
+        let originalState = try SystemProxyServiceState(
+            service: service,
+            protocolExists: true,
+            configuration: originalConfiguration
+        )
+        let backend = FakeSystemProxyBackend(
+            enabledServices: [service],
+            states: [originalState]
+        )
+        let manager = SystemProxyManager(backend: backend)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let snapshotURL = directory.appendingPathComponent("native-entrance.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = NativeSystemProxyConfiguration(
+            endpoints: try LocalSystemProxyEndpoints(mixedPort: 7_893),
+            bypassDomains: ["localhost", "*.local"],
+            snapshotURL: snapshotURL
+        )
+
+        try await manager.activate(configuration)
+        #expect(FileManager.default.fileExists(atPath: snapshotURL.path))
+        #expect(try await manager.configurationMatches(
+            endpoints: configuration.endpoints,
+            bypassDomains: configuration.bypassDomains
+        ))
+
+        try await manager.deactivate(snapshotAt: snapshotURL)
+        #expect(backend.currentStates == [originalState])
+        #expect(!FileManager.default.fileExists(atPath: snapshotURL.path))
+    }
+
     @Test("Concurrent activations are serialized by the manager actor")
     func concurrentOperationsAreSerialized() async throws {
         let service = SystemProxyNetworkService(id: "wifi", name: "Wi-Fi")
