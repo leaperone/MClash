@@ -111,6 +111,7 @@ extension CoreSupervisor {
             workspaceRevision: nil,
             listenerCount: 0,
             enabledListenerCount: 0,
+            enabledSocketListenerCount: 0,
             sessionValidationError: nil,
             listenerStates: [:],
             connectorCapabilities: [],

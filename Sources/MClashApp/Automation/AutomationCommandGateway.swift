@@ -1860,6 +1860,7 @@ final class AutomationCommandGateway {
             } ?? .null,
             "listenerCount": .integer(Int64(value.listenerCount)),
             "enabledListenerCount": .integer(Int64(value.enabledListenerCount)),
+            "enabledSocketListenerCount": .integer(Int64(value.enabledSocketListenerCount)),
             "listenerStates": .object(listenerStates),
             "connectorCapabilities": .array(connectorCapabilities),
             "unsupportedConnectors": .array(unsupported),

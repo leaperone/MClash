@@ -27,6 +27,9 @@ struct NativeRuntimeDiagnostics: Equatable, Sendable {
     /// Listener counts come from the MClash registry, never from Mihomo.
     let listenerCount: Int
     let enabledListenerCount: Int
+    /// Number of enabled socket entrances (HTTP/SOCKS5). App Routing and
+    /// TUN are capability entries, not app-owned TCP sockets.
+    let enabledSocketListenerCount: Int
     /// Validation failures are surfaced independently of lifecycle failures.
     let sessionValidationError: String?
     /// Lifecycle state of each MClash-owned entrance. Native listeners are
@@ -375,6 +378,8 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             workspaceRevision: sessionState?.plan.workspaceRevision,
             listenerCount: sessionState?.listeners.listeners.count ?? 0,
             enabledListenerCount: sessionState?.listeners.enabledListeners.count ?? 0,
+            enabledSocketListenerCount: sessionState?.listeners.enabledListeners
+                .filter { $0.kind.requiresSocketEndpoint }.count ?? 0,
             sessionValidationError: sessionValidationError,
             listenerStates: listenerHandles.mapValues(\.state),
             connectorCapabilities: Self.connectorCapabilityMatrix(in: outboundNodeTargets),
@@ -538,7 +543,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         guard let registry = sessionState?.listeners else { return }
         for spec in registry.listeners {
             guard var handle = listenerHandles[spec.id] else { continue }
-            handle.state = spec.enabled ? .starting : .stopped
+            handle.state = spec.enabled && spec.kind.requiresSocketEndpoint ? .starting : .stopped
             listenerHandles[spec.id] = handle
         }
         for spec in registry.enabledListeners {

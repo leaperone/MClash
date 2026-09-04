@@ -362,6 +362,7 @@ struct NativeRuntimeControllerTests {
         let diagnostics = await engine.diagnostics()
         #expect(diagnostics.listenerStates[http.id] == .running)
         #expect(diagnostics.listenerStates[app.id] == .stopped)
+        #expect(diagnostics.enabledSocketListenerCount == 1)
         #expect(diagnostics.listenerStates.values.filter { $0 == .running }.count == 1)
         #expect(!FileManager.default.fileExists(atPath: configuration.binaryURL.path))
 
