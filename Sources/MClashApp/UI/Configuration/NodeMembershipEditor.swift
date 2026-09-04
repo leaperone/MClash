@@ -166,6 +166,17 @@ struct NodeMembershipEditor: View {
                     .controlSize(.small)
                 }
             } else {
+                HStack(spacing: 8) {
+                    Label(AppLocalization.format("%d automatic rules", selectors.count), systemImage: "wand.and.stars")
+                    Text("·")
+                    Label(AppLocalization.format("%d fixed pins", selectedNodeIDs.count), systemImage: "pin.fill")
+                    if !orderedNodeIDs.isEmpty {
+                        Text("·")
+                        Text(AppLocalization.string("Fixed pins follow the order below"))
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 Text(AppLocalization.string("Fallback checks members from top to bottom and uses the first healthy option. Move members to set priority."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -410,6 +421,10 @@ struct NodeMembershipEditor: View {
                                     AppLocalization.string("Remove this fixed node")
                                 )
                                 let position = orderedNodeIDs.firstIndex(of: node.id) ?? 0
+                                Text("#\(position + 1)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24, alignment: .trailing)
                                 Button {
                                     movePinnedNode(node.id, by: -1)
                                 } label: {
