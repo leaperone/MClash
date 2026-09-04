@@ -21,6 +21,16 @@ struct NativeRuleEngineProjectionTests {
         try NativeGeoCapabilityGate.validate(plan: plan, providerStatus: nil, enforce: false)
     }
 
+    @Test("v2fly GeoIP protobuf fixture matches country CIDR")
+    func geoIPProtobufFixture() throws {
+        let cidr = Data([0x0a, 0x04, 192, 0, 2, 0, 0x10, 0x08])
+        let entry = Data([0x0a, 0x02]) + Data("CN".utf8) + Data([0x12, UInt8(cidr.count)]) + cidr
+        let database = try NativeGeoIPDatabaseProvider(data: Data([0x0a, UInt8(entry.count)]) + entry)
+        let context = FlowContext(source: FlowSource(processIdentifier: 1, auditToken: Data(), userID: 501), destination: try FlowDestination(ipAddress: IPAddress("192.0.2.42"), port: 443), transportProtocol: .tcp)
+        #expect(database.matches(kind: .ip, value: "cn", context: context))
+        #expect(!database.matches(kind: .site, value: "cn", context: context))
+    }
+
     @Test("native rule-set support distinguishes inline data from external providers")
     func ruleSetSupportGate() {
         #expect(NativeRuleSetSupport.assess(RuleSet(name: "inline", rules: ["DOMAIN,example.com"])) == .inline)
