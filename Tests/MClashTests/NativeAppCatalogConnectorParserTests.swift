@@ -5,6 +5,26 @@ import Testing
 
 @Suite("Native app catalog response parsers")
 struct NativeAppCatalogConnectorParserTests {
+    @Test("App connector accepts only supported Shadowsocks TCP material")
+    func shadowsocksCapabilityGate() throws {
+        let target = try OutboundNodeTarget(protocolName: "ss", host: "127.0.0.1", port: 8388, parameters: ["method": "aes-256-gcm", "password": "secret"])
+        #expect(NativeAppCatalogConnector.supports(target))
+        let plugin = try OutboundNodeTarget(protocolName: "ss", host: "127.0.0.1", port: 8388, parameters: ["method": "aes-256-gcm", "password": "secret", "plugin": "obfs"])
+        #expect(!NativeAppCatalogConnector.supports(plugin))
+    }
+
+    @Test("Shadowsocks SIP002 stream codec survives fragmented encrypted frames")
+    func shadowsocksFragmentation() throws {
+        let target = try OutboundNodeTarget(protocolName: "ss", host: "127.0.0.1", port: 8388, parameters: ["method": "aes-128-gcm", "password": "secret"])
+        let destination = MClashInboundDestination(host: "example.com", port: 443)
+        let client = try NativeAppShadowsocksCodec(target: target, destination: destination, routeKey: "test")
+        let server = try NativeAppShadowsocksCodec(target: target, destination: destination, routeKey: "test")
+        let encoded = try client.encode(Data("payload".utf8))
+        var decoded = [Data]()
+        for byte in encoded { decoded += try server.decode(Data([byte])) }
+        #expect(decoded == [Data("payload".utf8)])
+    }
+
     @Test("HTTP CONNECT accepts fragmented headers and preserves coalesced payload")
     func httpFragmentationAndTrailingBytes() throws {
         var parser = NativeHTTPConnectResponseParser()

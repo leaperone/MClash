@@ -8,11 +8,14 @@ import MClashNetworkShared
 /// target; unsupported node protocols fail closed during the route decision.
 struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
     let catalog: OutboundNodeTargetCatalog?
+    private let shadowsocksState = NativeAppShadowsocksState()
 
     static func supports(_ target: OutboundNodeTarget) -> Bool {
         switch target.protocolName {
         case "http", "socks5":
             true
+        case "ss", "shadowsocks":
+            Self.shadowsocksSupported(target)
         case "vless":
             target.parameters["uuid"] != nil
                 && {
@@ -28,13 +31,24 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
         }
     }
 
+    private static func shadowsocksSupported(_ target: OutboundNodeTarget) -> Bool {
+        guard let password = target.parameters["password"] ?? target.parameters["passwd"], !password.isEmpty else { return false }
+        let plugin = target.parameters["plugin"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let uot = target.parameters["uot"]?.lowercased() == "true" || target.parameters["udp"]?.lowercased() == "true"
+        return plugin.isEmpty && !uot
+    }
+
     func makeBridgeCodec(
         to destination: MClashInboundDestination,
         route: MClashInboundRoute
     ) throws -> (any MClashInboundBridgeCodec)? {
         guard case let .proxy(key) = route,
               let target = target(for: key),
-              target.protocolName == "vless" else { return nil }
+              (target.protocolName == "vless" || target.protocolName == "ss" || target.protocolName == "shadowsocks") else { return nil }
+        if target.protocolName == "ss" || target.protocolName == "shadowsocks" {
+            guard let codec = shadowsocksState.take(for: key) else { throw NativeAppCatalogConnectorError.unsupportedProtocol("shadowsocks state") }
+            return codec
+        }
         let endpoint = try SOCKS5Endpoint(
             address: SOCKS5Address(domain: destination.host),
             port: destination.port
@@ -114,6 +128,11 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
                     if let error { completion(error); return }
                     self.readSOCKSMethod(connection, destination: destination, target: target, completion: completion)
                 })
+            } else if target.protocolName == "ss" || target.protocolName == "shadowsocks" {
+                guard Self.shadowsocksSupported(target) else { throw NativeAppCatalogConnectorError.unsupportedProtocol("shadowsocks features") }
+                let codec = try NativeAppShadowsocksCodec(target: target, destination: destination, routeKey: key)
+                shadowsocksState.store(codec, for: connection)
+                connection.send(content: try codec.destinationPreamble(), completion: .contentProcessed(completion))
             } else if target.protocolName == "vless" {
                 let endpoint = try SOCKS5Endpoint(
                     address: SOCKS5Address(domain: destination.host),
@@ -201,6 +220,7 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
     private func target(for key: String) -> OutboundNodeTarget? {
         catalog?.entries.first { $0.route.stableSortKey == key }?.target
     }
+
 
     private func establishSOCKSWithInitialPayload(_ connection: NWConnection, destination: MClashInboundDestination, target: OutboundNodeTarget, completion: @escaping @Sendable (Error?, Data) -> Void) {
         let user = target.parameters["username"] ?? target.parameters["user"]
@@ -518,4 +538,39 @@ enum NativeAppCatalogConnectorError: Error, Equatable, Sendable {
     case truncatedResponse
     case missingCredentials
     case invalidWebSocketUpgrade
+}
+
+private final class NativeAppShadowsocksState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var codecs: [String: NativeAppShadowsocksCodec] = [:]
+    func store(_ codec: NativeAppShadowsocksCodec, for connection: NWConnection) {
+        lock.lock(); defer { lock.unlock() }; codecs[key(connection)] = codec
+    }
+    func take(for routeKey: String) -> NativeAppShadowsocksCodec? {
+        lock.lock(); defer { lock.unlock() }
+        // Establishment and bridge construction are serialized by the
+        // listener; route-key fallback keeps this state usable across the
+        // value-type connector copies used by the runtime.
+        if let match = codecs.first(where: { $0.value.routeKey == routeKey }) { codecs.removeValue(forKey: match.key); return match.value }
+        return nil
+    }
+    private func key(_ connection: NWConnection) -> String { String(ObjectIdentifier(connection).hashValue) }
+}
+
+final class NativeAppShadowsocksCodec: MClashInboundBridgeCodec, @unchecked Sendable {
+    private var encoder: ShadowsocksAEADStreamEncoder
+    private var decoder: ShadowsocksAEADStreamDecoder
+    let routeKey: String
+    private let destination: Data
+    init(target: OutboundNodeTarget, destination: MClashInboundDestination, routeKey: String) throws {
+        let method = target.parameters["method"] ?? target.parameters["cipher"] ?? "aes-256-gcm"
+        let password = target.parameters["password"] ?? target.parameters["passwd"] ?? ""
+        encoder = try ShadowsocksAEADStreamEncoder(methodName: method, password: password)
+        decoder = try ShadowsocksAEADStreamDecoder(methodName: method, password: password)
+        self.routeKey = routeKey
+        self.destination = try ShadowsocksAEADStreamEncoder.encodeDestination(host: destination.host, port: destination.port)
+    }
+    func destinationPreamble() throws -> Data { try encoder.encode(destination) }
+    func encode(_ payload: Data) throws -> Data { try encoder.encode(payload) }
+    func decode(_ input: Data) throws -> [Data] { try decoder.append(input) }
 }
