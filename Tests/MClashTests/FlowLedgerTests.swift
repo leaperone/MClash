@@ -404,6 +404,9 @@ struct FlowLedgerTests {
         #expect(
             ledger.recentEntries(limit: 10, since: baseDate).isEmpty
         )
+        #expect(ledger.recentEntriesPage(limit: 1, offset: 0).map(\.id) == [.legacyConnection("older")])
+        #expect(ledger.recentEntriesPage(limit: 1, offset: 1).map(\.id) == [.legacyConnection("newer")])
+        #expect(ledger.recentEntriesPage(limit: 1, offset: 2).isEmpty)
     }
 
     @Test("Latest route evidence is cached and ignores non-proxy terminals")

@@ -186,6 +186,25 @@ struct FlowLedger: Sendable {
             .map { $0 }
     }
 
+    /// Returns a stable page from the already ordered snapshot. Pagination is
+    /// applied after the optional time filter, so loading another page does
+    /// not reshuffle rows while live observations are being refreshed.
+    func recentEntriesPage(
+        limit: Int,
+        offset: Int,
+        since cutoff: Date? = nil
+    ) -> [FlowLedgerEntry] {
+        guard limit > 0, offset >= 0 else { return [] }
+        return entries.lazy
+            .filter { entry in
+                guard let cutoff else { return true }
+                return (entry.endedAt ?? entry.startedAt ?? .distantPast) >= cutoff
+            }
+            .dropFirst(offset)
+            .prefix(limit)
+            .map { $0 }
+    }
+
     func entries(for profileID: ProfileID?) -> [FlowLedgerEntry] {
         guard let profileID else { return entries }
         return entries.filter { $0.profileID == profileID }
