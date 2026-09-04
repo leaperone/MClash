@@ -280,6 +280,7 @@ struct ReleasePackagingTests {
         #expect(releaseScript.contains("MCLASH_NATIVE_ONLY=1"))
         #expect(releaseScript.contains("version\" == 1.5.*"))
         #expect(releaseScript.contains("MCLASH_NATIVE_ONLY\" != \"1\""))
+        #expect(workflow.contains("distribution-mode.json"))
     }
 
     @Test("GitHub macOS jobs stay on the free standard macos-26 runner")
