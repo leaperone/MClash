@@ -261,17 +261,18 @@ struct MClashInboundListenerTests {
             route: .proxy(route.stableSortKey)
         )
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        let initialPayload = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Data, Error>) in
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    connector.establish(
+                    connector.establishWithInitialPayload(
                         connection,
                         to: MClashInboundDestination(host: "example.com", port: 443),
                         route: .proxy(route.stableSortKey)
-                    ) { error in
+                    ) { error, payload in
                         if let error { continuation.resume(throwing: error) }
-                        else { continuation.resume() }
+                        else { continuation.resume(returning: payload) }
                     }
                 case .failed(let error):
                     continuation.resume(throwing: error)
@@ -284,6 +285,7 @@ struct MClashInboundListenerTests {
 
         #expect(fixture.didReceiveGreeting)
         #expect(fixture.didReceiveConnect)
+        #expect(initialPayload == Data("coalesced".utf8))
         connection.cancel()
     }
 
@@ -353,9 +355,22 @@ struct MClashInboundListenerTests {
 
         let request = try upstream.read(until: Data("\r\n\r\n".utf8))
         #expect(try HTTPProxyCodec.decodeConnectRequest(request).host == "example.com")
-        try upstream.send(Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8))
+        try upstream.send(
+            Data("HTTP/1.1 200 Connection Established\r\n\r\ncoalesced".utf8)
+        )
         for _ in 0..<50 where firstRead.data == nil { try await Task.sleep(for: .milliseconds(100)) }
         #expect(firstRead.data?.range(of: Data("200 Connection Established".utf8)) != nil)
+        let coalesced = Data("coalesced".utf8)
+        var establishedBytes = firstRead.data ?? Data()
+        if establishedBytes.suffix(coalesced.count) != coalesced {
+            let initialTunnelRead = ReceiveOnce()
+            receiveOnce(from: client, into: initialTunnelRead)
+            for _ in 0..<50 where initialTunnelRead.data == nil {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            establishedBytes.append(initialTunnelRead.data ?? Data())
+        }
+        #expect(establishedBytes.suffix(coalesced.count) == coalesced)
 
         try await send(Data("ping".utf8), on: client)
         #expect(try upstream.read(atLeast: 4).suffix(4) == Data("ping".utf8))
@@ -651,7 +666,8 @@ struct MClashInboundListenerTests {
                 stage = 2
                 bytes.removeAll()
                 connection?.send(
-                    content: Data([5, 0, 0, 1, 127, 0, 0, 1, 0x1F, 0x90]),
+                    content: Data([5, 0, 0, 1, 127, 0, 0, 1, 0x1F, 0x90])
+                        + Data("coalesced".utf8),
                     completion: .contentProcessed { _ in }
                 )
             }
