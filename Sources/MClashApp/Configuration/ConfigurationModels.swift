@@ -198,6 +198,44 @@ public enum RoutingMatcher: Codable, Hashable, Sendable {
 }
 public enum RoutingAction: Codable, Hashable, Sendable { case direct, reject, proxyGroup(ProxyGroupID) }
 public enum UnavailableNodeFallback: String, Codable, Sendable { case direct, reject }
+extension UnavailableNodeFallback {
+    private enum LegacyObjectKey: String, CodingKey { case direct, reject }
+
+    /// Older manifests encoded this as a zero-payload object (`{"direct":{}}`)
+    /// before it became a string enum. Both shapes must decode, otherwise an
+    /// upgrade quarantines the whole strategy document.
+    public init(from decoder: Decoder) throws {
+        if let container = try? decoder.singleValueContainer(),
+           let raw = try? container.decode(String.self) {
+            guard let value = Self(rawValue: raw) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Unsupported unavailable-node fallback \(raw)"
+                )
+            }
+            self = value
+            return
+        }
+        let object = try decoder.container(keyedBy: LegacyObjectKey.self)
+        if object.contains(.direct) {
+            self = .direct
+        } else if object.contains(.reject) {
+            self = .reject
+        } else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Unsupported unavailable-node fallback"
+                )
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
 public enum ConfigurationRoutingMode: String, Codable, CaseIterable, Sendable {
     case rule
     case global
@@ -213,6 +251,35 @@ public enum ConfigurationBuiltInPolicy: String, Codable, CaseIterable, Sendable 
 }
 
 public struct RoutingRule: Codable, Hashable, Identifiable, Sendable { public let id: RoutingRuleID; public var enabled: Bool; public var priority: Int; public var matchers: [RoutingMatcher]; public var action: RoutingAction; public var unavailableFallback: UnavailableNodeFallback; public var workspaceScope: WorkspaceID?; public init(id: RoutingRuleID = RoutingRuleID(), enabled: Bool = true, priority: Int, matchers: [RoutingMatcher] = [], action: RoutingAction, unavailableFallback: UnavailableNodeFallback = .direct, workspaceScope: WorkspaceID? = nil) { self.id=id; self.enabled=enabled; self.priority=priority; self.matchers=matchers; self.action=action; self.unavailableFallback=unavailableFallback; self.workspaceScope=workspaceScope } }
+extension RoutingRule {
+    private enum CodingKeys: String, CodingKey {
+        case id, enabled, priority, matchers, action, unavailableFallback, workspaceScope
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(RoutingRuleID.self, forKey: .id),
+            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true,
+            priority: try container.decode(Int.self, forKey: .priority),
+            matchers: try container.decodeIfPresent([RoutingMatcher].self, forKey: .matchers) ?? [],
+            action: try container.decode(RoutingAction.self, forKey: .action),
+            unavailableFallback: try container.decodeIfPresent(UnavailableNodeFallback.self, forKey: .unavailableFallback) ?? .direct,
+            workspaceScope: try container.decodeIfPresent(WorkspaceID.self, forKey: .workspaceScope)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(priority, forKey: .priority)
+        try container.encode(matchers, forKey: .matchers)
+        try container.encode(action, forKey: .action)
+        try container.encode(unavailableFallback, forKey: .unavailableFallback)
+        try container.encodeIfPresent(workspaceScope, forKey: .workspaceScope)
+    }
+}
 public enum RuleSetBehavior: String, Codable, CaseIterable, Sendable {
     case classical
     case domain
