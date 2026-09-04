@@ -527,10 +527,13 @@ jobs:
             "${release_dir}/MClash-${MCLASH_VERSION}-macos-arm64.dmg"
             "${release_dir}/MClash-${MCLASH_VERSION}-macos-arm64.zip"
             "${release_dir}/appcast.xml"
-            "${release_dir}/mihomo-${MIHOMO_ALPHA_REVISION}-source.tar.gz"
             "${release_dir}/Sparkle-2.9.4-LICENSE.txt"
+            "${release_dir}/distribution-mode.json"
             "${release_dir}/SHA256SUMS"
           )
+          if [[ "${MCLASH_VERSION}" != 1.5.* && "${MCLASH_NATIVE_ONLY:-0}" != "1" ]]; then
+            assets+=("${release_dir}/mihomo-${MIHOMO_ALPHA_REVISION}-source.tar.gz")
+          fi
           for delta in "${release_dir}"/MClash-${MCLASH_VERSION}-from-*-macos-arm64.delta(N); do
             assets+=("${delta}")
           done

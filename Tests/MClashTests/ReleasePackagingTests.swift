@@ -277,6 +277,8 @@ struct ReleasePackagingTests {
         #expect(releaseScript.contains("dmg_creation_signing_notarization"))
         #expect(releaseScript.contains("delta_appcast"))
         #expect(releaseScript.contains("source_license_checksum"))
+        #expect(releaseScript.contains("MCLASH_NATIVE_ONLY=1"))
+        #expect(releaseScript.contains("version\" == 1.5.*"))
     }
 
     @Test("GitHub macOS jobs stay on the free standard macos-26 runner")

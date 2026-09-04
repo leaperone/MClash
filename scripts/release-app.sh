@@ -300,6 +300,11 @@ export MCLASH_VERSION="${version}"
 export MCLASH_BUNDLE_VERSION="${bundle_version}"
 export MCLASH_BUILD_NUMBER="${build_number}"
 export CODE_SIGN_IDENTITY="${identity}"
+if [[ "${version}" == 1.5.* || "${MCLASH_NATIVE_ONLY:-0}" == "1" ]]; then
+  export MCLASH_NATIVE_ONLY=1
+else
+  export MCLASH_NATIVE_ONLY=0
+fi
 release_phase_start build
 "${repo_root}/scripts/build-app.sh"
 release_phase_end build
@@ -339,8 +344,13 @@ dmg="${release_dir}/MClash-${version}-macos-arm64.dmg"
 appcast="${release_dir}/appcast.xml"
 checksums="${release_dir}/SHA256SUMS"
 delta_manifest="${release_dir}/delta-manifest.json"
+distribution_marker="${release_dir}/distribution-mode.json"
+native_only="${MCLASH_NATIVE_ONLY}"
 mihomo_source="${release_dir}/mihomo-${MIHOMO_ALPHA_REVISION}-source.tar.gz"
 sparkle_license="${release_dir}/Sparkle-2.9.4-LICENSE.txt"
+distribution_mode="compatibility"
+if [[ "${native_only}" == "1" ]]; then distribution_mode="native-only"; fi
+print -r -- "{\"version\":\"${version}\",\"build\":\"${build_number}\",\"mode\":\"${distribution_mode}\"}" > "${distribution_marker}"
 
 ditto -c -k --sequesterRsrc --keepParent "${app}" "${notary_submission}"
 release_phase_start app_notarization_staple
@@ -378,7 +388,9 @@ release_phase_start delta_appcast
   "${delta_manifest}"
 release_phase_end delta_appcast
 release_phase_start source_license_checksum
-"${repo_root}/scripts/package-mihomo-source.sh" "${mihomo_source}"
+if [[ "${native_only}" != "1" ]]; then
+  "${repo_root}/scripts/package-mihomo-source.sh" "${mihomo_source}"
+fi
 sparkle_tools="$(${repo_root}/scripts/fetch-sparkle-tools.sh)"
 cp "${sparkle_tools}/LICENSE" "${sparkle_license}"
 
@@ -388,9 +400,12 @@ cp "${sparkle_tools}/LICENSE" "${sparkle_license}"
     "${dmg:t}" \
     "${update_zip:t}" \
     "${appcast:t}" \
-    "${mihomo_source:t}" \
     "${sparkle_license:t}"
+    "${distribution_marker:t}"
   )
+  if [[ "${native_only}" != "1" ]]; then
+    checksum_assets+=("${mihomo_source:t}")
+  fi
   for delta in MClash-${version}-from-*-macos-arm64.delta(N); do
     checksum_assets+=("${delta}")
   done
@@ -402,7 +417,7 @@ print "Release assets ready in ${release_dir}:"
 print "  ${dmg:t}"
 print "  ${update_zip:t}"
 print "  ${appcast:t}"
-print "  ${mihomo_source:t}"
+if [[ "${native_only}" != "1" ]]; then print "  ${mihomo_source:t}"; fi
 print "  ${sparkle_license:t}"
 for delta in "${release_dir}"/MClash-${version}-from-*-macos-arm64.delta(N); do
   print "  ${delta:t}"
