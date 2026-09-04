@@ -127,6 +127,7 @@ swiftc -parse-as-library -swift-version 6 \
   cd "${repo_root}"
   MCLASH_PROXY_SMOKE_URL="http://127.0.0.1:${origin_port}/minimal.yaml" \
     MCLASH_TEST_CORE="${core}" \
+    MCLASH_SKIP_SOURCE_SYNCHRONIZATION=1 \
     "${build_dir}/app-model-smoke"
 )
 
