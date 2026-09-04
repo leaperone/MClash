@@ -831,6 +831,10 @@ final class AppModel {
         supervisor.runtimeCapabilities.contains(.nativeRuntime)
     }
 
+    /// Diagnostics must not expose a retained legacy mixed-port listener when
+    /// this instance is running the native runtime.
+    var usesNativeRuntimeForDiagnostics: Bool { usesNativeRuntime }
+
     /// Runtime selection is deterministic and side-effect free. Keeping this
     /// small policy function separate lets lifecycle tests exercise the exact
     /// environment/argument contract without mutating the process environment.

@@ -1522,7 +1522,7 @@ final class AutomationCommandGateway {
         case .degraded: "degraded"
         }
         var listeners: [AutomationJSONValue]
-        if model.unifiedConfigurationEnabled {
+        if model.unifiedConfigurationEnabled || model.usesNativeRuntimeForDiagnostics {
             listeners = []
             listeners.append(contentsOf: model.activeConfiguredEntrances.map { entrance in
                 .object([
@@ -1555,7 +1555,7 @@ final class AutomationCommandGateway {
         // mode the workspace entrances above are authoritative; reporting the
         // retained legacy plan here would make internal recovery ports look
         // like extra user entrances.
-        if !model.unifiedConfigurationEnabled {
+        if !model.unifiedConfigurationEnabled && !model.usesNativeRuntimeForDiagnostics {
             listeners.append(contentsOf: model.profileRuntimePlan.routeListeners.map { listener in
                 .object([
                     "id": .string(listener.id.uuidString.lowercased()),
