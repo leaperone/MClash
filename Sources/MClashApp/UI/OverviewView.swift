@@ -193,6 +193,29 @@ private struct OverviewEntrancesCard: View {
                         .accessibilityElement(children: .combine)
                     }
                 }
+                // macOS System Proxy is a host-level entrance, not a
+                // workspace TCP listener. Keep it visible in the same
+                // ingress card so users can understand the complete traffic
+                // path without mistaking it for a legacy Mixed port.
+                HStack(spacing: 10) {
+                    Image(systemName: "desktopcomputer")
+                        .foregroundStyle(model.systemProxyEnabled ? .green : .secondary)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(AppLocalization.string("macOS System Proxy"))
+                            .font(.callout.weight(.medium))
+                        Text(AppLocalization.string("System Proxy"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Text(model.systemProxyEnabled
+                        ? AppLocalization.string("On")
+                        : AppLocalization.string("Off"))
+                        .font(.caption)
+                        .foregroundStyle(model.systemProxyEnabled ? .green : .tertiary)
+                }
+                .accessibilityElement(children: .combine)
             }
         }
     }
