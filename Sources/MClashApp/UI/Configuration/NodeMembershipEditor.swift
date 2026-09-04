@@ -81,6 +81,9 @@ struct NodeMembershipEditor: View {
         let query = librarySearch.trimmed
         return nodes.filter { node in
             !selectedNodeIDs.contains(node.id)
+                && node.enabled
+                && node.health.availability != .sourceRemoved
+                && node.health.availability != .unsupported
                 && ((node.userAlias ?? node.displayName).localizedCaseInsensitiveContains(query)
                     || node.host.localizedCaseInsensitiveContains(query)
                     || node.proto.rawValue.localizedCaseInsensitiveContains(query)
@@ -471,6 +474,22 @@ struct NodeMembershipEditor: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(remainingFixedNodeCapacity == 0)
+                            .accessibilityLabel(
+                                AppLocalization.format(
+                                    "Select %@",
+                                    node.userAlias ?? node.displayName
+                                )
+                            )
+                            .accessibilityValue(
+                                librarySelectedIDs.contains(node.id)
+                                    ? AppLocalization.string("Selected")
+                                    : ""
+                            )
+                            .accessibilityAddTraits(
+                                librarySelectedIDs.contains(node.id)
+                                    ? .isSelected
+                                    : []
+                            )
                             .accessibilityHint(
                                 AppLocalization.string("Add this fixed node")
                             )
@@ -696,14 +715,18 @@ struct NodeMembershipEditor: View {
     }
 
     private func pinAvailableNodes() {
-        for id in availableLibraryNodes.prefix(remainingFixedNodeCapacity).map(\.id) {
+        let pinnedIDs = availableLibraryNodes
+            .prefix(remainingFixedNodeCapacity)
+            .map(\.id)
+        for id in pinnedIDs {
             selectedNodeIDs.insert(id)
             if !orderedNodeIDs.contains(id) { orderedNodeIDs.append(id) }
         }
+        librarySelectedIDs.subtract(pinnedIDs)
     }
 
     private func pinSelectedLibraryNodes() {
-        let ids = librarySelectedIDs.intersection(Set(availableLibraryNodes.map(\.id)))
+        let ids = availableLibraryNodes.map(\.id).filter(librarySelectedIDs.contains)
         for id in ids.prefix(remainingFixedNodeCapacity) {
             togglePin(id, pinned: true)
         }

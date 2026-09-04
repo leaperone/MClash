@@ -716,6 +716,7 @@ final class AppModel {
     private let systemProxyPreferencesStore: SystemProxyPreferencesStore?
     private let networkCaptureConfigurationStore: NetworkCaptureConfigurationStore?
     private let networkExtensionControl: any NetworkExtensionControlling
+    private let nativeEntranceBackend: NativeNetworkExtensionEntranceBackend
     private let nativeEntranceLifecycle: NativeEntranceLifecycleCoordinator
     private let networkEnvironmentMonitor: any NetworkEnvironmentMonitoring
     private let systemProxyManager: SystemProxyManager
@@ -1054,10 +1055,12 @@ final class AppModel {
                 ? NetworkExtensionControlService.inert()
                 : NetworkExtensionControlService.live())
         self.networkExtensionControl = selectedNetworkExtensionControl
+        let nativeEntranceBackend = NativeNetworkExtensionEntranceBackend(
+            control: selectedNetworkExtensionControl
+        )
+        self.nativeEntranceBackend = nativeEntranceBackend
         self.nativeEntranceLifecycle = NativeEntranceLifecycleCoordinator(
-            backend: NativeNetworkExtensionEntranceBackend(
-                control: selectedNetworkExtensionControl
-            )
+            backend: nativeEntranceBackend
         )
         if let networkEnvironmentMonitor {
             self.networkEnvironmentMonitor = networkEnvironmentMonitor
@@ -7838,23 +7841,7 @@ final class AppModel {
             guard !shutdownInProgress else { throw CancellationError() }
             let outcome: NetworkExtensionEnableOutcome
             if usesNativeRuntime {
-                let enabled: Set<NativeEntranceCapability> = [.appRouting]
-                let activation = NativeEntranceActivation(
-                    revision: configuration.revision,
-                    enabled: enabled,
-                    generation: configuration.revision
-                )
-                _ = try await nativeEntranceLifecycle.activate(
-                    NativeEntranceTransaction(
-                        activation: activation,
-                        runtimeConfiguration: configuration
-                    )
-                )
-                outcome = .running
-            } else {
-                outcome = try await networkExtensionControl.enable(
-                    configuration,
-                    progress: { [weak self] progress in
+                nativeEntranceBackend.setProgressHandler { [weak self] progress in
                     Task { @MainActor in
                         guard let self,
                               progress == .awaitingSystemExtensionApproval,
@@ -7863,7 +7850,37 @@ final class AppModel {
                         self.networkCaptureState = .awaitingUserApproval
                     }
                 }
-            )
+                defer { nativeEntranceBackend.setProgressHandler(nil) }
+                let enabled: Set<NativeEntranceCapability> = [.appRouting]
+                let activation = NativeEntranceActivation(
+                    revision: configuration.revision,
+                    enabled: enabled,
+                    generation: configuration.revision
+                )
+                let result = try await nativeEntranceLifecycle.activate(
+                    NativeEntranceTransaction(
+                        activation: activation,
+                        runtimeConfiguration: configuration
+                    )
+                )
+                outcome = switch result.outcome {
+                case .running: .running
+                case .requiresReboot: .requiresReboot
+                }
+            } else {
+                outcome = try await networkExtensionControl.enable(
+                    configuration,
+                    progress: { [weak self] progress in
+                        Task { @MainActor in
+                            guard let self,
+                                  progress == .awaitingSystemExtensionApproval,
+                                  self.networkCapturePreferences.enabled,
+                                  self.networkCaptureState == .enabling else { return }
+                            self.networkCaptureState = .awaitingUserApproval
+                        }
+                    }
+                )
+            }
             guard !shutdownInProgress else {
                 try? await networkExtensionControl.disable()
                 networkCaptureState = .off
@@ -9270,8 +9287,7 @@ final class AppModel {
             listener.protocolType == .http || listener.protocolType == .mixed
                 ? listener.port
                 : nil
-                    })
-            }
+        })
         let socksPorts = Set(listeners.compactMap { listener in
             listener.protocolType == .socks || listener.protocolType == .mixed
                 ? listener.port

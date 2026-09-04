@@ -1,5 +1,6 @@
 @testable import MClashApp
 import Foundation
+import MClashNetworkShared
 import Testing
 
 @Suite("Native entrance lifecycle")
@@ -98,6 +99,75 @@ struct NativeEntranceLifecycleTests {
         #expect(applied[1].transaction.activation == second)
         #expect(applied[1].previous?.activation == first)
     }
+
+    @Test("Requires-reboot outcome is preserved instead of reported as running")
+    func requiresRebootIsExplicit() async throws {
+        let backend = RecordingEntranceBackend()
+        await backend.returnRequiresReboot()
+        let coordinator = NativeEntranceLifecycleCoordinator(backend: backend)
+        let activation = NativeEntranceActivation(
+            revision: 5,
+            enabled: [.appRouting],
+            generation: 1
+        )
+
+        let result = try await coordinator.activate(
+            NativeEntranceTransaction(activation: activation)
+        )
+        #expect(result.outcome == .requiresReboot)
+        #expect(await coordinator.state == .requiresReboot(activation))
+    }
+
+    @Test("Network Extension backend preserves progress, reboot, and rollback")
+    func networkExtensionBackendSemantics() async throws {
+        let control = RecordingEntranceNetworkExtensionControl()
+        let backend = NativeNetworkExtensionEntranceBackend(control: control)
+        let progress = EntranceProgressRecorder()
+        backend.setProgressHandler { value in
+            Task { await progress.record(value) }
+        }
+        await control.returnRequiresRebootOnEnable()
+        let initialConfiguration = NetworkExtensionRuntimeConfiguration(
+            revision: 10,
+            dnsEnabled: false
+        )
+        let initial = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(
+                revision: 10,
+                enabled: [.appRouting],
+                generation: 1
+            ),
+            runtimeConfiguration: initialConfiguration
+        )
+
+        #expect(try await backend.apply(initial, replacing: nil) == .requiresReboot)
+        for _ in 0..<20 {
+            if !(await progress.values).isEmpty { break }
+            await Task.yield()
+        }
+        #expect(await progress.values == [.awaitingSystemExtensionApproval])
+
+        let replacementConfiguration = NetworkExtensionRuntimeConfiguration(
+            revision: 11,
+            dnsEnabled: false
+        )
+        let replacement = NativeEntranceTransaction(
+            activation: NativeEntranceActivation(
+                revision: 11,
+                enabled: [.appRouting],
+                generation: 2
+            ),
+            runtimeConfiguration: replacementConfiguration
+        )
+        await control.failNextUpdate()
+        await #expect(throws: EntranceNetworkExtensionError.updateFailed) {
+            _ = try await backend.apply(replacement, replacing: initial)
+        }
+        #expect(await control.updatedConfigurations == [
+            replacementConfiguration,
+            initialConfiguration,
+        ])
+    }
 }
 
 private actor RecordingEntranceBackend: NativeEntranceLifecycleBackend {
@@ -109,16 +179,20 @@ private actor RecordingEntranceBackend: NativeEntranceLifecycleBackend {
     var applied: [ApplyRecord] = []
     var deactivated: [NativeEntranceTransaction] = []
     private var shouldFail = false
+    private var nextOutcome: NativeEntranceApplyOutcome = .running
 
     func apply(
         _ transaction: NativeEntranceTransaction,
         replacing previous: NativeEntranceTransaction?
-    ) async throws {
+    ) async throws -> NativeEntranceApplyOutcome {
         if shouldFail {
             shouldFail = false
             throw RecordingEntranceError.applyFailed
         }
         applied.append(ApplyRecord(transaction: transaction, previous: previous))
+        let outcome = nextOutcome
+        nextOutcome = .running
+        return outcome
     }
 
     func deactivate(_ transaction: NativeEntranceTransaction) async throws {
@@ -126,10 +200,79 @@ private actor RecordingEntranceBackend: NativeEntranceLifecycleBackend {
     }
 
     func failNextApply() { shouldFail = true }
+    func returnRequiresReboot() { nextOutcome = .requiresReboot }
 }
 
 private enum RecordingEntranceError: Error, Equatable, LocalizedError {
     case applyFailed
 
     var errorDescription: String? { "recording backend apply failed" }
+}
+
+private actor EntranceProgressRecorder {
+    var values: [NetworkExtensionEnableProgress] = []
+    func record(_ value: NetworkExtensionEnableProgress) { values.append(value) }
+}
+
+private actor RecordingEntranceNetworkExtensionControl: NetworkExtensionControlling {
+    private var nextEnableOutcome: NetworkExtensionEnableOutcome = .running
+    private var shouldFailNextUpdate = false
+    private(set) var updatedConfigurations: [NetworkExtensionRuntimeConfiguration] = []
+
+    func returnRequiresRebootOnEnable() {
+        nextEnableOutcome = .requiresReboot
+    }
+
+    func failNextUpdate() {
+        shouldFailNextUpdate = true
+    }
+
+    func enable(
+        _ configuration: NetworkExtensionRuntimeConfiguration,
+        progress reportProgress: @escaping @Sendable (
+            NetworkExtensionEnableProgress
+        ) -> Void
+    ) async throws -> NetworkExtensionEnableOutcome {
+        _ = configuration
+        reportProgress(.awaitingSystemExtensionApproval)
+        let outcome = nextEnableOutcome
+        nextEnableOutcome = .running
+        return outcome
+    }
+
+    func updateRuntimeConfiguration(
+        _ configuration: NetworkExtensionRuntimeConfiguration
+    ) async throws -> NetworkExtensionEnableOutcome {
+        updatedConfigurations.append(configuration)
+        if shouldFailNextUpdate {
+            shouldFailNextUpdate = false
+            throw EntranceNetworkExtensionError.updateFailed
+        }
+        return .running
+    }
+
+    func disable() async throws {}
+    func uninstall() async throws -> NetworkExtensionUninstallOutcome { .uninstalled }
+    func currentState() async -> NetworkExtensionControlState { .inactive }
+    func providerRuntimeStatus() async throws -> TransparentProxyProviderStatus {
+        throw EntranceNetworkExtensionError.unavailable
+    }
+    func appRoutingActivity(
+        after cursor: UInt64,
+        limit: Int
+    ) async throws -> AppRoutingActivityBatch {
+        _ = limit
+        return AppRoutingActivityBatch(
+            activities: [],
+            nextCursor: cursor,
+            droppedBeforeSequence: nil,
+            hasMore: false
+        )
+    }
+    func clearAppRoutingActivity() async throws {}
+}
+
+private enum EntranceNetworkExtensionError: Error, Equatable {
+    case updateFailed
+    case unavailable
 }

@@ -20,6 +20,16 @@ struct NativeEntranceActivation: Equatable, Sendable {
     var appRoutingEnabled: Bool { enabled.contains(.appRouting) }
 }
 
+enum NativeEntranceApplyOutcome: Equatable, Sendable {
+    case running
+    case requiresReboot
+}
+
+struct NativeEntranceActivationResult: Equatable, Sendable {
+    let activation: NativeEntranceActivation
+    let outcome: NativeEntranceApplyOutcome
+}
+
 /// Complete native entrance transaction passed to the side-effect boundary.
 /// It is intentionally not Equatable or printable: the embedded runtime
 /// configuration may contain connector credentials. Rollback data is opaque
@@ -50,12 +60,14 @@ enum NativeEntranceLifecycleState: Equatable, Sendable {
     case inactive
     case activating(NativeEntranceActivation)
     case active(NativeEntranceActivation)
+    case requiresReboot(NativeEntranceActivation)
     case deactivating(NativeEntranceActivation)
     case failed(String)
 
     var activation: NativeEntranceActivation? {
         switch self {
-        case let .activating(value), let .active(value), let .deactivating(value):
+        case let .activating(value), let .active(value),
+             let .requiresReboot(value), let .deactivating(value):
             return value
         case .inactive, .failed:
             return nil
@@ -93,7 +105,7 @@ protocol NativeEntranceLifecycleBackend: Sendable {
     func apply(
         _ transaction: NativeEntranceTransaction,
         replacing previous: NativeEntranceTransaction?
-    ) async throws
+    ) async throws -> NativeEntranceApplyOutcome
     func deactivate(_ transaction: NativeEntranceTransaction) async throws
 }
 
@@ -102,21 +114,73 @@ protocol NativeEntranceLifecycleBackend: Sendable {
 /// established snapshot path; this adapter never invokes privileged APIs.
 final class NativeNetworkExtensionEntranceBackend: NativeEntranceLifecycleBackend, @unchecked Sendable {
     private let control: any NetworkExtensionControlling
+    private let lock = NSLock()
+    private var progressHandler: (@Sendable (NetworkExtensionEnableProgress) -> Void)?
 
     init(control: any NetworkExtensionControlling) { self.control = control }
 
-    func apply(_ transaction: NativeEntranceTransaction, replacing previous: NativeEntranceTransaction?) async throws {
-        guard let configuration = transaction.runtimeConfiguration else { return }
-        if previous?.runtimeConfiguration != nil {
-            _ = try await control.updateRuntimeConfiguration(configuration)
+    func setProgressHandler(
+        _ handler: (@Sendable (NetworkExtensionEnableProgress) -> Void)?
+    ) {
+        lock.lock()
+        progressHandler = handler
+        lock.unlock()
+    }
+
+    private func reportProgress(_ progress: NetworkExtensionEnableProgress) {
+        lock.lock()
+        let handler = progressHandler
+        lock.unlock()
+        handler?(progress)
+    }
+
+    func apply(
+        _ transaction: NativeEntranceTransaction,
+        replacing previous: NativeEntranceTransaction?
+    ) async throws -> NativeEntranceApplyOutcome {
+        guard let configuration = transaction.runtimeConfiguration else {
+            throw NativeEntranceBackendError.missingRuntimeConfiguration
+        }
+        let outcome: NetworkExtensionEnableOutcome
+        if let previousConfiguration = previous?.runtimeConfiguration {
+            do {
+                outcome = try await control.updateRuntimeConfiguration(configuration)
+            } catch {
+                do {
+                    _ = try await control.updateRuntimeConfiguration(previousConfiguration)
+                } catch {
+                    throw NativeEntranceBackendError.rollbackFailed
+                }
+                throw error
+            }
         } else {
-            _ = try await control.enable(configuration)
+            outcome = try await control.enable(configuration) { [weak self] progress in
+                self?.reportProgress(progress)
+            }
+        }
+        return switch outcome {
+        case .running: .running
+        case .requiresReboot: .requiresReboot
         }
     }
 
     func deactivate(_ transaction: NativeEntranceTransaction) async throws {
         _ = transaction
         try await control.disable()
+    }
+}
+
+enum NativeEntranceBackendError: Error, Equatable, LocalizedError, Sendable {
+    case missingRuntimeConfiguration
+    case rollbackFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .missingRuntimeConfiguration:
+            "Native App Routing activation is missing its runtime configuration."
+        case .rollbackFailed:
+            "Native App Routing update failed and the previous provider configuration could not be restored."
+        }
     }
 }
 
@@ -136,11 +200,13 @@ actor NativeEntranceLifecycleCoordinator {
     /// lifecycle model.
     private var committedActivation: NativeEntranceActivation?
     private var committedTransaction: NativeEntranceTransaction?
+    private var committedOutcome: NativeEntranceApplyOutcome?
 
     init(backend: any NativeEntranceLifecycleBackend) {
         self.backend = backend
         committedActivation = nil
         committedTransaction = nil
+        committedOutcome = nil
     }
 
     @discardableResult
@@ -169,14 +235,22 @@ actor NativeEntranceLifecycleCoordinator {
         state = .activating(activation)
         do {
             let transaction = NativeEntranceTransaction(activation: activation)
-            try await backend.apply(transaction, replacing: committedTransaction)
+            let outcome = try await backend.apply(
+                transaction,
+                replacing: committedTransaction
+            )
             committedActivation = activation
             committedTransaction = transaction
-            state = .active(activation)
+            committedOutcome = outcome
+            state = outcome == .running
+                ? .active(activation)
+                : .requiresReboot(activation)
             return activation
         } catch {
-            if let committedActivation {
-                state = .active(committedActivation)
+            if let committedActivation, let committedOutcome {
+                state = committedOutcome == .running
+                    ? .active(committedActivation)
+                    : .requiresReboot(committedActivation)
             } else {
                 state = .failed(error.localizedDescription)
             }
@@ -185,7 +259,9 @@ actor NativeEntranceLifecycleCoordinator {
     }
 
     @discardableResult
-    func activate(_ transaction: NativeEntranceTransaction) async throws -> NativeEntranceActivation {
+    func activate(
+        _ transaction: NativeEntranceTransaction
+    ) async throws -> NativeEntranceActivationResult {
         let activation = transaction.activation
         guard activation.revision > 0 else { throw NativeEntranceLifecycleError.invalidRevision }
         guard !activation.enabled.isEmpty else { throw NativeEntranceLifecycleError.noEnabledEntrance }
@@ -198,13 +274,26 @@ actor NativeEntranceLifecycleCoordinator {
         generation = max(generation &+ 1, activation.generation)
         state = .activating(activation)
         do {
-            try await backend.apply(transaction, replacing: committedTransaction)
+            let outcome = try await backend.apply(
+                transaction,
+                replacing: committedTransaction
+            )
             committedActivation = activation
             committedTransaction = transaction
-            state = .active(activation)
-            return activation
+            committedOutcome = outcome
+            state = outcome == .running
+                ? .active(activation)
+                : .requiresReboot(activation)
+            return NativeEntranceActivationResult(
+                activation: activation,
+                outcome: outcome
+            )
         } catch {
-            if let committedActivation { state = .active(committedActivation) }
+            if let committedActivation, let committedOutcome {
+                state = committedOutcome == .running
+                    ? .active(committedActivation)
+                    : .requiresReboot(committedActivation)
+            }
             else { state = .failed(error.localizedDescription) }
             throw error
         }
@@ -226,6 +315,7 @@ actor NativeEntranceLifecycleCoordinator {
             }
             committedActivation = nil
             committedTransaction = nil
+            committedOutcome = nil
             state = .inactive
         } catch {
             state = .active(current)
