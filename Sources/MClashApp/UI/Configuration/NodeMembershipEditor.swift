@@ -70,16 +70,6 @@ struct NodeMembershipEditor: View {
         return result
     }
 
-    private var hasIncludeConditions: Bool {
-        !nameContains.trimmed.isEmpty
-            || !nameEquals.trimmed.isEmpty
-            || !hostContains.trimmed.isEmpty
-            || !hostEquals.trimmed.isEmpty
-            || sourceChoice != nil
-            || protocolChoice != nil
-            || !tagContains.trimmed.isEmpty
-    }
-
     private var matchedNodes: [Node] {
         guard activeSelectorID != nil else { return [] }
         let selector = draftSelector
@@ -398,7 +388,7 @@ struct NodeMembershipEditor: View {
                 Text(AppLocalization.string("Add a selector to describe which nodes belong to this group."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if !hasIncludeConditions {
+            } else if activeCriterionChips.isEmpty {
                 Text(AppLocalization.string("No include condition means all enabled nodes. Add a condition to narrow the match."))
                     .font(.caption)
                     .foregroundStyle(.secondary)

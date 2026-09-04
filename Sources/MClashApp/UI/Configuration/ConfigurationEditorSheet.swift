@@ -148,31 +148,20 @@ struct ConfigurationEditorSheet: View {
     }
 
     private var proxyGroupEmbeddedEditor: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: MClashLayout.panelSpacing) {
-                Form {
-                    Section(AppLocalization.string("Group")) {
-                        proxyGroupIdentityFields
-                    }
-                }
-                .formStyle(.grouped)
-                .scrollDisabled(true)
-
-                Form {
-                    NodeMembershipEditor(
-                        nodes: model.configurationDocument.nodes,
-                        sourceNames: proxyGroupSourceNames,
-                        selectedNodeIDs: $selectedNodeIDs,
-                        selectors: $nodeSelectors,
-                        orderedNodeIDs: $orderedNodeIDs
-                    )
-                    groupSelection
-                }
-                .formStyle(.grouped)
-                .scrollDisabled(true)
+        Form {
+            Section(AppLocalization.string("Group")) {
+                proxyGroupIdentityFields
             }
-            .padding(.bottom, MClashLayout.compactPagePadding)
+            NodeMembershipEditor(
+                nodes: model.configurationDocument.nodes,
+                sourceNames: proxyGroupSourceNames,
+                selectedNodeIDs: $selectedNodeIDs,
+                selectors: $nodeSelectors,
+                orderedNodeIDs: $orderedNodeIDs
+            )
+            groupSelection
         }
+        .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
