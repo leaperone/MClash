@@ -97,6 +97,29 @@ protocol NativeEntranceLifecycleBackend: Sendable {
     func deactivate(_ transaction: NativeEntranceTransaction) async throws
 }
 
+/// Production adapter for the existing transactional Network Extension
+/// controller. System Proxy remains owned by SystemProxyManager/AppModel's
+/// established snapshot path; this adapter never invokes privileged APIs.
+final class NativeNetworkExtensionEntranceBackend: NativeEntranceLifecycleBackend, @unchecked Sendable {
+    private let control: any NetworkExtensionControlling
+
+    init(control: any NetworkExtensionControlling) { self.control = control }
+
+    func apply(_ transaction: NativeEntranceTransaction, replacing previous: NativeEntranceTransaction?) async throws {
+        guard let configuration = transaction.runtimeConfiguration else { return }
+        if previous?.runtimeConfiguration != nil {
+            _ = try await control.updateRuntimeConfiguration(configuration)
+        } else {
+            _ = try await control.enable(configuration)
+        }
+    }
+
+    func deactivate(_ transaction: NativeEntranceTransaction) async throws {
+        _ = transaction
+        try await control.disable()
+    }
+}
+
 /// Transactional lifecycle owner for native capture entrances.
 ///
 /// The coordinator serializes activation/deactivation and keeps the last

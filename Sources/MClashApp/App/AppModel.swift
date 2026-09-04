@@ -716,6 +716,7 @@ final class AppModel {
     private let systemProxyPreferencesStore: SystemProxyPreferencesStore?
     private let networkCaptureConfigurationStore: NetworkCaptureConfigurationStore?
     private let networkExtensionControl: any NetworkExtensionControlling
+    private let nativeEntranceLifecycle: NativeEntranceLifecycleCoordinator
     private let networkEnvironmentMonitor: any NetworkEnvironmentMonitoring
     private let systemProxyManager: SystemProxyManager
     private let localPortProbe: LocalPortProbe
@@ -1048,10 +1049,16 @@ final class AppModel {
             defaults = .standard
         }
         self.preferenceDefaults = defaults
-        self.networkExtensionControl = networkExtensionControl
+        let selectedNetworkExtensionControl = networkExtensionControl
             ?? (testInstance
                 ? NetworkExtensionControlService.inert()
                 : NetworkExtensionControlService.live())
+        self.networkExtensionControl = selectedNetworkExtensionControl
+        self.nativeEntranceLifecycle = NativeEntranceLifecycleCoordinator(
+            backend: NativeNetworkExtensionEntranceBackend(
+                control: selectedNetworkExtensionControl
+            )
+        )
         if let networkEnvironmentMonitor {
             self.networkEnvironmentMonitor = networkEnvironmentMonitor
         } else {
@@ -7829,9 +7836,25 @@ final class AppModel {
                 nativeInboundListenersEnabled: usesNativeRuntime
             )
             guard !shutdownInProgress else { throw CancellationError() }
-            let outcome = try await networkExtensionControl.enable(
-                configuration,
-                progress: { [weak self] progress in
+            let outcome: NetworkExtensionEnableOutcome
+            if usesNativeRuntime {
+                let enabled: Set<NativeEntranceCapability> = [.appRouting]
+                let activation = NativeEntranceActivation(
+                    revision: configuration.revision,
+                    enabled: enabled,
+                    generation: configuration.revision
+                )
+                _ = try await nativeEntranceLifecycle.activate(
+                    NativeEntranceTransaction(
+                        activation: activation,
+                        runtimeConfiguration: configuration
+                    )
+                )
+                outcome = .running
+            } else {
+                outcome = try await networkExtensionControl.enable(
+                    configuration,
+                    progress: { [weak self] progress in
                     Task { @MainActor in
                         guard let self,
                               progress == .awaitingSystemExtensionApproval,
@@ -7914,7 +7937,11 @@ final class AppModel {
         networkCaptureState = .disabling
         stopAppRoutingActivityMonitor()
         do {
-            try await networkExtensionControl.disable()
+            if usesNativeRuntime {
+                try await nativeEntranceLifecycle.deactivate()
+            } else {
+                try await networkExtensionControl.disable()
+            }
             // An explicit App Routing shutdown is also the end of the coupled
             // DNS lifecycle. Clear a prior runtime failure so the next enable
             // performs a fresh DNS activation instead of displaying stale state.
@@ -9243,7 +9270,8 @@ final class AppModel {
             listener.protocolType == .http || listener.protocolType == .mixed
                 ? listener.port
                 : nil
-        })
+                    })
+            }
         let socksPorts = Set(listeners.compactMap { listener in
             listener.protocolType == .socks || listener.protocolType == .mixed
                 ? listener.port
