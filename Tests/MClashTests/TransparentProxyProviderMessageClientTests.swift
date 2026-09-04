@@ -203,6 +203,52 @@ struct TransparentProxyProviderMessageClientTests {
         #expect(requests[1].activationIdentifier == nil)
     }
 
+    @Test("Native apply sends only connector-neutral routing material")
+    func nativeApplyOmitsLegacyConnectorMaterial() async throws {
+        let snapshot = try CaptureConfigurationSnapshot(
+            revision: 14,
+            rules: [try CaptureRule(
+                id: "native-all",
+                priority: 1,
+                action: .outbound(.profileRules)
+            )]
+        )
+        let preferences = try NetworkCapturePreferences(
+            enabled: true,
+            dnsEnabled: false,
+            failOpen: false,
+            snapshot: snapshot
+        )
+        let target = try OutboundNodeTarget(
+            protocolName: "vless",
+            host: "node.example.com",
+            port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001"]
+        )
+        let catalog = try OutboundNodeTargetCatalog(entries: [
+            OutboundNodeTargetEntry(route: .profileRules, target: target)
+        ])
+        let configuration = try NetworkExtensionRuntimeConfiguration(
+            preferences: preferences,
+            outboundNodeTargetCatalog: catalog,
+            nativeInboundListenersEnabled: true
+        )
+        let session = ScriptedProviderMessageSession(responses: [
+            response(revision: 14, captureEnabled: true, failOpen: false)
+        ])
+
+        _ = try await TransparentProxyProviderMessageClient(session: session)
+            .applyConfiguration(configuration)
+        let request = try #require(session.decodedRequests().first)
+        #expect(request.captureBackend == .native)
+        #expect(request.outboundNodeTargetCatalog == configuration.encodedOutboundNodeTargetCatalog)
+        #expect(request.mihomoRouteProxyCatalog == nil)
+        #expect(request.mihomoSOCKSHost == nil)
+        #expect(request.mihomoSOCKSPort == nil)
+        #expect(request.mihomoSOCKSUsername == nil)
+        #expect(request.mihomoSOCKSPassword == nil)
+    }
+
     private func runtimeConfiguration(
         revision: UInt64
     ) throws -> NetworkExtensionRuntimeConfiguration {

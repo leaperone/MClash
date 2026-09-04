@@ -123,4 +123,27 @@ struct NativeRouteValidationTests {
             ))
         }
     }
+
+    @Test("An explicit native backend cannot be rescued by legacy fields")
+    func explicitNativeBackendRequiresNativeCatalog() throws {
+        let snapshot = try CaptureConfigurationSnapshot(revision: 3, rules: [])
+        let legacy = try JSONEncoder().encode([
+            try MihomoRouteProxyEndpoint(
+                route: .profileRules,
+                host: "127.0.0.1",
+                port: 18080
+            )
+        ])
+        let base: [String: Any] = [
+            ProviderConfigurationKey.captureEnabled: true,
+            ProviderConfigurationKey.captureBackend: NetworkCaptureBackend.native.rawValue,
+            ProviderConfigurationKey.captureConfigurationSnapshot: try JSONEncoder().encode(snapshot),
+            ProviderConfigurationKey.mihomoRouteProxyCatalog: legacy,
+        ]
+
+        #expect(!NetworkExtensionFlowDecisionCoordinator().validates(configuration: base))
+        var malformed = base
+        malformed[ProviderConfigurationKey.outboundNodeTargetCatalog] = Data("not-json".utf8)
+        #expect(!NetworkExtensionFlowDecisionCoordinator().validates(configuration: malformed))
+    }
 }

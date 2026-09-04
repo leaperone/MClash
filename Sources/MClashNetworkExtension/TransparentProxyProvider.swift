@@ -632,22 +632,23 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
         if let snapshot = request.captureConfigurationSnapshot {
             configuration[ProviderConfigurationKey.captureConfigurationSnapshot] = snapshot
         }
-        if let catalog = request.mihomoRouteProxyCatalog {
+        let nativeBackend = request.captureBackend == .native
+        if !nativeBackend, let catalog = request.mihomoRouteProxyCatalog {
             configuration[ProviderConfigurationKey.mihomoRouteProxyCatalog] = catalog
         }
         if let catalog = request.outboundNodeTargetCatalog {
             configuration[ProviderConfigurationKey.outboundNodeTargetCatalog] = catalog
         }
-        if let host = request.mihomoSOCKSHost {
+        if !nativeBackend, let host = request.mihomoSOCKSHost {
             configuration[ProviderConfigurationKey.mihomoSOCKSHost] = host
         }
-        if let port = request.mihomoSOCKSPort {
+        if !nativeBackend, let port = request.mihomoSOCKSPort {
             configuration[ProviderConfigurationKey.mihomoSOCKSPort] = port
         }
-        if let username = request.mihomoSOCKSUsername {
+        if !nativeBackend, let username = request.mihomoSOCKSUsername {
             configuration[ProviderConfigurationKey.mihomoSOCKSUsername] = username
         }
-        if let password = request.mihomoSOCKSPassword {
+        if !nativeBackend, let password = request.mihomoSOCKSPassword {
             configuration[ProviderConfigurationKey.mihomoSOCKSPassword] = password
         }
         return configuration

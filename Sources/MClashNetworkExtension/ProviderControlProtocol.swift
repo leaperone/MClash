@@ -29,6 +29,7 @@ struct ProviderControlRequest: Codable, Sendable {
     let captureEnabled: Bool?
     let failOpen: Bool?
     let captureBackend: NetworkCaptureBackend?
+    let outboundNodeTargetCatalog: Data?
     let captureConfigurationSnapshot: Data?
     let mihomoRouteProxyCatalog: Data?
     let mihomoSOCKSHost: String?

@@ -141,13 +141,16 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let routeCatalog = ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
         ) ?? [:]
+        let backendMarkerPresent = configuration?[ProviderConfigurationKey.captureBackend] != nil
         let backendMarker = (configuration?[ProviderConfigurationKey.captureBackend] as? String)
             .flatMap(NetworkCaptureBackend.init(rawValue:))
         let nativePayloadPresent = configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog] != nil
         let nativeCatalog = (configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data)
             .flatMap { try? OutboundNodeTargetCatalog.decode($0) }
         state.outboundNodeTargets = nativeCatalog
-        state.nativeMode = backendMarker == .native || nativePayloadPresent
+        state.nativeMode = backendMarkerPresent && backendMarker != .legacy
+            || backendMarker == .native
+            || nativePayloadPresent
         state.mihomoSOCKSConfigurations = routeCatalog
         // Route availability includes connector-neutral node targets. A
         // native SOCKS5 route must not be downgraded to Direct merely because
@@ -185,16 +188,32 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             configuration[ProviderConfigurationKey.captureConfigurationSnapshot] as? Data
         )
         guard case .loaded = snapshot else { return false }
+        let backendValue = configuration[ProviderConfigurationKey.captureBackend]
+        let backendMarker: NetworkCaptureBackend?
+        if let backendValue {
+            guard let rawValue = backendValue as? String,
+                  let decoded = NetworkCaptureBackend(rawValue: rawValue) else {
+                return false
+            }
+            backendMarker = decoded
+        } else {
+            backendMarker = nil
+        }
         // Native node routes do not need a loopback Mihomo SOCKS catalog.
         // When a native catalog is present it is authoritative: legacy
         // endpoints cannot validate, rescue, or mask an unsupported target.
-        if let data = configuration[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data {
+        let nativePayloadPresent = configuration[ProviderConfigurationKey.outboundNodeTargetCatalog] != nil
+        if backendMarker == .native || nativePayloadPresent {
+            guard let data = configuration[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data else {
+                return false
+            }
             guard let catalog = try? OutboundNodeTargetCatalog.decode(data),
                   !catalog.entries.isEmpty else { return false }
             // Capability is checked for the selected route at flow planning
             // time; unused catalog entries must not prevent provider startup.
             return true
         }
+        guard backendMarker != .native else { return false }
         return ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
         ) != nil
