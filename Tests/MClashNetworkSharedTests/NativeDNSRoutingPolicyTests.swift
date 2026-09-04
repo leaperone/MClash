@@ -32,4 +32,21 @@ struct NativeDNSRoutingPolicyTests {
         #expect(decoded.orderedEndpoints(for: "db.internal.example").first?.address == preferred.address)
         #expect(decoded.orderedEndpoints(for: "public.example").first?.address == fallback.address)
     }
+
+    @Test("Accepts literal IPv4/IPv6 nameservers and rejects hostnames")
+    func literalNameserverParsing() throws {
+        let ipv4 = try #require(
+            NativeDNSRoutingPolicy.literalNameserver("9.9.9.9:5353")
+        )
+        let expectedIPv4 = try IPAddress("9.9.9.9")
+        #expect(ipv4.address == expectedIPv4)
+        #expect(ipv4.port == 5353)
+        let ipv6 = try #require(
+            NativeDNSRoutingPolicy.literalNameserver("[2001:4860:4860::8888]")
+        )
+        let expectedIPv6 = try IPAddress("2001:4860:4860::8888")
+        #expect(ipv6.address == expectedIPv6)
+        #expect(ipv6.port == nil)
+        #expect(NativeDNSRoutingPolicy.literalNameserver("dns.example.com") == nil)
+    }
 }

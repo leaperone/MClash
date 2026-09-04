@@ -32,6 +32,41 @@ public struct NativeDNSRoutingPolicy: Sendable, Equatable {
         return rules.first(where: { name == $0.suffix || name.hasSuffix("." + $0.suffix) })?.decision ?? .system
     }
 
+    /// Parses a literal IP nameserver, optionally with a port. Hostnames are
+    /// intentionally rejected here because resolving a policy target would
+    /// recurse through the very DNS path this policy is selecting.
+    public static func literalNameserver(
+        _ rawValue: String
+    ) -> (address: IPAddress, port: UInt16?)? {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        var port: UInt16?
+        if value.first == "[",
+           let closing = value.firstIndex(of: "]") {
+            let addressText = String(value[value.index(after: value.startIndex) ..< closing])
+            let suffix = String(value[value.index(after: closing)...])
+            if suffix.isEmpty {
+                value = addressText
+            } else {
+                guard suffix.first == ":",
+                      let parsed = UInt16(suffix.dropFirst()), parsed > 0 else {
+                    return nil
+                }
+                value = addressText
+                port = parsed
+            }
+        } else if value.filter({ $0 == ":" }).count == 1,
+                  let separator = value.lastIndex(of: ":") {
+            let candidatePort = value[value.index(after: separator)...]
+            if let parsed = UInt16(candidatePort), parsed > 0 {
+                port = parsed
+                value = String(value[..<separator])
+            }
+        }
+        guard let address = try? IPAddress(value) else { return nil }
+        return (address, port)
+    }
+
     private static func parse(_ raw: String) -> Rule? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
@@ -44,7 +79,7 @@ public struct NativeDNSRoutingPolicy: Sendable, Equatable {
         let decision: Decision
         if destination.isEmpty || destination.caseInsensitiveCompare("system") == .orderedSame || destination.caseInsensitiveCompare("direct") == .orderedSame {
             decision = .system
-        } else if destination.contains("/") || (try? IPAddress(destination)) != nil {
+        } else if literalNameserver(destination) != nil {
             decision = .nameserver(destination)
         } else {
             decision = .unsupported(destination)

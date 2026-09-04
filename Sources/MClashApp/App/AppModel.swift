@@ -974,7 +974,10 @@ final class AppModel {
             }
             return try? DNSUpstreamEndpoint(address: address, transport: .udp)
         }
-        return try? DNSUpstreamBootstrap(endpoints: endpoints)
+        return try? DNSUpstreamBootstrap(
+            endpoints: endpoints,
+            policyRules: policy.rules
+        )
     }
 
     private var configuredNativeInboundListenerRegistry: MClashListenerRegistry? {

@@ -160,8 +160,31 @@ public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
 
     public func orderedEndpoints(for hostname: String) -> [DNSUpstreamEndpoint] {
         guard case let .nameserver(server) = NativeDNSRoutingPolicy(rules: policyRules).decision(for: hostname),
-              let address = try? IPAddress(server) else { return endpoints }
-        return endpoints.sorted { ($0.address == address ? 0 : 1) < ($1.address == address ? 0 : 1) }
+              let nameserver = NativeDNSRoutingPolicy.literalNameserver(server) else {
+            return endpoints
+        }
+        return endpoints.enumerated().sorted { left, right in
+            let leftMatch = left.element.address == nameserver.address
+                && (nameserver.port == nil || left.element.port == nameserver.port)
+            let rightMatch = right.element.address == nameserver.address
+                && (nameserver.port == nil || right.element.port == nameserver.port)
+            if leftMatch != rightMatch { return leftMatch }
+            return left.offset < right.offset
+        }.map(\.element)
+    }
+
+    /// Chooses the first endpoint for a wire query after applying the
+    /// connector-neutral suffix policy. If the query is malformed or the
+    /// policy nameserver is not part of the declared bootstrap, declaration
+    /// order remains the safe fallback.
+    public func endpoint(
+        forQuery query: Data,
+        transport: DNSUpstreamTransport
+    ) -> DNSUpstreamEndpoint? {
+        let candidates = orderedEndpoints(
+            for: DNSWireMessage.firstQuestionName(of: query) ?? ""
+        ).filter { $0.transport == transport }
+        return candidates.first ?? endpoints.first(where: { $0.transport == transport })
     }
 
     /// The reason a native resolver selected an endpoint. Keeping this
@@ -218,6 +241,37 @@ public protocol DNSUpstream: Sendable {
 /// DNS wire framing and safety checks. This does not interpret records; the
 /// router may pass the validated response on to its own policy/cache layer.
 public enum DNSWireMessage {
+    /// Returns the first question name from a DNS query using bounded label
+    /// parsing. Queries delivered by macOS normally contain an uncompressed
+    /// QNAME; compression pointers are rejected here rather than followed
+    /// without a recursion budget.
+    public static func firstQuestionName(of message: Data) -> String? {
+        guard message.count >= 12 else { return nil }
+        let questionCount = UInt16(message[4]) << 8 | UInt16(message[5])
+        guard questionCount > 0 else { return nil }
+        var offset = 12
+        var labels: [String] = []
+        while offset < message.count {
+            let length = Int(message[offset])
+            offset += 1
+            if length == 0 { break }
+            // A pointer in a question is legal in DNS, but following it here
+            // would make policy selection depend on unbounded graph walking.
+            guard length <= 63,
+                  offset + length <= message.count,
+                  (message[offset - 1] & 0xc0) == 0 else { return nil }
+            let labelData = message[offset ..< offset + length]
+            guard let label = String(data: labelData, encoding: .utf8),
+                  !label.isEmpty else { return nil }
+            labels.append(label.lowercased())
+            offset += length
+            guard labels.count <= 127 else { return nil }
+        }
+        guard offset < message.count, !labels.isEmpty,
+              offset + 4 <= message.count else { return nil }
+        return labels.joined(separator: ".")
+    }
+
     public static func transactionID(of message: Data) throws -> UInt16 {
         guard message.count >= 12 else { throw DNSUpstreamError.invalidMessage("DNS header is truncated") }
         return UInt16(message[message.startIndex]) << 8 | UInt16(message[message.startIndex + 1])

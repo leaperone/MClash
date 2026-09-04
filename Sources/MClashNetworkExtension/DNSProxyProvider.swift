@@ -436,9 +436,13 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             proxyCatalog: runtimeState.proxyCatalog
         )
         if case let .native(endpoint) = route {
+            let nativeBootstrap = runtimeState.nativeUpstreamBootstrap
             let relay = NativeDNSFlowRelay.startTCP(
                 flow: tcpFlow,
                 endpoint: endpoint,
+                endpointSelector: { query in
+                    nativeBootstrap?.endpoint(forQuery: query, transport: .tcp)
+                },
                 completion: { [weak self] in self?.releaseNativeDNSRelay(identifier) }
             )
             backendProbeLock.lock()
@@ -702,9 +706,13 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             proxyCatalog: runtimeState.proxyCatalog
         )
         if case let .native(endpoint) = initialRoute {
+            let nativeBootstrap = runtimeState.nativeUpstreamBootstrap
             let relay = NativeDNSFlowRelay.startUDP(
                 flow: flow,
                 endpoint: endpoint,
+                endpointSelector: { query in
+                    nativeBootstrap?.endpoint(forQuery: query, transport: .udp)
+                },
                 completion: { [weak self] in self?.releaseNativeDNSRelay(parentIdentifier) }
             )
             backendProbeLock.lock()

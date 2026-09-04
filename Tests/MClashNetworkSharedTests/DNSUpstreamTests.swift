@@ -97,6 +97,30 @@ struct DNSUpstreamTests {
         #expect(unavailable.endpoint?.address == unavailableAddress)
     }
 
+    @Test("DNS query hostname parsing is bounded and drives policy endpoint selection")
+    func queryHostnameSelectsPolicyEndpoint() throws {
+        #expect(DNSWireMessage.firstQuestionName(of: query) == "example.com")
+        let preferred = try DNSUpstreamEndpoint(
+            address: IPAddress("9.9.9.9"),
+            transport: .udp
+        )
+        let fallback = try DNSUpstreamEndpoint(
+            address: IPAddress("1.1.1.1"),
+            transport: .udp
+        )
+        let bootstrap = try DNSUpstreamBootstrap(
+            endpoints: [fallback, preferred],
+            policyRules: ["domain:example.com,9.9.9.9"]
+        )
+        #expect(
+            bootstrap.endpoint(forQuery: query, transport: .udp)?.address
+                == preferred.address
+        )
+        var malformed = query
+        malformed[12] = 0xc0
+        #expect(DNSWireMessage.firstQuestionName(of: malformed) == nil)
+    }
+
     @Test("Native DNS bootstrap does not require a Mihomo route endpoint")
     func nativeBootstrapIsMihomoIndependent() throws {
         let upstream = try DNSUpstreamEndpoint(

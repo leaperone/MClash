@@ -9,31 +9,37 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
     private let queue = DispatchQueue(label: "one.leaper.mclash.native-dns-relay")
     private let tcpFlow: NEAppProxyTCPFlow?
     private let udpFlow: NEAppProxyUDPFlow?
-    private let upstream: any DNSUpstream
+    private let endpoint: DNSUpstreamEndpoint
+    private let endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)?
     private let completion: @Sendable () -> Void
     private var buffer = Data()
     private var stopped = false
+    private var completionCalled = false
 
     private init(
         tcpFlow: NEAppProxyTCPFlow? = nil,
         udpFlow: NEAppProxyUDPFlow? = nil,
-        upstream: any DNSUpstream,
+        endpoint: DNSUpstreamEndpoint,
+        endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         completion: @escaping @Sendable () -> Void
     ) {
         self.tcpFlow = tcpFlow
         self.udpFlow = udpFlow
-        self.upstream = upstream
+        self.endpoint = endpoint
+        self.endpointSelector = endpointSelector
         self.completion = completion
     }
 
     static func startTCP(
         flow: NEAppProxyTCPFlow,
         endpoint: DNSUpstreamEndpoint,
+        endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         completion: @escaping @Sendable () -> Void
     ) -> NativeDNSFlowRelay {
         let relay = NativeDNSFlowRelay(
             tcpFlow: flow,
-            upstream: SocketDNSUpstream(endpoint: endpoint),
+            endpoint: endpoint,
+            endpointSelector: endpointSelector,
             completion: completion
         )
         relay.queue.async { relay.openTCP() }
@@ -43,11 +49,13 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
     static func startUDP(
         flow: NEAppProxyUDPFlow,
         endpoint: DNSUpstreamEndpoint,
+        endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         completion: @escaping @Sendable () -> Void
     ) -> NativeDNSFlowRelay {
         let relay = NativeDNSFlowRelay(
             udpFlow: flow,
-            upstream: SocketDNSUpstream(endpoint: endpoint),
+            endpoint: endpoint,
+            endpointSelector: endpointSelector,
             completion: completion
         )
         relay.queue.async { relay.openUDP() }
@@ -61,7 +69,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
             self.tcpFlow?.closeWriteWithError(nil)
             self.udpFlow?.closeReadWithError(nil)
             self.udpFlow?.closeWriteWithError(nil)
-            self.completion()
+            self.completeOnce()
         }
     }
 
@@ -98,7 +106,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
                     Task { [weak self] in
                         guard let self else { return }
                         do {
-                            let response = try await self.upstream.exchange(query: query)
+                            let response = try await self.exchange(query: query)
                             let output = try DNSWireMessage.tcpFrame(for: response)
                             self.queue.async {
                                 guard !self.stopped else { return }
@@ -149,7 +157,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await self.upstream.exchange(query: datagram.payload)
+                let response = try await self.exchange(query: datagram.payload)
                 self.queue.async {
                     guard !self.stopped else { return }
                     UDPAppProxyFlowCompatibility.write(
@@ -169,12 +177,26 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
     }
 
     private func finish() {
-        guard !stopped else { completion(); return }
+        guard !stopped else {
+            completeOnce()
+            return
+        }
         stopped = true
         tcpFlow?.closeReadWithError(nil)
         tcpFlow?.closeWriteWithError(nil)
         udpFlow?.closeReadWithError(nil)
         udpFlow?.closeWriteWithError(nil)
+        completeOnce()
+    }
+
+    private func completeOnce() {
+        guard !completionCalled else { return }
+        completionCalled = true
         completion()
+    }
+
+    private func exchange(query: Data) async throws -> Data {
+        let selected = endpointSelector?(query) ?? endpoint
+        return try await SocketDNSUpstream(endpoint: selected).exchange(query: query)
     }
 }
