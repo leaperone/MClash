@@ -291,38 +291,29 @@ struct ConfigurationNodesView: View {
 
 struct ConfigurationProxyGroupsView: View {
     @Bindable var model: AppModel
-    @State private var editRequest: ConfigurationEditRequest?
+    @State private var selectedID: UUID?
+    @State private var isCreating = false
+    @State private var query = ""
     @State private var showsPresetConfirmation = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             commonStrategyGroups
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, MClashLayout.compactPagePadding)
             Divider()
-            ConfigurationWorkbench(
-                title: AppLocalization.string("Nodes"),
-                sections: [.proxyGroups],
-                items: model.configurationWorkbenchItems,
-                onAdd: { _ in
-                    editRequest = ConfigurationEditRequest(
-                        section: .proxyGroups,
-                        itemID: UUID(),
-                        isNew: true
-                    )
-                },
-                statusMessage: model.configurationStatusMessage,
-                onToggleEnabled: { section, id in
-                    Task {
-                        do { try await model.toggleConfigurationEnabled(section: section, id: id) }
-                        catch { model.errorMessage = error.localizedDescription }
-                    }
-                },
-                onEdit: { section, id in editRequest = ConfigurationEditRequest(section: section, itemID: id) }
-            )
+            HStack(spacing: 0) {
+                groupList
+                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 300)
+                Divider()
+                groupEditor
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
-        .sheet(item: $editRequest) { request in
-            ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID, isNew: request.isNew)
-        }
+        .navigationTitle(AppLocalization.string("Nodes"))
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { normalizeSelection() }
+        .onChange(of: groupIDs) { _, _ in normalizeSelection() }
         .alert(
             AppLocalization.string("Install Node Selection setup?"),
             isPresented: $showsPresetConfirmation
@@ -337,6 +328,211 @@ struct ConfigurationProxyGroupsView: View {
         } message: {
             Text(AppLocalization.string("Adds Node Selection, US/JP/HK priority, Auto, Manual, Failover, Residential and Direct groups. Existing rules are redirected to Node Selection; source rules are not imported."))
         }
+    }
+
+    private var groupItems: [ConfigurationWorkbenchItem] {
+        model.configurationWorkbenchItems[.proxyGroups] ?? []
+    }
+
+    private var groupIDs: [UUID] { groupItems.map(\.id) }
+
+    private var filteredItems: [ConfigurationWorkbenchItem] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return groupItems }
+        return groupItems.filter { item in
+            item.title.localizedCaseInsensitiveContains(normalizedQuery)
+                || item.subtitle.localizedCaseInsensitiveContains(normalizedQuery)
+        }
+    }
+
+    private var addButtonTitle: String {
+        AppLocalization.format(
+            "Add %@",
+            AppLocalization.string(ConfigurationWorkbenchSection.proxyGroups.presentationSingularTitle)
+        )
+    }
+
+    private var groupList: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(AppLocalization.number(filteredItems.count))
+                    .font(.title3.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Button {
+                    beginCreate()
+                } label: {
+                    ViewThatFits(in: .horizontal) {
+                        Label(addButtonTitle, systemImage: "plus")
+                        Image(systemName: "plus")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .help(addButtonTitle)
+                .accessibilityLabel(addButtonTitle)
+            }
+            .padding(.horizontal, MClashLayout.controlSpacing)
+            .padding(.top, MClashLayout.controlSpacing)
+            .padding(.bottom, 8)
+
+            if let statusMessage = model.configurationStatusMessage, !statusMessage.isEmpty {
+                Label(statusMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, MClashLayout.controlSpacing)
+                    .padding(.bottom, 8)
+            }
+
+            TextField(AppLocalization.string("Search"), text: $query)
+                .textFieldStyle(.roundedBorder)
+                .overlay(alignment: .trailing) {
+                    if !query.isEmpty {
+                        Button { query = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 7)
+                        .accessibilityLabel(AppLocalization.string("Clear search"))
+                    }
+                }
+                .padding(.horizontal, MClashLayout.controlSpacing)
+                .padding(.bottom, 8)
+
+            List(selection: selectedGroupBinding) {
+                ForEach(filteredItems) { item in
+                    nodeGroupRow(item)
+                        .tag(item.id)
+                }
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .overlay {
+                if filteredItems.isEmpty && !isCreating {
+                    ContentUnavailableView {
+                        Label(
+                            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? AppLocalization.string("Nothing here yet")
+                                : AppLocalization.string("No matching items"),
+                            systemImage: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? ConfigurationWorkbenchSection.proxyGroups.symbol
+                                : "magnifyingglass"
+                        )
+                    } description: {
+                        Text(
+                            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? AppLocalization.string("Add a group, then choose fixed nodes or automatic matches.")
+                                : AppLocalization.string("Try a different search term or clear the filter.")
+                        )
+                    } actions: {
+                        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button(addButtonTitle, action: beginCreate)
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                }
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var groupEditor: some View {
+        Group {
+            if let selectedID {
+                ConfigurationEditorSheet(
+                    model: model,
+                    section: .proxyGroups,
+                    id: selectedID,
+                    isNew: isCreating,
+                    isEmbedded: true,
+                    onSaved: {
+                        isCreating = false
+                    }
+                )
+                .id(editorInstanceID)
+            } else {
+                ContentUnavailableView(
+                    AppLocalization.string("Select an item"),
+                    systemImage: ConfigurationWorkbenchSection.proxyGroups.symbol,
+                    description: Text(AppLocalization.string("Pin nodes or describe automatic membership conditions."))
+                )
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
+    }
+
+    private var editorInstanceID: String {
+        guard let selectedID else { return "empty" }
+        if isCreating {
+            return "new:\(selectedID.uuidString)"
+        }
+        guard let group = model.configurationDocument.proxyGroups.first(where: {
+            $0.id.rawValue == selectedID
+        }) else {
+            return "missing:\(selectedID.uuidString)"
+        }
+        // Identity includes persisted membership so an in-place rewrite
+        // (Install setup, automation) remounts the editor before Save.
+        return [
+            group.id.rawValue.uuidString,
+            group.name,
+            group.type.rawValue,
+            group.enabled ? "1" : "0",
+            group.members.map { String(describing: $0) }.joined(separator: ","),
+            group.memberSelectors.map(\.id.uuidString).joined(separator: ",")
+        ].joined(separator: "|")
+    }
+
+    private var selectedGroupBinding: Binding<UUID?> {
+        Binding(
+            get: { isCreating ? nil : selectedID },
+            set: { newValue in
+                guard let newValue else { return }
+                isCreating = false
+                selectedID = newValue
+            }
+        )
+    }
+
+    private func nodeGroupRow(_ item: ConfigurationWorkbenchItem) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: item.symbol)
+                .foregroundStyle(.tint)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(item.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            if let isEnabled = item.isEnabled {
+                Image(systemName: isEnabled ? "circle.fill" : "circle")
+                    .font(.caption2)
+                    .foregroundStyle(isEnabled ? .green : .secondary)
+                    .accessibilityLabel(AppLocalization.string(isEnabled ? "Enabled" : "Disabled"))
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func beginCreate() {
+        isCreating = true
+        selectedID = UUID()
+        query = ""
+    }
+
+    private func normalizeSelection() {
+        if isCreating { return }
+        if let selectedID, groupItems.contains(where: { $0.id == selectedID }) {
+            return
+        }
+        selectedID = filteredItems.first?.id ?? groupItems.first?.id
     }
 
     private var commonPresetInstalled: Bool {
