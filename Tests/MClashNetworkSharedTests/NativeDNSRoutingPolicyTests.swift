@@ -21,4 +21,15 @@ struct NativeDNSRoutingPolicyTests {
         #expect(policy.decision(for: "ai.example") == .unsupported("proxy-group"))
         #expect(policy.decision(for: "other.example") == .system)
     }
+
+    @Test("Bootstrap persists policy rules and prioritizes the literal upstream")
+    func bootstrapPolicySelection() throws {
+        let preferred = try DNSUpstreamEndpoint(address: IPAddress("9.9.9.9"), transport: .udp)
+        let fallback = try DNSUpstreamEndpoint(address: IPAddress("1.1.1.1"), transport: .udp)
+        let bootstrap = try DNSUpstreamBootstrap(endpoints: [fallback, preferred], policyRules: ["domain:internal.example,9.9.9.9"])
+        let decoded = try DNSUpstreamBootstrap.decode(try bootstrap.encoded())
+        #expect(decoded == bootstrap)
+        #expect(decoded.orderedEndpoints(for: "db.internal.example").first?.address == preferred.address)
+        #expect(decoded.orderedEndpoints(for: "public.example").first?.address == fallback.address)
+    }
 }

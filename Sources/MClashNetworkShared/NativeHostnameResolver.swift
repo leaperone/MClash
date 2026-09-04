@@ -33,7 +33,7 @@ public struct NativeHostnameResolver: Sendable {
     public func resolve(_ hostname: String) async throws -> [IPAddress] {
         let name = try Self.normalizedHostname(hostname)
         var hadUsableResponse = false
-        for endpoint in bootstrap.endpoints {
+        for endpoint in bootstrap.orderedEndpoints(for: name) {
             var addresses: [IPAddress] = []
             for type in [RecordType.a, .aaaa] {
                 do {

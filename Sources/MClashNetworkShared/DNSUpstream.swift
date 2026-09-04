@@ -112,8 +112,9 @@ public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
 
     public let schemaVersion: Int
     public let endpoints: [DNSUpstreamEndpoint]
+    public let policyRules: [String]
 
-    public init(endpoints: [DNSUpstreamEndpoint]) throws {
+    public init(endpoints: [DNSUpstreamEndpoint], policyRules: [String] = []) throws {
         guard !endpoints.isEmpty, endpoints.count <= Self.maximumEntries else {
             throw DNSUpstreamBootstrapError.invalidEndpointCount
         }
@@ -123,6 +124,7 @@ public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
         }
         schemaVersion = Self.currentSchemaVersion
         self.endpoints = endpoints
+        self.policyRules = Array(policyRules.prefix(512))
     }
 
     public init(from decoder: Decoder) throws {
@@ -131,10 +133,10 @@ public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
         guard version == Self.currentSchemaVersion else {
             throw DNSUpstreamBootstrapError.unsupportedSchemaVersion(version)
         }
-        try self.init(endpoints: container.decode([DNSUpstreamEndpoint].self, forKey: .endpoints))
+        try self.init(endpoints: container.decode([DNSUpstreamEndpoint].self, forKey: .endpoints), policyRules: container.decodeIfPresent([String].self, forKey: .policyRules) ?? [])
     }
 
-    private enum CodingKeys: String, CodingKey { case schemaVersion, endpoints }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, endpoints, policyRules }
 
     public func encoded() throws -> Data {
         let data = try JSONEncoder().encode(self)
@@ -155,6 +157,12 @@ public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
     /// policy belongs to the resolver and can be added without changing the
     /// connector-neutral wire contract.
     public var primary: DNSUpstreamEndpoint { endpoints[0] }
+
+    public func orderedEndpoints(for hostname: String) -> [DNSUpstreamEndpoint] {
+        guard case let .nameserver(server) = NativeDNSRoutingPolicy(rules: policyRules).decision(for: hostname),
+              let address = try? IPAddress(server) else { return endpoints }
+        return endpoints.sorted { ($0.address == address ? 0 : 1) < ($1.address == address ? 0 : 1) }
+    }
 
     /// The reason a native resolver selected an endpoint. Keeping this
     /// explicit makes fallback observable without exposing a query or an
