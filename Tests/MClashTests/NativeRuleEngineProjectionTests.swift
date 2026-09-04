@@ -37,9 +37,9 @@ struct NativeRuleEngineProjectionTests {
         let group = ProxyGroup(name: "Proxy")
         let ruleSet = RuleSet(
             name: "local-gfw",
+            defaultAction: .proxyGroup(group.id),
             format: .text,
-            path: url.path,
-            defaultAction: .proxyGroup(group.id)
+            path: url.path
         )
         let runtime = plan(groups: [group], ruleSets: [ruleSet])
         let decision = NativeRuleEngineProjection(plan: runtime)
