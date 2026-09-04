@@ -14,6 +14,7 @@ public struct NativeGeoIPDatabaseProvider: NativeGeoDatabaseProvider {
         guard data.count <= 32 * 1024 * 1024 else { throw NativeGeoIPDatabaseError.tooLarge }
         var decoder = NativeGeoIPProtobufDecoder(data: data)
         let decoded = try decoder.decode()
+        guard !decoded.isEmpty else { throw NativeGeoIPDatabaseError.malformed }
         var grouped: [String: [IPNetwork]] = [:]
         var count = 0
         for (country, networks) in decoded {
@@ -21,6 +22,9 @@ public struct NativeGeoIPDatabaseProvider: NativeGeoDatabaseProvider {
             guard !key.isEmpty else { throw NativeGeoIPDatabaseError.malformed }
             grouped[key, default: []].append(contentsOf: networks)
             count += networks.count
+            guard count <= 2_000_000 else {
+                throw NativeGeoIPDatabaseError.tooLarge
+            }
         }
         networksByCountry = grouped
         entryCount = count
@@ -71,7 +75,13 @@ private struct NativeGeoIPProtobufDecoder {
         return Data(data[index ..< index + Int(length)])
     }
     mutating func skip(_ wire: Int) throws {
-        switch wire { case 0: _ = try varint(); case 2: _ = try bytes(); default: throw NativeGeoIPDatabaseError.malformed }
+        switch wire {
+        case 0: _ = try varint()
+        case 1: guard index + 8 <= data.count else { throw NativeGeoIPDatabaseError.malformed }; index += 8
+        case 2: _ = try bytes()
+        case 5: guard index + 4 <= data.count else { throw NativeGeoIPDatabaseError.malformed }; index += 4
+        default: throw NativeGeoIPDatabaseError.malformed
+        }
     }
 }
 
@@ -96,7 +106,15 @@ private struct NativeGeoIPEntryDecoder {
     }
     mutating func varint() throws -> UInt64 { var value: UInt64 = 0; for shift in stride(from: 0, through: 63, by: 7) { guard index < data.count else { throw NativeGeoIPDatabaseError.malformed }; let b=data[index]; index += 1; value |= UInt64(b & 127) << UInt64(shift); if b & 128 == 0 { return value } }; throw NativeGeoIPDatabaseError.malformed }
     mutating func bytes() throws -> Data { let n=try varint(); guard n <= UInt64(data.count-index) else { throw NativeGeoIPDatabaseError.malformed }; defer { index += Int(n) }; return Data(data[index..<index+Int(n)]) }
-    mutating func skip(_ wire: Int) throws { if wire == 0 { _ = try varint() } else if wire == 2 { _ = try bytes() } else { throw NativeGeoIPDatabaseError.malformed } }
+    mutating func skip(_ wire: Int) throws {
+        switch wire {
+        case 0: _ = try varint()
+        case 1: guard index + 8 <= data.count else { throw NativeGeoIPDatabaseError.malformed }; index += 8
+        case 2: _ = try bytes()
+        case 5: guard index + 4 <= data.count else { throw NativeGeoIPDatabaseError.malformed }; index += 4
+        default: throw NativeGeoIPDatabaseError.malformed
+        }
+    }
 }
 
 private struct NativeGeoCIDRDecoder {
@@ -121,5 +139,13 @@ private struct NativeGeoCIDRDecoder {
     }
     mutating func varint() throws -> UInt64 { var value: UInt64=0; for shift in stride(from:0,through:63,by:7) { guard index<data.count else { throw NativeGeoIPDatabaseError.malformed }; let b=data[index]; index += 1; value |= UInt64(b&127)<<UInt64(shift); if b&128 == 0{return value} }; throw NativeGeoIPDatabaseError.malformed }
     mutating func bytes() throws -> Data { let n=try varint(); guard n<=UInt64(data.count-index) else { throw NativeGeoIPDatabaseError.malformed }; defer{index += Int(n)}; return Data(data[index..<index+Int(n)]) }
-    mutating func skip(_ wire:Int) throws { if wire==0 {_=try varint()} else if wire==2 {_=try bytes()} else {throw NativeGeoIPDatabaseError.malformed} }
+    mutating func skip(_ wire: Int) throws {
+        switch wire {
+        case 0: _ = try varint()
+        case 1: guard index + 8 <= data.count else { throw NativeGeoIPDatabaseError.malformed }; index += 8
+        case 2: _ = try bytes()
+        case 5: guard index + 4 <= data.count else { throw NativeGeoIPDatabaseError.malformed }; index += 4
+        default: throw NativeGeoIPDatabaseError.malformed
+        }
+    }
 }
