@@ -113,7 +113,15 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     private let trustedComponentPolicy = TrustedMClashComponentPolicy()
     private let contextBuilder = FlowContextBuilder()
     private let decisionAdapter = FlowTrafficDecisionAdapter()
+    private let dnsAssociations: DNSResolutionAssociationStore
     private var state = State()
+
+    init(
+        dnsAssociations: DNSResolutionAssociationStore =
+            DNSResolutionAssociationRegistry.shared.store
+    ) {
+        self.dnsAssociations = dnsAssociations
+    }
 
     func load(configuration: [String: Any]?) {
         let captureEnabled = Self.bool(
@@ -534,6 +542,44 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         return (source, state.revision, state.generation)
     }
 
+    func dnsAttributedHostname(
+        endpointHost: String,
+        suppliedHostname: String?,
+        sourceIdentity: String
+    ) -> String? {
+        let currentState = snapshotState()
+        return dnsAttributedHostname(
+            endpointHost: endpointHost,
+            suppliedHostname: suppliedHostname,
+            sourceIdentity: sourceIdentity,
+            revision: currentState.revision,
+            generation: currentState.generation
+        )
+    }
+
+    private func dnsAttributedHostname(
+        endpointHost: String,
+        suppliedHostname: String?,
+        sourceIdentity: String,
+        revision: UInt64,
+        generation: UUID
+    ) -> String? {
+        let supplied = suppliedHostname?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let suppliedIsLiteralIP = supplied.flatMap { try? IPAddress($0) } != nil
+        guard let address = try? IPAddress(endpointHost),
+              supplied == nil || supplied?.isEmpty == true || suppliedIsLiteralIP,
+              !sourceIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return dnsAssociations.hostname(
+            for: address,
+            sourceIdentity: sourceIdentity,
+            configurationRevision: revision,
+            generation: generation
+        )
+    }
+
     @available(macOS, introduced: 14.0, obsoleted: 15.0)
     func decideLegacyUDPFlow(
         _ flow: NEAppProxyUDPFlow,
@@ -581,19 +627,13 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
                 metadataSigningIdentifier: applicationMetadata.sourceAppSigningIdentifier
             )
         let suppliedHostname = remoteHostname ?? flow.remoteHostname
-        let associatedHostname: String? = {
-            let supplied = suppliedHostname?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let suppliedIsLiteralIP = supplied.flatMap { try? IPAddress($0) } != nil
-            guard let address = try? IPAddress(endpoint.host),
-                  (supplied == nil || supplied?.isEmpty == true || suppliedIsLiteralIP),
-                  !applicationMetadata.sourceAppSigningIdentifier.isEmpty else { return nil }
-            return DNSResolutionAssociationRegistry.shared.store.hostname(
-                for: address,
-                sourceIdentity: applicationMetadata.sourceAppSigningIdentifier,
-                configurationRevision: currentState.revision,
-                generation: currentState.generation
-            )
-        }()
+        let associatedHostname = dnsAttributedHostname(
+            endpointHost: endpoint.host,
+            suppliedHostname: suppliedHostname,
+            sourceIdentity: applicationMetadata.sourceAppSigningIdentifier,
+            revision: currentState.revision,
+            generation: currentState.generation
+        )
         let context = contextBuilder.resolve(
             endpoint: endpoint,
             remoteHostname: associatedHostname ?? suppliedHostname,

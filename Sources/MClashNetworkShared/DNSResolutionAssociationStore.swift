@@ -27,7 +27,7 @@ public enum DNSResolutionRecordParserError: Error, Equatable, Sendable {
 /// Bounded DNS answer parser used for attribution. It validates the question,
 /// all answer boundaries and compression pointers before exposing A/AAAA data.
 public enum DNSResolutionRecordParser {
-    public static func parse(_ message: Data, maximumRecords: Int = 4_096) throws -> DNSResolutionRecord {
+    public static func parse(_ message: Data, maximumRecords: Int = 256) throws -> DNSResolutionRecord {
         guard message.count >= 12, message.count <= DNSUpstreamLimits.maximumMessageBytes else { throw DNSResolutionRecordParserError.malformedMessage }
         let flags = try u16(message, 2)
         guard flags & 0x8000 != 0, flags & 0x0200 == 0, flags & 0x000F == 0 else { throw DNSResolutionRecordParserError.malformedMessage }
@@ -36,6 +36,7 @@ public enum DNSResolutionRecordParser {
         guard questions == 1, answers + authorities + additional <= maximumRecords else { throw DNSResolutionRecordParserError.malformedMessage }
         var offset = 12
         let question = try name(message, offset: &offset)
+        guard !question.isEmpty else { throw DNSResolutionRecordParserError.invalidName }
         let qtype = try u16(message, &offset), qclass = try u16(message, &offset)
         guard qclass == 1, qtype == 1 || qtype == 28 else { throw DNSResolutionRecordParserError.unsupportedRecord }
         var addressesByOwner: [String: [IPAddress]] = [:]
@@ -50,7 +51,7 @@ public enum DNSResolutionRecordParser {
                 let length = Int(try u16(message, &offset))
                 guard length <= DNSUpstreamLimits.maximumMessageBytes, offset <= message.count - length else { throw DNSResolutionRecordParserError.truncated }
                 let end = offset + length
-                if section == 0, klass == 1, (type == 1 || type == 28) {
+                if section == 0, klass == 1, type == qtype {
                     guard length == (type == 1 ? 4 : 16) else { throw DNSResolutionRecordParserError.malformedMessage }
                     let bytes = Array(message[offset..<end])
                     let text = type == 1 ? bytes.map(String.init).joined(separator: ".") : ipv6(bytes)
@@ -74,8 +75,16 @@ public enum DNSResolutionRecordParser {
             guard let next = aliases[current] else { break }
             current = next
         }
-        guard !addresses.isEmpty else { throw DNSResolutionRecordParserError.malformedMessage }
-        return DNSResolutionRecord(hostname: question, addresses: addresses, aliases: aliases, ttl: ttl == .max ? 0 : ttl)
+        guard !addresses.isEmpty, offset == message.count else {
+            throw DNSResolutionRecordParserError.malformedMessage
+        }
+        var seen = Set<IPAddress>()
+        return DNSResolutionRecord(
+            hostname: question,
+            addresses: addresses.filter { seen.insert($0).inserted },
+            aliases: aliases,
+            ttl: ttl == .max ? 0 : ttl
+        )
     }
 
     private static func u16(_ data: Data, _ at: Int) throws -> UInt16 { guard at >= 0, at <= data.count - 2 else { throw DNSResolutionRecordParserError.truncated }; return UInt16(data[data.index(data.startIndex, offsetBy: at)]) << 8 | UInt16(data[data.index(data.startIndex, offsetBy: at + 1)]) }
@@ -90,7 +99,7 @@ public enum DNSResolutionRecordParser {
             if length & 0xC0 == 0xC0 {
                 guard position + 1 < data.count else { throw DNSResolutionRecordParserError.truncated }
                 let pointer = ((length & 0x3F) << 8) | Int(data[data.index(data.startIndex, offsetBy: position + 1)])
-                guard pointer < data.count, visited.insert(pointer).inserted else { throw DNSResolutionRecordParserError.compressionLoop }
+                guard pointer < position, visited.insert(pointer).inserted else { throw DNSResolutionRecordParserError.compressionLoop }
                 if !jumped { offset = position + 2; jumped = true }; position = pointer; continue
             }
             guard length <= 63, position + 1 + length <= data.count, bytes + length + 1 <= 253 else { throw DNSResolutionRecordParserError.invalidName }
@@ -104,30 +113,215 @@ public enum DNSResolutionRecordParser {
 
 /// Short-lived, bounded association between a captured destination and the
 /// hostname that produced it. Ambiguous addresses intentionally return nil.
-public actor DNSResolutionAssociationStore {
-    public struct Key: Hashable, Sendable { public let sourceIdentity: String; public let address: IPAddress; public let configurationRevision: Int; public let generation: Int; public init(sourceIdentity: String, address: IPAddress, configurationRevision: Int, generation: Int) { self.sourceIdentity = sourceIdentity; self.address = address; self.configurationRevision = configurationRevision; self.generation = generation } }
-    private struct Entry: Sendable { var hostnames: Set<String>; let expires: Date; var touched: UInt64 }
-    private var entries: [Key: Entry] = [:]
-    private var clock: UInt64 = 0
+public final class DNSResolutionAssociationStore: @unchecked Sendable {
+    public struct Key: Hashable, Sendable {
+        public let sourceIdentity: String
+        public let address: IPAddress
+        public let configurationRevision: UInt64
+        public let generation: UUID
+
+        public init(
+            sourceIdentity: String,
+            address: IPAddress,
+            configurationRevision: UInt64,
+            generation: UUID
+        ) {
+            self.sourceIdentity = sourceIdentity
+            self.address = address
+            self.configurationRevision = configurationRevision
+            self.generation = generation
+        }
+    }
+
+    private struct Entry: Sendable {
+        var expirationsByHostname: [String: Date]
+        var touched: UInt64
+    }
+
+    private struct State: Sendable {
+        var entries: [Key: Entry] = [:]
+        var clock: UInt64 = 0
+    }
+
+    private let lock = NSLock()
+    private var state = State()
     public let maximumEntries: Int
     public let maximumEntriesPerSource: Int
     public let minimumTTL: TimeInterval
     public let maximumTTL: TimeInterval
 
-    public init(maximumEntries: Int = 4_096, maximumEntriesPerSource: Int = 512, minimumTTL: TimeInterval = 1, maximumTTL: TimeInterval = 86_400) {
-        self.maximumEntries = max(1, maximumEntries); self.maximumEntriesPerSource = max(1, maximumEntriesPerSource); self.minimumTTL = max(0, minimumTTL); self.maximumTTL = max(self.minimumTTL, maximumTTL)
+    public init(
+        maximumEntries: Int = 4_096,
+        maximumEntriesPerSource: Int = 512,
+        minimumTTL: TimeInterval = 5,
+        maximumTTL: TimeInterval = 600
+    ) {
+        self.maximumEntries = max(1, maximumEntries)
+        self.maximumEntriesPerSource = max(1, maximumEntriesPerSource)
+        self.minimumTTL = max(0, minimumTTL)
+        self.maximumTTL = max(self.minimumTTL, maximumTTL)
     }
-    public func associate(hostname: String, addresses: [IPAddress], sourceIdentity: String, configurationRevision: Int, generation: Int, ttl: UInt32, now: Date = Date()) {
-        let host = hostname.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")); guard !host.isEmpty else { return }
-        purgeExpired(now: now); let expiry = now.addingTimeInterval(min(max(Double(ttl), minimumTTL), maximumTTL))
-        for address in Set(addresses) { let key = Key(sourceIdentity: sourceIdentity, address: address, configurationRevision: configurationRevision, generation: generation); clock += 1; if let existing = entries[key] { entries[key] = Entry(hostnames: existing.hostnames.union([host]), expires: max(existing.expires, expiry), touched: clock) } else { entries[key] = Entry(hostnames: [host], expires: expiry, touched: clock) }; enforceLimits(sourceIdentity: sourceIdentity) }
-        enforceGlobalLimit()
+
+    public func associate(
+        hostname: String,
+        addresses: [IPAddress],
+        sourceIdentity: String,
+        configurationRevision: UInt64,
+        generation: UUID,
+        ttl: UInt32,
+        now: Date = Date()
+    ) {
+        guard let host = Self.normalizedHostname(hostname),
+              let source = Self.normalizedSourceIdentity(sourceIdentity) else {
+            return
+        }
+        lock.withLock {
+            if state.entries.count >= maximumEntries || state.clock & 0x3f == 0 {
+                purgeExpired(now: now)
+            }
+            let expiry = now.addingTimeInterval(
+                min(max(Double(ttl), minimumTTL), maximumTTL)
+            )
+            for address in Set(addresses) {
+                let key = Key(
+                    sourceIdentity: source,
+                    address: address,
+                    configurationRevision: configurationRevision,
+                    generation: generation
+                )
+                state.clock &+= 1
+                var entry = state.entries[key] ?? Entry(
+                    expirationsByHostname: [:],
+                    touched: state.clock
+                )
+                entry.expirationsByHostname[host] = max(
+                    entry.expirationsByHostname[host] ?? .distantPast,
+                    expiry
+                )
+                entry.touched = state.clock
+                state.entries[key] = entry
+            }
+            enforcePerSourceLimit(sourceIdentity: source)
+            enforceGlobalLimit()
+        }
     }
-    public func hostname(for address: IPAddress, sourceIdentity: String, configurationRevision: Int, generation: Int, now: Date = Date()) -> String? {
-        purgeExpired(now: now); let key = Key(sourceIdentity: sourceIdentity, address: address, configurationRevision: configurationRevision, generation: generation); guard let entry = entries[key], entry.hostnames.count == 1 else { return nil }; clock += 1; entries[key]?.touched = clock; return entry.hostnames.first
+
+    public func hostname(
+        for address: IPAddress,
+        sourceIdentity: String,
+        configurationRevision: UInt64,
+        generation: UUID,
+        now: Date = Date()
+    ) -> String? {
+        guard let source = Self.normalizedSourceIdentity(sourceIdentity) else {
+            return nil
+        }
+        return lock.withLock {
+            let key = Key(
+                sourceIdentity: source,
+                address: address,
+                configurationRevision: configurationRevision,
+                generation: generation
+            )
+            guard var entry = state.entries[key] else { return nil }
+            entry.expirationsByHostname = entry.expirationsByHostname.filter {
+                $0.value > now
+            }
+            guard !entry.expirationsByHostname.isEmpty else {
+                state.entries.removeValue(forKey: key)
+                return nil
+            }
+            guard entry.expirationsByHostname.count == 1 else {
+                state.entries[key] = entry
+                return nil
+            }
+            state.clock &+= 1
+            let touched = state.clock
+            entry.touched = touched
+            state.entries[key] = entry
+            return entry.expirationsByHostname.keys.first
+        }
     }
-    public func count(now: Date = Date()) -> Int { purgeExpired(now: now); return entries.count }
-    private func purgeExpired(now: Date) { entries = entries.filter { $0.value.expires > now } }
-    private func enforceLimits(sourceIdentity: String) { while entries.filter({ $0.key.sourceIdentity == sourceIdentity }).count > maximumEntriesPerSource { if let victim = entries.filter({ $0.key.sourceIdentity == sourceIdentity }).min(by: { $0.value.touched < $1.value.touched })?.key { entries.removeValue(forKey: victim) } } }
-    private func enforceGlobalLimit() { while entries.count > maximumEntries { if let victim = entries.min(by: { $0.value.touched < $1.value.touched })?.key { entries.removeValue(forKey: victim) } } }
+
+    public func count(now: Date = Date()) -> Int {
+        lock.withLock {
+            purgeExpired(now: now)
+            return state.entries.count
+        }
+    }
+
+    public func removeAll() {
+        lock.withLock {
+            state.entries.removeAll(keepingCapacity: true)
+            state.clock = 0
+        }
+    }
+
+    private func purgeExpired(now: Date) {
+        for key in Array(state.entries.keys) {
+            guard var entry = state.entries[key] else { continue }
+            entry.expirationsByHostname = entry.expirationsByHostname.filter {
+                $0.value > now
+            }
+            if entry.expirationsByHostname.isEmpty {
+                state.entries.removeValue(forKey: key)
+            } else {
+                state.entries[key] = entry
+            }
+        }
+    }
+
+    private func enforcePerSourceLimit(sourceIdentity: String) {
+        while state.entries.count(where: {
+            $0.key.sourceIdentity == sourceIdentity
+        }) > maximumEntriesPerSource {
+            guard let victim = state.entries
+                .filter({ $0.key.sourceIdentity == sourceIdentity })
+                .min(by: { $0.value.touched < $1.value.touched })?.key else {
+                return
+            }
+            state.entries.removeValue(forKey: victim)
+        }
+    }
+
+    private func enforceGlobalLimit() {
+        while state.entries.count > maximumEntries {
+            guard let victim = state.entries.min(by: {
+                $0.value.touched < $1.value.touched
+            })?.key else { return }
+            state.entries.removeValue(forKey: victim)
+        }
+    }
+
+    private static func normalizedHostname(_ value: String) -> String? {
+        let host = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !host.isEmpty, host.utf8.count <= 253,
+              host.unicodeScalars.allSatisfy({ $0.isASCII }),
+              host.split(separator: ".", omittingEmptySubsequences: false)
+                .allSatisfy({ label in
+                    !label.isEmpty && label.utf8.count <= 63
+                        && label.utf8.allSatisfy {
+                            ($0 >= 0x30 && $0 <= 0x39)
+                                || ($0 >= 0x61 && $0 <= 0x7a)
+                                || $0 == 0x2d || $0 == 0x5f
+                        }
+                }) else {
+            return nil
+        }
+        return host
+    }
+
+    private static func normalizedSourceIdentity(_ value: String) -> String? {
+        let source = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !source.isEmpty, source.utf8.count <= 512,
+              !source.unicodeScalars.contains(where: {
+                  CharacterSet.controlCharacters.contains($0)
+              }) else {
+            return nil
+        }
+        return source
+    }
 }

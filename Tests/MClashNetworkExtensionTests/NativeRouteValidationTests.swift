@@ -146,4 +146,54 @@ struct NativeRouteValidationTests {
         malformed[ProviderConfigurationKey.outboundNodeTargetCatalog] = Data("not-json".utf8)
         #expect(!NetworkExtensionFlowDecisionCoordinator().validates(configuration: malformed))
     }
+
+    @Test("DNS attribution supplements only IP-only flows in the same generation")
+    func dnsAttributionSupplementsIPOnlyFlow() throws {
+        let generation = UUID()
+        let snapshot = try CaptureConfigurationSnapshot(
+            revision: 9,
+            generationID: generation,
+            rules: []
+        )
+        let store = DNSResolutionAssociationStore()
+        let coordinator = NetworkExtensionFlowDecisionCoordinator(
+            dnsAssociations: store
+        )
+        coordinator.load(configuration: [
+            ProviderConfigurationKey.revision: UInt64(9),
+            ProviderConfigurationKey.captureEnabled: true,
+            ProviderConfigurationKey.captureConfigurationSnapshot:
+                try JSONEncoder().encode(snapshot),
+        ])
+        let address = try IPAddress("203.0.113.42")
+        store.associate(
+            hostname: "domestic.example",
+            addresses: [address],
+            sourceIdentity: "com.example.browser",
+            configurationRevision: 9,
+            generation: generation,
+            ttl: 60
+        )
+
+        #expect(coordinator.dnsAttributedHostname(
+            endpointHost: address.presentation,
+            suppliedHostname: nil,
+            sourceIdentity: "com.example.browser"
+        ) == "domestic.example")
+        #expect(coordinator.dnsAttributedHostname(
+            endpointHost: address.presentation,
+            suppliedHostname: address.presentation,
+            sourceIdentity: "com.example.browser"
+        ) == "domestic.example")
+        #expect(coordinator.dnsAttributedHostname(
+            endpointHost: address.presentation,
+            suppliedHostname: "authoritative.example",
+            sourceIdentity: "com.example.browser"
+        ) == nil)
+        #expect(coordinator.dnsAttributedHostname(
+            endpointHost: address.presentation,
+            suppliedHostname: nil,
+            sourceIdentity: "com.example.other"
+        ) == nil)
+    }
 }
