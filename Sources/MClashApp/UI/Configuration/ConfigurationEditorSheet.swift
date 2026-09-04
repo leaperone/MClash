@@ -74,11 +74,15 @@ struct ConfigurationEditorSheet: View {
                     .padding(.horizontal, MClashLayout.pagePadding)
                     .padding(.vertical, 10)
                     Divider()
-                    Form {
-                        editorForm
+                    if section == .proxyGroups {
+                        proxyGroupEmbeddedEditor
+                    } else {
+                        Form {
+                            editorForm
+                        }
+                        .formStyle(.grouped)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .formStyle(.grouped)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -126,6 +130,53 @@ struct ConfigurationEditorSheet: View {
         )
     }
 
+    private var proxyGroupSourceNames: [SourceID: String] {
+        Dictionary(
+            model.configurationDocument.sources.map { ($0.id, $0.displayName) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    @ViewBuilder
+    private var proxyGroupIdentityFields: some View {
+        Label(
+            AppLocalization.string("Choose a group type, then add fixed nodes or automatic matches below."),
+            systemImage: "checklist"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        TextField(AppLocalization.string("Name"), text: $name)
+        Picker(AppLocalization.string("Type"), selection: $groupType) {
+            ForEach(ProxyGroupType.allCases.filter { $0 != .relay }, id: \.self) { type in
+                Text(type.localizedTitle).tag(type)
+            }
+        }
+        Text(groupType.taskDescription)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
+    }
+
+    private var proxyGroupEmbeddedEditor: some View {
+        Form {
+            Section(AppLocalization.string("Group")) {
+                proxyGroupIdentityFields
+            }
+            NodeMembershipEditor(
+                nodes: model.configurationDocument.nodes,
+                sourceNames: proxyGroupSourceNames,
+                selectedNodeIDs: $selectedNodeIDs,
+                selectors: $nodeSelectors,
+                orderedNodeIDs: $orderedNodeIDs
+            )
+            groupSelection
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     @ViewBuilder
     private var editorForm: some View {
         switch section {
@@ -136,30 +187,10 @@ struct ConfigurationEditorSheet: View {
             }
         case .proxyGroups:
             Section(AppLocalization.string("Group")) {
-                Label(
-                    AppLocalization.string("Choose a group type, then add fixed nodes or automatic matches below."),
-                    systemImage: "checklist"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                TextField(AppLocalization.string("Name"), text: $name)
-                Picker(AppLocalization.string("Type"), selection: $groupType) {
-                    ForEach(ProxyGroupType.allCases.filter { $0 != .relay }, id: \.self) { type in
-                        Text(type.localizedTitle).tag(type)
-                    }
-                }
-                Text(groupType.taskDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Toggle(AppLocalization.string("Enabled"), isOn: $enabled)
+                proxyGroupIdentityFields
                 NodeMembershipEditor(
                     nodes: model.configurationDocument.nodes,
-                    sourceNames: Dictionary(
-                        model.configurationDocument.sources.map { ($0.id, $0.displayName) },
-                        uniquingKeysWith: { first, _ in first }
-                    ),
+                    sourceNames: proxyGroupSourceNames,
                     selectedNodeIDs: $selectedNodeIDs,
                     selectors: $nodeSelectors,
                     orderedNodeIDs: $orderedNodeIDs

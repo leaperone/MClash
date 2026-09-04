@@ -2025,6 +2025,7 @@
 "No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”." = "No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”.";
 "Match conditions" = "Match conditions";
 "Remove selector" = "Remove selector";
+"Remove condition" = "Remove condition";
 "All included conditions must match. Exclusions are applied last." = "All included conditions must match. Exclusions are applied last.";
 "Name contains or matches (for example US or US*)" = "Name contains or matches (for example US or US*)";
 "Host/IP contains or matches (for example us.*)" = "Host/IP contains or matches (for example us.*)";

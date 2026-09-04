@@ -2027,6 +2027,7 @@
 "No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”." = "Aucun sélecteur automatique pour l’instant. Ajoutez-en un pour décrire un groupe, par exemple « le nom contient US » ou « la source est Primary ».";
 "Match conditions" = "Conditions de correspondance";
 "Remove selector" = "Supprimer le sélecteur";
+"Remove condition" = "Supprimer la condition";
 "All included conditions must match. Exclusions are applied last." = "Toutes les conditions d’inclusion doivent être remplies. Les exclusions sont appliquées en dernier.";
 "Name contains or matches (for example US or US*)" = "Le nom contient ou correspond au motif (par exemple US ou US*)";
 "Host/IP contains or matches (for example us.*)" = "L’hôte/IP contient ou correspond au motif (par exemple us.*)";

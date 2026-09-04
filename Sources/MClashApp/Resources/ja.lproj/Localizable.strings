@@ -2027,6 +2027,7 @@
 "No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”." = "自動セレクタはまだありません。「名前に US を含む」「ソースが Primary」など、グループの条件を指定するセレクタを追加してください。";
 "Match conditions" = "一致条件";
 "Remove selector" = "セレクタを削除";
+"Remove condition" = "条件を削除";
 "All included conditions must match. Exclusions are applied last." = "含める条件はすべて一致する必要があります。除外条件は最後に適用されます。";
 "Name contains or matches (for example US or US*)" = "名前の部分一致／ワイルドカード（例：US、US*）";
 "Host/IP contains or matches (for example us.*)" = "ホスト/IP の部分一致／ワイルドカード（例：us.*）";

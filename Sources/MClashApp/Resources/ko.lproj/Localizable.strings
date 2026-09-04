@@ -2026,6 +2026,7 @@
 "No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”." = "아직 자동 선택기가 없습니다. “이름에 US 포함” 또는 “소스가 Primary”와 같은 노드 그룹을 지정하려면 선택기를 추가하세요.";
 "Match conditions" = "일치 조건";
 "Remove selector" = "선택기 제거";
+"Remove condition" = "조건 제거";
 "All included conditions must match. Exclusions are applied last." = "모든 포함 조건이 일치해야 합니다. 제외 조건은 마지막에 적용됩니다.";
 "Name contains or matches (for example US or US*)" = "이름 포함 또는 패턴 일치(예: US 또는 US*)";
 "Host/IP contains or matches (for example us.*)" = "호스트/IP 포함 또는 패턴 일치(예: us.*)";

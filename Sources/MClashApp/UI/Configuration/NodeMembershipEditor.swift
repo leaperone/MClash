@@ -33,17 +33,41 @@ struct NodeMembershipEditor: View {
         return selectors.first { $0.id == activeSelectorID }
     }
 
-    private var activeCriteria: [String] {
-        var result: [String] = []
-        if !nameContains.trimmed.isEmpty { result.append(AppLocalization.format("Name contains %@", nameContains.trimmed)) }
-        if !nameEquals.trimmed.isEmpty { result.append(AppLocalization.format("Name is %@", nameEquals.trimmed)) }
-        if !hostContains.trimmed.isEmpty { result.append(AppLocalization.format("Host/IP contains %@", hostContains.trimmed)) }
-        if !hostEquals.trimmed.isEmpty { result.append(AppLocalization.format("Host/IP is %@", hostEquals.trimmed)) }
-        if let sourceChoice { result.append(AppLocalization.format("Source is %@", sourceNames[sourceChoice] ?? AppLocalization.string("selected source"))) }
-        if let protocolChoice { result.append(AppLocalization.format("Protocol is %@", protocolChoice.rawValue.uppercased())) }
-        if !tagContains.trimmed.isEmpty { result.append(AppLocalization.format("Tag contains %@", tagContains.trimmed)) }
-        if !excludeNameContains.trimmed.isEmpty { result.append(AppLocalization.format("Exclude name %@", excludeNameContains.trimmed)) }
-        if !excludeHostContains.trimmed.isEmpty { result.append(AppLocalization.format("Exclude host/IP %@", excludeHostContains.trimmed)) }
+    private var activeCriterionChips: [SelectorCriterionChip] {
+        var result: [SelectorCriterionChip] = []
+        if !nameContains.trimmed.isEmpty {
+            result.append(.init(kind: .nameContains, label: AppLocalization.format("Name contains %@", nameContains.trimmed)))
+        }
+        if !nameEquals.trimmed.isEmpty {
+            result.append(.init(kind: .nameEquals, label: AppLocalization.format("Name is %@", nameEquals.trimmed)))
+        }
+        if !hostContains.trimmed.isEmpty {
+            result.append(.init(kind: .hostContains, label: AppLocalization.format("Host/IP contains %@", hostContains.trimmed)))
+        }
+        if !hostEquals.trimmed.isEmpty {
+            result.append(.init(kind: .hostEquals, label: AppLocalization.format("Host/IP is %@", hostEquals.trimmed)))
+        }
+        if let sourceChoice {
+            result.append(.init(
+                kind: .source,
+                label: AppLocalization.format("Source is %@", sourceNames[sourceChoice] ?? AppLocalization.string("selected source"))
+            ))
+        }
+        if let protocolChoice {
+            result.append(.init(
+                kind: .proto,
+                label: AppLocalization.format("Protocol is %@", protocolChoice.rawValue.uppercased())
+            ))
+        }
+        if !tagContains.trimmed.isEmpty {
+            result.append(.init(kind: .tag, label: AppLocalization.format("Tag contains %@", tagContains.trimmed)))
+        }
+        if !excludeNameContains.trimmed.isEmpty {
+            result.append(.init(kind: .excludeName, label: AppLocalization.format("Exclude name %@", excludeNameContains.trimmed)))
+        }
+        if !excludeHostContains.trimmed.isEmpty {
+            result.append(.init(kind: .excludeHost, label: AppLocalization.format("Exclude host/IP %@", excludeHostContains.trimmed)))
+        }
         return result
     }
 
@@ -181,56 +205,102 @@ struct NodeMembershipEditor: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(selectors.enumerated()), id: \.element.id) { index, selector in
-                            HStack(spacing: 4) {
-                                Button {
-                                    selectSelector(selector.id)
+                VStack(spacing: 4) {
+                    ForEach(Array(selectors.enumerated()), id: \.element.id) { index, selector in
+                        selectorRow(selector, index: index)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(selector.id == activeSelectorID
+                                          ? Color.accentColor.opacity(0.12)
+                                          : Color.clear)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    removeSelector(selector.id)
                                 } label: {
-                                    HStack(spacing: 5) {
-                                        Image(systemName: selector.id == activeSelectorID ? "checkmark.circle.fill" : "line.3.horizontal.decrease.circle")
-                                        Text(selector.name)
-                                        Text(
-                                            AppLocalization.format(
-                                                "%d matches",
-                                                selectorMatchCount(selector)
-                                            )
-                                        )
-                                            .font(.caption2.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                        Spacer(minLength: 0)
-                                    }
+                                    Label(
+                                        AppLocalization.string("Remove selector"),
+                                        systemImage: "trash"
+                                    )
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .accessibilityLabel(AppLocalization.format("Selector %@", selector.name))
-
-                                Button {
-                                    moveSelector(selector.id, by: -1)
-                                } label: {
-                                    Image(systemName: "chevron.up")
-                                }
-                                .buttonStyle(.borderless)
-                                .disabled(index == 0)
-                                .accessibilityLabel(AppLocalization.string("Move selector up"))
-
-                                Button {
-                                    moveSelector(selector.id, by: 1)
-                                } label: {
-                                    Image(systemName: "chevron.down")
-                                }
-                                .buttonStyle(.borderless)
-                                .disabled(index >= selectors.count - 1)
-                                .accessibilityLabel(AppLocalization.string("Move selector down"))
                             }
-                        }
                     }
                 }
-                .frame(maxHeight: 144)
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
             }
         }
+    }
+
+    private func selectorRow(_ selector: NodeSelector, index: Int) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                selectSelector(selector.id)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: selector.id == activeSelectorID
+                          ? "checkmark.circle.fill"
+                          : "line.3.horizontal.decrease.circle")
+                        .foregroundStyle(selector.id == activeSelectorID ? Color.accentColor : Color.secondary)
+                        .frame(width: 18)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(selector.name)
+                            .lineLimit(1)
+                            .foregroundStyle(.primary)
+                        Text(
+                            AppLocalization.format(
+                                "%d matches",
+                                selectorMatchCount(selector)
+                            )
+                        )
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(AppLocalization.format("Selector %@", selector.name))
+            .accessibilityAddTraits(selector.id == activeSelectorID ? .isSelected : [])
+            Button {
+                moveSelector(selector.id, by: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(index == 0)
+            .accessibilityLabel(AppLocalization.string("Move selector up"))
+            Button {
+                moveSelector(selector.id, by: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(index >= selectors.count - 1)
+            .accessibilityLabel(AppLocalization.string("Move selector down"))
+            Button(role: .destructive) {
+                removeSelector(selector.id)
+            } label: {
+                Image(systemName: "trash")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(AppLocalization.string("Remove selector"))
+            .accessibilityLabel(AppLocalization.string("Remove selector"))
+        }
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
@@ -245,14 +315,24 @@ struct NodeMembershipEditor: View {
                         .frame(maxWidth: 220)
                     Spacer()
                     Button(AppLocalization.string("Remove selector"), role: .destructive) {
-                        removeActiveSelector()
+                        if let activeSelectorID {
+                            removeSelector(activeSelectorID)
+                        }
                     }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
                 }
                 Text(AppLocalization.string("All included conditions must match. Exclusions apply to automatic matches; fixed pins remain in the group."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if !activeCriterionChips.isEmpty {
+                    FlowCriterionChips(
+                        chips: activeCriterionChips,
+                        onRemove: clearCriterion
+                    )
+                }
 
                 HStack(spacing: 8) {
                     Image(systemName: "textformat")
@@ -303,18 +383,6 @@ struct NodeMembershipEditor: View {
                     }
                     .padding(.top, 6)
                 }
-
-                if !activeCriteria.isEmpty {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 5) {
-                        ForEach(activeCriteria, id: \.self) { criterion in
-                            Text(criterion)
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.accentColor.opacity(0.12), in: Capsule())
-                        }
-                    }
-                }
             }
             .textFieldStyle(.roundedBorder)
         }
@@ -334,7 +402,7 @@ struct NodeMembershipEditor: View {
                 Text(AppLocalization.string("Add a selector to describe which nodes belong to this group."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if activeCriteria.isEmpty {
+            } else if activeCriterionChips.isEmpty {
                 Text(AppLocalization.string("No include condition means all enabled nodes. Add a condition to narrow the match."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -643,14 +711,32 @@ struct NodeMembershipEditor: View {
         selectors.swapAt(index, destination)
     }
 
-    private func removeActiveSelector() {
-        guard let activeSelectorID else { return }
-        selectors.removeAll { $0.id == activeSelectorID }
-        self.activeSelectorID = selectors.first?.id
-        if self.activeSelectorID == nil {
+    private func removeSelector(_ id: UUID) {
+        let wasActive = activeSelectorID == id
+        selectors.removeAll { $0.id == id }
+        guard wasActive else { return }
+        activeSelectorID = selectors.first?.id
+        if activeSelectorID == nil {
             selectorName = ""
             clearFields()
-        } else { loadActiveSelector() }
+        } else {
+            loadActiveSelector()
+        }
+    }
+
+    private func clearCriterion(_ kind: SelectorCriterionKind) {
+        switch kind {
+        case .nameContains: nameContains = ""
+        case .nameEquals: nameEquals = ""
+        case .hostContains: hostContains = ""
+        case .hostEquals: hostEquals = ""
+        case .source: sourceChoice = nil
+        case .proto: protocolChoice = nil
+        case .tag: tagContains = ""
+        case .excludeName: excludeNameContains = ""
+        case .excludeHost: excludeHostContains = ""
+        }
+        syncSelector()
     }
 
     private func loadActiveSelector() {
@@ -761,6 +847,89 @@ struct NodeMembershipEditor: View {
         let left = (lhs.userAlias ?? lhs.displayName).lowercased() + "|" + lhs.host + "|" + lhs.id.rawValue.uuidString
         let right = (rhs.userAlias ?? rhs.displayName).lowercased() + "|" + rhs.host + "|" + rhs.id.rawValue.uuidString
         return left < right
+    }
+}
+
+private enum SelectorCriterionKind: Hashable {
+    case nameContains, nameEquals, hostContains, hostEquals
+    case source, proto, tag, excludeName, excludeHost
+}
+
+private struct SelectorCriterionChip: Identifiable {
+    var id: SelectorCriterionKind { kind }
+    let kind: SelectorCriterionKind
+    let label: String
+}
+
+private struct FlowCriterionChips: View {
+    let chips: [SelectorCriterionChip]
+    let onRemove: (SelectorCriterionKind) -> Void
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(chips) { chip in
+                HStack(spacing: 2) {
+                    Text(chip.label)
+                        .font(.caption)
+                    Button {
+                        onRemove(chip.kind)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(AppLocalization.string("Remove condition"))
+                    .accessibilityLabel(AppLocalization.string("Remove condition"))
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 4)
+                .padding(.vertical, 2)
+                .background(Color.accentColor.opacity(0.12), in: Capsule())
+            }
+        }
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(proposal: proposal, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrange(proposal: proposal, subviews: subviews)
+        for index in subviews.indices {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + result.origins[index].x, y: bounds.minY + result.origins[index].y),
+                proposal: .unspecified
+            )
+        }
+    }
+
+    private func arrange(proposal: ProposedViewSize, subviews: Subviews) -> (origins: [CGPoint], size: CGSize) {
+        let maxWidth = proposal.width ?? .infinity
+        var origins: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var width: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+            width = max(width, x - spacing)
+        }
+        return (origins, CGSize(width: width, height: y + rowHeight))
     }
 }
 
