@@ -84,14 +84,13 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
         )
         let connection = NetworkConnection(to: endpoint) {
             QUIC(alpn: ["h3"])
-        }.start()
+        }
         try await waitUntilReady(connection)
         self.connection = connection
         return connection
     }
 
     private func waitUntilReady(_ connection: NetworkConnection<QUIC>) async throws {
-        if connection.state == .ready { return }
         let completionGate = NativeHysteria2ContinuationGate()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -112,6 +111,20 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
                     default:
                         break
                     }
+                }
+                // Install the handler before starting.  Starting first can
+                // transition through ready before the callback is attached,
+                // leaving a continuation suspended forever.
+                connection.start()
+                switch connection.state {
+                case .ready:
+                    completionGate.resume { continuation.resume() }
+                case .failed(let error):
+                    completionGate.resume { continuation.resume(throwing: error) }
+                case .cancelled:
+                    completionGate.resume { continuation.resume(throwing: Hysteria2TransportError.closed) }
+                default:
+                    break
                 }
             }
         } onCancel: {
@@ -151,7 +164,9 @@ private final class NativeHysteria2QUICStream: Hysteria2StreamTransport, @unchec
 }
 
 @available(macOS 26.0, *)
-private final class NativeHysteria2ContinuationGate: @unchecked Sendable {
+/// Internal so timing tests can exercise the exactly-once continuation guard
+/// without opening a network connection.
+final class NativeHysteria2ContinuationGate: @unchecked Sendable {
     private let lock = NSLock()
     private var completed = false
 
