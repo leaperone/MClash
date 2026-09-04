@@ -136,6 +136,12 @@ public actor ConfigurationStore {
         } catch let error as ConfigurationStoreError {
             throw error
         } catch {
+            // Typed JSON that the current decoder rejects must stay on the live
+            // path. Moving it aside and writing a default document is what made
+            // upgrades look like they deleted the user's configuration.
+            if (try? JSONSerialization.jsonObject(with: data)) != nil {
+                throw error
+            }
             let quarantine = layout.configurationDirectory.appendingPathComponent(
                 "manifest.invalid-\(UUID().uuidString.lowercased()).json"
             )
