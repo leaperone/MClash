@@ -13,21 +13,34 @@ public enum NativeFakeIPResponseRewriteError: Error, Equatable, Sendable {
 /// for an IPv6 question.
 public enum NativeFakeIPResponseRewriter {
     public static func rewrite(query: Data, response: Data, virtualAddress: IPAddress) throws -> Data {
-        guard let q = question(query), q.klass == 1,
-              let responseQ = responseQuestion(response), responseQ.klass == 1,
-              q.name == responseQ.name else { throw NativeFakeIPResponseRewriteError.questionMismatch }
+        let q = try question(query)
         guard query.count >= 2, response.count >= 2, query[0] == response[0], query[1] == response[1] else { throw NativeFakeIPResponseRewriteError.transactionMismatch }
+        guard q.klass == 1 else {
+            throw NativeFakeIPResponseRewriteError.unsupportedQuestion
+        }
+        guard let responseQ = responseQuestion(response),
+              responseQ.klass == q.klass,
+              responseQ.type == q.type,
+              responseQ.name == q.name else {
+            throw NativeFakeIPResponseRewriteError.questionMismatch
+        }
+        guard q.type == 1 || q.type == 28 else {
+            throw NativeFakeIPResponseRewriteError.unsupportedQuestion
+        }
         let record: DNSResolutionRecord
         do { record = try DNSResolutionRecordParser.parse(response) } catch { throw NativeFakeIPResponseRewriteError.malformedResponse }
-        guard q.type == recordType(response) else { throw NativeFakeIPResponseRewriteError.questionMismatch }
-        guard q.type == 1 || q.type == 28 else { throw NativeFakeIPResponseRewriteError.unsupportedQuestion }
         guard q.type == 1 else { return response }
         guard virtualAddress.family == .ipv4 else { throw NativeFakeIPResponseRewriteError.unsupportedQuestion }
         var output = response
         var offset = 12
         _ = try readName(response, &offset)
         offset += 4
-        var owners = Set(record.aliases.keys); owners.insert(record.hostname)
+        var owners = Set<String>(); var owner = record.hostname
+        for _ in 0..<16 {
+            guard owners.insert(owner).inserted else { break }
+            guard let next = record.aliases[owner] else { break }
+            owner = next
+        }
         let counts = [Int(response[6]) << 8 | Int(response[7]), Int(response[8]) << 8 | Int(response[9]), Int(response[10]) << 8 | Int(response[11])]
         for section in 0..<3 {
             for _ in 0..<counts[section] {
@@ -45,16 +58,21 @@ public enum NativeFakeIPResponseRewriter {
     }
 
     private struct Question { let name: String; let type: UInt16; let klass: UInt16 }
-    private static func responseQuestion(_ data: Data) -> Question? { try? parseQuestion(data) }
-    private static func question(_ data: Data) -> Question? { try? parseQuestion(data) }
-    private static func parseQuestion(_ data: Data) throws -> Question {
-        guard data.count >= 17 else { throw NativeFakeIPResponseRewriteError.malformedQuery }
-        var offset = 12; let name = try readName(data, &offset)
-        guard offset + 4 <= data.count else { throw NativeFakeIPResponseRewriteError.malformedQuery }
+    private static func responseQuestion(_ data: Data) -> Question? {
+        guard data.count >= 12, data[2] & 0x80 != 0, u16(data, 4) == 1 else { return nil }
+        var offset = 12
+        guard let name = try? readName(data, &offset), offset + 4 <= data.count else { return nil }
         return Question(name: name, type: u16(data, offset), klass: u16(data, offset + 2))
     }
-    private static func recordType(_ data: Data) -> UInt16 { data.count >= 17 ? u16(data, 12 + nameLength(data, 12)) : 0 }
-    private static func nameLength(_ data: Data, _ start: Int) -> Int { var o = start; _ = try? readName(data, &o); return o - start }
+    private static func question(_ data: Data) throws -> Question {
+        guard data.count >= 12, data.count <= DNSUpstreamLimits.maximumMessageBytes,
+              data[2] & 0x80 == 0, u16(data, 4) == 1 else { throw NativeFakeIPResponseRewriteError.malformedQuery }
+        var offset = 12
+        let name: String
+        do { name = try readName(data, &offset) } catch { throw NativeFakeIPResponseRewriteError.malformedQuery }
+        guard !name.isEmpty, offset + 4 <= data.count else { throw NativeFakeIPResponseRewriteError.malformedQuery }
+        return Question(name: name, type: u16(data, offset), klass: u16(data, offset + 2))
+    }
     private static func u16(_ data: Data, _ at: Int) -> UInt16 { UInt16(data[at]) << 8 | UInt16(data[at + 1]) }
     private static func readName(_ data: Data, _ offset: inout Int) throws -> String {
         var position = offset, jumped = false, labels: [String] = [], seen = Set<Int>()

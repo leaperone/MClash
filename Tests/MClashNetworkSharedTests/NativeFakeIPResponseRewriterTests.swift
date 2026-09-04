@@ -13,6 +13,34 @@ struct NativeFakeIPResponseRewriterTests {
         return (query, response)
     }
 
+    private func cnamePacket() -> (Data, Data) {
+        var query = Data([0x45, 0x67, 0x01, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+        query.append(contentsOf: encodedName("example.com"))
+        query.append(contentsOf: [0, 1, 0, 1])
+        var response = query
+        response[2] = 0x81
+        response[3] = 0
+        response[7] = 3
+
+        let alias = encodedName("alias.example.com")
+        response.append(contentsOf: [
+            0xc0, 0x0c, 0, 5, 0, 1, 0, 0, 0, 20,
+            UInt8(alias.count >> 8), UInt8(alias.count),
+        ])
+        response.append(contentsOf: alias)
+        response.append(contentsOf: alias)
+        response.append(contentsOf: [0, 1, 0, 1, 0, 0, 0, 30, 0, 4, 203, 0, 113, 9])
+        response.append(contentsOf: encodedName("unrelated.example.com"))
+        response.append(contentsOf: [0, 1, 0, 1, 0, 0, 0, 40, 0, 4, 192, 0, 2, 55])
+        return (query, response)
+    }
+
+    private func encodedName(_ hostname: String) -> [UInt8] {
+        hostname.split(separator: ".").flatMap { label in
+            [UInt8(label.utf8.count)] + Array(label.utf8)
+        } + [0]
+    }
+
     @Test("Rewrites A answer while preserving transaction and question")
     func rewritesA() throws {
         let (query, response) = packet()
@@ -29,6 +57,44 @@ struct NativeFakeIPResponseRewriterTests {
         var mismatched = response; mismatched[0] = 0x99
         #expect(throws: NativeFakeIPResponseRewriteError.transactionMismatch) {
             _ = try NativeFakeIPResponseRewriter.rewrite(query: query, response: mismatched, virtualAddress: try IPAddress("198.18.0.2"))
+        }
+
+        let (otherQuery, _) = packet()
+        var otherResponse = response
+        otherResponse[13] = 0x78
+        #expect(throws: NativeFakeIPResponseRewriteError.questionMismatch) {
+            _ = try NativeFakeIPResponseRewriter.rewrite(query: otherQuery, response: otherResponse, virtualAddress: try IPAddress("198.18.0.2"))
+        }
+    }
+
+    @Test("Rewrites the followed CNAME target without changing unrelated answers")
+    func rewritesCNAMEChainOnly() throws {
+        let (query, response) = cnamePacket()
+        let rewritten = try NativeFakeIPResponseRewriter.rewrite(
+            query: query,
+            response: response,
+            virtualAddress: try IPAddress("198.18.0.2")
+        )
+        let record = try DNSResolutionRecordParser.parse(rewritten)
+        #expect(record.aliases["example.com"] == "alias.example.com")
+        #expect(record.addresses == [try IPAddress("198.18.0.2")])
+        #expect(Array(rewritten.suffix(4)) == [192, 0, 2, 55])
+    }
+
+    @Test("Rejects malformed query before examining response")
+    func malformedQuery() throws {
+        let (_, response) = packet()
+        #expect(throws: NativeFakeIPResponseRewriteError.malformedQuery) {
+            _ = try NativeFakeIPResponseRewriter.rewrite(query: Data([0, 1, 0]), response: response, virtualAddress: try IPAddress("198.18.0.2"))
+        }
+        var responseShapedQuery = response
+        responseShapedQuery[2] |= 0x80
+        #expect(throws: NativeFakeIPResponseRewriteError.malformedQuery) {
+            _ = try NativeFakeIPResponseRewriter.rewrite(query: responseShapedQuery, response: response, virtualAddress: try IPAddress("198.18.0.2"))
+        }
+        let (unsupportedQuery, unsupportedResponse) = packet(type: 15)
+        #expect(throws: NativeFakeIPResponseRewriteError.unsupportedQuestion) {
+            _ = try NativeFakeIPResponseRewriter.rewrite(query: unsupportedQuery, response: unsupportedResponse, virtualAddress: try IPAddress("198.18.0.2"))
         }
     }
 }

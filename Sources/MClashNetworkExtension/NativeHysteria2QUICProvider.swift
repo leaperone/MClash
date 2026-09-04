@@ -163,7 +163,6 @@ private final class NativeHysteria2QUICStream: Hysteria2StreamTransport, @unchec
     }
 }
 
-@available(macOS 26.0, *)
 /// Internal so timing tests can exercise the exactly-once continuation guard
 /// without opening a network connection.
 final class NativeHysteria2ContinuationGate: @unchecked Sendable {
