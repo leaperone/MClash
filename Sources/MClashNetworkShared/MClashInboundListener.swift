@@ -240,7 +240,7 @@ public final class MClashInboundListener: @unchecked Sendable {
         let decision = routing.route(destination)
         let connector = routing.connector
         let flowID = UUID().uuidString
-        let meter = NativeFlowObservationMeter(id: flowID, startedAt: Date(), network: kind == .httpConnect ? "tcp/http" : "tcp/socks5", destination: destination, entranceName: entranceName, route: decision == .direct ? .direct : .relay, emit: observationHandler)
+        let meter = NativeFlowObservationMeter(id: flowID, startedAt: Date(), network: kind == .httpConnect ? "tcp/http" : "tcp/socks5", destination: destination, entranceName: entranceName, route: decision == .direct ? .direct : .relay, routeChain: { if case let .proxy(key) = decision { return [key] }; return [] }(), emit: observationHandler)
         guard decision != .reject else {
             observationHandler?(FlowRelayObservation(id: flowID, startedAt: Date(), endedAt: Date(), network: kind == .httpConnect ? "tcp/http" : "tcp/socks5", destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, connector: "native", state: .rejected, route: .rejected))
             let rejection = response.starts(with: Data("HTTP/".utf8)) ? HTTPProxyCodec.encodeFailureResponse(status: 403, reason: "Forbidden") : Self.socksReply(.connectionNotAllowed)
@@ -303,7 +303,7 @@ public final class MClashInboundListener: @unchecked Sendable {
             self.pump(from: b, to: a, transform: { data in
                 guard let codec else { return [data] }
                 return try codec.decode(data)
-            }, delivered: { meter.addDownload($0) }, terminal: { meter.emit(state: .completed) })
+            }, delivered: { meter.addDownload($0) }, terminal: { meter.markClosed(download: true) })
         }
         if !initialUpstreamPayload.isEmpty {
             do {
@@ -319,7 +319,7 @@ public final class MClashInboundListener: @unchecked Sendable {
         pump(from: a, to: b, transform: { data in
             guard let codec else { return [data] }
             return [try codec.encode(data)]
-        }, delivered: { meter.addUpload($0) }, terminal: { meter.emit(state: .completed) })
+        }, delivered: { meter.addUpload($0) }, terminal: { meter.markClosed(download: false) })
     }
     private func pump(
         from source: NWConnection,
@@ -367,7 +367,7 @@ public final class MClashInboundListener: @unchecked Sendable {
         guard index < chunks.count else {
             delivered?(chunks.reduce(0) { $0 + $1.count })
             if let completion { completion() } else {
-                pump(from: source, to: target, transform: transform, terminal: terminal)
+                pump(from: source, to: target, transform: transform, delivered: delivered, terminal: terminal)
             }
             return
         }
@@ -393,23 +393,33 @@ private final class NativeFlowObservationMeter: @unchecked Sendable {
     private let lock = NSLock()
     private var upload: UInt64 = 0
     private var download: UInt64 = 0
+    private var uploadClosed = false
+    private var downloadClosed = false
     private let id: String
     private let startedAt: Date
     private let network: String
     private let destination: MClashInboundDestination
     private let entranceName: String
     private let route: FlowRelayObservation.Route
+    private let routeChain: [String]
     private let emitHandler: (@Sendable (FlowRelayObservation) -> Void)?
-    init(id: String, startedAt: Date, network: String, destination: MClashInboundDestination, entranceName: String, route: FlowRelayObservation.Route, emit: (@Sendable (FlowRelayObservation) -> Void)?) {
-        self.id = id; self.startedAt = startedAt; self.network = network; self.destination = destination; self.entranceName = entranceName; self.route = route; emitHandler = emit
+    init(id: String, startedAt: Date, network: String, destination: MClashInboundDestination, entranceName: String, route: FlowRelayObservation.Route, routeChain: [String], emit: (@Sendable (FlowRelayObservation) -> Void)?) {
+        self.id = id; self.startedAt = startedAt; self.network = network; self.destination = destination; self.entranceName = entranceName; self.route = route; self.routeChain = routeChain; emitHandler = emit
     }
     func addUpload(_ count: Int) { update(upload: count, download: 0) }
     func addDownload(_ count: Int) { update(upload: 0, download: count) }
+    func markClosed(download: Bool) {
+        lock.lock()
+        if download { downloadClosed = true } else { uploadClosed = true }
+        let complete = uploadClosed && downloadClosed
+        lock.unlock()
+        if complete { emit(state: .completed) }
+    }
     func emit(state: FlowRelayObservation.State) {
         lock.lock(); let up = upload, down = download; lock.unlock()
-        emitHandler?(FlowRelayObservation(id: id, startedAt: startedAt, endedAt: state == .active ? nil : Date(), network: network, destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, connector: "native", uploadBytes: up, downloadBytes: down, state: state, route: route))
+        emitHandler?(FlowRelayObservation(id: id, startedAt: startedAt, endedAt: state == .active ? nil : Date(), network: network, destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, routeChain: routeChain, connector: "native", uploadBytes: up, downloadBytes: down, state: state, route: route))
     }
-    private func update(upload: Int, download: Int) { lock.lock(); self.upload &+= UInt64(max(0, upload)); self.download &+= UInt64(max(0, download)); let up = self.upload, down = self.download; lock.unlock(); emitHandler?(FlowRelayObservation(id: id, startedAt: startedAt, network: network, destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, connector: "native", uploadBytes: up, downloadBytes: down, state: .active, route: route)) }
+    private func update(upload: Int, download: Int) { lock.lock(); self.upload &+= UInt64(max(0, upload)); self.download &+= UInt64(max(0, download)); let up = self.upload, down = self.download; lock.unlock(); emitHandler?(FlowRelayObservation(id: id, startedAt: startedAt, network: network, destinationHost: destination.host, destinationPort: destination.port, inboundName: entranceName, routeChain: routeChain, connector: "native", uploadBytes: up, downloadBytes: down, state: .active, route: route)) }
 }
 
 private final class MClashInboundRoutingState: @unchecked Sendable {

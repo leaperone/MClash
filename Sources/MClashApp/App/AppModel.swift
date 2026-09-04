@@ -1309,20 +1309,6 @@ final class AppModel {
                 self?.receive(event)
             }
         }
-        if let nativeStore = supervisor.nativeFlowObservations {
-            nativeFlowObservationTask = Task { [weak self, stream = nativeStore.stream] in
-                for await observation in stream {
-                    guard !Task.isCancelled else { break }
-                    await MainActor.run {
-                        guard let self else { return }
-                        self.nativeFlowObservationsByID[observation.id] = observation
-                        self.flowLedgerRevision &+= 1
-                        self.flowLedgerPresentationRefreshPending = true
-                        self.startFlowLedgerRefreshIfNeeded()
-                    }
-                }
-            }
-        }
     }
 
     func prepare() async {
@@ -9495,6 +9481,7 @@ final class AppModel {
             activeControllerEndpoint = session.endpoint
             controllerGeneration &+= 1
             controllerState = .ready
+            startNativeFlowObservationConsumptionIfNeeded()
             errorMessage = nil
             appendSupervisorLog("Native runtime is ready; no legacy controller was contacted.")
             return
@@ -9518,6 +9505,23 @@ final class AppModel {
         await task.value
         if controllerSetupOperation?.id == id {
             controllerSetupOperation = nil
+        }
+    }
+
+    private func startNativeFlowObservationConsumptionIfNeeded() {
+        guard usesNativeRuntime, nativeFlowObservationTask == nil,
+              let store = supervisor.nativeFlowObservations else { return }
+        nativeFlowObservationTask = Task { [weak self, stream = store.stream] in
+            for await observation in stream {
+                guard !Task.isCancelled else { break }
+                await MainActor.run {
+                    guard let self else { return }
+                    self.nativeFlowObservationsByID[observation.id] = observation
+                    self.flowLedgerRevision &+= 1
+                    self.flowLedgerPresentationRefreshPending = true
+                    self.startFlowLedgerRefreshIfNeeded()
+                }
+            }
         }
     }
 
@@ -10481,6 +10485,14 @@ final class AppModel {
     }
 
     private func stopControllerStreams() {
+        nativeFlowObservationTask?.cancel()
+        nativeFlowObservationTask = nil
+        if !nativeFlowObservationsByID.isEmpty {
+            nativeFlowObservationsByID.removeAll()
+            flowLedgerRevision &+= 1
+            flowLedgerPresentationRefreshPending = true
+        }
+        startFlowLedgerRefreshIfNeeded()
         supervisor.setProcessLogForwardingEnabled(false)
         controllerSetupOperation?.task.cancel()
         controllerSetupOperation = nil
