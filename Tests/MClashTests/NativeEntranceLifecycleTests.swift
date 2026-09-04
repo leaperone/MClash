@@ -4,22 +4,23 @@ import Testing
 
 @Suite("Native entrance lifecycle")
 struct NativeEntranceLifecycleTests {
-    @Test("Native activation applies both entrances without a Mihomo controller")
-    func activatesSystemProxyAndAppRouting() async throws {
+    @Test("Native activation applies App Routing without a Mihomo controller")
+    func activatesAppRouting() async throws {
         let backend = RecordingEntranceBackend()
         let coordinator = NativeEntranceLifecycleCoordinator(backend: backend)
 
         let activation = try await coordinator.activate(
             revision: 12,
-            enabled: [.systemProxy, .appRouting]
+            enabled: [.appRouting]
         )
 
         #expect(activation.revision == 12)
-        #expect(activation.systemProxyEnabled)
+        #expect(!activation.systemProxyEnabled)
         #expect(activation.appRoutingEnabled)
         #expect(await coordinator.state == .active(activation))
         #expect(await backend.applied.count == 1)
-        #expect(await backend.applied.first?.activation == activation)
+        #expect(await backend.applied.first?.transaction.activation == activation)
+        #expect(await backend.applied.first?.previous == nil)
     }
 
     @Test("Failed replacement preserves no half-active state and can be retried")
@@ -48,7 +49,7 @@ struct NativeEntranceLifecycleTests {
         }
 
         #expect(await coordinator.state == .active(initial))
-        #expect(await backend.applied.map(\.activation) == [initial])
+        #expect(await backend.applied.map(\.transaction.activation) == [initial])
     }
 
     @Test("Deactivation is idempotent and calls the backend once")
@@ -63,12 +64,18 @@ struct NativeEntranceLifecycleTests {
         #expect(await backend.deactivated.count == 1)
     }
 
-    @Test("Invalid and stale revisions fail before touching the backend")
+    @Test("Invalid, conflicting, and stale revisions fail before touching the backend")
     func validatesRevision() async throws {
         let backend = RecordingEntranceBackend()
         let coordinator = NativeEntranceLifecycleCoordinator(backend: backend)
         await #expect(throws: NativeEntranceLifecycleError.invalidRevision) {
             try await coordinator.activate(revision: 0, enabled: [.appRouting])
+        }
+        await #expect(throws: NativeEntranceLifecycleError.mutuallyExclusiveEntrances) {
+            try await coordinator.activate(
+                revision: 1,
+                enabled: [.systemProxy, .appRouting]
+            )
         }
         _ = try await coordinator.activate(revision: 4, enabled: [.appRouting])
         await #expect(throws: NativeEntranceLifecycleError.staleRevision(current: 4, requested: 2)) {
@@ -76,19 +83,42 @@ struct NativeEntranceLifecycleTests {
         }
         #expect(await backend.applied.count == 1)
     }
+
+    @Test("Replacement receives the exact committed rollback transaction")
+    func replacementCarriesRollbackTransaction() async throws {
+        let backend = RecordingEntranceBackend()
+        let coordinator = NativeEntranceLifecycleCoordinator(backend: backend)
+        let first = try await coordinator.activate(revision: 1, enabled: [.appRouting])
+        let second = try await coordinator.activate(revision: 2, enabled: [.systemProxy])
+
+        let applied = await backend.applied
+        #expect(applied.count == 2)
+        #expect(applied[0].transaction.activation == first)
+        #expect(applied[0].previous == nil)
+        #expect(applied[1].transaction.activation == second)
+        #expect(applied[1].previous?.activation == first)
+    }
 }
 
 private actor RecordingEntranceBackend: NativeEntranceLifecycleBackend {
-    var applied: [NativeEntranceTransaction] = []
+    struct ApplyRecord: Sendable {
+        let transaction: NativeEntranceTransaction
+        let previous: NativeEntranceTransaction?
+    }
+
+    var applied: [ApplyRecord] = []
     var deactivated: [NativeEntranceTransaction] = []
     private var shouldFail = false
 
-    func apply(_ transaction: NativeEntranceTransaction) async throws {
+    func apply(
+        _ transaction: NativeEntranceTransaction,
+        replacing previous: NativeEntranceTransaction?
+    ) async throws {
         if shouldFail {
             shouldFail = false
             throw RecordingEntranceError.applyFailed
         }
-        applied.append(transaction)
+        applied.append(ApplyRecord(transaction: transaction, previous: previous))
     }
 
     func deactivate(_ transaction: NativeEntranceTransaction) async throws {

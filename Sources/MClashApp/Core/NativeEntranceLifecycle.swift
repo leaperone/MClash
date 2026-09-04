@@ -66,6 +66,7 @@ enum NativeEntranceLifecycleState: Equatable, Sendable {
 enum NativeEntranceLifecycleError: Error, Equatable, LocalizedError, Sendable {
     case invalidRevision
     case noEnabledEntrance
+    case mutuallyExclusiveEntrances
     case staleRevision(current: UInt64, requested: UInt64)
 
     var errorDescription: String? {
@@ -74,6 +75,8 @@ enum NativeEntranceLifecycleError: Error, Equatable, LocalizedError, Sendable {
             "Native entrance activation requires a non-zero revision."
         case .noEnabledEntrance:
             "Native entrance activation requires at least one enabled entrance."
+        case .mutuallyExclusiveEntrances:
+            "macOS System Proxy and App Routing cannot capture traffic at the same time."
         case let .staleRevision(current, requested):
             "Native entrance revision \(requested) is older than the active revision \(current)."
         }
@@ -84,7 +87,13 @@ enum NativeEntranceLifecycleError: Error, Equatable, LocalizedError, Sendable {
 /// by NetworkExtension/SystemConfiguration, while tests use an in-memory
 /// backend. No implementation is allowed to invoke a Mihomo controller.
 protocol NativeEntranceLifecycleBackend: Sendable {
-    func apply(_ transaction: NativeEntranceTransaction) async throws
+    /// Atomically applies `transaction`. When replacing a committed value,
+    /// `previous` is the exact rollback input the backend must restore before
+    /// returning an error from a partially applied change.
+    func apply(
+        _ transaction: NativeEntranceTransaction,
+        replacing previous: NativeEntranceTransaction?
+    ) async throws
     func deactivate(_ transaction: NativeEntranceTransaction) async throws
 }
 
@@ -118,6 +127,9 @@ actor NativeEntranceLifecycleCoordinator {
     ) async throws -> NativeEntranceActivation {
         guard revision > 0 else { throw NativeEntranceLifecycleError.invalidRevision }
         guard !enabled.isEmpty else { throw NativeEntranceLifecycleError.noEnabledEntrance }
+        guard !enabled.isSuperset(of: [.systemProxy, .appRouting]) else {
+            throw NativeEntranceLifecycleError.mutuallyExclusiveEntrances
+        }
         if let current = state.activation, revision < current.revision {
             throw NativeEntranceLifecycleError.staleRevision(
                 current: current.revision,
@@ -133,9 +145,10 @@ actor NativeEntranceLifecycleCoordinator {
         )
         state = .activating(activation)
         do {
-            try await backend.apply(NativeEntranceTransaction(activation: activation))
+            let transaction = NativeEntranceTransaction(activation: activation)
+            try await backend.apply(transaction, replacing: committedTransaction)
             committedActivation = activation
-            committedTransaction = NativeEntranceTransaction(activation: activation)
+            committedTransaction = transaction
             state = .active(activation)
             return activation
         } catch {
@@ -153,13 +166,16 @@ actor NativeEntranceLifecycleCoordinator {
         let activation = transaction.activation
         guard activation.revision > 0 else { throw NativeEntranceLifecycleError.invalidRevision }
         guard !activation.enabled.isEmpty else { throw NativeEntranceLifecycleError.noEnabledEntrance }
+        guard !activation.enabled.isSuperset(of: [.systemProxy, .appRouting]) else {
+            throw NativeEntranceLifecycleError.mutuallyExclusiveEntrances
+        }
         if let current = state.activation, activation.revision < current.revision {
             throw NativeEntranceLifecycleError.staleRevision(current: current.revision, requested: activation.revision)
         }
         generation = max(generation &+ 1, activation.generation)
         state = .activating(activation)
         do {
-            try await backend.apply(transaction)
+            try await backend.apply(transaction, replacing: committedTransaction)
             committedActivation = activation
             committedTransaction = transaction
             state = .active(activation)
