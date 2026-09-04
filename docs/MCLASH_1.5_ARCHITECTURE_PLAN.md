@@ -532,6 +532,10 @@ and can be tested without producing a Mihomo YAML document.
   protobuf country/CIDR entries and conforms to `NativeGeoDatabaseProvider`.
   It is limited to GeoIP matching; GeoSite, `geoip.metadb`, and MaxMind
   readers remain unsupported and must report capability limitations.
+- A bounded reader also supports the official v2fly `GeoSite.dat` protobuf
+  domain types Plain, RootDomain, Full and Regex with per-database size and
+  regex limits. Domain attributes are intentionally ignored; metadb/MRS remain
+  unsupported.
 - Native mode now loads MClash-owned local `.text` rule sets through a bounded
   4 MiB line loader, stripping comments and blank lines before the existing
   classical matcher runs. URL, YAML and MRS providers remain explicitly

@@ -31,6 +31,20 @@ struct NativeRuleEngineProjectionTests {
         #expect(!database.matches(kind: .site, value: "cn", context: context))
     }
 
+    @Test("v2fly GeoSite protobuf fixture matches domain types")
+    func geoSiteProtobufFixture() throws {
+        func field(_ n: UInt8, _ payload: Data) -> Data { Data([n << 3 | 2, UInt8(payload.count)]) + payload }
+        func domain(_ type: UInt8, _ value: String) -> Data { Data([0x08, type]) + field(2, Data(value.utf8)) }
+        let domains = field(2, domain(2, "example.com")) + field(2, domain(3, "exact.example"))
+        let entry = field(1, Data("CN".utf8)) + domains
+        let data = field(1, entry)
+        let provider = try NativeGeoSiteDatabaseProvider(data: data)
+        let suffix = try context("www.example.com")
+        let exact = try context("exact.example")
+        #expect(provider.matches(kind: .site, value: "cn", context: suffix))
+        #expect(provider.matches(kind: .site, value: "cn", context: exact))
+    }
+
     @Test("bundled v2fly GeoIP data parses when an integration fixture is supplied")
     func bundledGeoIPData() throws {
         guard let path = ProcessInfo.processInfo.environment["MCLASH_GEOIP_DAT_PATH"] else {
