@@ -150,6 +150,7 @@ extension CoreRunState {
 /// The app process owns its HTTP/SOCKS5 entrances; Mihomo is never started.
 final actor NativeRuntimeEngine: ProfileRuntimeSession {
     nonisolated let events: AsyncStream<CoreEvent>
+    nonisolated let flowObservations: NativeFlowObservationStore
     nonisolated let runtimeCapabilities: Set<NativeRuntimeCapability> = [
         .nativeRuntime,
         .nativeRouting,
@@ -182,6 +183,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         )
         events = pair.stream
         continuation = pair.continuation
+        flowObservations = NativeFlowObservationStore()
         sessionState = nil
         sessionValidationError = nil
         outboundNodeTargets = nil
@@ -201,12 +203,17 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         )
         events = pair.stream
         continuation = pair.continuation
+        flowObservations = NativeFlowObservationStore()
         sessionState = try NativeRuntimeSessionState(plan: plan, listeners: listeners)
         sessionValidationError = nil
         listenerHandles = Self.makeListenerHandles(for: listeners)
         self.outboundNodeTargets = outboundNodeTargets
             ?? Self.makeOutboundNodeTargetCatalog(from: plan)
     }
+
+    /// Read-only native telemetry seam; callers consume the stream or ask the
+    /// bounded store for a stable snapshot without touching connector state.
+    nonisolated func nativeFlowObservations() -> NativeFlowObservationStore { flowObservations }
 
     func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
         let state: NativeRuntimeSessionState
