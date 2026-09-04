@@ -51,4 +51,23 @@ struct NativeRouteValidationTests {
 
         #expect(!NetworkExtensionFlowDecisionCoordinator().validates(configuration: configuration))
     }
+
+    @Test("Native catalog remains authoritative over a legacy Mihomo rescue")
+    func nativeCatalogCannotBeRescuedByLegacyRoute() throws {
+        let snapshot = try CaptureConfigurationSnapshot(revision: 2, rules: [])
+        let unsupported = try OutboundNodeTarget(protocolName: "quic", host: "node.example.com", port: 443)
+        let native = try OutboundNodeTargetCatalog(entries: [
+            OutboundNodeTargetEntry(route: .profileRules, target: unsupported)
+        ])
+        let legacy = try JSONEncoder().encode([
+            try MihomoRouteProxyEndpoint(route: .profileRules, host: "127.0.0.1", port: 18080)
+        ])
+        let configuration: [String: Any] = [
+            ProviderConfigurationKey.captureEnabled: true,
+            ProviderConfigurationKey.captureConfigurationSnapshot: try JSONEncoder().encode(snapshot),
+            ProviderConfigurationKey.outboundNodeTargetCatalog: try native.encoded(),
+            ProviderConfigurationKey.mihomoRouteProxyCatalog: legacy
+        ]
+        #expect(!NetworkExtensionFlowDecisionCoordinator().validates(configuration: configuration))
+    }
 }

@@ -29,7 +29,7 @@ struct NativeRuntimeDiagnostics: Equatable, Sendable {
     let enabledListenerCount: Int
     /// Number of enabled socket entrances (HTTP/SOCKS5). App Routing and
     /// TUN are capability entries, not app-owned TCP sockets.
-    let enabledSocketListenerCount: Int = 0
+    let enabledSocketListenerCount: Int
     /// Validation failures are surfaced independently of lifecycle failures.
     let sessionValidationError: String?
     /// Lifecycle state of each MClash-owned entrance. Native listeners are
