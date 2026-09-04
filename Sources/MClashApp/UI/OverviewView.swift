@@ -213,7 +213,7 @@ private struct OverviewEntrancesCard: View {
                         ? AppLocalization.string("On")
                         : AppLocalization.string("Off"))
                         .font(.caption)
-                        .foregroundStyle(model.systemProxyEnabled ? .green : .tertiary)
+                        .foregroundStyle(model.systemProxyEnabled ? Color.green : Color.secondary)
                 }
                 .accessibilityElement(children: .combine)
             }
