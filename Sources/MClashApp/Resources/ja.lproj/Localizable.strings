@@ -185,6 +185,7 @@
 "Export current operating status and the filtered logs with recognized credentials redacted" = "現在の動作状況と、検出した認証情報を伏せたフィルタ済みログを書き出します";
 "External changes repaired" = "外部の変更を修復しました";
 "Fake IP" = "Fake IP";
+"Native Fake IP DNS mode is not implemented yet. Choose Redir Host or System DNS." = "ネイティブ Fake IP DNS モードはまだ実装されていません。Redir Host またはシステム DNS を選択してください。";
 "Filter app, target, rule, or route" = "アプリ、宛先、ルール、経路を検索";
 "Filter logs by source" = "送信元でログを絞り込む";
 "Finish the current network or profile operation before adding this subscription." = "現在のネットワークまたはプロファイル操作を完了してから、このサブスクリプションを追加してください。";

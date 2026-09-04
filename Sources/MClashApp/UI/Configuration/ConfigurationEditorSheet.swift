@@ -345,6 +345,14 @@ struct ConfigurationEditorSheet: View {
                         Text(mode.localizedTitle).tag(mode)
                     }
                 }
+                if model.usesNativeRuntimeForDiagnostics, dnsMode == .fakeIP {
+                    Text(AppLocalization.string(
+                        "Native Fake IP DNS mode is not implemented yet. Choose Redir Host or System DNS."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
                 TextField(AppLocalization.string("Nameservers (comma or newline separated)"), text: $dnsNameserversText, axis: .vertical)
                     .lineLimit(2...4)
                 TextField(AppLocalization.string("Fallback resolvers (optional)"), text: $dnsFallbackNameserversText, axis: .vertical)

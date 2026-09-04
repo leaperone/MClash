@@ -22,6 +22,21 @@ struct NativeRuntimeControllerTests {
                 upstreamMode: .legacyConnector
             )
         )
+        #expect(AppModel.nativeCaptureRejectsDNSMode(
+            usingNativeRuntime: true,
+            dnsEnabled: true,
+            mode: .fakeIP
+        ))
+        #expect(!AppModel.nativeCaptureRejectsDNSMode(
+            usingNativeRuntime: true,
+            dnsEnabled: true,
+            mode: .redirHost
+        ))
+        #expect(!AppModel.nativeCaptureRejectsDNSMode(
+            usingNativeRuntime: false,
+            dnsEnabled: true,
+            mode: .fakeIP
+        ))
         #expect(
             !AppModel.nativeCaptureRequiresNativeDNS(
                 usingNativeRuntime: true,

@@ -185,6 +185,7 @@
 "Export current operating status and the filtered logs with recognized credentials redacted" = "匯出目前執行狀態和篩選後的日誌，並隱去已識別的認證資訊";
 "External changes repaired" = "已修復外部更改";
 "Fake IP" = "Fake IP";
+"Native Fake IP DNS mode is not implemented yet. Choose Redir Host or System DNS." = "原生 Fake IP DNS 模式尚未實作。請選擇 Redir Host 或系統 DNS。";
 "Filter app, target, rule, or route" = "按 App、目標、規則或路由篩選";
 "Filter logs by source" = "依來源篩選日誌";
 "Finish the current network or profile operation before adding this subscription." = "請先完成目前網路或設定檔操作，再加入此訂閱。";

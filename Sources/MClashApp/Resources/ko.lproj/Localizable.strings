@@ -185,6 +185,7 @@
 "Export current operating status and the filtered logs with recognized credentials redacted" = "현재 작동 상태와 감지된 자격 증명을 가린 필터링된 로그 내보내기";
 "External changes repaired" = "외부 변경 사항 복구됨";
 "Fake IP" = "Fake IP";
+"Native Fake IP DNS mode is not implemented yet. Choose Redir Host or System DNS." = "네이티브 Fake IP DNS 모드는 아직 구현되지 않았습니다. Redir Host 또는 시스템 DNS를 선택하세요.";
 "Filter app, target, rule, or route" = "앱, 대상, 규칙 또는 경로 필터링";
 "Filter logs by source" = "소스별 로그 필터링";
 "Finish the current network or profile operation before adding this subscription." = "이 구독을 추가하기 전에 현재 네트워크 또는 프로파일 작업을 완료하십시오.";

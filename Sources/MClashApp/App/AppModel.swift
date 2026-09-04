@@ -927,6 +927,17 @@ final class AppModel {
         usingNativeRuntime && dnsEnabled && upstreamMode != .native
     }
 
+    /// Native fake-IP needs an allocator plus a bounded reverse mapping table.
+    /// Until both exist, accepting the mode would silently behave like
+    /// redir-host and make the user's DNS policy dishonest.
+    static func nativeCaptureRejectsDNSMode(
+        usingNativeRuntime: Bool,
+        dnsEnabled: Bool,
+        mode: DNSMode?
+    ) -> Bool {
+        usingNativeRuntime && dnsEnabled && mode == .fakeIP
+    }
+
     /// Returns the connector-neutral runtime state used by read-only
     /// automation diagnostics. Keep this narrow so automation never reaches
     /// into the runtime implementation or exposes a controller secret.
@@ -962,7 +973,9 @@ final class AppModel {
         guard ProcessInfo.processInfo.environment["MCLASH_LEGACY_DNS"] != "1",
               let workspace = configurationDocument.currentWorkspace,
               let policy = configurationDocument.dnsPolicies.first(where: {
-                  $0.id == workspace.dnsPolicyID && $0.takeoverEnabled
+                  $0.id == workspace.dnsPolicyID
+                      && $0.takeoverEnabled
+                      && $0.mode != .fakeIP
               }) else {
             return nil
         }
@@ -978,6 +991,15 @@ final class AppModel {
             endpoints: endpoints,
             policyRules: policy.rules
         )
+    }
+
+    private var configuredDNSPolicyMode: DNSMode? {
+        guard let workspace = configurationDocument.currentWorkspace else {
+            return nil
+        }
+        return configurationDocument.dnsPolicies.first {
+            $0.id == workspace.dnsPolicyID
+        }?.mode
     }
 
     private var configuredNativeInboundListenerRegistry: MClashListenerRegistry? {
@@ -7956,6 +7978,18 @@ final class AppModel {
         guard !shutdownInProgress else { return }
         guard networkCapturePreferences.enabled else {
             networkCaptureState = .off
+            return
+        }
+        if Self.nativeCaptureRejectsDNSMode(
+            usingNativeRuntime: usesNativeRuntime,
+            dnsEnabled: networkCapturePreferences.dnsEnabled,
+            mode: configuredDNSPolicyMode
+        ) {
+            reportNetworkCaptureFailure(
+                AppLocalization.string(
+                    "Native Fake IP DNS mode is not implemented yet. Choose Redir Host or System DNS."
+                )
+            )
             return
         }
         if Self.nativeCaptureRequiresNativeDNS(

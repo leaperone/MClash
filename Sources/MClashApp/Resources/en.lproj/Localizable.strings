@@ -186,6 +186,7 @@
 "Export current operating status and the filtered logs with recognized credentials redacted" = "Export current operating status and the filtered logs with recognized credentials redacted";
 "External changes repaired" = "External changes repaired";
 "Fake IP" = "Fake IP";
+"Native Fake IP DNS mode is not implemented yet. Choose Redir Host or System DNS." = "Native Fake IP DNS mode is not implemented yet. Choose Redir Host or System DNS.";
 "Filter app, target, rule, or route" = "Filter app, target, rule, or route";
 "Filter logs by source" = "Filter logs by source";
 "Finish the current network or profile operation before adding this subscription." = "Finish the current network or profile operation before adding this subscription.";

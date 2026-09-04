@@ -186,6 +186,7 @@
 "Export current operating status and the filtered logs with recognized credentials redacted" = "Exportieren Sie den aktuellen Betriebsstatus und die gefilterten Protokolle mit geschwärzten erkannten Anmeldeinformationen";
 "External changes repaired" = "Externe Änderungen repariert";
 "Fake IP" = "Fake IP";
+"Native Fake IP DNS mode is not implemented yet. Choose Redir Host or System DNS." = "Der native Fake-IP-DNS-Modus ist noch nicht implementiert. Wählen Sie Redir Host oder System-DNS.";
 "Filter app, target, rule, or route" = "Filtern Sie App, Ziel, Regel oder Route";
 "Filter logs by source" = "Protokolle nach Quelle filtern";
 "Finish the current network or profile operation before adding this subscription." = "Beenden Sie den aktuellen Netzwerk- oder Profilvorgang, bevor Sie dieses Abonnement hinzufügen.";
