@@ -11,6 +11,19 @@ struct NativeRuleEngineProjectionTests {
         #expect(NativeRuleSetSupport.assess(RuleSet(name: "file", path: "/tmp/rules.txt")) == .externalRequiresLoader)
     }
 
+    @Test("native text rule-set loader strips comments and blank lines")
+    func loadsClassicalTextRuleSet() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mclash-rules-\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("# header\nexample.com\nDOMAIN-SUFFIX,example.org # note\n\n".utf8).write(to: url)
+        let set = RuleSet(name: "local", format: .text, path: url.path)
+        #expect(try NativeRuleSetFileLoader.load(set) == ["example.com", "DOMAIN-SUFFIX,example.org"])
+        #expect(throws: NativeRuleSetFileLoader.Error.unsupportedSource) {
+            try NativeRuleSetFileLoader.load(RuleSet(name: "yaml", format: .yaml, path: url.path))
+        }
+    }
+
     @Test("native projection honors direct and reject actions")
     func directAndReject() throws {
         let group = ProxyGroup(name: "Proxy")

@@ -54,6 +54,36 @@ public enum NativeRuleSetSupport: Equatable, Sendable {
     }
 }
 
+/// Bounded loader for MClash-owned classical text rule sets. YAML/MRS and URL
+/// providers deliberately remain unsupported until they have dedicated native
+/// parsers and refresh lifecycles.
+public enum NativeRuleSetFileLoader {
+    public static let maximumBytes = 4 * 1024 * 1024
+
+    public enum Error: Swift.Error, Equatable, Sendable {
+        case unsupportedSource
+        case missingPath
+        case tooLarge
+        case unreadable
+    }
+
+    public static func load(_ ruleSet: RuleSet) throws -> [String] {
+        guard ruleSet.sourceURL == nil, ruleSet.format == .text else { throw Error.unsupportedSource }
+        guard let rawPath = ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines), !rawPath.isEmpty else {
+            throw Error.missingPath
+        }
+        let url = URL(fileURLWithPath: rawPath).standardizedFileURL
+        guard let data = try? Data(contentsOf: url), data.count <= maximumBytes else {
+            throw (FileManager.default.fileExists(atPath: url.path) ? Error.tooLarge : Error.unreadable)
+        }
+        return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).compactMap {
+            let line = $0.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return line.isEmpty ? nil : line
+        }
+    }
+}
+
 /// Evaluates a compiled, workspace-scoped plan before any outbound connector
 /// is selected. Rule sets are evaluated in plan order, followed by explicit
 /// rules, matching the policy order emitted by the compiler.  Compatibility
@@ -65,6 +95,7 @@ public struct NativeRuleEngineProjection: Sendable {
     private let ruleSetMatcher: NativeRuleSetMatcher?
     private let groups: Set<ProxyGroupID>
     private let groupNames: [String: ProxyGroupID]
+    private let externalRuleSetEntries: [RuleSetID: [String]]
 
     public init(
         plan: CompiledRuntimePlan,
@@ -79,6 +110,11 @@ public struct NativeRuleEngineProjection: Sendable {
             plan.proxyGroups.filter(\.enabled).map { ($0.name.lowercased(), $0.id) },
             uniquingKeysWith: { first, _ in first }
         )
+        self.externalRuleSetEntries = Dictionary(uniqueKeysWithValues: plan.ruleSets.compactMap { ruleSet in
+            guard NativeRuleSetSupport.assess(ruleSet) == .externalRequiresLoader,
+                  let entries = try? NativeRuleSetFileLoader.load(ruleSet) else { return nil }
+            return (ruleSet.id, entries)
+        })
     }
 
     public func evaluate(_ context: FlowContext) -> NativeRouteDecision {
@@ -196,7 +232,7 @@ public struct NativeRuleEngineProjection: Sendable {
         }
         var nextVisited = visited
         nextVisited.insert(ruleSet.id)
-        for raw in ruleSet.rules {
+        for raw in (ruleSet.rules + (externalRuleSetEntries[ruleSet.id] ?? [])) {
             let parts = raw.split(separator: ",", omittingEmptySubsequences: false).map {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines)
             }
