@@ -12,7 +12,8 @@ public struct NativeGeoIPDatabaseProvider: NativeGeoDatabaseProvider {
 
     public init(data: Data) throws {
         guard data.count <= 32 * 1024 * 1024 else { throw NativeGeoIPDatabaseError.tooLarge }
-        entries = try NativeGeoIPProtobufDecoder(data: data).decode().map {
+        var decoder = NativeGeoIPProtobufDecoder(data: data)
+        entries = try decoder.decode().map {
             Entry(country: $0.0, networks: $0.1)
         }
         status = .ready(revision: String(data.count))
