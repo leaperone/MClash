@@ -38,9 +38,10 @@ public enum NativeGeoKind: String, Codable, Hashable, Sendable {
 }
 
 /// Describes whether a rule set has data that the native projection can
-/// evaluate synchronously.  Remote providers and file-backed sets need an
+/// evaluate synchronously. Remote providers and non-text formats need an
 /// explicit loader/matcher; treating their absent cache as an empty set would
-/// silently change routing policy.
+/// silently change routing policy. A local classical text file is loaded by
+/// `NativeRuleSetFileLoader` during native session validation.
 public enum NativeRuleSetSupport: Equatable, Sendable {
     case inline
     case localText
