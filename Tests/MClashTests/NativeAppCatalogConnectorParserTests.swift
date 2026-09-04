@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import Network
 import MClashNetworkShared
 import Testing
 @testable import MClashApp
@@ -23,6 +24,20 @@ struct NativeAppCatalogConnectorParserTests {
         var decoded = [Data]()
         for byte in encoded { decoded += try server.decode(Data([byte])) }
         #expect(decoded == [Data("payload".utf8)])
+    }
+
+    @Test("Same-route Shadowsocks connections retain exact codec identity")
+    func shadowsocksConnectionIdentity() throws {
+        let target = try OutboundNodeTarget(protocolName: "ss", host: "127.0.0.1", port: 8388, parameters: ["method": "aes-128-gcm", "password": "secret"])
+        let destination = MClashInboundDestination(host: "example.com", port: 443)
+        let first = try NativeAppShadowsocksCodec(target: target, destination: destination, routeKey: "same")
+        let second = try NativeAppShadowsocksCodec(target: target, destination: destination, routeKey: "same")
+        let state = NativeAppShadowsocksState()
+        let c1 = NWConnection(host: "127.0.0.1", port: 1, using: .tcp)
+        let c2 = NWConnection(host: "127.0.0.1", port: 1, using: .tcp)
+        state.store(first, for: c1); state.store(second, for: c2)
+        #expect(state.take(for: c2) === second)
+        #expect(state.take(for: c1) === first)
     }
 
     @Test("HTTP CONNECT accepts fragmented headers and preserves coalesced payload")

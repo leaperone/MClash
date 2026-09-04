@@ -37,6 +37,12 @@ public protocol MClashInboundOutboundConnector: Sendable {
         route: MClashInboundRoute
     ) throws -> (any MClashInboundBridgeCodec)?
 
+    func makeBridgeCodec(
+        for connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute
+    ) throws -> (any MClashInboundBridgeCodec)?
+
     /// Completes any protocol handshake required by the selected outbound
     /// transport. The completion must only succeed once the upstream is ready
     /// to carry application bytes. The default is used by DIRECT and test
@@ -73,6 +79,14 @@ public extension MClashInboundOutboundConnector {
         to _: MClashInboundDestination,
         route _: MClashInboundRoute
     ) throws -> (any MClashInboundBridgeCodec)? { nil }
+
+    func makeBridgeCodec(
+        for _: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute
+    ) throws -> (any MClashInboundBridgeCodec)? {
+        try makeBridgeCodec(to: destination, route: route)
+    }
 
     func establish(
         _ connection: NWConnection,
@@ -249,6 +263,7 @@ public final class MClashInboundListener: @unchecked Sendable {
                         guard error == nil else { client.cancel(); upstream.cancel(); return }
                         do {
                             let codec = try connector.makeBridgeCodec(
+                                for: upstream,
                                 to: destination,
                                 route: decision
                             )

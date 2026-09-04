@@ -46,8 +46,7 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
               let target = target(for: key),
               (target.protocolName == "vless" || target.protocolName == "ss" || target.protocolName == "shadowsocks") else { return nil }
         if target.protocolName == "ss" || target.protocolName == "shadowsocks" {
-            guard let codec = shadowsocksState.take(for: key) else { throw NativeAppCatalogConnectorError.unsupportedProtocol("shadowsocks state") }
-            return codec
+            throw NativeAppCatalogConnectorError.unsupportedProtocol("shadowsocks connection state")
         }
         let endpoint = try SOCKS5Endpoint(
             address: SOCKS5Address(domain: destination.host),
@@ -60,6 +59,15 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
             )
         }
         return NativeAppVLESSPlainBridge()
+    }
+
+    func makeBridgeCodec(for connection: NWConnection, to destination: MClashInboundDestination, route: MClashInboundRoute) throws -> (any MClashInboundBridgeCodec)? {
+        guard case let .proxy(key) = route, let target = target(for: key), target.protocolName == "ss" || target.protocolName == "shadowsocks" else {
+            return try makeBridgeCodec(to: destination, route: route)
+        }
+        guard let codec = shadowsocksState.take(for: connection) else { throw NativeAppCatalogConnectorError.unsupportedProtocol("shadowsocks connection state") }
+        _ = key
+        return codec
     }
 
     func connect(to _: MClashInboundDestination, route: MClashInboundRoute) -> NWConnection {
@@ -131,8 +139,11 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
             } else if target.protocolName == "ss" || target.protocolName == "shadowsocks" {
                 guard Self.shadowsocksSupported(target) else { throw NativeAppCatalogConnectorError.unsupportedProtocol("shadowsocks features") }
                 let codec = try NativeAppShadowsocksCodec(target: target, destination: destination, routeKey: key)
-                shadowsocksState.store(codec, for: connection)
-                connection.send(content: try codec.destinationPreamble(), completion: .contentProcessed(completion))
+                let preamble = try codec.destinationPreamble()
+                connection.send(content: preamble, completion: .contentProcessed { error in
+                    if error == nil { self.shadowsocksState.store(codec, for: connection) }
+                    completion(error)
+                })
             } else if target.protocolName == "vless" {
                 let endpoint = try SOCKS5Endpoint(
                     address: SOCKS5Address(domain: destination.host),
@@ -540,21 +551,16 @@ enum NativeAppCatalogConnectorError: Error, Equatable, Sendable {
     case invalidWebSocketUpgrade
 }
 
-private final class NativeAppShadowsocksState: @unchecked Sendable {
+final class NativeAppShadowsocksState: @unchecked Sendable {
     private let lock = NSLock()
-    private var codecs: [String: NativeAppShadowsocksCodec] = [:]
+    private var codecs: [ObjectIdentifier: NativeAppShadowsocksCodec] = [:]
     func store(_ codec: NativeAppShadowsocksCodec, for connection: NWConnection) {
-        lock.lock(); defer { lock.unlock() }; codecs[key(connection)] = codec
+        lock.lock(); defer { lock.unlock() }; codecs[ObjectIdentifier(connection)] = codec
     }
-    func take(for routeKey: String) -> NativeAppShadowsocksCodec? {
+    func take(for connection: NWConnection) -> NativeAppShadowsocksCodec? {
         lock.lock(); defer { lock.unlock() }
-        // Establishment and bridge construction are serialized by the
-        // listener; route-key fallback keeps this state usable across the
-        // value-type connector copies used by the runtime.
-        if let match = codecs.first(where: { $0.value.routeKey == routeKey }) { codecs.removeValue(forKey: match.key); return match.value }
-        return nil
+        return codecs.removeValue(forKey: ObjectIdentifier(connection))
     }
-    private func key(_ connection: NWConnection) -> String { String(ObjectIdentifier(connection).hashValue) }
 }
 
 final class NativeAppShadowsocksCodec: MClashInboundBridgeCodec, @unchecked Sendable {
