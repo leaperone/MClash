@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_version": "1.5.1",
-  "commit": "e406d0db77bab10ad239f71a70f464a01e910f7f",
+  "commit": "c7089b66217c9536ce72fb7e70e6de5892563d67",
   "status": "passed",
   "backend": "native",
   "capabilities": [
