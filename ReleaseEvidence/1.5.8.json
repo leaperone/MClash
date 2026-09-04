@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "release_version": "1.5.8",
+  "commit": "acdb8e1494be60b8a666a82a395ab3bbc0e44ad7",
+  "status": "passed",
+  "backend": "native",
+  "capabilities": [
+    "nativeRuntime",
+    "nativeRouting",
+    "nativeDNS"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "MCLASH_GEOIP_DAT_PATH=.build/geodata/GeoIP.dat MCLASH_GEOSITE_DAT_PATH=.build/geodata/GeoSite.dat ./scripts/test-direct.sh",
+    "MCLASH_LEGACY_RUNTIME=1 ./scripts/integration-test.sh",
+    "MCLASH_NATIVE_ONLY=1 MCLASH_VERSION=1.5.8 MCLASH_BUILD_NUMBER=150080 CONFIGURATION=native-only-1.5.8-final ./scripts/build-app.sh",
+    "MCLASH_APP_PATH=.build/native-only-1.5.8-final/MClash.app MCLASH_SHADOW_SOURCE_ROOT=~/Library/Application Support/MClash MCLASH_SHADOW_AUTO_CONNECT=1 ./scripts/smoke-test-native-runtime-cli.sh",
+    "MCLASH_REAL_PROFILE_MANIFEST=~/Library/Application Support/MClash/Configuration/manifest.json MCLASH_REAL_NODE_NAME_CONTAINS='🇺🇸 美国|us|9929|ws|private' .build/direct-tests/MClashPackageTests"
+  ],
+  "validation_summary": {
+    "application_tests": 548,
+    "shared_targets": 36,
+    "network_extension_targets": 12,
+    "automation_tests": 6,
+    "geodata_real_fixture": {
+      "geoip_status": "ready",
+      "geoip_revision": "17120267",
+      "geoip_cn_match": "223.5.5.5",
+      "geosite_status": "ready",
+      "geosite_revision": "4242757",
+      "geosite_gfw_match": "www.google.com"
+    },
+    "native_shadow": {
+      "backend": "native",
+      "workspace_revision": 31,
+      "listener_count": 5,
+      "enabled_listener_count": 4,
+      "enabled_socket_listener_count": 3,
+      "running_socket_listener_count": 3,
+      "control_plane_available": false,
+      "unsupported_connectors": []
+    },
+    "real_cunoe_endpoint": {
+      "protocol": "vless",
+      "transport": "ws",
+      "google_generate_204": 204
+    }
+  }
+}
