@@ -626,11 +626,17 @@ final class TransparentProxyProvider: NETransparentProxyProvider, @unchecked Sen
         if let failOpen = request.failOpen {
             configuration[ProviderConfigurationKey.failOpen] = failOpen
         }
+        if let backend = request.captureBackend {
+            configuration[ProviderConfigurationKey.captureBackend] = backend.rawValue as NSString
+        }
         if let snapshot = request.captureConfigurationSnapshot {
             configuration[ProviderConfigurationKey.captureConfigurationSnapshot] = snapshot
         }
         if let catalog = request.mihomoRouteProxyCatalog {
             configuration[ProviderConfigurationKey.mihomoRouteProxyCatalog] = catalog
+        }
+        if let catalog = request.outboundNodeTargetCatalog {
+            configuration[ProviderConfigurationKey.outboundNodeTargetCatalog] = catalog
         }
         if let host = request.mihomoSOCKSHost {
             configuration[ProviderConfigurationKey.mihomoSOCKSHost] = host

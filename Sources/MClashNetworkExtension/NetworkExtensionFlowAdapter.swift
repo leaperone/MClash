@@ -141,11 +141,13 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let routeCatalog = ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
         ) ?? [:]
+        let backendMarker = (configuration?[ProviderConfigurationKey.captureBackend] as? String)
+            .flatMap(NetworkCaptureBackend.init(rawValue:))
         let nativePayloadPresent = configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog] != nil
         let nativeCatalog = (configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data)
             .flatMap { try? OutboundNodeTargetCatalog.decode($0) }
         state.outboundNodeTargets = nativeCatalog
-        state.nativeMode = nativePayloadPresent
+        state.nativeMode = backendMarker == .native || nativePayloadPresent
         state.mihomoSOCKSConfigurations = routeCatalog
         // Route availability includes connector-neutral node targets. A
         // native SOCKS5 route must not be downgraded to Direct merely because

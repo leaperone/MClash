@@ -6,12 +6,18 @@ enum MClashNetworkExtensionIdentifiers {
     static let localizedDescription = "MClash Application Proxy"
 }
 
+enum NetworkCaptureBackend: String, Codable, Equatable, Sendable {
+    case legacy
+    case native
+}
+
 struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
     let revision: UInt64
     let activationIdentifier: UUID
     let dnsEnabled: Bool
     let failOpen: Bool
     let captureEnabled: Bool
+    let captureBackend: NetworkCaptureBackend
     let encodedCaptureSnapshot: Data?
     /// Connector-neutral route endpoint catalog sent to the provider.
     let encodedOutboundConnectorCatalog: Data?
@@ -45,6 +51,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         self.failOpen = failOpen
         self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = true
+        captureBackend = .legacy
         encodedCaptureSnapshot = nil
         encodedOutboundConnectorCatalog = nil
         encodedOutboundNodeTargetCatalog = nil
@@ -87,9 +94,9 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         failOpen = preferences.failOpen
         self.dnsUpstreamMode = dnsUpstreamMode
         captureEnabled = preferences.enabled
+        captureBackend = (outboundNodeTargetCatalog != nil || nativeInboundListenersEnabled || dnsUpstreamMode == .native) ? .native : .legacy
         self.encodedCaptureSnapshot = encodedSnapshot
-        let nativeDataPlane = nativeInboundListenersEnabled
-            && (dnsUpstreamMode == .native || !preferences.dnsEnabled)
+        let nativeDataPlane = captureBackend == .native
         let endpoints = nativeDataPlane
             ? []
             : try routeProxyEndpoints ?? mihomoListener?.routeProxyEndpoints() ?? []
@@ -114,6 +121,9 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
                 encodedCaptureSnapshot: encodedSnapshot,
                 nativeUpstreamBootstrap: nativeUpstreamBootstrap
             ).encoded()
+        } else if captureBackend == .native {
+            // Native App Routing does not require a DNS provider bootstrap.
+            encodedDNSProxyBootstrap = nil
         } else {
             guard let profileRulesProxy = endpoints.first(where: { $0.route == .profileRules }) else {
                 throw NetworkExtensionRuntimeConfigurationError.missingProfileRulesProxy
@@ -137,11 +147,12 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
             "activationIdentifier": activationIdentifier.uuidString as NSString,
             "captureEnabled": NSNumber(value: captureEnabled),
             "failOpen": NSNumber(value: failOpen),
+            "captureBackend": captureBackend.rawValue as NSString,
         ]
         if let encodedCaptureSnapshot {
             configuration["captureConfigurationSnapshot"] = encodedCaptureSnapshot as NSData
         }
-        if let encodedOutboundConnectorCatalog {
+        if captureBackend == .legacy, let encodedOutboundConnectorCatalog {
             configuration["outboundConnectorCatalog"] = encodedOutboundConnectorCatalog as NSData
             // Keep the old key during the rolling upgrade window. Older
             // providers ignore the canonical key and continue to function.
@@ -157,7 +168,7 @@ struct NetworkExtensionRuntimeConfiguration: Equatable, Sendable {
         if let encodedDNSProxyBootstrap {
             configuration["dnsProxyBootstrap"] = encodedDNSProxyBootstrap as NSData
         }
-        if let mihomoListener {
+        if captureBackend == .legacy, let mihomoListener {
             configuration["mihomoSOCKSHost"] = mihomoListener.ipv4Endpoint.host as NSString
             configuration["mihomoSOCKSPort"] = NSNumber(value: mihomoListener.port)
             if let authentication = mihomoListener.authentication {

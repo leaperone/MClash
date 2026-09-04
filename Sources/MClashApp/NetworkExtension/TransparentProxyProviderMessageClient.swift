@@ -21,6 +21,8 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
     let dnsProxyBootstrap: Data?
     let captureEnabled: Bool?
     let failOpen: Bool?
+    let captureBackend: NetworkCaptureBackend?
+    let outboundNodeTargetCatalog: Data?
     let captureConfigurationSnapshot: Data?
     let mihomoRouteProxyCatalog: Data?
     let mihomoSOCKSHost: String?
@@ -37,6 +39,8 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
         dnsProxyBootstrap: Data? = nil,
         captureEnabled: Bool? = nil,
         failOpen: Bool? = nil,
+        captureBackend: NetworkCaptureBackend? = nil,
+        outboundNodeTargetCatalog: Data? = nil,
         captureConfigurationSnapshot: Data? = nil,
         mihomoRouteProxyCatalog: Data? = nil,
         mihomoSOCKSHost: String? = nil,
@@ -53,6 +57,8 @@ struct TransparentProxyProviderControlRequest: Codable, Equatable, Sendable {
         self.dnsProxyBootstrap = dnsProxyBootstrap
         self.captureEnabled = captureEnabled
         self.failOpen = failOpen
+        self.captureBackend = captureBackend
+        self.outboundNodeTargetCatalog = outboundNodeTargetCatalog
         self.captureConfigurationSnapshot = captureConfigurationSnapshot
         self.mihomoRouteProxyCatalog = mihomoRouteProxyCatalog
         self.mihomoSOCKSHost = mihomoSOCKSHost
@@ -303,12 +309,14 @@ struct TransparentProxyProviderMessageClient: Sendable {
                 dnsProxyBootstrap: configuration.encodedDNSProxyBootstrap,
                 captureEnabled: configuration.captureEnabled,
                 failOpen: configuration.failOpen,
+                captureBackend: configuration.captureBackend,
+                outboundNodeTargetCatalog: configuration.captureBackend == .native ? configuration.encodedOutboundNodeTargetCatalog : nil,
                 captureConfigurationSnapshot: configuration.encodedCaptureSnapshot,
-                mihomoRouteProxyCatalog: configuration.encodedOutboundConnectorCatalog,
-                mihomoSOCKSHost: listener?.ipv4Endpoint.host,
-                mihomoSOCKSPort: listener?.port,
-                mihomoSOCKSUsername: listener?.authentication?.username,
-                mihomoSOCKSPassword: listener?.authentication?.password
+                mihomoRouteProxyCatalog: configuration.captureBackend == .legacy ? configuration.encodedOutboundConnectorCatalog : nil,
+                mihomoSOCKSHost: configuration.captureBackend == .legacy ? listener?.ipv4Endpoint.host : nil,
+                mihomoSOCKSPort: configuration.captureBackend == .legacy ? listener?.port : nil,
+                mihomoSOCKSUsername: configuration.captureBackend == .legacy ? listener?.authentication?.username : nil,
+                mihomoSOCKSPassword: configuration.captureBackend == .legacy ? listener?.authentication?.password : nil
             ),
             expectedRevision: configuration.revision,
             expectedCaptureEnabled: configuration.captureEnabled,

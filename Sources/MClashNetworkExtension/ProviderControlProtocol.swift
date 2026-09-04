@@ -28,6 +28,7 @@ struct ProviderControlRequest: Codable, Sendable {
     let dnsProxyBootstrap: Data?
     let captureEnabled: Bool?
     let failOpen: Bool?
+    let captureBackend: NetworkCaptureBackend?
     let captureConfigurationSnapshot: Data?
     let mihomoRouteProxyCatalog: Data?
     let mihomoSOCKSHost: String?
@@ -55,6 +56,7 @@ enum ProviderConfigurationKey {
     static let revision = "revision"
     static let captureEnabled = "captureEnabled"
     static let failOpen = "failOpen"
+    static let captureBackend = "captureBackend"
     static let activationIdentifier = "activationIdentifier"
     static let dnsProxyBootstrap = "dnsProxyBootstrap"
     /// JSON-encoded `CaptureConfigurationSnapshot` stored as `Data`/`NSData`.
