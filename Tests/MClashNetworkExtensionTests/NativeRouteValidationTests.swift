@@ -30,7 +30,7 @@ struct NativeRouteValidationTests {
         #expect(ProviderSOCKSConfiguration.routeCatalog(providerConfiguration: configuration) == nil)
     }
 
-    @Test("A node-only bootstrap rejects unsupported-only targets")
+    @Test("A node-only bootstrap accepts unsupported targets for flow-level fail-closed")
     func unsupportedNodeOnlyBootstrapIsRejected() throws {
         let snapshot = try CaptureConfigurationSnapshot(revision: 1, rules: [])
         let target = try OutboundNodeTarget(
@@ -49,7 +49,7 @@ struct NativeRouteValidationTests {
                 try catalog.encoded()
         ]
 
-        #expect(!NetworkExtensionFlowDecisionCoordinator().validates(configuration: configuration))
+        #expect(NetworkExtensionFlowDecisionCoordinator().validates(configuration: configuration))
     }
 
     @Test("Native catalog remains authoritative over a legacy Mihomo rescue")

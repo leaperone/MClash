@@ -141,10 +141,11 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let routeCatalog = ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
         ) ?? [:]
+        let nativePayloadPresent = configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog] != nil
         let nativeCatalog = (configuration?[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data)
             .flatMap { try? OutboundNodeTargetCatalog.decode($0) }
         state.outboundNodeTargets = nativeCatalog
-        state.nativeMode = nativeCatalog != nil
+        state.nativeMode = nativePayloadPresent
         state.mihomoSOCKSConfigurations = routeCatalog
         // Route availability includes connector-neutral node targets. A
         // native SOCKS5 route must not be downgraded to Direct merely because
@@ -188,7 +189,9 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         if let data = configuration[ProviderConfigurationKey.outboundNodeTargetCatalog] as? Data {
             guard let catalog = try? OutboundNodeTargetCatalog.decode(data),
                   !catalog.entries.isEmpty else { return false }
-            return catalog.entries.allSatisfy { NativeConnectorRegistry.supportsNativeTCP($0.target) }
+            // Capability is checked for the selected route at flow planning
+            // time; unused catalog entries must not prevent provider startup.
+            return true
         }
         return ProviderSOCKSConfiguration.routeCatalog(
             providerConfiguration: configuration
@@ -318,7 +321,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             .unsupported
         }
         let nativeDecision = currentState.nativeMode
-            ? normalizedNativeDecision(outcome.decision, target: nativeTarget)
+            ? normalizedNativeDecision(outcome.decision, target: nativeTarget, transportProtocol: .tcp)
             : outcome.decision
         return TCPFlowInterceptionPlan(
             decision: nativeDecision,
@@ -570,11 +573,14 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
     /// retaining the rule evidence and unavailable reason for diagnostics.
     private func normalizedNativeDecision(
         _ decision: FlowTrafficDecision,
-        target: OutboundNodeTarget?
+        target: OutboundNodeTarget?,
+        transportProtocol: TransportProtocol
     ) -> FlowTrafficDecision {
         guard case .outbound = decision.disposition,
               let target,
-              NativeConnectorRegistry.supportsNativeTCP(target) else {
+              (transportProtocol == .tcp
+                ? NativeConnectorRegistry.supportsNativeTCP(target)
+                : NativeConnectorRegistry.supportsNativeUDP(target)) else {
             guard case .outbound = decision.disposition else { return decision }
             let fallback: UnavailableFallback = .reject
             let cause: RuleDecisionCause
@@ -611,7 +617,8 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         let nativeDecision = currentState.nativeMode
             ? normalizedNativeDecision(
                 outcome.decision,
-                target: nativeRoute.flatMap { currentState.outboundNodeTargets?.target(for: $0) }
+                target: nativeRoute.flatMap { currentState.outboundNodeTargets?.target(for: $0) },
+                transportProtocol: .udp
             )
             : outcome.decision
         if currentState.nativeMode {
