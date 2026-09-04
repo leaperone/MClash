@@ -43,12 +43,16 @@ public enum NativeGeoKind: String, Codable, Hashable, Sendable {
 /// silently change routing policy.
 public enum NativeRuleSetSupport: Equatable, Sendable {
     case inline
+    case localText
     case externalRequiresLoader
 
     public static func assess(_ ruleSet: RuleSet) -> NativeRuleSetSupport {
         if ruleSet.sourceURL == nil,
            ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             return .inline
+        }
+        if ruleSet.sourceURL == nil, ruleSet.format == .text {
+            return .localText
         }
         return .externalRequiresLoader
     }
@@ -68,19 +72,45 @@ public enum NativeRuleSetFileLoader {
     }
 
     public static func load(_ ruleSet: RuleSet) throws -> [String] {
-        guard ruleSet.sourceURL == nil, ruleSet.format == .text else { throw Error.unsupportedSource }
-        guard let rawPath = ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines), !rawPath.isEmpty else {
+        guard ruleSet.sourceURL == nil, ruleSet.format == .text else {
+            throw Error.unsupportedSource
+        }
+        guard let rawPath = ruleSet.path?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawPath.isEmpty else {
             throw Error.missingPath
         }
         let url = URL(fileURLWithPath: rawPath).standardizedFileURL
-        guard let data = try? Data(contentsOf: url), data.count <= maximumBytes else {
-            throw (FileManager.default.fileExists(atPath: url.path) ? Error.tooLarge : Error.unreadable)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url, options: .mappedIfSafe)
+        } catch {
+            throw Error.unreadable
         }
-        return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).compactMap {
-            let line = $0.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return line.isEmpty ? nil : line
-        }
+        guard data.count <= maximumBytes else { throw Error.tooLarge }
+        return String(decoding: data, as: UTF8.self)
+            .split(whereSeparator: \.isNewline)
+            .compactMap { rawLine in
+                var line = rawLine
+                    .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !line.isEmpty,
+                      !line.hasPrefix("!"),
+                      !line.hasPrefix("[") else { return nil }
+                // Common GFW/Adblock-style entries are normalized to the
+                // connector-neutral classical vocabulary before evaluation.
+                if line.hasPrefix("||"), line.hasSuffix("^") {
+                    line = String(line.dropFirst(2).dropLast())
+                    return line.isEmpty ? nil : "DOMAIN-SUFFIX,\(line)"
+                }
+                if line.contains(",") { return line }
+                if (try? IPNetwork(String(line))) != nil {
+                    return "IP-CIDR,\(line)"
+                }
+                let domain = line.hasPrefix("+.")
+                    ? String(line.dropFirst(2))
+                    : line
+                return "DOMAIN-SUFFIX,\(domain)"
+            }
     }
 }
 

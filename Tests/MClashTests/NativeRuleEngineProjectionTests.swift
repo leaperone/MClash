@@ -8,7 +8,7 @@ struct NativeRuleEngineProjectionTests {
     func ruleSetSupportGate() {
         #expect(NativeRuleSetSupport.assess(RuleSet(name: "inline", rules: ["DOMAIN,example.com"])) == .inline)
         #expect(NativeRuleSetSupport.assess(RuleSet(name: "remote", sourceURL: URL(string: "https://rules.example/set"))) == .externalRequiresLoader)
-        #expect(NativeRuleSetSupport.assess(RuleSet(name: "file", path: "/tmp/rules.txt")) == .externalRequiresLoader)
+        #expect(NativeRuleSetSupport.assess(RuleSet(name: "file", path: "/tmp/rules.txt")) == .localText)
     }
 
     @Test("native text rule-set loader strips comments and blank lines")
@@ -16,12 +16,36 @@ struct NativeRuleEngineProjectionTests {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("mclash-rules-\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(at: url) }
-        try Data("# header\nexample.com\nDOMAIN-SUFFIX,example.org # note\n\n".utf8).write(to: url)
+        try Data("# header\nexample.com\n||example.org^ # note\n203.0.113.0/24\n\n".utf8).write(to: url)
         let set = RuleSet(name: "local", format: .text, path: url.path)
-        #expect(try NativeRuleSetFileLoader.load(set) == ["example.com", "DOMAIN-SUFFIX,example.org"])
+        #expect(try NativeRuleSetFileLoader.load(set) == [
+            "DOMAIN-SUFFIX,example.com",
+            "DOMAIN-SUFFIX,example.org",
+            "IP-CIDR,203.0.113.0/24"
+        ])
         #expect(throws: NativeRuleSetFileLoader.Error.unsupportedSource) {
             try NativeRuleSetFileLoader.load(RuleSet(name: "yaml", format: .yaml, path: url.path))
         }
+    }
+
+    @Test("native projection evaluates a local text rule set")
+    func evaluatesLocalTextRuleSet() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mclash-native-rules-\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("||blocked.example^\n".utf8).write(to: url)
+        let group = ProxyGroup(name: "Proxy")
+        let ruleSet = RuleSet(
+            name: "local-gfw",
+            format: .text,
+            path: url.path,
+            defaultAction: .proxyGroup(group.id)
+        )
+        let runtime = plan(groups: [group], ruleSets: [ruleSet])
+        let decision = NativeRuleEngineProjection(plan: runtime)
+            .evaluate(try context("www.blocked.example"))
+        #expect(decision.action == .outbound(group.id))
+        #expect(decision.matchedRuleSetID == ruleSet.id)
     }
 
     @Test("native projection honors direct and reject actions")

@@ -113,6 +113,15 @@ struct NativeRuntimeSessionState: Equatable, Sendable {
             throw NativeRuntimeSessionValidationError
                 .externalRuleSetRequiresLoader(externalRuleSet.id)
         }
+        for ruleSet in plan.ruleSets
+        where NativeRuleSetSupport.assess(ruleSet) == .localText {
+            do {
+                _ = try NativeRuleSetFileLoader.load(ruleSet)
+            } catch {
+                throw NativeRuntimeSessionValidationError
+                    .ruleSetFileLoadFailed(ruleSet.id, error.localizedDescription)
+            }
+        }
         do {
             try MClashListenerRegistry.validate(listeners.listeners)
         } catch let error as MClashListenerRegistryError {
@@ -126,6 +135,7 @@ struct NativeRuntimeSessionState: Equatable, Sendable {
 enum NativeRuntimeSessionValidationError: Error, Equatable, Sendable {
     case invalidPlan(CompiledRuntimePlanValidationError)
     case externalRuleSetRequiresLoader(RuleSetID)
+    case ruleSetFileLoadFailed(RuleSetID, String)
     case invalidListeners(MClashListenerRegistryError)
 }
 
@@ -136,6 +146,8 @@ extension NativeRuntimeSessionValidationError: LocalizedError {
             "Native runtime policy plan is invalid: \(error.localizedDescription)"
         case let .externalRuleSetRequiresLoader(id):
             "Native runtime rule set \(id.rawValue.uuidString.lowercased()) requires an explicit native loader; no policy was activated."
+        case let .ruleSetFileLoadFailed(id, reason):
+            "Native runtime could not load rule set \(id.rawValue.uuidString.lowercased()): \(reason)"
         case let .invalidListeners(error):
             "Native runtime listener registry is invalid: \(error.localizedDescription)"
         }
