@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "release_version": "1.5.5",
+  "commit": "bca5548269017ecab1d1e6b571b17f70250ae698",
+  "status": "passed",
+  "backend": "native",
+  "capabilities": [
+    "nativeRuntime",
+    "nativeRouting",
+    "nativeDNS"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh",
+    "MCLASH_LEGACY_RUNTIME=1 ./scripts/integration-test.sh",
+    "MCLASH_NATIVE_ONLY=1 MCLASH_VERSION=1.5.5 MCLASH_BUILD_NUMBER=150050 CONFIGURATION=native-only-1.5.5-final ./scripts/build-app.sh",
+    "MCLASH_APP_PATH=.build/native-only-1.5.5-final/MClash.app MCLASH_SHADOW_SOURCE_ROOT=~/Library/Application Support/MClash MCLASH_SHADOW_AUTO_CONNECT=1 ./scripts/smoke-test-native-runtime-cli.sh",
+    "MCLASH_REAL_PROFILE_MANIFEST=~/Library/Application Support/MClash/Configuration/manifest.json .build/direct-tests/MClashPackageTests"
+  ],
+  "validation_summary": {
+    "application_tests": 538,
+    "shared_targets": 35,
+    "network_extension_targets": 12,
+    "automation_tests": 6,
+    "native_shadow": {
+      "backend": "native",
+      "workspace_revision": 31,
+      "listener_count": 5,
+      "enabled_listener_count": 4,
+      "enabled_socket_listener_count": 3,
+      "running_socket_listener_count": 3,
+      "control_plane_available": false,
+      "unsupported_connectors": []
+    }
+  }
+}
