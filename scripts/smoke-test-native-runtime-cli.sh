@@ -178,15 +178,23 @@ if [[ "${MCLASH_SHADOW_AUTO_CONNECT:-0}" == "1" ]]; then
   while (( SECONDS < connect_deadline )); do
     response="$("${cli}" runtime-diagnostics --socket "${socket_path}" --pretty \
       --timeout "${MCLASH_SMOKE_TIMEOUT_SECONDS:-30}")"
-    state="$(/usr/bin/python3 - "${response}" <<'PY'
-import json, sys
+    if /usr/bin/python3 - "${response}" <<'PY'
+import json
+import sys
+
 try:
-    print(json.loads(sys.argv[1]).get("result", {}).get("state", ""))
+    diagnostics = json.loads(sys.argv[1]).get("result", {})
+    expected = diagnostics.get("enabledSocketListenerCount", -1)
+    states = diagnostics.get("listenerStates", {})
+    running = sum(value == "running" for value in states.values())
+    ready = diagnostics.get("state") == "running" and expected >= 0 and running >= expected
 except Exception:
-    print("")
+    ready = False
+raise SystemExit(0 if ready else 1)
 PY
-)"
-    [[ "${state}" == "running" ]] && break
+    then
+      break
+    fi
     sleep 0.2
   done
 else
@@ -219,7 +227,9 @@ if sys.argv[3] == "1":
     if diagnostics.get("state") != "running" or not diagnostics.get("startedAt"):
         raise SystemExit("native shadow auto-connect did not reach a running state")
     listener_states = diagnostics.get("listenerStates", {})
-    enabled_count = diagnostics.get("enabledListenerCount", 0)
+    enabled_count = diagnostics.get("enabledSocketListenerCount", -1)
+    if enabled_count < 0:
+        raise SystemExit("native shadow diagnostics omitted the socket listener count")
     running_count = sum(value == "running" for value in listener_states.values())
     if running_count < enabled_count:
         raise SystemExit(

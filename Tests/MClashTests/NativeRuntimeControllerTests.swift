@@ -328,7 +328,7 @@ struct NativeRuntimeControllerTests {
         let app = try MClashListenerSpec(
             name: "Native App Routing",
             kind: .appRouting,
-            enabled: false
+            enabled: true
         )
         let registry = try MClashListenerRegistry(listeners: [http, app])
         let engine = try NativeRuntimeEngine(plan: plan, listeners: registry)
