@@ -81,7 +81,7 @@ public struct NativeRuleEngineProjection: Sendable {
         for ruleSet in plan.ruleSets where ruleSet.enabled {
             if let ruleSetAction = ruleSetAction(ruleSet: ruleSet, context: context, visited: []) {
                 return NativeRouteDecision(
-                    action: ruleSetAction,
+                    action: ruleSetAction.action,
                     matchedRuleSetID: ruleSet.id
                 )
             }
@@ -157,14 +157,25 @@ public struct NativeRuleEngineProjection: Sendable {
     /// classical rule set may contain `GEOSITE,gfw,REJECT` or
     /// `GEOIP,CN,DIRECT,no-resolve`, and silently replacing that target with
     /// the rule-set default would change policy semantics.
+    private struct RuleSetResolution {
+        let action: NativeRouteAction
+        /// True when the action came from an explicit target token in a
+        /// classical rule-set entry. A nested rule-set's default must not
+        /// override its wrapper's default unless it carried such a token.
+        let isExplicit: Bool
+    }
+
     private func ruleSetAction(
         ruleSet: RuleSet,
         context: FlowContext,
         visited: Set<RuleSetID>
-    ) -> NativeRouteAction? {
+    ) -> RuleSetResolution? {
         guard !visited.contains(ruleSet.id) else { return nil }
         if let ruleSetMatcher, ruleSetMatcher(ruleSet, context) {
-            return action(ruleSet.defaultAction)
+            return RuleSetResolution(
+                action: action(ruleSet.defaultAction),
+                isExplicit: false
+            )
         }
         var nextVisited = visited
         nextVisited.insert(ruleSet.id)
@@ -176,17 +187,31 @@ public struct NativeRuleEngineProjection: Sendable {
             let explicitTarget = parts.dropFirst(2).first(where: { actionToken($0) != nil })
             if kind == "RULE-SET", let name = parts.dropFirst().first?.lowercased(),
                let nested = plan.ruleSets.first(where: { $0.enabled && $0.name.lowercased() == name }) {
-                guard let nestedAction = ruleSetAction(
+                guard let nestedResolution = ruleSetAction(
                     ruleSet: nested,
                     context: context,
                     visited: nextVisited
                 ) else { continue }
-                return explicitTarget.flatMap(actionToken) ?? nestedAction
+                if let explicitTarget, let resolved = actionToken(explicitTarget) {
+                    return RuleSetResolution(action: resolved, isExplicit: true)
+                }
+                return nestedResolution.isExplicit
+                    ? nestedResolution
+                    : RuleSetResolution(
+                        action: action(ruleSet.defaultAction),
+                        isExplicit: false
+                    )
             }
             guard matchesRuleSetEntry(kind: kind, value: parts[1], context: context) else {
                 continue
             }
-            return explicitTarget.flatMap(actionToken) ?? action(ruleSet.defaultAction)
+            if let explicitTarget, let resolved = actionToken(explicitTarget) {
+                return RuleSetResolution(action: resolved, isExplicit: true)
+            }
+            return RuleSetResolution(
+                action: action(ruleSet.defaultAction),
+                isExplicit: false
+            )
         }
         return nil
     }

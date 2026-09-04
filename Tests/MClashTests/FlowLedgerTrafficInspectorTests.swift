@@ -40,8 +40,8 @@ struct FlowLedgerTrafficInspectorTests {
         #expect(inspector.evidence.contains("rule-payload=api.example.com"))
         #expect(inspector.quickRuleDrafts.map(\.kind) == [
             .application,
-            .exactDomain,
             .domainSuffix,
+            .exactDomain,
             .ipAddress,
             .processPath
         ])
