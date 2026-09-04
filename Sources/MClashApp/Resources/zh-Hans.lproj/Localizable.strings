@@ -2038,6 +2038,7 @@
 "No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”." = "还没有自动选择器。添加一个，例如“名称包含 US”或“来源为 Primary”。";
 "Match conditions" = "匹配条件";
 "Remove selector" = "移除选择器";
+"Remove condition" = "移除条件";
 "All included conditions must match. Exclusions are applied last." = "所有包含条件必须同时满足，排除条件最后应用。";
 "Name contains or matches (for example US or US*)" = "名称包含或匹配（例如 US 或 US*）";
 "Host/IP contains or matches (for example us.*)" = "主机/IP 包含或匹配（例如 us.*）";
