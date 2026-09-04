@@ -532,12 +532,12 @@ jobs:
             "${release_dir}/SHA256SUMS"
           )
           distribution_mode="$(python3 - "${release_dir}/distribution-mode.json" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as stream:
-    print(json.load(stream).get("mode", "compatibility"))
-PY
-)"
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              print(json.load(stream).get("mode", "compatibility"))
+          PY
+          )"
           if [[ "${distribution_mode}" != "native-only" ]]; then
             assets+=("${release_dir}/mihomo-${MIHOMO_ALPHA_REVISION}-source.tar.gz")
           fi
