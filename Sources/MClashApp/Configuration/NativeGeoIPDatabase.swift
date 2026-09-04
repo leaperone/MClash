@@ -6,25 +6,31 @@ import Darwin
 /// reads country code and CIDR entries; GeoSite, metadb and MaxMind formats are
 /// deliberately outside this type.
 public struct NativeGeoIPDatabaseProvider: NativeGeoDatabaseProvider {
-    private struct Entry: Sendable { let country: String; let networks: [IPNetwork] }
-    private let entries: [Entry]
+    private let networksByCountry: [String: [IPNetwork]]
+    public let entryCount: Int
     public let status: NativeGeoDatabaseStatus
 
     public init(data: Data) throws {
         guard data.count <= 32 * 1024 * 1024 else { throw NativeGeoIPDatabaseError.tooLarge }
         var decoder = NativeGeoIPProtobufDecoder(data: data)
-        entries = try decoder.decode().map {
-            Entry(country: $0.0, networks: $0.1)
+        let decoded = try decoder.decode()
+        var grouped: [String: [IPNetwork]] = [:]
+        var count = 0
+        for (country, networks) in decoded {
+            let key = country.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            guard !key.isEmpty else { throw NativeGeoIPDatabaseError.malformed }
+            grouped[key, default: []].append(contentsOf: networks)
+            count += networks.count
         }
+        networksByCountry = grouped
+        entryCount = count
         status = .ready(revision: String(data.count))
     }
 
     public func matches(kind: NativeGeoKind, value: String, context: FlowContext) -> Bool {
         guard kind == .ip, let address = context.destination.ipAddress else { return false }
-        return entries.contains { entry in
-            entry.country.caseInsensitiveCompare(value) == .orderedSame
-                && entry.networks.contains { $0.contains(address) }
-        }
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return networksByCountry[key]?.contains { $0.contains(address) } == true
     }
 }
 

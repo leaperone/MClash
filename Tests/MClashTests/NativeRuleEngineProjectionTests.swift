@@ -47,6 +47,7 @@ struct NativeRuleEngineProjectionTests {
             transportProtocol: .udp
         )
         #expect(database.status != .unavailable)
+        #expect(database.entryCount > 0)
         #expect(database.matches(kind: .ip, value: "CN", context: context))
     }
 

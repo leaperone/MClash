@@ -197,6 +197,8 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     private var outboundNodeTargets: OutboundNodeTargetCatalog?
     private var inboundListeners: [UUID: MClashInboundListener] = [:]
     private var listenerGeneration: UInt64 = 0
+    private let geoProvider: (any NativeGeoDatabaseProvider)?
+    private let geoMatcher: NativeGeoMatcher?
 
     init() {
         let pair = AsyncStream<CoreEvent>.makeStream(
@@ -209,6 +211,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         sessionState = nil
         sessionValidationError = nil
         outboundNodeTargets = nil
+        geoProvider = Self.loadBundledGeoIPProvider()
+        if let provider = geoProvider {
+            geoMatcher = { kind, value, context in provider.matches(kind: kind, value: value, context: context) }
+        } else { geoMatcher = nil }
     }
 
     /// Creates an engine with a validated, MClash-owned policy snapshot.
@@ -217,7 +223,8 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     init(
         plan: CompiledRuntimePlan,
         listeners: MClashListenerRegistry,
-        outboundNodeTargets: OutboundNodeTargetCatalog? = nil
+        outboundNodeTargets: OutboundNodeTargetCatalog? = nil,
+        geoProvider: (any NativeGeoDatabaseProvider)? = nil
     ) throws {
         let pair = AsyncStream<CoreEvent>.makeStream(
             of: CoreEvent.self,
@@ -231,6 +238,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         listenerHandles = Self.makeListenerHandles(for: listeners)
         self.outboundNodeTargets = outboundNodeTargets
             ?? Self.makeOutboundNodeTargetCatalog(from: plan)
+        self.geoProvider = geoProvider ?? Self.loadBundledGeoIPProvider()
+        if let provider = self.geoProvider {
+            self.geoMatcher = { kind, value, context in provider.matches(kind: kind, value: value, context: context) }
+        } else { self.geoMatcher = nil }
     }
 
     func configure(plan: CompiledRuntimePlan, listeners: MClashListenerRegistry) async throws {
@@ -354,7 +365,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             )
         }
 
-        let decision = NativeRuleEngineProjection(plan: sessionState.plan).evaluate(context)
+        let decision = NativeRuleEngineProjection(plan: sessionState.plan, geoMatcher: geoMatcher).evaluate(context)
         guard case let .outbound(groupID) = decision.action,
               let group = sessionState.plan.proxyGroups.first(where: { $0.id == groupID }) else {
             return NativeRuntimeRouteEvaluation(decision: decision, route: nil, target: nil, connectorDiagnostic: nil)
@@ -387,6 +398,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
     }
 
     func nativeSessionState() -> NativeRuntimeSessionState? { sessionState }
+
+    func nativeGeoDatabaseStatus() -> NativeGeoDatabaseStatus {
+        geoProvider?.status ?? .unavailable
+    }
 
     func state() async -> CoreRunState { currentState }
 
@@ -633,7 +648,7 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
         plan: CompiledRuntimePlan,
         catalog: OutboundNodeTargetCatalog?
     ) -> @Sendable (MClashInboundDestination) -> MClashInboundRoute {
-        let projection = NativeRuleEngineProjection(plan: plan)
+        let projection = NativeRuleEngineProjection(plan: plan, geoMatcher: geoMatcher)
         return { destination in
             guard let flowDestination = try? FlowDestination(
                 hostname: destination.host,
@@ -676,6 +691,21 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
                 "\(spec.kind.rawValue):\(spec.bindAddress):\(port)"
             )
         })
+    }
+
+    private static func loadBundledGeoIPProvider() -> (any NativeGeoDatabaseProvider)? {
+        let candidates = [
+            ProcessInfo.processInfo.environment["MCLASH_GEOIP_DAT_PATH"].map { URL(fileURLWithPath: $0) },
+            Bundle.main.url(forResource: "GeoIP", withExtension: "dat"),
+            Bundle.main.url(forResource: "GeoIP", withExtension: "dat", subdirectory: "GeoData")
+        ].compactMap { $0 }
+        for url in candidates {
+            if let data = try? Data(contentsOf: url),
+               let provider = try? NativeGeoIPDatabaseProvider(data: data) {
+                return provider
+            }
+        }
+        return nil
     }
 
     private static func socketShapesOverlap(
