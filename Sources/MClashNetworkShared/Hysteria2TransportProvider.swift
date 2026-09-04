@@ -23,6 +23,7 @@ public actor Hysteria2MultiplexedTransport {
     public struct StreamID: Hashable, Sendable { fileprivate let rawValue = UUID(); public init() {} }
     private let provider: any Hysteria2TransportProvider
     private var authenticated = false
+    private var authenticationTask: Task<Bool, Error>?
     private var closed = false
     private var streams: [StreamID: any Hysteria2StreamTransport] = [:]
 
@@ -30,8 +31,30 @@ public actor Hysteria2MultiplexedTransport {
     private func ensureAuthenticated() async throws {
         guard !closed else { throw Hysteria2TransportError.closed }
         guard !authenticated else { return }
-        guard try await provider.authenticate() else { throw Hysteria2TransportError.authenticationFailed }
-        authenticated = true
+        let task: Task<Bool, Error>
+        if let authenticationTask {
+            task = authenticationTask
+        } else {
+            let created = Task { [provider] in
+                try await provider.authenticate()
+            }
+            authenticationTask = created
+            task = created
+        }
+        do {
+            guard try await task.value else {
+                throw Hysteria2TransportError.authenticationFailed
+            }
+            authenticated = true
+            if authenticationTask != nil {
+                authenticationTask = nil
+            }
+        } catch {
+            if authenticationTask != nil {
+                authenticationTask = nil
+            }
+            throw error
+        }
     }
     public func openStream() async throws -> StreamID {
         try await ensureAuthenticated(); let id = StreamID()
