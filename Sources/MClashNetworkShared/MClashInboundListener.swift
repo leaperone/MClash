@@ -47,6 +47,16 @@ public protocol MClashInboundOutboundConnector: Sendable {
         route: MClashInboundRoute,
         completion: @escaping @Sendable (Error?) -> Void
     )
+
+    /// Completes establishment and returns bytes already read after the
+    /// protocol response header. TCP stacks may coalesce the first payload
+    /// with CONNECT/SOCKS success; dropping it corrupts the application flow.
+    func establishWithInitialPayload(
+        _ connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute,
+        completion: @escaping @Sendable (Error?, Data) -> Void
+    )
 }
 
 /// Adapts application bytes to and from a transport framing layer. Returning
@@ -72,6 +82,17 @@ public extension MClashInboundOutboundConnector {
     ) {
         _ = connection; _ = destination; _ = route
         completion(nil)
+    }
+
+    func establishWithInitialPayload(
+        _ connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute,
+        completion: @escaping @Sendable (Error?, Data) -> Void
+    ) {
+        establish(connection, to: destination, route: route) { error in
+            completion(error, Data())
+        }
     }
 }
 
@@ -215,11 +236,11 @@ public final class MClashInboundListener: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
-                connector.establish(
+                connector.establishWithInitialPayload(
                     upstream,
                     to: destination,
                     route: decision
-                ) { error in
+                ) { error, initialPayload in
                     guard error == nil else {
                         self.reportFailure(error, context: "outbound establishment")
                         client.cancel(); upstream.cancel(); return
@@ -231,7 +252,7 @@ public final class MClashInboundListener: @unchecked Sendable {
                                 to: destination,
                                 route: decision
                             )
-                            self.bridge(client, upstream, codec: codec)
+                            self.bridge(client, upstream, codec: codec, initialUpstreamPayload: initialPayload)
                         } catch {
                             self.reportFailure(error, context: "bridge setup")
                             client.cancel(); upstream.cancel()
@@ -253,15 +274,29 @@ public final class MClashInboundListener: @unchecked Sendable {
     private func bridge(
         _ a: NWConnection,
         _ b: NWConnection,
-        codec: (any MClashInboundBridgeCodec)?
+        codec: (any MClashInboundBridgeCodec)?,
+        initialUpstreamPayload: Data = Data()
     ) {
+        let upstreamToClient: @Sendable () -> Void = {
+            self.pump(from: b, to: a, transform: { data in
+                guard let codec else { return [data] }
+                return try codec.decode(data)
+            })
+        }
+        if !initialUpstreamPayload.isEmpty {
+            do {
+                let chunks = try codec.map { try $0.decode(initialUpstreamPayload) } ?? [initialUpstreamPayload]
+                send(chunks, index: 0, from: b, to: a, transform: { data in [data] }, then: upstreamToClient)
+            } catch {
+                reportFailure(error, context: "initial bridge transform")
+                a.cancel(); b.cancel(); return
+            }
+        } else {
+            upstreamToClient()
+        }
         pump(from: a, to: b, transform: { data in
             guard let codec else { return [data] }
             return [try codec.encode(data)]
-        })
-        pump(from: b, to: a, transform: { data in
-            guard let codec else { return [data] }
-            return try codec.decode(data)
         })
     }
     private func pump(
@@ -292,8 +327,21 @@ public final class MClashInboundListener: @unchecked Sendable {
         to target: NWConnection,
         transform: @escaping @Sendable (Data) throws -> [Data]
     ) {
+        send(chunks, index: index, from: source, to: target, transform: transform, then: nil)
+    }
+
+    private func send(
+        _ chunks: [Data],
+        index: Int,
+        from source: NWConnection,
+        to target: NWConnection,
+        transform: @escaping @Sendable (Data) throws -> [Data],
+        then completion: (@Sendable () -> Void)?
+    ) {
         guard index < chunks.count else {
-            pump(from: source, to: target, transform: transform)
+            if let completion { completion() } else {
+                pump(from: source, to: target, transform: transform)
+            }
             return
         }
         target.send(content: chunks[index], completion: .contentProcessed { [weak self] error in
@@ -301,7 +349,7 @@ public final class MClashInboundListener: @unchecked Sendable {
                 if let error { self?.reportFailure(error, context: "bridge send") }
                 source.cancel(); target.cancel(); return
             }
-            self.send(chunks, index: index + 1, from: source, to: target, transform: transform)
+            self.send(chunks, index: index + 1, from: source, to: target, transform: transform, then: completion)
         })
     }
 

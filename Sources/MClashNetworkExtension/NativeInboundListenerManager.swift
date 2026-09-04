@@ -517,6 +517,56 @@ struct NativeInboundCatalogConnector: MClashInboundOutboundConnector {
             }
         }
     }
+
+    /// Payload-aware HTTP establishment for coalesced tunnel bytes. Other
+    /// protocols retain the established Error-only path until their response
+    /// framing is promoted to the same boundary.
+    func establishWithInitialPayload(
+        _ connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute,
+        completion: @escaping @Sendable (Error?, Data) -> Void
+    ) {
+        guard case let .proxy(routeKey) = route,
+              let entry = catalog.entries.first(where: { $0.route.stableSortKey == routeKey }),
+              entry.target.protocolName == "http" else {
+            establish(connection, to: destination, route: route) { error in completion(error, Data()) }
+            return
+        }
+        do {
+            let request = try NativeHTTPConnectOutboundConnector(target: entry.target)
+                .handshake(for: SOCKS5Endpoint(address: SOCKS5Address(domain: destination.host), port: destination.port))
+            send(request, on: connection) { [self, connection] error in
+                guard error == nil else { completion(error, Data()); return }
+                receiveHTTPResponseWithPayload(from: connection, buffer: Data(), completion: completion)
+            }
+        } catch { completion(error, Data()); connection.cancel() }
+    }
+
+    private func receiveHTTPResponseWithPayload(
+        from connection: NWConnection,
+        buffer: Data,
+        completion: @escaping @Sendable (Error?, Data) -> Void
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: HTTPProxyCodec.maximumHeaderBytes) { [self, connection] data, _, complete, error in
+            var next = buffer; if let data { next.append(data) }
+            if let error { completion(error, Data()); return }
+            do {
+                guard let end = next.range(of: Data("\r\n\r\n".utf8)) else {
+                    if complete || next.count >= HTTPProxyCodec.maximumHeaderBytes {
+                        completion(NativeInboundSOCKS5HandshakeError.truncatedResponse, Data()); connection.cancel()
+                    } else {
+                        receiveHTTPResponseWithPayload(from: connection, buffer: next, completion: completion)
+                    }
+                    return
+                }
+                let headerEnd = end.upperBound
+                guard headerEnd <= HTTPProxyCodec.maximumHeaderBytes else { throw NativeInboundSOCKS5HandshakeError.truncatedResponse }
+                _ = try HTTPProxyCodec.decodeConnectResponse(Data(next[..<headerEnd]))
+                completion(nil, Data(next[headerEnd...]))
+            } catch { completion(error, Data()); connection.cancel() }
+        }
+    }
 }
 
 enum NativeInboundSOCKS5HandshakeError: Error, Equatable, Sendable {

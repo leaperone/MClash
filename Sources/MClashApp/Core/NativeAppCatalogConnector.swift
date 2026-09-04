@@ -169,6 +169,31 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
         } catch { completion(error) }
     }
 
+    /// Payload-aware establishment used by the app-owned listener. This
+    /// overload keeps the legacy Error-only API intact for callers while
+    /// preserving bytes coalesced after an HTTP CONNECT response.
+    func establishWithInitialPayload(
+        _ connection: NWConnection,
+        to destination: MClashInboundDestination,
+        route: MClashInboundRoute,
+        completion: @escaping @Sendable (Error?, Data) -> Void
+    ) {
+        guard case let .proxy(key) = route, let target = target(for: key), target.protocolName == "http" else {
+            establish(connection, to: destination, route: route) { error in completion(error, Data()) }
+            return
+        }
+        do {
+            let request = try HTTPProxyCodec.encodeConnectRequest(
+                host: destination.host, port: destination.port,
+                username: target.parameters["username"], password: target.parameters["password"]
+            )
+            connection.send(content: request, completion: .contentProcessed { error in
+                if let error { completion(error, Data()); return }
+                self.readHTTPResponseWithPayload(connection, buffer: Data(), completion: completion)
+            })
+        } catch { completion(error, Data()) }
+    }
+
     private func target(for key: String) -> OutboundNodeTarget? {
         catalog?.entries.first { $0.route.stableSortKey == key }?.target
     }
@@ -306,6 +331,23 @@ struct NativeAppCatalogConnector: MClashInboundOutboundConnector {
             } catch {
                 completion(error); connection.cancel()
             }
+        }
+    }
+
+    private func readHTTPResponseWithPayload(_ connection: NWConnection, buffer: Data, completion: @escaping @Sendable (Error?, Data) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: HTTPProxyCodec.maximumHeaderBytes) { [self] data, _, complete, error in
+            var next = buffer; if let data { next.append(data) }
+            if let error { completion(error, Data()); return }
+            do {
+                var parser = NativeHTTPConnectResponseParser(buffer: next)
+                if let result = try parser.append(Data()) {
+                    completion(nil, result.trailing)
+                } else if complete {
+                    completion(NativeAppCatalogConnectorError.truncatedResponse, Data()); connection.cancel()
+                } else {
+                    self.readHTTPResponseWithPayload(connection, buffer: next, completion: completion)
+                }
+            } catch { completion(error, Data()); connection.cancel() }
         }
     }
 
