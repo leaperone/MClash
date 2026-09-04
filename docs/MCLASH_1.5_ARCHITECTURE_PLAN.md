@@ -535,6 +535,45 @@ and can be tested without producing a Mihomo YAML document.
   [33829275876](https://github.com/leaperone/MClash/actions/runs/33829275876)
   also passed at `bde7829`; the newer commits still require the same runner gate
   before release evidence can be finalized.
+- Standard free runner acceptance
+  [33837045257](https://github.com/leaperone/MClash/actions/runs/33837045257)
+  passed at `361726d`. The same HEAD produced native-only build 150012 and the
+  later local gates were repeated after every control-plane change.
+- `aa348ca` and `04da108` add App-owned Shadowsocks SIP002 AEAD TCP framing for
+  the three supported ciphers. Per-connection salt/nonce state is keyed by the
+  exact upstream connection, so concurrent flows through one group cannot
+  exchange codecs; plugins, UoT, UDP and empty credentials remain fail-closed.
+- `f5c6c9f` through `dc8b5da` add an explicit native/legacy capture backend to
+  the host-provider protocol. Native apply messages carry only the capture
+  snapshot and node-target catalog; provider-side validation rejects missing
+  or malformed native catalogs and ignores injected legacy SOCKS material.
+- `9835b30` through `a487de6` wire App Routing activation into the native
+  entrance lifecycle while preserving installation progress and
+  requires-reboot outcomes. Replacement receives the exact prior transaction,
+  attempts provider rollback before surfacing an error, and rejects simultaneous
+  System Proxy/App Routing capture. System Proxy still uses its established
+  AppModel transaction and remains a partial unification item.
+- The latest clean local harness at `a487de6` passes 529 App tests, every 33
+  Shared and 12 Network Extension file target, six automation tests and release
+  preflight. Native-only build `1.5.0 (150014)` then loaded the current copied
+  workspace at revision 30 with all three HTTP/SOCKS sockets running on IPv4
+  loopback, no unsupported selected connector, and no legacy control plane;
+  the App-owned CUNOE VLESS WebSocket path returned Google HTTP 204 again.
+- `7d17ab0` and `a487de6` make fixed-node management practical for large
+  catalogs: an empty search shows a bounded library, users can multi-select or
+  pin the current filtered result, unavailable nodes are excluded, and stable
+  list order is retained for failover priority. All eight localization bundles
+  contain the new action text.
+- `fcf654c` adds monotonic release phase timing without removing or reordering
+  signing, notarization, stapling, checksum, native smoke or standard-runner
+  gates. The last published workflow spent about 46 minutes; parallel unit and
+  integration jobs plus removal of duplicate release typecheck should reduce
+  the execution critical path to roughly 26-29 minutes before queue variance.
+- Reality/XTLS stays explicit legacy fallback: system TLS cannot inject the
+  uTLS ClientHello and record-layer behavior required by REALITY/Vision.
+  Hysteria2 also remains a prototype until independent QUIC streams, complete
+  HTTP/3 control/QPACK behavior and real TCP/UDP endpoint interoperability are
+  proven; neither is claimed native for 1.5.0 yet.
 
 ### Definition of done
 
