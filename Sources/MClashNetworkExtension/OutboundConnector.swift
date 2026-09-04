@@ -69,7 +69,7 @@ struct NativeSOCKS5OutboundConnector: Sendable {
 
     func makeConnection() -> NWConnection {
         NWConnection(
-            host: NWEndpoint.Host(target.host),
+            host: NWEndpoint.Host(target.connectionHost),
             port: NWEndpoint.Port(rawValue: target.port)!,
             using: .tcp
         )
@@ -112,7 +112,7 @@ struct NativeShadowsocksRelayConnector: OutboundConnector {
     let destination: SOCKS5Endpoint
 
     func makeConnection(to _: ProviderSOCKSConfiguration?) -> NWConnection {
-        NWConnection(host: NWEndpoint.Host(target.host),
+        NWConnection(host: NWEndpoint.Host(target.connectionHost),
                      port: NWEndpoint.Port(rawValue: target.port)!, using: .tcp)
     }
 
@@ -161,7 +161,7 @@ struct NativeVLESSOutboundConnector: Sendable {
             parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
         }
         return NWConnection(
-            host: NWEndpoint.Host(target.host),
+            host: NWEndpoint.Host(target.connectionHost),
             port: NWEndpoint.Port(rawValue: target.port)!,
             using: parameters
         )
@@ -326,7 +326,7 @@ struct NativeVLESSWebSocketRelayConnector: OutboundConnector, OutboundResponseHa
             name.withCString { sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, $0) }
             parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
         } else { parameters = .tcp }
-        return NWConnection(host: NWEndpoint.Host(target.host), port: NWEndpoint.Port(rawValue: target.port)!, using: parameters)
+        return NWConnection(host: NWEndpoint.Host(target.connectionHost), port: NWEndpoint.Port(rawValue: target.port)!, using: parameters)
     }
 
     func makeStreamCodec(for destination: SOCKS5Endpoint) throws -> (any NativeStreamCodec)? {
@@ -398,7 +398,7 @@ struct NativeTrojanOutboundConnector: Sendable {
             )
         }
         return NWConnection(
-            host: NWEndpoint.Host(target.host),
+            host: NWEndpoint.Host(target.connectionHost),
             port: NWEndpoint.Port(rawValue: target.port)!,
             using: NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
         )
@@ -463,7 +463,7 @@ struct NativeHTTPConnectOutboundConnector: Sendable {
             parameters = .tcp
         }
         return NWConnection(
-            host: NWEndpoint.Host(target.host),
+            host: NWEndpoint.Host(target.connectionHost),
             port: NWEndpoint.Port(rawValue: target.port)!,
             using: parameters
         )
@@ -525,7 +525,7 @@ struct NativeHysteria2OutboundConnector: Sendable {
             )
         }
         return NWConnection(
-            host: NWEndpoint.Host(target.host),
+            host: NWEndpoint.Host(target.connectionHost),
             port: NWEndpoint.Port(rawValue: target.port)!,
             using: NWParameters(quic: quic)
         )

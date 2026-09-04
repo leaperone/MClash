@@ -14,11 +14,28 @@ struct NativeRealEndpointInteropTests {
         }
         let nodeHint = environment["MCLASH_REAL_NODE_NAME_CONTAINS"]
             ?? "🇺🇸 美国|us|9929|ws|private"
-        let target = try Self.loadVLESSWebSocketTarget(
+        var target = try Self.loadVLESSWebSocketTarget(
             manifestURL: URL(fileURLWithPath: manifestPath),
             nameContains: nodeHint,
             resolvedAddress: environment["MCLASH_REAL_NODE_ADDRESS"]
         )
+        if target.connectionHost == target.host,
+           let dnsServer = environment["MCLASH_REAL_DNS_SERVER"],
+           let dnsAddress = try? IPAddress(dnsServer) {
+            let endpoint = try DNSUpstreamEndpoint(
+                address: dnsAddress,
+                transport: .udp
+            )
+            let catalog = try OutboundNodeTargetCatalog(entries: [
+                .init(route: .global, target: target)
+            ])
+            let bootstrap = try DNSUpstreamBootstrap(endpoints: [endpoint])
+            target = try #require(
+                await NativeHostnameResolver(
+                    bootstrap: bootstrap
+                ).resolving(catalog).target(for: .global)
+            )
+        }
         guard OutboundConnectorCapabilityMatrix.support(for: target) == .native else {
             throw RealEndpointProbeError.nodeIsNotNativeVLESSWebSocket
         }
@@ -116,19 +133,13 @@ struct NativeRealEndpointInteropTests {
                 }
             }
             guard parameters["network"]?.lowercased() == "ws" else { continue }
-            let connectionHost: String
             if let resolvedAddress,
                (try? IPAddress(resolvedAddress)) != nil {
-                connectionHost = resolvedAddress
-                if parameters["sni"] == nil, parameters["servername"] == nil {
-                    parameters["sni"] = host
-                }
-            } else {
-                connectionHost = host
+                parameters[OutboundNodeTarget.resolvedAddressParameterKey] = resolvedAddress
             }
             return try OutboundNodeTarget(
                 protocolName: "vless",
-                host: connectionHost,
+                host: host,
                 port: port,
                 parameters: parameters
             )

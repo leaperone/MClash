@@ -511,6 +511,9 @@ final class AppModel {
         }
     }
     private(set) var compiledConfiguration: CompiledConfiguration?
+    /// Native connector endpoints after MClash DNS resolution. Original
+    /// hostnames remain in each target for SNI/Host/protocol semantics.
+    private var resolvedNativeOutboundNodeTargetCatalog: OutboundNodeTargetCatalog?
     private(set) var configurationDiagnostics: [ConfigurationDiagnostic] = []
     /// Whether the selected MClash Workspace is authoritative for the next
     /// activation. Populated installs are adopted automatically once during
@@ -1854,7 +1857,7 @@ final class AppModel {
     /// neutral catalog consumed by the Network Extension. This is deliberately
     /// a fallback projection during migration; native protocol connectors can
     /// replace it without changing workspace/rule semantics.
-    private func activeOutboundNodeTargetCatalog() -> OutboundNodeTargetCatalog? {
+    private func unresolvedActiveOutboundNodeTargetCatalog() -> OutboundNodeTargetCatalog? {
         guard let workspace = configurationDocument.currentWorkspace else { return nil }
         let preferredSourceIDs: Set<SourceID> = Set(
             configurationDocument.sources.compactMap { source in
@@ -1892,6 +1895,13 @@ final class AppModel {
             guard !result.contains(where: { $0.route == entry.route }) else { return }
             result.append(entry)
         })
+    }
+
+    private func activeOutboundNodeTargetCatalog() -> OutboundNodeTargetCatalog? {
+        if usesNativeRuntime, let resolvedNativeOutboundNodeTargetCatalog {
+            return resolvedNativeOutboundNodeTargetCatalog
+        }
+        return unresolvedActiveOutboundNodeTargetCatalog()
     }
 
     /// Whether startup had to create the internal Mixed recovery endpoint
@@ -2744,6 +2754,18 @@ final class AppModel {
         try await supervisor.configure(
             plan: compiled.runtimePlan,
             listeners: listeners
+        )
+        let unresolvedCatalog = unresolvedActiveOutboundNodeTargetCatalog()
+        if let unresolvedCatalog,
+           let bootstrap = configuredNativeDNSUpstreamBootstrap {
+            resolvedNativeOutboundNodeTargetCatalog = await NativeHostnameResolver(
+                bootstrap: bootstrap
+            ).resolving(unresolvedCatalog)
+        } else {
+            resolvedNativeOutboundNodeTargetCatalog = unresolvedCatalog
+        }
+        await supervisor.configureOutboundTargets(
+            resolvedNativeOutboundNodeTargetCatalog
         )
     }
 

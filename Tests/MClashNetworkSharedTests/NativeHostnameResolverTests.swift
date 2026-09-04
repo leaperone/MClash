@@ -15,13 +15,45 @@ struct NativeHostnameResolverTests {
 
     @Test("Parses compressed A and IPv6 answers and rejects compression loops")
     func compressedAnswers() throws {
-        let response = dnsResponse(id: 0x42, answers: [(.a, [192, 0, 2, 7]), (.aaaa, Array(repeating: 0, count: 15) + [1])])
-        #expect(try NativeHostnameResolver.parseAddresses(response, name: "example.com", type: .a).map(\.presentation) == ["192.0.2.7"])
-        #expect(try NativeHostnameResolver.parseAddresses(response, name: "example.com", type: .aaaa).map(\.presentation) == ["::1"])
-        var loop = response
+        let ipv4 = dnsResponse(id: 0x42, questionType: .a, answers: [(.a, [192, 0, 2, 7])])
+        let ipv6 = dnsResponse(
+            id: 0x43,
+            questionType: .aaaa,
+            answers: [(.aaaa, Array(repeating: 0, count: 15) + [1])]
+        )
+        let parsedIPv4: [IPAddress]
+        let parsedIPv6: [IPAddress]
+        do {
+            parsedIPv4 = try NativeHostnameResolver.parseAddresses(ipv4, name: "example.com", type: .a)
+        } catch {
+            let packet = ipv4.map { String(format: "%02x", $0) }.joined()
+            Issue.record("Compressed IPv4 parsing failed: \(error); packet=\(packet)")
+            return
+        }
+        do {
+            parsedIPv6 = try NativeHostnameResolver.parseAddresses(
+                ipv6,
+                name: "example.com",
+                type: .aaaa
+            )
+        } catch {
+            Issue.record("Compressed IPv6 parsing failed: \(error)")
+            return
+        }
+        #expect(parsedIPv4.map(\.presentation) == ["192.0.2.7"])
+        #expect(parsedIPv6.map(\.presentation) == ["::1"])
+        var loop = ipv4
         loop[12] = 0xc0; loop[13] = 0x0c
         #expect(throws: NativeHostnameResolver.Error.allUpstreamsFailed) {
             _ = try NativeHostnameResolver.parseAddresses(loop, name: "example.com", type: .a)
+        }
+
+        #expect(throws: NativeHostnameResolver.Error.allUpstreamsFailed) {
+            _ = try NativeHostnameResolver.parseAddresses(
+                ipv4,
+                name: "different.example",
+                type: .a
+            )
         }
     }
 
@@ -31,9 +63,45 @@ struct NativeHostnameResolverTests {
         let second = try DNSUpstreamEndpoint(address: IPAddress("192.0.2.2"), transport: .udp, timeoutMilliseconds: 100)
         let bootstrap = try DNSUpstreamBootstrap(endpoints: [first, second])
         let resolver = NativeHostnameResolver(bootstrap: bootstrap) { endpoint in
-            FixtureUpstream(response: endpoint.address == second.address ? dnsResponse(id: nil, answers: [(.a, [198, 51, 100, 9])]) : nil)
+            FixtureUpstream(response: endpoint.address == second.address ? dnsResponse(id: nil, questionType: .a, answers: [(.a, [198, 51, 100, 9])]) : nil)
         }
         #expect(try await resolver.resolve("example.com").map(\.presentation) == ["198.51.100.9"])
+    }
+
+    @Test("Resolved catalogs keep the original protocol hostname")
+    func resolvesConnectorCatalogWithoutChangingSNI() async throws {
+        let endpoint = try DNSUpstreamEndpoint(
+            address: IPAddress("192.0.2.53"),
+            transport: .udp,
+            timeoutMilliseconds: 100
+        )
+        let resolver = NativeHostnameResolver(
+            bootstrap: try DNSUpstreamBootstrap(endpoints: [endpoint])
+        ) { _ in
+            FixtureUpstream(
+                response: dnsResponse(
+                    id: nil,
+                    questionType: .a,
+                    answers: [(.a, [198, 51, 100, 9])]
+                )
+            )
+        }
+        let target = try OutboundNodeTarget(
+            protocolName: "vless",
+            host: "example.com",
+            port: 443,
+            parameters: ["sni": "example.com", "uuid": "secret"]
+        )
+        let catalog = try OutboundNodeTargetCatalog(entries: [
+            .init(route: .global, target: target)
+        ])
+
+        let resolved = await resolver.resolving(catalog)
+        let resolvedTarget = try #require(resolved.target(for: .global))
+        #expect(resolvedTarget.host == "example.com")
+        #expect(resolvedTarget.connectionHost == "198.51.100.9")
+        #expect(resolvedTarget.parameters["sni"] == "example.com")
+        #expect(resolvedTarget.parameters["uuid"] == "secret")
     }
 
     private final class FixtureUpstream: DNSUpstream, @unchecked Sendable {
@@ -46,13 +114,17 @@ struct NativeHostnameResolverTests {
         }
     }
 
-    private static func dnsResponse(id: UInt16?, answers: [(NativeHostnameResolver.RecordType, [UInt8])]) -> Data {
-        var data = Data([0, 0, 0x81, 0x80, 0, 1, 0, UInt8(answers.count), 0, 0, 0, 0])
-        data.append(contentsOf: [7]); data.append(contentsOf: Data("example".utf8)); data.append(3); data.append(contentsOf: Data("com".utf8)); data.append(contentsOf: [0, 0, 1, 0, 1])
+    private static func dnsResponse(id: UInt16?, questionType: NativeHostnameResolver.RecordType, answers: [(NativeHostnameResolver.RecordType, [UInt8])]) -> Data {
+        let transactionID = id ?? 0
+        var data = Data([
+            UInt8(transactionID >> 8), UInt8(transactionID & 0xff),
+            0x81, 0x80, 0, 1, 0, UInt8(answers.count), 0, 0, 0, 0
+        ])
+        data.append(contentsOf: [7]); data.append(contentsOf: Data("example".utf8)); data.append(3); data.append(contentsOf: Data("com".utf8)); data.append(contentsOf: [0, 0, UInt8(questionType.rawValue), 0, 1])
         for (type, bytes) in answers {
             data.append(contentsOf: [0xc0, 0x0c, UInt8(type.rawValue >> 8), UInt8(type.rawValue & 0xff), 0, 1, 0, 0, 0, 30, UInt8(bytes.count >> 8), UInt8(bytes.count & 0xff)]); data.append(contentsOf: bytes)
         }
         return data
     }
-    private func dnsResponse(id: UInt16? = nil, answers: [(NativeHostnameResolver.RecordType, [UInt8])]) -> Data { Self.dnsResponse(id: id, answers: answers) }
+    private func dnsResponse(id: UInt16? = nil, questionType: NativeHostnameResolver.RecordType, answers: [(NativeHostnameResolver.RecordType, [UInt8])]) -> Data { Self.dnsResponse(id: id, questionType: questionType, answers: answers) }
 }

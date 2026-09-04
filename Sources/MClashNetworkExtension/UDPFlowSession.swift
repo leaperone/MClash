@@ -849,7 +849,7 @@ private enum SOCKS5UDPUpstream: Sendable {
     var host: NWEndpoint.Host {
         switch self {
         case let .mihomo(proxy): proxy.networkHost
-        case let .native(target): NWEndpoint.Host(target.host)
+        case let .native(target): NWEndpoint.Host(target.connectionHost)
         }
     }
 
