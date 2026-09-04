@@ -31,6 +31,25 @@ struct NativeRuleEngineProjectionTests {
         #expect(!database.matches(kind: .site, value: "cn", context: context))
     }
 
+    @Test("bundled v2fly GeoIP data parses when an integration fixture is supplied")
+    func bundledGeoIPData() throws {
+        guard let path = ProcessInfo.processInfo.environment["MCLASH_GEOIP_DAT_PATH"] else {
+            return
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
+        let database = try NativeGeoIPDatabaseProvider(data: data)
+        let context = FlowContext(
+            source: FlowSource(processIdentifier: 1, auditToken: Data(), userID: 501),
+            destination: try FlowDestination(
+                ipAddress: IPAddress("223.5.5.5"),
+                port: 53
+            ),
+            transportProtocol: .udp
+        )
+        #expect(database.status != .unavailable)
+        #expect(database.matches(kind: .ip, value: "CN", context: context))
+    }
+
     @Test("native rule-set support distinguishes inline data from external providers")
     func ruleSetSupportGate() {
         #expect(NativeRuleSetSupport.assess(RuleSet(name: "inline", rules: ["DOMAIN,example.com"])) == .inline)
