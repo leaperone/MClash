@@ -34,6 +34,9 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
                     _ = try Hysteria2Codec.decodeAuthResponse(statusCode: status, headers: headers)
                     return true
                 }
+                if message.metadata.endOfStream {
+                    throw Hysteria2CodecError.invalidResponse
+                }
             }
         } catch {
             stream.streamApplicationErrorCode = 0x100
@@ -57,7 +60,10 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
     }
 
     func close() async {
-        authStream?.cancel()
+        if let authStream {
+            authStream.streamApplicationErrorCode = 0x100
+            try? await authStream.send(Data(), endOfStream: true)
+        }
         authStream = nil
         connection?.applicationError = Network.NWProtocolQUIC.ApplicationError(code: 0x100, reason: "closed")
         connection = nil
@@ -79,16 +85,23 @@ actor NativeHysteria2QUICProvider: Hysteria2TransportProvider {
 
     private func waitUntilReady(_ connection: NetworkConnection<QUIC>) async throws {
         if connection.state == .ready { return }
+        let completionGate = NativeHysteria2ContinuationGate()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 _ = connection.onStateUpdate { connection, state in
                     switch state {
                     case .ready:
-                        continuation.resume()
+                        completionGate.resume { continuation.resume() }
                     case .failed(let error):
-                        continuation.resume(throwing: error)
+                        completionGate.resume {
+                            continuation.resume(throwing: error)
+                        }
                     case .cancelled:
-                        continuation.resume(throwing: Hysteria2TransportError.closed)
+                        completionGate.resume {
+                            continuation.resume(
+                                throwing: Hysteria2TransportError.closed
+                            )
+                        }
                     default:
                         break
                     }
@@ -115,7 +128,9 @@ private final class NativeHysteria2QUICStream: Hysteria2StreamTransport, @unchec
 
     func receive() async throws -> Data? {
         try Task.checkCancellation()
-        return try await stream.receive(atLeast: 1, atMost: 1_048_576).content
+        let message = try await stream.receive(atLeast: 1, atMost: 1_048_576)
+        if message.content.isEmpty, message.metadata.endOfStream { return nil }
+        return message.content
     }
 
     func halfClose() async {
@@ -125,5 +140,22 @@ private final class NativeHysteria2QUICStream: Hysteria2StreamTransport, @unchec
     func close() async {
         stream.streamApplicationErrorCode = 0x100
         try? await stream.send(Data(), endOfStream: true)
+    }
+}
+
+@available(macOS 26.0, *)
+private final class NativeHysteria2ContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+
+    func resume(_ action: () -> Void) {
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        lock.unlock()
+        action()
     }
 }
