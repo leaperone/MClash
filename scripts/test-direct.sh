@@ -198,7 +198,7 @@ fi
 # arm64e "Not enough bits" trap). Keep each process bounded so one runtime
 # abort cannot prevent later test files from running. This is deliberately a
 # process split, not a test filter: every source file is compiled and run.
-network_test_chunk_size="${MCLASH_NETWORK_TEST_CHUNK_SIZE:-8}"
+network_test_chunk_size="${MCLASH_NETWORK_TEST_CHUNK_SIZE:-1}"
 if [[ ! "${network_test_chunk_size}" =~ '^[1-9][0-9]*$' ]]; then
   print -u2 "MCLASH_NETWORK_TEST_CHUNK_SIZE must be a positive integer."
   exit 1

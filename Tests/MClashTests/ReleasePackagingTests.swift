@@ -345,7 +345,7 @@ struct ReleasePackagingTests {
     func directNetworkTestsAreProcessPartitioned() throws {
         let script = try source("scripts/test-direct.sh")
 
-        #expect(script.contains("MCLASH_NETWORK_TEST_CHUNK_SIZE:-8"))
+        #expect(script.contains("MCLASH_NETWORK_TEST_CHUNK_SIZE:-1"))
         #expect(!script.contains("swift test --configuration debug --no-parallel"))
         #expect(script.contains("The direct harness is used in CI as well as locally"))
         #expect(script.contains("require a -- delimiter before test files"))
