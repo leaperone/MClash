@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "release_version": "1.5.2",
+  "commit": "a26d2854a01b815948f50a931f5d762969cf8d76",
+  "status": "passed",
+  "backend": "native",
+  "capabilities": [
+    "nativeRuntime",
+    "nativeRouting",
+    "nativeDNS"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh",
+    "MCLASH_LEGACY_RUNTIME=1 ./scripts/integration-test.sh",
+    "MCLASH_APP_PATH=.build/native-only-final/MClash.app MCLASH_SHADOW_SOURCE_ROOT=~/Library/Application Support/MClash MCLASH_SHADOW_AUTO_CONNECT=1 ./scripts/smoke-test-native-runtime-cli.sh",
+    "ruby -e 'require \"yaml\"; YAML.load_file(\".github/workflows/release.yml\")'"
+  ],
+  "validation_summary": {
+    "application_tests": 532,
+    "shared_targets": 35,
+    "network_extension_targets": 12,
+    "automation_tests": 6,
+    "legacy_integration": "passed_with_optional_relay_skip",
+    "native_shadow": {
+      "backend": "native",
+      "workspace_revision": 30,
+      "listener_count": 5,
+      "enabled_listener_count": 4,
+      "enabled_socket_listener_count": 3,
+      "running_socket_listener_count": 3,
+      "control_plane_available": false,
+      "unsupported_connectors": []
+    }
+  }
+}
