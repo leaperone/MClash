@@ -1843,6 +1843,25 @@ final class AutomationCommandGateway {
             } ?? .null
             return AutomationJSONValue.object(object)
         }
+        let geoDatabase: AutomationJSONValue = switch value.geoDatabaseStatus {
+        case .unavailable:
+            .object(["status": .string("unavailable")])
+        case let .installedButUnsupportedFormat(format):
+            .object([
+                "status": .string("installedButUnsupportedFormat"),
+                "format": .string(displaySafe(format, maximumLength: 32)),
+            ])
+        case let .ready(revision):
+            .object([
+                "status": .string("ready"),
+                "revision": .string(displaySafe(revision, maximumLength: 64)),
+            ])
+        case let .failed(reason):
+            .object([
+                "status": .string("failed"),
+                "reason": .string(redactedDiagnosticText(reason)),
+            ])
+        }
         return .object([
             "backend": .string(value.backend == "native" ? "native" : "mihomo"),
             "state": .string(state),
@@ -1864,6 +1883,7 @@ final class AutomationCommandGateway {
             "listenerStates": .object(listenerStates),
             "connectorCapabilities": .array(connectorCapabilities),
             "unsupportedConnectors": .array(unsupported),
+            "geoDatabase": geoDatabase,
             "sessionValidationError": value.sessionValidationError.map {
                 .string(redactedDiagnosticText($0))
             } ?? .null,

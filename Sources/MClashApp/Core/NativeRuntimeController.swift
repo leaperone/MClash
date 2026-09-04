@@ -117,7 +117,8 @@ extension CoreSupervisor {
             sessionValidationError: nil,
             listenerStates: [:],
             connectorCapabilities: [],
-            unsupportedConnectors: []
+            unsupportedConnectors: [],
+            geoDatabaseStatus: .unavailable
         )
     }
 

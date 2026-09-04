@@ -26,6 +26,7 @@ struct AutomationCommandGatewayTests {
         #expect(result["capabilities"]?.arrayValue != nil)
         #expect(result["listenerStates"]?.objectValue != nil)
         #expect(result["unsupportedConnectors"]?.arrayValue != nil)
+        #expect(result["geoDatabase"]?.objectValue?["status"]?.stringValue != nil)
         // CoreSession.secret and controller endpoint are intentionally never
         // part of the connector-neutral diagnostics contract.
         #expect(result["secret"] == nil)

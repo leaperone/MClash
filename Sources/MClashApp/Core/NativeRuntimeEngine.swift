@@ -44,6 +44,10 @@ struct NativeRuntimeDiagnostics: Equatable, Sendable {
     /// Unknown protocols are reported here instead of silently falling back
     /// to a direct connection.
     let unsupportedConnectors: [NativeRuntimeConnectorDiagnostic]
+    /// Native GEO database capability is reported separately from connector
+    /// support so a policy author can distinguish "no match" from "database
+    /// unavailable" without inspecting implementation logs.
+    let geoDatabaseStatus: NativeGeoDatabaseStatus
 }
 
 /// A connector-neutral explanation for a node that the native data plane
@@ -423,7 +427,8 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
             sessionValidationError: sessionValidationError,
             listenerStates: listenerHandles.mapValues(\.state),
             connectorCapabilities: Self.connectorCapabilityMatrix(in: outboundNodeTargets),
-            unsupportedConnectors: Self.unsupportedConnectors(in: outboundNodeTargets)
+            unsupportedConnectors: Self.unsupportedConnectors(in: outboundNodeTargets),
+            geoDatabaseStatus: geoProvider?.status ?? .unavailable
         )
     }
 
