@@ -2040,6 +2040,7 @@
 "No automatic selector yet. Add one to describe a group such as “name contains US” or “source is Primary”." = "尚無自動選取器。新增一個，例如「名稱包含 US」或「來源為 Primary」。";
 "Match conditions" = "比對條件";
 "Remove selector" = "移除選取器";
+"Remove condition" = "移除條件";
 "All included conditions must match. Exclusions are applied last." = "所有包含條件都必須符合，排除條件最後套用。";
 "Name contains or matches (for example US or US*)" = "名稱包含或符合（例如 US 或 US*）";
 "Host/IP contains or matches (for example us.*)" = "主機/IP 包含或符合（例如 us.*）";
