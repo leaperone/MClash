@@ -73,9 +73,10 @@ struct NativeRuleEngineProjectionTests {
             defaultAction: .proxyGroup(proxy.id)
         )
         let runtime = plan(groups: [proxy], ruleSets: [geo])
+        let expectedIP = try IPAddress("203.0.113.8")
         let matcher: NativeGeoMatcher = { kind, value, context in
             (kind == .site && value == "cn" && context.destination.hostname == "cn.example")
-                || (kind == .ip && value == "CN" && context.destination.ipAddress?.description == "203.0.113.8")
+                || (kind == .ip && value == "CN" && context.destination.ipAddress == expectedIP)
         }
         let projection = NativeRuleEngineProjection(plan: runtime, geoMatcher: matcher)
         #expect(projection.evaluate(try context("cn.example")).action == .direct)
