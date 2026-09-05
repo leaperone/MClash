@@ -106,6 +106,8 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private var proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration] = [:]
     private var dnsUpstreamMode: DNSUpstreamMode = .legacyConnector
     private var nativeUpstreamBootstrap: DNSUpstreamBootstrap?
+    private var activeRevision: UInt64 = 0
+    private var activeGeneration = UUID()
     private var nativeDNSRelays: [UUID: NativeDNSFlowRelay] = [:]
     private let backendProbeQueue = DispatchQueue(
         label: "one.leaper.mclash.dns-backend-probe"
@@ -180,7 +182,13 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             return
         }
         flowDecisionCoordinator.load(configuration: dataPlane.routingConfiguration)
-        DNSResolutionAssociationRegistry.shared.clear()
+        let fakeIPCandidate: NativeFakeIPAllocator?
+        do {
+            fakeIPCandidate = try Self.fakeIPAllocator(for: dataPlane)
+        } catch {
+            rejectBootstrapLocked(reason: .invalidPrivateRelay, error: .invalidPrivateRelay, bootstrap: bootstrap, startCompletion: startCompletion)
+            return
+        }
 
         do {
             let reporter = try DNSProxyRuntimeReporter(
@@ -198,11 +206,15 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             self.proxyCatalog = dataPlane.proxyCatalog
             self.dnsUpstreamMode = dataPlane.dnsUpstreamMode
             self.nativeUpstreamBootstrap = dataPlane.nativeUpstreamBootstrap
+            self.activeRevision = bootstrap.revision
+            self.activeGeneration = bootstrap.activationIdentifier
             consecutiveBackendProbeFailures = 0
             activeBackendProbe = probe
             pendingStartCompletion = startCompletion
             reporter.resumeHeartbeat()
             runtime.start(configuration: options)
+            DNSResolutionAssociationRegistry.shared.clear()
+            _ = NativeFakeIPAllocatorRegistry.shared.replace(with: fakeIPCandidate)
             liveUpdaterToken = DNSProxyRuntimeRegistry.shared.registerLiveUpdater {
                 [weak self] bootstrap in
                 self?.applyLiveBootstrap(bootstrap) ?? false
@@ -381,6 +393,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let nativeDNSRelays = self.nativeDNSRelays.values
         self.nativeDNSRelays = [:]
         flowDecisionCoordinator.quiesce()
+        NativeFakeIPAllocatorRegistry.shared.clear()
         DNSResolutionAssociationRegistry.shared.clear()
         if let liveUpdaterToken {
             DNSProxyRuntimeRegistry.shared.unregisterLiveUpdater(liveUpdaterToken)
@@ -448,6 +461,10 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 exchangeObserver: { [weak self] query, response in
                     self?.associateDNSResolution(query: query, response: response, flow: tcpFlow)
                 },
+                responseObserver: Self.fakeIPResponseObserver(
+                    revision: runtimeState.revision,
+                    generation: runtimeState.generation
+                ),
                 completion: { [weak self] in self?.releaseNativeDNSRelay(identifier) }
             )
             backendProbeLock.lock()
@@ -721,6 +738,10 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
                 exchangeObserver: { [weak self] query, response in
                     self?.associateDNSResolution(query: query, response: response, flow: flow)
                 },
+                responseObserver: Self.fakeIPResponseObserver(
+                    revision: runtimeState.revision,
+                    generation: runtimeState.generation
+                ),
                 completion: { [weak self] in self?.releaseNativeDNSRelay(parentIdentifier) }
             )
             backendProbeLock.lock()
@@ -928,10 +949,12 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration],
         dnsUpstreamMode: DNSUpstreamMode
         ,
-        nativeUpstreamBootstrap: DNSUpstreamBootstrap?
+        nativeUpstreamBootstrap: DNSUpstreamBootstrap?,
+        revision: UInt64,
+        generation: UUID
     ) {
         backendProbeLock.lock()
-        let snapshot = (reporter, proxy, proxyCatalog, dnsUpstreamMode, nativeUpstreamBootstrap)
+        let snapshot = (reporter, proxy, proxyCatalog, dnsUpstreamMode, nativeUpstreamBootstrap, activeRevision, activeGeneration)
         backendProbeLock.unlock()
         return snapshot
     }
@@ -998,6 +1021,12 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             return false
         }
         let newReporter: DNSProxyRuntimeReporter
+        let fakeIPCandidate: NativeFakeIPAllocator?
+        do {
+            fakeIPCandidate = try Self.fakeIPAllocator(for: dataPlane)
+        } catch {
+            return false
+        }
         do {
             newReporter = try DNSProxyRuntimeReporter(
                 revision: bootstrap.revision,
@@ -1041,6 +1070,9 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         proxyCatalog = dataPlane.proxyCatalog
         dnsUpstreamMode = dataPlane.dnsUpstreamMode
         nativeUpstreamBootstrap = dataPlane.nativeUpstreamBootstrap
+        activeRevision = bootstrap.revision
+        activeGeneration = bootstrap.activationIdentifier
+        _ = NativeFakeIPAllocatorRegistry.shared.replace(with: fakeIPCandidate)
         runtime.replace(
             revision: bootstrap.revision,
             captureEnabled: true,
@@ -1073,6 +1105,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
         let routingConfiguration: [String: Any]
         let dnsUpstreamMode: DNSUpstreamMode
         let nativeUpstreamBootstrap: DNSUpstreamBootstrap?
+        let fakeIPConfiguration: NativeFakeIPConfiguration?
     }
 
     private static func dataPlaneConfiguration(
@@ -1113,8 +1146,49 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             proxyCatalog: proxyCatalog,
             routingConfiguration: routingConfiguration,
             dnsUpstreamMode: bootstrap.dnsUpstreamMode,
-            nativeUpstreamBootstrap: bootstrap.nativeUpstreamBootstrap
+            nativeUpstreamBootstrap: bootstrap.nativeUpstreamBootstrap,
+            fakeIPConfiguration: bootstrap.nativeUpstreamBootstrap?.fakeIPConfiguration
         )
+    }
+
+    private static func fakeIPAllocator(
+        for dataPlane: DataPlaneConfiguration
+    ) throws -> NativeFakeIPAllocator? {
+        guard dataPlane.dnsUpstreamMode == .native,
+              let configuration = dataPlane.fakeIPConfiguration,
+              configuration.mappingScope == .runtimeGlobal else { return nil }
+        return try NativeFakeIPAllocator(configuration: configuration)
+    }
+
+    private static func fakeIPResponseObserver(
+        revision: UInt64,
+        generation: UUID
+    ) -> NativeDNSFlowRelay.ResponseObserver? {
+        guard let allocator = NativeFakeIPAllocatorRegistry.shared.snapshot() else { return nil }
+        return { query, response in
+            guard let current = NativeFakeIPAllocatorRegistry.shared.snapshot(),
+                  current === allocator,
+                  let hostname = DNSWireMessage.firstQuestionName(of: query),
+                  let record = try? DNSResolutionRecordParser.parse(response),
+                  record.addresses.contains(where: { $0.family == .ipv4 }) else { return response }
+            do {
+                guard let resolution = try allocator.allocate(
+                    hostname: hostname,
+                    realAddresses: record.addresses,
+                    sourceIdentity: "runtime-global",
+                    revision: revision,
+                    generation: generation,
+                    ttl: record.ttl
+                ) else { return response }
+                return try NativeFakeIPResponseRewriter.rewrite(
+                    query: query,
+                    response: response,
+                    virtualAddress: resolution.virtualAddress
+                )
+            } catch {
+                return response
+            }
+        }
     }
 
     private static func data(_ value: Any?) -> Data? {
