@@ -37,6 +37,7 @@ public final class NativeFakeIPAllocator: @unchecked Sendable {
         var touched: UInt64
     }
     private let lock = NSLock()
+    public let mappingScope: NativeFakeIPMappingScope
     public let pool: IPNetwork
     public let maximumEntries: Int
     public let maximumEntriesPerSource: Int
@@ -77,14 +78,16 @@ public final class NativeFakeIPAllocator: @unchecked Sendable {
             maximumEntriesPerSource: configuration.maximumEntriesPerSourceCount,
             minimumTTL: configuration.minimumTTL,
             maximumTTL: configuration.maximumTTLValue,
-            filters: configuration.filters
+            filters: configuration.filters,
+            mappingScope: configuration.mappingScope
         )
     }
 
     public init(pool: IPNetwork? = nil, maximumEntries: Int? = nil,
                 maximumEntriesPerSource: Int? = nil,
                 minimumTTL: TimeInterval = 5, maximumTTL: TimeInterval = 600,
-                filters: [String] = []) throws {
+                filters: [String] = [],
+                mappingScope: NativeFakeIPMappingScope = .sourceScoped) throws {
         let configuredPool: IPNetwork
         if let pool { configuredPool = pool } else { configuredPool = try IPNetwork(NativeFakeIPAllocator.defaultPoolCIDR) }
         guard configuredPool.address.family == .ipv4, (15...30).contains(configuredPool.prefixLength),
@@ -113,6 +116,7 @@ public final class NativeFakeIPAllocator: @unchecked Sendable {
             throw NativeFakeIPAllocatorError.invalidFilter
         }
         self.pool = configuredPool
+        self.mappingScope = mappingScope
         self.maximumEntries = configuredMaximumEntries
         self.maximumEntriesPerSource = configuredMaximumEntriesPerSource
         self.minimumTTL = minimumTTL; self.maximumTTL = maximumTTL
@@ -140,7 +144,12 @@ public final class NativeFakeIPAllocator: @unchecked Sendable {
             if entries.count >= maximumEntries || clock & 0x3f == 0 {
                 purge(now)
             }
-            let key = Key(source: source, hostname: host, revision: revision, generation: generation)
+            let key = Key(
+                source: mappingScope == .runtimeGlobal ? Self.globalSource : source,
+                hostname: host,
+                revision: revision,
+                generation: generation
+            )
             let expiry = now.addingTimeInterval(min(max(Double(ttl), minimumTTL), maximumTTL))
             if var existing = entries[key], existing.resolution.expiresAt > now {
                 let value = NativeFakeIPResolution(virtualAddress: existing.resolution.virtualAddress, hostname: host,
@@ -150,7 +159,8 @@ public final class NativeFakeIPAllocator: @unchecked Sendable {
                 return value
             }
             removeEntry(for: key)
-            if entries.keys.count(where: { $0.source == source }) >= maximumEntriesPerSource,
+            if mappingScope == .sourceScoped,
+               entries.keys.count(where: { $0.source == source }) >= maximumEntriesPerSource,
                !evictOldest(source: source) {
                 throw NativeFakeIPAllocatorError.capacityExceeded
             }
@@ -171,8 +181,14 @@ public final class NativeFakeIPAllocator: @unchecked Sendable {
                            generation: UUID, now: Date = Date()) -> NativeFakeIPResolution? {
         guard let source = Self.normalizeSource(sourceIdentity) else { return nil }
         return lock.withLock {
-            let key = Key(source: source, hostname: "", revision: revision, generation: generation)
-            guard let actual = reverse[address], actual.source == key.source,
+            let key = Key(
+                source: mappingScope == .runtimeGlobal ? Self.globalSource : source,
+                hostname: "",
+                revision: revision,
+                generation: generation
+            )
+            guard let actual = reverse[address],
+                  mappingScope == .runtimeGlobal || actual.source == key.source,
                   actual.revision == key.revision, actual.generation == key.generation,
                   let entry = entries[actual] else { return nil }
             guard entry.resolution.expiresAt > now else {
@@ -218,6 +234,7 @@ public final class NativeFakeIPAllocator: @unchecked Sendable {
         }
     }
     private static func number(_ address: IPAddress) -> UInt32 { address.bytes.reduce(0) { ($0 << 8) | UInt32($1) } }
+    private static let globalSource = "@runtime-global"
     private static func address(_ value: UInt32) -> IPAddress? { try? IPAddress("\(value >> 24).\(value >> 16 & 255).\(value >> 8 & 255).\(value & 255)") }
     private static func poolEnd(_ pool: IPNetwork) -> UInt32 { number(pool.address) + (1 << UInt32(32 - pool.prefixLength)) - 1 }
     private static func usableCapacity(_ pool: IPNetwork) -> Int { Int((1 << UInt32(32 - pool.prefixLength)) - 2) }

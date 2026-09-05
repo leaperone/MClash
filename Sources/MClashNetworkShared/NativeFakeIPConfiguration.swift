@@ -9,6 +9,7 @@ public enum NativeFakeIPConfigurationError: Error, Equatable, Sendable {
 }
 
 public enum NativeFakeIPMappingScope: String, Codable, Equatable, Sendable {
+    case sourceScoped
     case runtimeGlobal
 }
 

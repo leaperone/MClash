@@ -122,4 +122,39 @@ struct NativeFakeIPAllocatorTests {
         #expect(allocator.resolution(for: fourth.virtualAddress, sourceIdentity: "b", revision: 1, generation: generation, now: now.addingTimeInterval(5)) != nil)
         #expect(allocator.resolution(for: fifth.virtualAddress, sourceIdentity: "b", revision: 1, generation: generation, now: now.addingTimeInterval(5)) != nil)
     }
+
+    @Test("Runtime-global configuration reuses a hostname across source identities")
+    func runtimeGlobalScope() throws {
+        let configuration = try NativeFakeIPConfiguration(
+            pool: IPNetwork("198.18.0.0/29"),
+            maximumEntries: 4,
+            maximumEntriesPerSource: 2,
+            mappingScope: .runtimeGlobal
+        )
+        let allocator = try NativeFakeIPAllocator(configuration: configuration)
+        let generation = UUID()
+        let first = try #require(try allocator.allocate(
+            hostname: "shared.example",
+            realAddresses: [try IPAddress("203.0.113.1")],
+            sourceIdentity: "app.a",
+            revision: 1,
+            generation: generation,
+            ttl: 30
+        ))
+        let second = try #require(try allocator.allocate(
+            hostname: "shared.example",
+            realAddresses: [try IPAddress("203.0.113.2")],
+            sourceIdentity: "app.b",
+            revision: 1,
+            generation: generation,
+            ttl: 30
+        ))
+        #expect(first.virtualAddress == second.virtualAddress)
+        #expect(allocator.resolution(
+            for: first.virtualAddress,
+            sourceIdentity: "app.b",
+            revision: 1,
+            generation: generation
+        )?.hostname == "shared.example")
+    }
 }
