@@ -10,7 +10,7 @@ MClash is primarily for the Leaperone team and other technically fluent macOS us
 
 ## Product Purpose
 
-MClash provides a dependable, native macOS control surface for the bundled MetaCubeX mihomo Alpha core. Success means the app starts ready to use, keeps network state recoverable, makes common routing decisions fast, and never exposes implementation chores such as locating or downloading a core binary to the user.
+MClash provides a dependable, native macOS routing runtime and control surface. It owns entrances, DNS, rules, groups, node selection, traffic inspection, and lifecycle; imported Profiles supply node connection records only. Success means the app starts ready to use, keeps network state recoverable, explains every route, and never exposes compatibility-engine maintenance as a normal user task.
 
 ## Brand Personality
 
@@ -24,7 +24,8 @@ Native, calm, precise. MClash should feel like a focused Apple utility: familiar
 
 ## Design Principles
 
-- The core is infrastructure: bundle it, verify it, and keep it out of normal user decisions.
+- The runtime is infrastructure: MClash owns it, verifies it, and keeps compatibility connectors out of normal user decisions.
+- A Profile is a replaceable node source, never the active routing configuration.
 - Use macOS conventions before inventing custom controls.
 - Put current network state and recovery actions ahead of decorative metrics.
 - Make advanced information available progressively without making the primary workflow feel technical.

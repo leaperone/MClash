@@ -1,6 +1,6 @@
 ---
 name: MClash
-description: A calm, native macOS control surface for mihomo Alpha.
+description: A calm, native macOS network-routing workspace owned by MClash.
 colors:
   accent: "NSColor.controlAccentColor"
   window-background: "NSColor.windowBackgroundColor"
