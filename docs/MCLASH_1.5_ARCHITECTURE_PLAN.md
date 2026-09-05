@@ -274,7 +274,45 @@ and can be tested without producing a Mihomo YAML document.
 - [ ] Install the patch into the isolated test namespace, then perform the
       separately authorized production upgrade and verify rollback readiness.
 
-## 6. Progress record (2026-09-03)
+## 6. Progress record (2026-09-05)
+
+- `v1.5.9` (`9147843`) is the signed, notarized native patch release. The
+  standard free `macos-26` workflow passed unit, compatibility, evidence,
+  native-only CLI smoke, Developer ID signing, notarization, stapling and
+  Gatekeeper. The downloaded ZIP was independently checksum- and signature-
+  verified, then installed under an isolated app name; the production
+  `/Applications/MClash.app` was not replaced.
+- The release gate now executes Network Shared and Network Extension tests in
+  bounded four-file child processes. This preserves every test file and process
+  isolation; it reduced the unit job from 9m58s to 9m19s on the standard
+  runner. The expensive critical path is still compilation/signing, so no
+  correctness gate was removed.
+- `9f27756` and `7f218b3` close and compile the macOS 26 typed-QUIC readiness
+  lifecycle. A real subscribed `hy2台湾01` probe still timed out at the QUIC
+  connection stage after 15 seconds. Hysteria2 therefore remains explicit
+  fallback: the typed API exposes ALPN, transport limits and peer-auth policy,
+  but not a configurable TLS server name/SNI, and no native capability is
+  claimed.
+- `8d338fe` adds transport-dimensional connector diagnostics (`nativeTCP`,
+  `nativeUDP`, `inboundTCP`, `inboundUDP`) without breaking old automation
+  payloads. Default VLESS WebSocket options are valid; malformed explicit
+  options remain fail-closed. TUN and App-owned SOCKS UDP ingress remain
+  unsupported and are not presented as active capabilities.
+- `9d52208`, `de3c885`, `25a65e4` and `48ecad8` build the first bounded Fake-IP
+  foundation without enabling it: a memory-only IPv4 allocator, validated A
+  response rewriter, runtime-global mapping scope, schema-2 DNS bootstrap,
+  DNS policy projection, and a byte-preserving DNS relay replacement seam.
+  Native Fake-IP activation still rejects before provider startup. The next
+  required slice is transactional DNS-provider wiring plus flow destination
+  restoration; until both exist, Fake-IP must remain unavailable.
+- The real local App Routing activity stream confirms signed application
+  metadata is available for ordinary captured flows, while DNS resolver flows
+  can be attributed to a resolver process. The Fake-IP design therefore uses a
+  runtime-global mapping namespace per revision/generation for its first safe
+  implementation; source identity remains diagnostic/quota metadata rather
+  than a required cross-provider join key.
+
+### Earlier progress (2026-09-03)
 
 - `e7c7035` persists per-source refresh generations on nodes, keeps legacy
   manifests decodable, and covers credential rotation without changing node
