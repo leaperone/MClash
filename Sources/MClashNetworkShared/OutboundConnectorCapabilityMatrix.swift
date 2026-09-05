@@ -146,7 +146,7 @@ public enum OutboundConnectorCapabilityMatrix {
                parameters["uuid"]?.isEmpty != false {
                 return (.legacyFallback, "VLESS WebSocket requires a UUID.", false, false)
             }
-            if network == "ws", target.vlessWebSocketOptions == nil {
+            if network == "ws", target.hasInvalidVLESSWebSocketOptions {
                 return (.legacyFallback, "VLESS WebSocket transport options are incomplete.", false, false)
             }
             if parameters["reality-opts"] != nil || parameters["reality-options"] != nil

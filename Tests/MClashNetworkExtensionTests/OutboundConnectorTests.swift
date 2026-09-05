@@ -308,6 +308,14 @@ struct OutboundConnectorTests {
             protocolName: "vless", host: "node.example.com", port: 443,
             parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "network": "ws", "ws-path": "/vless"]
         )
+        let defaultWebSocket = try OutboundNodeTarget(
+            protocolName: "vless", host: "node.example.com", port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "network": "ws"]
+        )
+        let malformedWebSocket = try OutboundNodeTarget(
+            protocolName: "vless", host: "node.example.com", port: 443,
+            parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "network": "ws", "ws-opts": "not-json"]
+        )
         let reality = try OutboundNodeTarget(
             protocolName: "vless", host: "node.example.com", port: 443,
             parameters: ["uuid": "00000000-0000-0000-0000-000000000001", "reality": "true"]
@@ -315,6 +323,8 @@ struct OutboundConnectorTests {
 
         #expect(NativeConnectorRegistry.supportsNativeTCP(plain))
         #expect(NativeConnectorRegistry.supportsNativeTCP(websocket))
+        #expect(NativeConnectorRegistry.supportsNativeTCP(defaultWebSocket))
+        #expect(!NativeConnectorRegistry.supportsNativeTCP(malformedWebSocket))
         #expect(!NativeConnectorRegistry.supportsNativeTCP(reality))
         #expect(NativeConnectorRegistry.capability(for: plain) == .native)
         #expect(NativeConnectorRegistry.capability(for: websocket) == .native)

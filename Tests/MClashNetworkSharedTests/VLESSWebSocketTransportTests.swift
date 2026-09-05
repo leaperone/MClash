@@ -37,4 +37,28 @@ struct VLESSWebSocketTransportTests {
         )
         #expect(target.vlessWebSocketOptions == nil)
     }
+
+    @Test("Distinguishes valid defaults from malformed explicit options")
+    func distinguishesDefaultsFromMalformedOptions() throws {
+        let defaults = try OutboundNodeTarget(
+            protocolName: "vless", host: "edge.example.com", port: 443,
+            parameters: ["network": "ws"]
+        )
+        #expect(defaults.vlessWebSocketOptions == nil)
+        #expect(!defaults.hasInvalidVLESSWebSocketOptions)
+
+        let malformed = try OutboundNodeTarget(
+            protocolName: "vless", host: "edge.example.com", port: 443,
+            parameters: ["network": "ws", "ws-opts": "not-json"]
+        )
+        #expect(malformed.vlessWebSocketOptions == nil)
+        #expect(malformed.hasInvalidVLESSWebSocketOptions)
+
+        let malformedField = try OutboundNodeTarget(
+            protocolName: "vless", host: "edge.example.com", port: 443,
+            parameters: ["network": "ws", "ws-opts": #"{"path":42}"#]
+        )
+        #expect(malformedField.vlessWebSocketOptions == nil)
+        #expect(malformedField.hasInvalidVLESSWebSocketOptions)
+    }
 }

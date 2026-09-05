@@ -31,6 +31,25 @@ public struct OutboundNodeTarget: Codable, Equatable, Hashable, Sendable {
         return VLESSWebSocketOptions.parse(parameters: parameters)
     }
 
+    /// A missing WebSocket options block means the protocol defaults (`/` and
+    /// the target host). An explicitly malformed block must remain fail-closed.
+    public var hasInvalidVLESSWebSocketOptions: Bool {
+        guard protocolName == "vless",
+              parameters["network"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == "ws" else {
+            return false
+        }
+        let optionKeys = Set(parameters.keys.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "_", with: "-")
+        })
+        let declaresOptions = !optionKeys.isDisjoint(with: [
+            "ws-opts", "ws-options", "ws-path", "ws-host",
+        ])
+        return declaresOptions && vlessWebSocketOptions == nil
+    }
+
     public init(protocolName: String, host: String, port: UInt16, parameters: [String: String] = [:]) throws {
         let normalizedProtocol = protocolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -569,8 +569,8 @@ enum NativeConnectorRegistry {
             // TCPFlowRelay: HTTP 101 is validated before the masked VLESS
             // binary request is written.  Reality/XTLS remains fallback.
             if network == "ws" {
-                return target.parameters["uuid"] != nil
-                    && target.vlessWebSocketOptions != nil
+                return target.parameters["uuid"]?.isEmpty == false
+                    && !target.hasInvalidVLESSWebSocketOptions
                     && !hasUnsupportedRealityOrXTLSParameters(target.parameters)
             }
             return network == "tcp" && !hasUnsupportedRealityOrXTLSParameters(target.parameters)

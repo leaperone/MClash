@@ -25,23 +25,33 @@ public struct VLESSWebSocketOptions: Codable, Equatable, Hashable, Sendable {
         }, uniquingKeysWith: { first, _ in first })
         var path: String?
         var headers: [String: String] = [:]
+        var declaredOptions = false
         for key in ["ws-opts", "ws-options"] {
-            guard let raw = normalized[key],
-                  let data = raw.data(using: .utf8),
+            guard let raw = normalized[key] else { continue }
+            declaredOptions = true
+            guard let data = raw.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data),
-                  let map = object as? [String: Any]
-            else { continue }
-            if let value = map["path"] as? String { path = value }
-            if let values = map["headers"] as? [String: String] { headers.merge(values) { _, new in new } }
-            if let values = map["headers"] as? [String: Any] {
+                  let map = object as? [String: Any] else {
+                return nil
+            }
+            if let rawPath = map["path"] {
+                guard let value = rawPath as? String else { return nil }
+                path = value
+            }
+            if let rawHeaders = map["headers"] {
+                guard let values = rawHeaders as? [String: Any] else { return nil }
                 for (name, value) in values {
-                    if let value = value as? String { headers[name] = value }
+                    guard let value = value as? String else { return nil }
+                    headers[name] = value
                 }
             }
         }
+        if normalized["ws-path"] != nil || normalized["ws-host"] != nil {
+            declaredOptions = true
+        }
         path = path ?? normalized["ws-path"]
         if let host = normalized["ws-host"], !host.isEmpty { headers["Host"] = host }
-        guard path != nil || !headers.isEmpty || normalized.keys.contains("ws-opts") || normalized.keys.contains("ws-options") else {
+        guard declaredOptions else {
             return nil
         }
         return VLESSWebSocketOptions(path: path ?? "/", headers: headers)
