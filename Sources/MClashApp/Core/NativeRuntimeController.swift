@@ -3,9 +3,9 @@ import MClashNetworkShared
 
 /// Connector-neutral lifecycle surface used by the application model.
 ///
-/// The first implementation still delegates to the bundled Mihomo process,
-/// but keeping this boundary independent of its name lets the control plane
-/// move to native connectors without changing AppModel's lifecycle code.
+/// The native implementation owns the control plane in-process. The legacy
+/// compatibility adapter remains behind this boundary for explicit rollback,
+/// so AppModel's lifecycle code does not depend on a particular connector.
 protocol NativeRuntimeController: AnyObject, Sendable {
     nonisolated var nativeFlowObservations: NativeFlowObservationStore? { get }
     var events: AsyncStream<CoreEvent> { get }
@@ -30,6 +30,11 @@ protocol NativeRuntimeController: AnyObject, Sendable {
     /// Legacy controllers intentionally ignore this catalog.
     func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) async
 
+    /// Returns the immutable policy snapshot currently attached to a native
+    /// session. Compatibility sessions return nil so callers can populate
+    /// native presentation state without probing an HTTP controller.
+    func compiledRuntimePlan() async -> CompiledRuntimePlan?
+
     /// Log forwarding is deliberately synchronous: CoreSupervisor uses this
     /// from pipe callbacks, and the gate itself is thread-safe.
     nonisolated func setProcessLogForwardingEnabled(_ enabled: Bool)
@@ -38,9 +43,9 @@ protocol NativeRuntimeController: AnyObject, Sendable {
 /// The implementation-neutral identity of a profile runtime session.
 ///
 /// CoreFleetSupervisor uses this boundary instead of constructing a
-/// CoreSupervisor directly.  A native session can therefore participate in
-/// the same profile lifecycle while the legacy Mihomo adapter remains the
-/// default for existing callers.
+/// CoreSupervisor directly. A native session can therefore participate in
+/// the same profile lifecycle while the legacy compatibility adapter remains
+/// available as an explicit rollback path.
 enum ProfileRuntimeSessionBackend: String, Codable, Equatable, Sendable {
     case native
     case legacyConnector
@@ -133,6 +138,8 @@ extension CoreSupervisor {
     func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) async {
         // Legacy Mihomo adapter ignores native node targets.
     }
+
+    func compiledRuntimePlan() async -> CompiledRuntimePlan? { nil }
 }
 
 /// Compatibility adapter for the current Mihomo-backed runtime.
@@ -192,6 +199,8 @@ final actor MihomoRuntimeControllerAdapter: ProfileRuntimeSession {
     func configureOutboundTargets(_ catalog: OutboundNodeTargetCatalog?) async {
         // Keep legacy behavior unchanged while native runtime is opt-in.
     }
+
+    func compiledRuntimePlan() async -> CompiledRuntimePlan? { nil }
 
     nonisolated func setProcessLogForwardingEnabled(_ enabled: Bool) {
         supervisor.setProcessLogForwardingEnabled(enabled)

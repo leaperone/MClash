@@ -1,20 +1,20 @@
 # MClash
 
-MClash is a native macOS controller for the
-[MetaCubeX mihomo Alpha](https://github.com/MetaCubeX/mihomo/tree/Alpha) core.
-It bundles and supervises the core, manages Clash-compatible profiles, and
-provides System Proxy and per-application routing without exposing routine core
-maintenance to the user.
+MClash is a native macOS network-routing runtime. It owns configuration,
+entrances, DNS, rules, node selection and lifecycle in Swift, with no Mihomo
+process or controller on the normal 1.5.x path. Imported Clash-compatible
+profiles are parsed as node sources; their policy sections are not executed.
 
-MClash is a controller, not a proxy service. You need your own compatible YAML
-profile or subscription.
+MClash is a routing service, not a subscription provider. You need your own
+compatible profile or subscription for outbound nodes.
 
 ## Highlights
 
 - Native SwiftUI and AppKit interface, main window, and menu bar controls
 - Interface languages: English, Simplified and Traditional Chinese, Japanese,
   Korean, French, German, and Spanish, with a System Default option
-- Bundled, checksum-verified mihomo Alpha core and GEO databases
+- Native in-process runtime with explicit protocol capability diagnostics
+- Bundled GEO databases for native rule matching
 - Local YAML profiles and remote subscriptions with validation, transactional
   activation, rollback, scheduled refresh, and bounded retry backoff
 - Rule, Global, and Direct modes with searchable proxy groups, latency tests,
@@ -31,7 +31,8 @@ profile or subscription.
 
 - macOS 14 or later
 - Apple Silicon for published releases
-- A Clash/mihomo-compatible local profile or subscription
+- A Clash-compatible local profile or subscription (nodes are imported into
+  the MClash catalog)
 
 The repository contains architecture-selection support for Intel, but an Intel
 release is not produced until its mihomo artifact has an independently reviewed
@@ -46,20 +47,22 @@ hash in the manifest.
    Extension, and automatic updates retain a stable identity.
 
 Published builds are Developer ID signed, notarized by Apple, and updated from
-the signed Sparkle feed. The mihomo executable and GEO data are already included;
-end users do not download or select a core.
+the signed Sparkle feed. Native 1.5.x builds do not include or launch a Mihomo
+executable. A compatibility connector is retained only as an explicit rollback
+build for profiles that still require an unsupported protocol.
 
 ## Get started
 
 1. Open **Profiles** and choose **Import & Activate** for a local YAML file, or
    **Add Subscription** for an HTTP/HTTPS subscription.
 2. Select the default profile, optionally enable additional Profile sessions,
-   and connect. Each enabled Profile has its own Mihomo process and Mixed port.
+   and connect. Each enabled Profile has its own isolated native runtime and
+   entrance ports.
 3. Choose how macOS traffic should enter MClash:
 
    - Enable **Use macOS System Proxy** for ordinary proxy-aware applications.
    - Open **App Routing** to send selected applications or destinations through
-     Mihomo while leaving other applications direct.
+     the native policy engine while leaving other applications direct.
    - Leave both off when you only need the local Mixed listeners shown by
      MClash. Each Mixed port accepts HTTP, HTTPS proxy, and SOCKS5 clients.
 
@@ -69,20 +72,19 @@ end users do not download or select a core.
 Choose **Settings → Appearance → Language** to override the macOS language, or
 leave **System Default** selected.
 
-MClash validates the generated runtime configuration with `mihomo -t` before
-activation without rewriting the stored profile. For predictable multi-profile
-isolation, each managed session exposes only its MClash-assigned Mixed port and
-private App Routing listeners. Profile-owned HTTP/SOCKS/Mixed/custom listeners,
-TUN, tunnels, server shortcuts, and external controllers are not launched;
-advanced Redirect, TProxy, and DNS settings remain available on the default
-profile.
+MClash validates a connector-neutral runtime plan before activation without
+rewriting the stored profile. For predictable multi-profile isolation, each
+managed session exposes only its MClash-assigned entrances and private App
+Routing listeners. Profile-owned listeners, TUN, tunnels, server shortcuts,
+and external controllers are not launched; unsupported protocol features are
+reported as explicit compatibility fallbacks.
 
 ## App Routing
 
 App Routing uses a macOS app-proxy Network Extension to evaluate traffic before
-it reaches Mihomo. The first enabled matching rule wins. If no rule is enabled,
-application traffic is explicitly Direct. DNS routing has its own on/off state
-and runs through the companion DNS Proxy provider.
+it reaches the native policy engine. The first enabled matching rule wins. If
+no rule is enabled, application traffic is explicitly Direct. DNS routing has
+its own on/off state and runs through the companion DNS Proxy provider.
 
 A rule can match:
 
@@ -93,7 +95,7 @@ A rule can match:
 - TCP, UDP, and destination port ranges.
 
 A match can go Direct, be rejected, follow a selected Profile's rules, use that
-Profile's Mihomo GLOBAL route, or enter a specific policy group on the default
+Profile's global route, or enter a specific policy group on the default
 Profile. Each rule also defines what to do if its requested Profile or route is
 unavailable. Rules can be reordered, disabled, duplicated, and updated
 transactionally. Existing Proxifier `.ppx` routing rules can be previewed and
@@ -131,7 +133,7 @@ mclashctl routing.mode.set --params '{"mode":"rule"}'
 `system.capabilities` is the authoritative operation list for the installed
 version. The API covers app and core lifecycle, profiles and backups, settings,
 routing and proxy selection, unified Configuration planning and activation,
-Mihomo rules/providers, System Proxy, App Routing, traffic/history, logs, and
+rules/providers, System Proxy, App Routing, traffic/history, logs, and
 diagnostics. If moving MClash leaves an old command link, follow the verified
 `readlink` and `unlink` recovery in [Automation API v1](docs/AUTOMATION.md);
 do not overwrite it with `ln -sf`.
@@ -163,9 +165,9 @@ separate trust identities. Tokens are stored in the client's Keychain; MClash
 stores only their SHA-256 hashes.
 
 The endpoint does not listen on TCP or LAN. It accepts the same macOS user only,
-binds authorization to the client's code identity, and does not return the
-Mihomo controller secret, Network Extension credentials, or full subscription
-URLs. See [Automation API v1](docs/AUTOMATION.md) for the protocol, scopes,
+binds authorization to the client's code identity, and does not return runtime
+secrets, Network Extension credentials, or full subscription URLs. See
+[Automation API v1](docs/AUTOMATION.md) for the protocol, scopes,
 idempotency rules, CLI options, and complete operation families.
 
 ## Development
@@ -182,9 +184,8 @@ open .build/release/MClash.app
 ```
 
 `build-app.sh` creates an ad-hoc-signed local application by default. It fetches
-Sparkle tools and immutable build inputs when needed, verifies the selected
-mihomo artifact and GEO databases, and assembles the host app, `mclashctl`, and
-Network Extension. A production-capable Network Extension build requires the
+Sparkle tools and immutable GEO databases when needed, and assembles the host
+app, `mclashctl`, and Network Extension. A production-capable Network Extension build requires the
 Developer ID identity, provisioning profiles, and entitlements used by the
 protected release workflow.
 
@@ -196,13 +197,14 @@ with a complete Xcode toolchain.
 Useful verification commands:
 
 ```sh
-./scripts/verify-mihomo-alpha.sh
 ./scripts/verify-mihomo-geodata.sh .build/release/MClash.app/Contents/Resources/GeoData
 ```
 
-The pinned core version and commit live in `Support/mihomo-alpha.env`; reviewed
-raw executable hashes live in `Support/mihomo-alpha.sha256`. Production builds
-also bundle verified `geoip.metadb`, `GeoIP.dat`, `GeoSite.dat`, and `ASN.mmdb`.
+The GEO snapshots are used by native rule matching. The legacy Mihomo artifact
+manifest and verification scripts remain only for an explicitly requested
+compatibility build; native-only 1.5.x packages do not include that executable.
+Production builds bundle verified `geoip.metadb`, `GeoIP.dat`, `GeoSite.dat`,
+and `ASN.mmdb`.
 
 ### Repository layout
 
@@ -220,8 +222,8 @@ also bundle verified `geoip.metadb`, `GeoIP.dat`, `GeoSite.dat`, and `ASN.mmdb`.
 
 ## Security and privacy
 
-- The Mihomo controller binds to a dynamic `127.0.0.1` port and uses a random
-  per-launch secret retained only for the current MClash process.
+- Native entrances bind to loopback ports selected by the MClash listener
+  registry; native runtime sessions have no HTTP controller.
 - The automation endpoint is a mode-0600, per-user Unix socket. It checks the
   peer UID, client identity, token, and authorized access before dispatch.
 - Profile changes are validated before activation and use transactional rollback.
@@ -231,8 +233,8 @@ also bundle verified `geoip.metadb`, `GeoIP.dat`, `GeoSite.dat`, and `ASN.mmdb`.
   subscription details before export.
 - Backups are intentionally unencrypted and may contain subscription URLs and
   proxy credentials. Store them as secrets.
-- Core updates arrive as part of a signed MClash release; MClash does not use
-  Mihomo's in-place `/upgrade` endpoint.
+- Runtime updates arrive as part of a signed MClash release; native builds do
+  not expose a core download or in-place upgrade endpoint.
 - TUN mode is not currently exposed. Its design requires a separately signed,
   narrow privileged helper rather than arbitrary root shell execution.
 

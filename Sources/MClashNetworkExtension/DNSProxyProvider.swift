@@ -106,6 +106,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
     private var proxyCatalog: [OutboundRoute: ProviderSOCKSConfiguration] = [:]
     private var dnsUpstreamMode: DNSUpstreamMode = .legacyConnector
     private var nativeUpstreamBootstrap: DNSUpstreamBootstrap?
+    private let nativeDNSResponseCache = NativeDNSResponseCache()
     private var activeRevision: UInt64 = 0
     private var activeGeneration = UUID()
     private var nativeDNSRelays: [UUID: NativeDNSFlowRelay] = [:]
@@ -455,6 +456,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             let relay = NativeDNSFlowRelay.startTCP(
                 flow: tcpFlow,
                 endpoint: endpoint,
+                responseCache: nativeDNSResponseCache,
                 endpointSelector: { query in
                     nativeBootstrap?.endpoint(forQuery: query, transport: .tcp)
                 },
@@ -732,6 +734,7 @@ final class DNSProxyProvider: NEDNSProxyProvider, @unchecked Sendable {
             let relay = NativeDNSFlowRelay.startUDP(
                 flow: flow,
                 endpoint: endpoint,
+                responseCache: nativeDNSResponseCache,
                 endpointSelector: { query in
                     nativeBootstrap?.endpoint(forQuery: query, transport: .udp)
                 },

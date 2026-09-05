@@ -830,11 +830,10 @@ final class AppModel {
     private var startupPreparationErrorMessage: String?
     private let testInstance: Bool
 
-    /// Whether this instance uses the in-process native runtime. Isolated/test
-    /// instances deliberately default to native so they exercise the new
-    /// lifecycle, while production remains on the compatibility adapter until
-    /// the release gates are complete. `MCLASH_LEGACY_RUNTIME=1` is an
-    /// explicit rollback switch and always wins.
+    /// Whether this instance uses the in-process native runtime. Native is the
+    /// default for every distribution, while `MCLASH_LEGACY_RUNTIME=1` is an
+    /// explicit rollback switch for older profiles that still need the
+    /// compatibility connector during migration.
     private var usesNativeRuntime: Bool {
         supervisor.runtimeCapabilities.contains(.nativeRuntime)
     }
@@ -859,9 +858,10 @@ final class AppModel {
         // that isolated validation exercises.
         if distributionMode == "native-only" { return true }
         guard environment["MCLASH_LEGACY_RUNTIME"] != "1" else { return false }
-        return environment["MCLASH_NATIVE_RUNTIME"] == "1"
-            || environment["MCLASH_TEST_MODE"] == "1"
-            || arguments.contains("--mclash-test-instance")
+        // Keep the positive switches for callers that make the intent
+        // explicit, but do not require one in a production process. The
+        // native control plane is now the supported 1.5.x default.
+        return true
     }
 
     static func runtimeController(
@@ -885,8 +885,8 @@ final class AppModel {
     /// the primary session.  Keeping this decision in one factory is
     /// important during the migration: native mode must never accidentally
     /// create a CoreSupervisor for a secondary profile while the primary
-    /// controller is native.  The legacy path remains the explicit fallback
-    /// until native routing has completed its production readiness gates.
+    /// controller is native. The legacy path is selected only by the explicit
+    /// rollback switch or an injected compatibility controller.
     static func runtimeSessionFactory(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         arguments: [String] = CommandLine.arguments,
@@ -1080,10 +1080,7 @@ final class AppModel {
             // Preserve argument-based test isolation when constructing the
             // fleet factory (the factory intentionally accepts environment
             // values so it remains deterministic in unit tests).
-            if Self.shouldUseNativeRuntime(
-                environment: processEnvironment,
-                arguments: processArguments
-            ) {
+            if selectedSupervisor.runtimeCapabilities.contains(.nativeRuntime) {
                 sessionEnvironment["MCLASH_NATIVE_RUNTIME"] = "1"
             }
         }
@@ -1193,7 +1190,12 @@ final class AppModel {
             autoEnableSystemProxy = false
             unifiedConfigurationEnabled = true
         } else if defaults.object(forKey: Self.unifiedConfigurationEnabledKey) == nil {
-            unifiedConfigurationEnabled = false
+            // The native runtime consumes the connector-neutral workspace
+            // directly. New installs therefore start with the unified model;
+            // the legacy profile/YAML path remains available only through the
+            // explicit rollback runtime switch.
+            unifiedConfigurationEnabled = selectedSupervisor.runtimeCapabilities
+                .contains(.nativeRuntime)
         } else {
             unifiedConfigurationEnabled = defaults.bool(
                 forKey: Self.unifiedConfigurationEnabledKey
@@ -1285,10 +1287,7 @@ final class AppModel {
                 )
             }
 
-            if Self.shouldUseNativeRuntime(
-                environment: processEnvironment,
-                arguments: processArguments
-            ) {
+            if selectedSupervisor.runtimeCapabilities.contains(.nativeRuntime) {
                 // Native sessions do not read or write legacy runtime
                 // overrides. Keeping this coordinator nil prevents malformed
                 // YAML override state from affecting native startup.
@@ -1524,6 +1523,18 @@ final class AppModel {
                     startupUnifiedMigrationPreviousDocument = configurationDocument
                     startupUnifiedMigrationPreviousNetworkCapturePreferences = networkCapturePreferences
                     try await prepareDocumentForUnifiedMigration()
+                }
+                if usesNativeRuntime, !unifiedConfigurationEnabled {
+                    // Existing installations may have persisted the old
+                    // compatibility default. Promote them after the legacy
+                    // capture rules have been copied, then compile a native
+                    // plan so startup can never run without a policy snapshot.
+                    unifiedConfigurationEnabled = true
+                    appendSupervisorLog(
+                        AppLocalization.string(
+                            "The native runtime now uses the MClash configuration workspace."
+                        )
+                    )
                 }
                 if startupUnifiedMigrationPending || unifiedConfigurationEnabled {
                     do {
@@ -2851,6 +2862,14 @@ final class AppModel {
             plan: compiled.runtimePlan,
             listeners: listeners
         )
+        runtimeConfig = NativeRuntimeProjection.config(from: compiled.runtimePlan)
+        applyProxyCollection(
+            NativeRuntimeProjection.proxyCollection(from: compiled.runtimePlan),
+            profileStructure: .empty
+        )
+        rules = NativeRuntimeProjection.ruleCollection(from: compiled.runtimePlan).rules
+        rulesErrorMessage = nil
+        rulesLastLoadedAt = Date()
         let unresolvedCatalog = unresolvedActiveOutboundNodeTargetCatalog()
         if let unresolvedCatalog,
            let bootstrap = configuredNativeDNSUpstreamBootstrap {
@@ -6313,6 +6332,12 @@ final class AppModel {
             && controllerIsReady
         let generation = controllerGeneration
         let previousLiveMode = runtimeConfig?.mode.lowercased()
+        if isCurrentWorkspace, usesNativeRuntime {
+            // Apply the candidate to the in-process engine before persisting
+            // it. A rejected native plan therefore leaves both the durable
+            // workspace and the last-known-good listener session untouched.
+            try await synchronizeNativeRuntimePolicy(compiledTarget)
+        }
         if isCurrentWorkspace, let apiClient {
             pendingMode = mode.rawValue
             defer { pendingMode = nil }
@@ -6418,7 +6443,7 @@ final class AppModel {
         guard previousID != groupID else { return true }
         candidate.workspaces[workspaceIndex].globalProxyGroupID = groupID
         candidate.workspaces[workspaceIndex].revision += 1
-        _ = try ConfigurationCompiler().compile(
+        let compiledTarget = try ConfigurationCompiler().compile(
             document: candidate,
             workspaceID: targetID
         )
@@ -6427,6 +6452,9 @@ final class AppModel {
             && isConnected
             && controllerIsReady
         let generation = controllerGeneration
+        if isCurrentWorkspace, usesNativeRuntime {
+            try await synchronizeNativeRuntimePolicy(compiledTarget)
+        }
         if isCurrentWorkspace, let apiClient {
             guard candidate.workspaces[workspaceIndex].routingMode == .global else {
                 try await persistConfigurationDocument(candidate)
@@ -6491,6 +6519,64 @@ final class AppModel {
             end(.selectProxy(group))
         }
 
+        if usesNativeRuntime {
+            do {
+                let selectedGroupName: String
+                if group == "GLOBAL",
+                   let workspace = configurationDocument.currentWorkspace,
+                   let globalID = workspace.globalProxyGroupID
+                       ?? workspace.proxyGroupIDs.first,
+                   let global = configurationDocument.proxyGroups.first(where: {
+                       $0.id == globalID && $0.enabled
+                   }) {
+                    selectedGroupName = global.name
+                } else {
+                    selectedGroupName = group
+                }
+                guard let groupIndex = configurationDocument.proxyGroups.firstIndex(where: {
+                    $0.name == selectedGroupName && $0.enabled
+                }) else {
+                    throw ConfigurationAutomationError.invalidInput(
+                        "The selected native node group is unavailable"
+                    )
+                }
+                guard let node = configurationDocument.nodes.first(where: {
+                    $0.enabled
+                        && ($0.displayName == proxy || $0.userAlias == proxy)
+                }) else {
+                    throw ConfigurationAutomationError.invalidInput(
+                        "The selected native node is unavailable"
+                    )
+                }
+                var candidate = configurationDocument
+                var members = candidate.proxyGroups[groupIndex].members
+                members.removeAll { member in
+                    if case let .node(id) = member { return id == node.id }
+                    return false
+                }
+                members.insert(.node(node.id), at: 0)
+                candidate.proxyGroups[groupIndex].members = members
+                if let workspaceIndex = candidate.workspaces.firstIndex(where: {
+                    $0.id == candidate.currentWorkspaceID
+                }) {
+                    candidate.workspaces[workspaceIndex].revision += 1
+                }
+                let compiled = try ConfigurationCompiler().compile(
+                    document: candidate,
+                    workspaceID: candidate.currentWorkspaceID
+                )
+                if isConnected {
+                    try await synchronizeNativeRuntimePolicy(compiled)
+                }
+                try await persistConfigurationDocument(candidate)
+                compiledConfiguration = compiled
+                return true
+            } catch {
+                recordOperationFailure(error, context: "Native proxy selection")
+                return false
+            }
+        }
+
         guard let apiClient,
               let groupModel = proxiesByName[group],
               groupModel.groupBehavior?.supportsSelectionUpdate == true else {
@@ -6517,6 +6603,47 @@ final class AppModel {
     func clearProxyOverride(group: String) async -> Bool {
         guard begin(.clearProxyOverride(group)) else { return false }
         defer { end(.clearProxyOverride(group)) }
+
+        if usesNativeRuntime {
+            // Native groups resolve selector membership on every compile; the
+            // durable member list is the only source of a fixed override.
+            // Removing the first explicit node restores selector ordering.
+            do {
+                guard let groupIndex = configurationDocument.proxyGroups.firstIndex(where: {
+                    $0.name == group && $0.enabled
+                }) else {
+                    throw ConfigurationAutomationError.invalidInput(
+                        "The selected native node group is unavailable"
+                    )
+                }
+                var candidate = configurationDocument
+                if let fixedIndex = candidate.proxyGroups[groupIndex].members
+                    .firstIndex(where: { member in
+                        if case .node = member { return true }
+                        return false
+                    }) {
+                    candidate.proxyGroups[groupIndex].members.remove(at: fixedIndex)
+                }
+                if let workspaceIndex = candidate.workspaces.firstIndex(where: {
+                    $0.id == candidate.currentWorkspaceID
+                }) {
+                    candidate.workspaces[workspaceIndex].revision += 1
+                }
+                let compiled = try ConfigurationCompiler().compile(
+                    document: candidate,
+                    workspaceID: candidate.currentWorkspaceID
+                )
+                if isConnected {
+                    try await synchronizeNativeRuntimePolicy(compiled)
+                }
+                try await persistConfigurationDocument(candidate)
+                compiledConfiguration = compiled
+                return true
+            } catch {
+                recordOperationFailure(error, context: "Clear native proxy selection")
+                return false
+            }
+        }
 
         guard let apiClient,
               let groupModel = proxiesByName[group],
@@ -9765,6 +9892,23 @@ final class AppModel {
             activeControllerEndpoint = session.endpoint
             controllerGeneration &+= 1
             controllerState = .ready
+            if let plan = await supervisor.compiledRuntimePlan() {
+                // Keep the existing presentation models populated from the
+                // native plan. This is a local projection only; it never
+                // opens a controller socket or decodes a Mihomo response.
+                runtimeConfig = NativeRuntimeProjection.config(from: plan)
+                applyProxyCollection(
+                    NativeRuntimeProjection.proxyCollection(from: plan),
+                    profileStructure: .empty
+                )
+                rules = NativeRuntimeProjection.ruleCollection(from: plan).rules
+                rulesErrorMessage = nil
+                rulesLastLoadedAt = Date()
+                proxyProviders = []
+                ruleProviders = []
+                providersErrorMessage = nil
+                providersLastLoadedAt = Date()
+            }
             await startNativeFlowObservationConsumptionIfNeeded()
             errorMessage = nil
             appendSupervisorLog("Native runtime is ready; no legacy controller was contacted.")

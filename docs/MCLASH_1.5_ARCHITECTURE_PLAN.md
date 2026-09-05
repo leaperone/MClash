@@ -58,10 +58,10 @@ user/compiler action changes it.
       workspace revision, listener counts and validation errors in diagnostics.
 - [~] `NativeRuntimeEngine` owns a validated plan/listener session, but does
       not yet bind every socket or replace the production default.
-- [~] Make `NativeRuntimeEngine` the default lifecycle owner; isolated/test
-      AppModel instances now select it by default while production remains
-      legacy until the full protocol and lifecycle gates pass. AppModel must
-      supply a plan and `MClashListenerRegistry`, never a rendered YAML.
+- [~] Make `NativeRuntimeEngine` the default lifecycle owner; ordinary and
+      isolated AppModel instances now select it by default while
+      `MCLASH_LEGACY_RUNTIME=1` remains an explicit rollback switch. AppModel
+      must supply a plan and `MClashListenerRegistry`, never a rendered YAML.
 - [~] Remove Mihomo controller readiness, API polling and YAML generation from
       the native activation path. Keep a separately named legacy adapter only
       for rollback during the migration.
@@ -275,6 +275,14 @@ and can be tested without producing a Mihomo YAML document.
       separately authorized production upgrade and verify rollback readiness.
 
 ## 6. Progress record (2026-09-05)
+
+- The native runtime is now the ordinary launch default. Existing installs
+  promote the persisted workspace after copying legacy capture rules, compile
+  a connector-neutral plan, and attach it before connecting. Compatibility
+  sessions require the explicit `MCLASH_LEGACY_RUNTIME=1` switch.
+- Native DNS TCP/UDP relays share a bounded transaction-ID-safe response cache
+  (256 entries, 30-second TTL), reducing repeated upstream work without
+  allowing one client's DNS ID to leak into another response.
 
 - `v1.5.9` (`9147843`) is the signed, notarized native patch release. The
   standard free `macos-26` workflow passed unit, compatibility, evidence,

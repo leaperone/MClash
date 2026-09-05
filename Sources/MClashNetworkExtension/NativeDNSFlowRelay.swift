@@ -12,6 +12,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
     private let tcpFlow: NEAppProxyTCPFlow?
     private let udpFlow: NEAppProxyUDPFlow?
     private let endpoint: DNSUpstreamEndpoint
+    private let responseCache: NativeDNSResponseCache?
     private let endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)?
     private let completion: @Sendable () -> Void
     private let exchangeObserver: ExchangeObserver?
@@ -24,6 +25,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         tcpFlow: NEAppProxyTCPFlow? = nil,
         udpFlow: NEAppProxyUDPFlow? = nil,
         endpoint: DNSUpstreamEndpoint,
+        responseCache: NativeDNSResponseCache? = nil,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         exchangeObserver: ExchangeObserver? = nil,
         responseObserver: ResponseObserver? = nil,
@@ -32,6 +34,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         self.tcpFlow = tcpFlow
         self.udpFlow = udpFlow
         self.endpoint = endpoint
+        self.responseCache = responseCache
         self.endpointSelector = endpointSelector
         self.exchangeObserver = exchangeObserver
         self.responseObserver = responseObserver
@@ -41,6 +44,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
     static func startTCP(
         flow: NEAppProxyTCPFlow,
         endpoint: DNSUpstreamEndpoint,
+        responseCache: NativeDNSResponseCache? = nil,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         exchangeObserver: ExchangeObserver? = nil,
         responseObserver: ResponseObserver? = nil,
@@ -49,6 +53,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         let relay = NativeDNSFlowRelay(
             tcpFlow: flow,
             endpoint: endpoint,
+            responseCache: responseCache,
             endpointSelector: endpointSelector,
             exchangeObserver: exchangeObserver,
             responseObserver: responseObserver,
@@ -61,6 +66,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
     static func startUDP(
         flow: NEAppProxyUDPFlow,
         endpoint: DNSUpstreamEndpoint,
+        responseCache: NativeDNSResponseCache? = nil,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         exchangeObserver: ExchangeObserver? = nil,
         responseObserver: ResponseObserver? = nil,
@@ -69,6 +75,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         let relay = NativeDNSFlowRelay(
             udpFlow: flow,
             endpoint: endpoint,
+            responseCache: responseCache,
             endpointSelector: endpointSelector,
             exchangeObserver: exchangeObserver,
             responseObserver: responseObserver,
@@ -235,7 +242,10 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
     }
 
     private func exchange(query: Data) async throws -> Data {
+        if let cached = await responseCache?.response(for: query) { return cached }
         let selected = endpointSelector?(query) ?? endpoint
-        return try await SocketDNSUpstream(endpoint: selected).exchange(query: query)
+        let response = try await SocketDNSUpstream(endpoint: selected).exchange(query: query)
+        await responseCache?.insert(query: query, response: response)
+        return response
     }
 }

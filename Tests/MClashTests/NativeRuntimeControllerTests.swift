@@ -5,19 +5,41 @@ import MClashNetworkShared
 
 @Suite("Native runtime controller seam")
 struct NativeRuntimeControllerTests {
+    @Test("Native presentation state is projected from the compiled plan")
+    @MainActor
+    func nativePresentationProjectionUsesWorkspacePlan() throws {
+        let plan = try ConfigurationCompiler().compileRuntimePlan(
+            document: ConfigurationDocument.mclashDefault()
+        )
+        let proxies = NativeRuntimeProjection.proxyCollection(from: plan)
+        let rules = NativeRuntimeProjection.ruleCollection(from: plan)
+        let config = NativeRuntimeProjection.config(from: plan)
+
+        #expect(config.mode == plan.routingMode.rawValue)
+        #expect(config.listeners?.isEmpty == false)
+        #expect(proxies.proxies["MClash Select"] != nil)
+        #expect(rules.rules.isEmpty == false)
+        #expect(rules.rules.allSatisfy { !$0.proxy.isEmpty })
+    }
+
     @Test("Native DNS bootstrap projects Fake-IP only for literal upstreams")
+    @MainActor
     func nativeDNSProjection() throws {
         let fake = DNSPolicy(name: "Fake", mode: .fakeIP, nameservers: ["1.1.1.1"], takeoverEnabled: true)
-        let bootstrap = #require(try AppModel.nativeDNSBootstrap(for: fake))
-        #expect(bootstrap.fakeIPConfiguration != nil)
+        let bootstrap = try AppModel.nativeDNSBootstrap(for: fake)
+        #expect(bootstrap != nil)
+        #expect(bootstrap?.fakeIPConfiguration != nil)
 
         let redir = DNSPolicy(name: "Redir", mode: .redirHost, nameservers: ["1.1.1.1"], takeoverEnabled: true)
-        #expect(try AppModel.nativeDNSBootstrap(for: redir)?.fakeIPConfiguration == nil)
+        let redirBootstrap = try AppModel.nativeDNSBootstrap(for: redir)
+        #expect(redirBootstrap?.fakeIPConfiguration == nil)
         let hostnameOnly = DNSPolicy(name: "Host", mode: .redirHost, nameservers: ["dns.example"], takeoverEnabled: true)
-        #expect(try AppModel.nativeDNSBootstrap(for: hostnameOnly) == nil)
+        let hostnameBootstrap = try AppModel.nativeDNSBootstrap(for: hostnameOnly)
+        #expect(hostnameBootstrap == nil)
     }
 
     @Test("Invalid Fake-IP candidate is an explicit projection failure")
+    @MainActor
     func invalidNativeDNSProjection() {
         let invalid = DNSPolicy(name: "Fake", mode: .fakeIP, nameservers: ["1.1.1.1"], takeoverEnabled: true, fakeIPRange: "10.0.0.0/16")
         #expect(throws: NativeDNSBootstrapProjectionError.invalidFakeIPConfiguration) {
@@ -80,16 +102,19 @@ struct NativeRuntimeControllerTests {
         #expect(AppModel.shouldMaterializeLegacyConfiguration(usingNativeRuntime: false))
     }
 
-    @Test("AppModel runtime selection defaults native only for isolated instances")
+    @Test("AppModel runtime selection defaults native and keeps legacy explicit")
     @MainActor
     func appModelRuntimeSelectionIsExplicit() async {
+        #expect(AppModel.shouldUseNativeRuntime(environment: [:], arguments: []))
         let native = AppModel.runtimeController(
             environment: ["MCLASH_NATIVE_RUNTIME": "1"]
         )
         #expect(await native.diagnostics().backend == "native")
         #expect(await native.diagnostics().capabilities.contains(.nativeRuntime))
 
-        let legacy = AppModel.runtimeController(environment: [:])
+        let legacy = AppModel.runtimeController(
+            environment: ["MCLASH_LEGACY_RUNTIME": "1"]
+        )
         #expect(await legacy.diagnostics().backend == "mihomo")
         #expect(!(await legacy.diagnostics().capabilities.contains(.nativeRuntime)))
 
@@ -134,7 +159,9 @@ struct NativeRuntimeControllerTests {
         #expect(nativeSession.metadata.backend == .native)
         #expect(nativeSession.metadata.capabilities.contains(.nativeRuntime))
 
-        let legacyFactory = AppModel.runtimeSessionFactory(environment: [:])
+        let legacyFactory = AppModel.runtimeSessionFactory(
+            environment: ["MCLASH_LEGACY_RUNTIME": "1"]
+        )
         let legacySession = legacyFactory(ProfileID())
         #expect(legacySession.metadata.backend == .legacyConnector)
         #expect(legacySession.metadata.capabilities.contains(.legacyCore))

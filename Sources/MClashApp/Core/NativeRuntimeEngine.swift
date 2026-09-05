@@ -419,6 +419,10 @@ final actor NativeRuntimeEngine: ProfileRuntimeSession {
 
     func nativeSessionState() -> NativeRuntimeSessionState? { sessionState }
 
+    func compiledRuntimePlan() async -> CompiledRuntimePlan? {
+        sessionState?.plan
+    }
+
     func nativeGeoDatabaseStatus() -> NativeGeoDatabaseStatus {
         if let sessionState {
             ensureGeoProviderIfNeeded(for: sessionState.plan)
