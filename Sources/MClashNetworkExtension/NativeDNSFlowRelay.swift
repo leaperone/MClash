@@ -7,6 +7,7 @@ import MClashNetworkShared
 /// retained as the default until native DNS is enabled by a host bootstrap.
 final class NativeDNSFlowRelay: @unchecked Sendable {
     typealias ExchangeObserver = @Sendable (_ query: Data, _ response: Data) -> Void
+    typealias ResponseObserver = @Sendable (_ query: Data, _ response: Data) -> Data?
     private let queue = DispatchQueue(label: "one.leaper.mclash.native-dns-relay")
     private let tcpFlow: NEAppProxyTCPFlow?
     private let udpFlow: NEAppProxyUDPFlow?
@@ -14,6 +15,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
     private let endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)?
     private let completion: @Sendable () -> Void
     private let exchangeObserver: ExchangeObserver?
+    private let responseObserver: ResponseObserver?
     private var buffer = Data()
     private var stopped = false
     private var completionCalled = false
@@ -24,6 +26,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         endpoint: DNSUpstreamEndpoint,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         exchangeObserver: ExchangeObserver? = nil,
+        responseObserver: ResponseObserver? = nil,
         completion: @escaping @Sendable () -> Void
     ) {
         self.tcpFlow = tcpFlow
@@ -31,6 +34,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         self.endpoint = endpoint
         self.endpointSelector = endpointSelector
         self.exchangeObserver = exchangeObserver
+        self.responseObserver = responseObserver
         self.completion = completion
     }
 
@@ -39,6 +43,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         endpoint: DNSUpstreamEndpoint,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         exchangeObserver: ExchangeObserver? = nil,
+        responseObserver: ResponseObserver? = nil,
         completion: @escaping @Sendable () -> Void
     ) -> NativeDNSFlowRelay {
         let relay = NativeDNSFlowRelay(
@@ -46,6 +51,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
             endpoint: endpoint,
             endpointSelector: endpointSelector,
             exchangeObserver: exchangeObserver,
+            responseObserver: responseObserver,
             completion: completion
         )
         relay.queue.async { relay.openTCP() }
@@ -57,6 +63,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         endpoint: DNSUpstreamEndpoint,
         endpointSelector: (@Sendable (Data) -> DNSUpstreamEndpoint?)? = nil,
         exchangeObserver: ExchangeObserver? = nil,
+        responseObserver: ResponseObserver? = nil,
         completion: @escaping @Sendable () -> Void
     ) -> NativeDNSFlowRelay {
         let relay = NativeDNSFlowRelay(
@@ -64,6 +71,7 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
             endpoint: endpoint,
             endpointSelector: endpointSelector,
             exchangeObserver: exchangeObserver,
+            responseObserver: responseObserver,
             completion: completion
         )
         relay.queue.async { relay.openUDP() }
@@ -116,7 +124,12 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
                         do {
                             let response = try await self.exchange(query: query)
                             self.exchangeObserver?(query, response)
-                            let output = try DNSWireMessage.tcpFrame(for: response)
+                            let deliveredResponse = Self.responseAfterObservation(
+                                query: query,
+                                response: response,
+                                observer: self.responseObserver
+                            )
+                            let output = try DNSWireMessage.tcpFrame(for: deliveredResponse)
                             self.queue.async {
                                 guard !self.stopped else { return }
                                     flow.write(output) { [weak self] error in
@@ -168,10 +181,15 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
             do {
                 let response = try await self.exchange(query: datagram.payload)
                 self.exchangeObserver?(datagram.payload, response)
+                let deliveredResponse = Self.responseAfterObservation(
+                    query: datagram.payload,
+                    response: response,
+                    observer: self.responseObserver
+                )
                 self.queue.async {
                     guard !self.stopped else { return }
                     UDPAppProxyFlowCompatibility.write(
-                        UDPFlowDatagram(payload: response, endpoint: datagram.endpoint),
+                        UDPFlowDatagram(payload: deliveredResponse, endpoint: datagram.endpoint),
                         to: flow
                     ) { [weak self] error in
                         guard let self else { return }
@@ -203,6 +221,17 @@ final class NativeDNSFlowRelay: @unchecked Sendable {
         guard !completionCalled else { return }
         completionCalled = true
         completion()
+    }
+
+    /// Applies an optional response transformation immediately before bytes
+    /// are framed/written back to the intercepted flow. A nil transformation
+    /// result preserves the upstream response byte-for-byte.
+    static func responseAfterObservation(
+        query: Data,
+        response: Data,
+        observer: ResponseObserver?
+    ) -> Data {
+        observer?(query, response) ?? response
     }
 
     private func exchange(query: Data) async throws -> Data {

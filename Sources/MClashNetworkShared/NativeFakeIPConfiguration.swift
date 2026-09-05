@@ -31,7 +31,7 @@ public struct NativeFakeIPConfiguration: Codable, Equatable, Sendable {
     public let mappingScope: NativeFakeIPMappingScope
 
     public init(pool: IPNetwork? = nil, filters: [String] = [], maximumEntries: Int = Self.maximumEntries,
-                maximumEntriesPerSource: Int = Self.maximumEntriesPerSource, minimumTTL: TimeInterval = 5,
+                maximumEntriesPerSource: Int? = nil, minimumTTL: TimeInterval = 5,
                 maximumTTL: TimeInterval = NativeFakeIPConfiguration.maximumTTL,
                 mappingScope: NativeFakeIPMappingScope = .runtimeGlobal) throws {
         let selectedPool: IPNetwork
@@ -41,15 +41,21 @@ public struct NativeFakeIPConfiguration: Codable, Equatable, Sendable {
               Self.poolEnd(selectedPool) <= Self.number(try! IPAddress("198.19.255.255")) else {
             throw NativeFakeIPConfigurationError.unsupportedPool
         }
+        let configuredEntriesPerSource = maximumEntriesPerSource
+            ?? min(Self.maximumEntriesPerSource, maximumEntries)
         guard maximumEntries > 0, maximumEntries <= Self.maximumEntries,
-              maximumEntriesPerSource > 0, maximumEntriesPerSource <= Self.maximumEntriesPerSource,
-              maximumEntriesPerSource <= maximumEntries else { throw NativeFakeIPConfigurationError.invalidCapacity }
+              configuredEntriesPerSource > 0,
+              configuredEntriesPerSource <= Self.maximumEntriesPerSource,
+              configuredEntriesPerSource <= maximumEntries else {
+            throw NativeFakeIPConfigurationError.invalidCapacity
+        }
         guard minimumTTL.isFinite, maximumTTL.isFinite, minimumTTL >= 0,
               maximumTTL >= minimumTTL, maximumTTL <= Self.maximumTTL else { throw NativeFakeIPConfigurationError.invalidTTL }
         guard filters.count <= Self.maximumFilters else { throw NativeFakeIPConfigurationError.tooManyFilters }
         let normalized = try filters.map(Self.normalizeFilter)
         self.pool = selectedPool; self.filters = Array(Set(normalized)).sorted()
-        self.maximumEntriesCount = maximumEntries; self.maximumEntriesPerSourceCount = maximumEntriesPerSource
+        self.maximumEntriesCount = maximumEntries
+        self.maximumEntriesPerSourceCount = configuredEntriesPerSource
         self.minimumTTL = minimumTTL; self.maximumTTLValue = maximumTTL
         self.mappingScope = mappingScope
     }
