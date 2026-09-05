@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "release_version": "1.5.11",
+  "commit": "3036c5a8fd6c99a5ca75c7894d2d72d4a323ee8e",
+  "status": "passed",
+  "backend": "native",
+  "capabilities": [
+    "nativeRuntime",
+    "nativeRouting",
+    "nativeDNS"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh",
+    "./scripts/integration-test.sh",
+    "MCLASH_NATIVE_ONLY=1 MCLASH_VERSION=1.5.11 MCLASH_BUILD_NUMBER=151100 ./scripts/build-app.sh",
+    "MCLASH_SHADOW_SOURCE_ROOT=\"/Users/cunkycheng/Library/Application Support/MClash\" MCLASH_SHADOW_AUTO_CONNECT=1 ./scripts/smoke-test-native-runtime-cli.sh"
+  ]
+}
