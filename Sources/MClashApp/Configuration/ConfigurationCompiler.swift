@@ -25,6 +25,12 @@ public struct CompiledRuntimeConfiguration: Equatable, Sendable {
     public let diagnostics: [ConfigurationDiagnostic]
     public let configHash: String
 
+    /// Candidate native Fake-IP policy projected from the connector-neutral
+    /// plan. Activation remains gated by the native capability check.
+    public var nativeFakeIPConfiguration: NativeFakeIPConfiguration? {
+        runtimePlan.dnsPolicy?.nativeFakeIPConfiguration
+    }
+
     public init(
         runtimePlan: CompiledRuntimePlan,
         workspaceID: WorkspaceID,

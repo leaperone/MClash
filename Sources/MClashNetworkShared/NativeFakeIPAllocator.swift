@@ -70,6 +70,17 @@ public final class NativeFakeIPAllocator: @unchecked Sendable {
     private var next: UInt32
     private var clock: UInt64 = 0
 
+    public convenience init(configuration: NativeFakeIPConfiguration) throws {
+        try self.init(
+            pool: configuration.pool,
+            maximumEntries: configuration.maximumEntriesCount,
+            maximumEntriesPerSource: configuration.maximumEntriesPerSourceCount,
+            minimumTTL: configuration.minimumTTL,
+            maximumTTL: configuration.maximumTTLValue,
+            filters: configuration.filters
+        )
+    }
+
     public init(pool: IPNetwork? = nil, maximumEntries: Int? = nil,
                 maximumEntriesPerSource: Int? = nil,
                 minimumTTL: TimeInterval = 5, maximumTTL: TimeInterval = 600,

@@ -106,15 +106,16 @@ public struct DNSUpstreamEndpoint: Codable, Sendable, Hashable, Equatable {
 /// SOCKS port, or route endpoint.  Native DNS can therefore be bootstrapped
 /// even after the Mihomo control/data plane has been removed.
 public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public static let maximumEntries = 16
     public static let maximumEncodedBytes = 16 * 1_024
 
     public let schemaVersion: Int
     public let endpoints: [DNSUpstreamEndpoint]
     public let policyRules: [String]
+    public let fakeIPConfiguration: NativeFakeIPConfiguration?
 
-    public init(endpoints: [DNSUpstreamEndpoint], policyRules: [String] = []) throws {
+    public init(endpoints: [DNSUpstreamEndpoint], policyRules: [String] = [], fakeIPConfiguration: NativeFakeIPConfiguration? = nil) throws {
         guard !endpoints.isEmpty, endpoints.count <= Self.maximumEntries else {
             throw DNSUpstreamBootstrapError.invalidEndpointCount
         }
@@ -125,18 +126,19 @@ public struct DNSUpstreamBootstrap: Codable, Equatable, Sendable {
         schemaVersion = Self.currentSchemaVersion
         self.endpoints = endpoints
         self.policyRules = Array(policyRules.prefix(512))
+        self.fakeIPConfiguration = fakeIPConfiguration
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let version = try container.decode(Int.self, forKey: .schemaVersion)
-        guard version == Self.currentSchemaVersion else {
+        guard version == 1 || version == Self.currentSchemaVersion else {
             throw DNSUpstreamBootstrapError.unsupportedSchemaVersion(version)
         }
-        try self.init(endpoints: container.decode([DNSUpstreamEndpoint].self, forKey: .endpoints), policyRules: container.decodeIfPresent([String].self, forKey: .policyRules) ?? [])
+        try self.init(endpoints: container.decode([DNSUpstreamEndpoint].self, forKey: .endpoints), policyRules: container.decodeIfPresent([String].self, forKey: .policyRules) ?? [], fakeIPConfiguration: container.decodeIfPresent(NativeFakeIPConfiguration.self, forKey: .fakeIPConfiguration))
     }
 
-    private enum CodingKeys: String, CodingKey { case schemaVersion, endpoints, policyRules }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, endpoints, policyRules, fakeIPConfiguration }
 
     public func encoded() throws -> Data {
         let data = try JSONEncoder().encode(self)

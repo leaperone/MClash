@@ -399,7 +399,46 @@ public struct RuleSet: Codable, Hashable, Identifiable, Sendable {
 }
 
 public enum DNSMode: String, Codable, CaseIterable, Sendable { case system, fakeIP, redirHost }
-public struct DNSPolicy: Codable, Hashable, Identifiable, Sendable { public let id: DNSPolicyID; public var name: String; public var mode: DNSMode; public var nameservers: [String]; public var fallbackNameservers: [String]; public var proxyServer: String?; public var rules: [String]; public var takeoverEnabled: Bool; public init(id: DNSPolicyID = DNSPolicyID(), name: String, mode: DNSMode = .system, nameservers: [String] = [], fallbackNameservers: [String] = [], proxyServer: String? = nil, rules: [String] = [], takeoverEnabled: Bool = false) { self.id=id; self.name=name; self.mode=mode; self.nameservers=nameservers; self.fallbackNameservers=fallbackNameservers; self.proxyServer=proxyServer; self.rules=rules; self.takeoverEnabled=takeoverEnabled } }
+public struct DNSPolicy: Codable, Hashable, Identifiable, Sendable {
+    public let id: DNSPolicyID
+    public var name: String
+    public var mode: DNSMode
+    public var nameservers: [String]
+    public var fallbackNameservers: [String]
+    public var proxyServer: String?
+    public var rules: [String]
+    public var takeoverEnabled: Bool
+    public var fakeIPRange: String?
+    public var fakeIPFilter: [String]
+    public var fakeIPMaximumEntries: Int
+    public var fakeIPMaximumEntriesPerSource: Int
+    public var fakeIPMinimumTTL: TimeInterval
+    public var fakeIPMaximumTTL: TimeInterval
+
+    public init(id: DNSPolicyID = DNSPolicyID(), name: String, mode: DNSMode = .system,
+                nameservers: [String] = [], fallbackNameservers: [String] = [], proxyServer: String? = nil,
+                rules: [String] = [], takeoverEnabled: Bool = false, fakeIPRange: String? = nil,
+                fakeIPFilter: [String] = [], fakeIPMaximumEntries: Int = NativeFakeIPConfiguration.maximumEntries,
+                fakeIPMaximumEntriesPerSource: Int = NativeFakeIPConfiguration.maximumEntriesPerSource,
+                fakeIPMinimumTTL: TimeInterval = 5,
+                fakeIPMaximumTTL: TimeInterval = NativeFakeIPConfiguration.maximumTTL) {
+        self.id=id; self.name=name; self.mode=mode; self.nameservers=nameservers; self.fallbackNameservers=fallbackNameservers; self.proxyServer=proxyServer; self.rules=rules; self.takeoverEnabled=takeoverEnabled; self.fakeIPRange=fakeIPRange; self.fakeIPFilter=fakeIPFilter; self.fakeIPMaximumEntries=fakeIPMaximumEntries; self.fakeIPMaximumEntriesPerSource=fakeIPMaximumEntriesPerSource; self.fakeIPMinimumTTL=fakeIPMinimumTTL; self.fakeIPMaximumTTL=fakeIPMaximumTTL
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, mode, nameservers, fallbackNameservers, proxyServer, rules, takeoverEnabled, fakeIPRange, fakeIPFilter, fakeIPMaximumEntries, fakeIPMaximumEntriesPerSource, fakeIPMinimumTTL, fakeIPMaximumTTL }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(DNSPolicyID.self, forKey: .id), name: try c.decode(String.self, forKey: .name), mode: try c.decodeIfPresent(DNSMode.self, forKey: .mode) ?? .system, nameservers: try c.decodeIfPresent([String].self, forKey: .nameservers) ?? [], fallbackNameservers: try c.decodeIfPresent([String].self, forKey: .fallbackNameservers) ?? [], proxyServer: try c.decodeIfPresent(String.self, forKey: .proxyServer), rules: try c.decodeIfPresent([String].self, forKey: .rules) ?? [], takeoverEnabled: try c.decodeIfPresent(Bool.self, forKey: .takeoverEnabled) ?? false, fakeIPRange: try c.decodeIfPresent(String.self, forKey: .fakeIPRange), fakeIPFilter: try c.decodeIfPresent([String].self, forKey: .fakeIPFilter) ?? [], fakeIPMaximumEntries: try c.decodeIfPresent(Int.self, forKey: .fakeIPMaximumEntries) ?? NativeFakeIPConfiguration.maximumEntries, fakeIPMaximumEntriesPerSource: try c.decodeIfPresent(Int.self, forKey: .fakeIPMaximumEntriesPerSource) ?? NativeFakeIPConfiguration.maximumEntriesPerSource, fakeIPMinimumTTL: try c.decodeIfPresent(TimeInterval.self, forKey: .fakeIPMinimumTTL) ?? 5, fakeIPMaximumTTL: try c.decodeIfPresent(TimeInterval.self, forKey: .fakeIPMaximumTTL) ?? NativeFakeIPConfiguration.maximumTTL)
+    }
+}
+
+public extension DNSPolicy {
+    var nativeFakeIPConfiguration: NativeFakeIPConfiguration? {
+        guard mode == .fakeIP else { return nil }
+        let pool = fakeIPRange.flatMap { try? IPNetwork($0) }
+        return try? NativeFakeIPConfiguration(pool: pool, filters: fakeIPFilter, maximumEntries: fakeIPMaximumEntries, maximumEntriesPerSource: fakeIPMaximumEntriesPerSource, minimumTTL: fakeIPMinimumTTL, maximumTTL: fakeIPMaximumTTL)
+    }
+}
 
 public enum EntranceKind: String, Codable, CaseIterable, Sendable { case http, socks5, appRouting, tun }
 public struct Entrance: Codable, Hashable, Identifiable, Sendable {
