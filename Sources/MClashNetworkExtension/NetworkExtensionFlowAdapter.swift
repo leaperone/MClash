@@ -293,17 +293,19 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             transportProtocol: .tcp,
             state: currentState
         )
+        let planningEndpoint = outcome.effectiveEndpoint
         let routePlan: ProviderSOCKSFlowPlan? = currentState.nativeMode
             ? nil
             : try? ProviderSOCKSConfiguration.flowPlan(
                 for: outcome.decision,
-                endpoint: endpoint,
+                endpoint: planningEndpoint,
                 preferredHostname: outcome.destinationHostname,
                 routeCatalog: currentState.mihomoSOCKSConfigurations
             )
         let nativeDestination = try? SOCKS5Endpoint(
-            address: SOCKS5Address(domain: endpoint.host),
-            port: UInt16(endpoint.port) ?? 0
+            address: (try? IPAddress(planningEndpoint.host)).map { SOCKS5Address(ipAddress: $0) }
+                ?? SOCKS5Address(domain: planningEndpoint.host),
+            port: UInt16(planningEndpoint.port) ?? 0
         )
         // Native connectors use the node-only catalog directly. A missing
         // loopback Mihomo route endpoint must not make this target unusable.
@@ -626,16 +628,48 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             || trustedComponentPolicy.contains(
                 metadataSigningIdentifier: applicationMetadata.sourceAppSigningIdentifier
             )
-        let suppliedHostname = remoteHostname ?? flow.remoteHostname
+        let fakeResolution = NativeFakeIPFlowDestinationResolver.resolve(
+            endpoint: endpoint,
+            sourceIdentity: applicationMetadata.sourceAppSigningIdentifier,
+            revision: currentState.revision,
+            generation: currentState.generation,
+            allocator: NativeFakeIPAllocatorRegistry.shared.snapshot()
+        )
+        let effectiveEndpoint: FlowRemoteEndpoint
+        let fakeHostname: String?
+        switch fakeResolution {
+        case .notFakeIP:
+            effectiveEndpoint = endpoint
+            fakeHostname = nil
+        case let .resolved(resolvedEndpoint, hostname):
+            effectiveEndpoint = resolvedEndpoint
+            fakeHostname = hostname
+        case .unavailable:
+            let blockedDecision = NativeFakeIPFlowDestinationResolver.unavailableDecision()
+            let activity = fallbackActivity(
+                flow: flow,
+                endpoint: endpoint,
+                transportProtocol: transportProtocol,
+                failure: .fakeIPResolutionUnavailable,
+                decisionOverride: blockedDecision
+            )
+            return FlowDecisionOutcome(
+                decision: blockedDecision,
+                destinationHostname: nil,
+                effectiveEndpoint: endpoint,
+                activity: activity
+            )
+        }
+        let suppliedHostname = fakeHostname ?? remoteHostname ?? flow.remoteHostname
         let associatedHostname = dnsAttributedHostname(
-            endpointHost: endpoint.host,
+            endpointHost: effectiveEndpoint.host,
             suppliedHostname: suppliedHostname,
             sourceIdentity: applicationMetadata.sourceAppSigningIdentifier,
             revision: currentState.revision,
             generation: currentState.generation
         )
         let context = contextBuilder.resolve(
-            endpoint: endpoint,
+            endpoint: effectiveEndpoint,
             remoteHostname: associatedHostname ?? suppliedHostname,
             metadata: applicationMetadata,
             identityResolution: identityResolution,
@@ -656,9 +690,10 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         return FlowDecisionOutcome(
             decision: decision,
             destinationHostname: context.context?.destination.hostname,
+            effectiveEndpoint: effectiveEndpoint,
             activity: makeActivity(
                 flow: flow,
-                endpoint: endpoint,
+                endpoint: effectiveEndpoint,
                 transportProtocol: transportProtocol,
                 context: context,
                 identityResolution: identityResolution,
@@ -831,10 +866,11 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
         flow: NEAppProxyFlow,
         endpoint: FlowRemoteEndpoint?,
         transportProtocol: TransportProtocol,
-        failure: FlowContextConversionFailure
+        failure: FlowContextConversionFailure,
+        decisionOverride: FlowTrafficDecision? = nil
     ) -> AppRoutingActivity {
         let currentState = snapshotState()
-        let decision = failOpen(failure)
+        let decision = decisionOverride ?? failOpen(failure)
         let metadata = flow.metaData
         return AppRoutingActivity(
             configurationRevision: currentState.revision,
@@ -852,8 +888,8 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
             ),
             transportProtocol: transportProtocol,
             decision: decision,
-            configuredAction: .direct,
-            effectiveAction: .failOpen,
+            configuredAction: decision.disposition == .reject ? .reject : .direct,
+            effectiveAction: decision.disposition,
             relayState: .notApplicable,
             relayError: failure.description
         )
@@ -963,6 +999,7 @@ final class NetworkExtensionFlowDecisionCoordinator: @unchecked Sendable {
 private struct FlowDecisionOutcome: Sendable {
     let decision: FlowTrafficDecision
     let destinationHostname: String?
+    let effectiveEndpoint: FlowRemoteEndpoint
     let activity: AppRoutingActivity
 }
 

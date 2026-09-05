@@ -18,10 +18,21 @@ struct NativeFakeIPPolicyProjectionTests {
 
     @Test("Old DNS policy payload receives safe Fake-IP defaults")
     func oldPolicyDefaults() throws {
-        let json = """
-        {"id":"00000000-0000-0000-0000-000000000001","name":"DNS","mode":"redirHost","nameservers":[],"fallbackNameservers":[],"rules":[],"takeoverEnabled":true}
-        """
-        let decoded = try JSONDecoder().decode(DNSPolicy.self, from: Data(json.utf8))
+        let original = DNSPolicy(name: "DNS", mode: .redirHost, takeoverEnabled: true)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(original))
+                as? [String: Any]
+        )
+        object.removeValue(forKey: "fakeIPRange")
+        object.removeValue(forKey: "fakeIPFilter")
+        object.removeValue(forKey: "fakeIPMaximumEntries")
+        object.removeValue(forKey: "fakeIPMaximumEntriesPerSource")
+        object.removeValue(forKey: "fakeIPMinimumTTL")
+        object.removeValue(forKey: "fakeIPMaximumTTL")
+        let decoded = try JSONDecoder().decode(
+            DNSPolicy.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
         #expect(decoded.fakeIPRange == nil)
         #expect(decoded.fakeIPFilter.isEmpty)
         #expect(decoded.nativeFakeIPConfiguration == nil)

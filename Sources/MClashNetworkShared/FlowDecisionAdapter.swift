@@ -42,6 +42,7 @@ public enum FlowContextConversionFailure: Error, Codable, Hashable, Sendable {
     case emptyRemoteHost
     case invalidRemotePort(String)
     case unsupportedRemoteEndpoint
+    case fakeIPResolutionUnavailable
 }
 
 extension FlowContextConversionFailure: CustomStringConvertible {
@@ -62,6 +63,8 @@ extension FlowContextConversionFailure: CustomStringConvertible {
             return "The flow remote endpoint has an invalid port: \(port)"
         case .unsupportedRemoteEndpoint:
             return "The flow uses an endpoint type that cannot be matched by capture rules"
+        case .fakeIPResolutionUnavailable:
+            return "The flow targets an unmapped or expired native fake IP address"
         }
     }
 }
@@ -640,6 +643,8 @@ public struct FlowTrafficDecisionAdapter: Sendable {
         case .invalidRemotePort:
             .invalidRemotePort
         case .unsupportedRemoteEndpoint:
+            .unsupportedRemoteEndpoint
+        case .fakeIPResolutionUnavailable:
             .unsupportedRemoteEndpoint
         }
     }
