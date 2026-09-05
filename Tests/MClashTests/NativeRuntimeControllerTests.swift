@@ -5,6 +5,26 @@ import MClashNetworkShared
 
 @Suite("Native runtime controller seam")
 struct NativeRuntimeControllerTests {
+    @Test("Native DNS bootstrap projects Fake-IP only for literal upstreams")
+    func nativeDNSProjection() throws {
+        let fake = DNSPolicy(name: "Fake", mode: .fakeIP, takeoverEnabled: true, nameservers: ["1.1.1.1"])
+        let bootstrap = try #require(AppModel.nativeDNSBootstrap(for: fake))
+        #expect(bootstrap.fakeIPConfiguration != nil)
+
+        let redir = DNSPolicy(name: "Redir", mode: .redirHost, takeoverEnabled: true, nameservers: ["1.1.1.1"])
+        #expect(try AppModel.nativeDNSBootstrap(for: redir)?.fakeIPConfiguration == nil)
+        let hostnameOnly = DNSPolicy(name: "Host", mode: .redirHost, takeoverEnabled: true, nameservers: ["dns.example"])
+        #expect(try AppModel.nativeDNSBootstrap(for: hostnameOnly) == nil)
+    }
+
+    @Test("Invalid Fake-IP candidate is an explicit projection failure")
+    func invalidNativeDNSProjection() {
+        let invalid = DNSPolicy(name: "Fake", mode: .fakeIP, takeoverEnabled: true, nameservers: ["1.1.1.1"], fakeIPRange: "10.0.0.0/16")
+        #expect(throws: NativeDNSBootstrapProjectionError.invalidFakeIPConfiguration) {
+            _ = try AppModel.nativeDNSBootstrap(for: invalid)
+        }
+    }
+
     @Test("Native capture refuses legacy DNS when takeover is enabled")
     @MainActor
     func nativeCaptureRequiresNativeDNSOnlyForDNSTakeover() {

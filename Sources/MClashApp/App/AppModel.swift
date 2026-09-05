@@ -5,6 +5,10 @@ import MClashNetworkShared
 import Observation
 import Security
 
+enum NativeDNSBootstrapProjectionError: Error, Equatable {
+    case invalidFakeIPConfiguration
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -938,6 +942,43 @@ final class AppModel {
         usingNativeRuntime && dnsEnabled && mode == .fakeIP
     }
 
+    static func nativeDNSBootstrap(
+        for policy: DNSPolicy,
+        legacyDNS: Bool = false
+    ) throws -> DNSUpstreamBootstrap? {
+        guard !legacyDNS, policy.takeoverEnabled, policy.mode != .system else { return nil }
+        var seen = Set<IPAddress>()
+        let endpoints = (policy.nameservers + policy.fallbackNameservers).compactMap {
+            raw -> DNSUpstreamEndpoint? in
+            guard let address = try? IPAddress(raw), seen.insert(address).inserted else { return nil }
+            return try? DNSUpstreamEndpoint(address: address, transport: .udp)
+        }
+        guard !endpoints.isEmpty else { return nil }
+        let fakeIP: NativeFakeIPConfiguration?
+        if policy.mode == .fakeIP {
+            do {
+                let pool = try policy.fakeIPRange.map(IPNetwork.init)
+                fakeIP = try NativeFakeIPConfiguration(
+                    pool: pool,
+                    filters: policy.fakeIPFilter,
+                    maximumEntries: policy.fakeIPMaximumEntries,
+                    maximumEntriesPerSource: policy.fakeIPMaximumEntriesPerSource,
+                    minimumTTL: policy.fakeIPMinimumTTL,
+                    maximumTTL: policy.fakeIPMaximumTTL
+                )
+            } catch {
+                throw NativeDNSBootstrapProjectionError.invalidFakeIPConfiguration
+            }
+        } else {
+            fakeIP = nil
+        }
+        return try DNSUpstreamBootstrap(
+            endpoints: endpoints,
+            policyRules: policy.rules,
+            fakeIPConfiguration: fakeIP
+        )
+    }
+
     /// Returns the connector-neutral runtime state used by read-only
     /// automation diagnostics. Keep this narrow so automation never reaches
     /// into the runtime implementation or exposes a controller secret.
@@ -974,23 +1015,10 @@ final class AppModel {
               let workspace = configurationDocument.currentWorkspace,
               let policy = configurationDocument.dnsPolicies.first(where: {
                   $0.id == workspace.dnsPolicyID
-                      && $0.takeoverEnabled
-                      && $0.mode != .fakeIP
               }) else {
             return nil
         }
-        var seen = Set<IPAddress>()
-        let endpoints = (policy.nameservers + policy.fallbackNameservers).compactMap {
-            raw -> DNSUpstreamEndpoint? in
-            guard let address = try? IPAddress(raw), seen.insert(address).inserted else {
-                return nil
-            }
-            return try? DNSUpstreamEndpoint(address: address, transport: .udp)
-        }
-        return try? DNSUpstreamBootstrap(
-            endpoints: endpoints,
-            policyRules: policy.rules
-        )
+        return try? Self.nativeDNSBootstrap(for: policy)
     }
 
     private var configuredDNSPolicyMode: DNSMode? {
