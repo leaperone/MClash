@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Rockxy-inspired three-pane shell for the strategy-owned configuration
-/// model. The shell owns selection and filtering while callers own actions.
+/// List-first shell for the strategy-owned configuration model.
+/// The shell owns selection and filtering while callers own actions.
 struct ConfigurationWorkbench: View {
     let title: String
     let sections: [ConfigurationWorkbenchSection]
@@ -17,9 +17,6 @@ struct ConfigurationWorkbench: View {
     @State private var selectedID: UUID?
     @State private var query = ""
     @State private var filter: WorkbenchFilter = .all
-    @State private var compactLayout = false
-    @State private var compactInspectorPresented = false
-    @SceneStorage("mclash.configuration.inspectorVisible") private var inspectorVisible = true
 
     init(
         title: String = "Configuration",
@@ -53,39 +50,9 @@ struct ConfigurationWorkbench: View {
                 itemList
                     .frame(minWidth: 0, idealWidth: 350, maxWidth: .infinity)
             }
-            .onAppear { updateCompactLayout(for: geometry.size.width) }
-            .onChange(of: geometry.size.width) { _, width in
-                updateCompactLayout(for: width)
-            }
         }
         .navigationTitle(AppLocalization.string(title))
         .background(Color(nsColor: .windowBackgroundColor))
-        .inspector(isPresented: Binding(
-            get: { inspectorVisible && !compactLayout },
-            set: { inspectorVisible = $0 }
-        )) {
-            inspector
-                .inspectorColumnWidth(min: 220, ideal: 300, max: 400)
-        }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    if compactLayout {
-                        compactInspectorPresented = true
-                    } else {
-                        inspectorVisible.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.right")
-                }
-                .help(AppLocalization.string(inspectorButtonTitle))
-                .accessibilityLabel(AppLocalization.string(inspectorButtonTitle))
-            }
-        }
-        .sheet(isPresented: $compactInspectorPresented) {
-            inspector
-                .frame(minWidth: 320, minHeight: 420)
-        }
         .onChange(of: section) { _, _ in
             query = ""
             filter = .all
@@ -127,28 +94,6 @@ struct ConfigurationWorkbench: View {
             case .attention: filterMatches = item.isEnabled == false
             }
             return queryMatches && filterMatches
-        }
-    }
-    private var selectedItem: ConfigurationWorkbenchItem? {
-        filteredItems.first { $0.id == selectedID }
-            ?? currentItems.first { $0.id == selectedID }
-    }
-
-    private func updateCompactLayout(for width: CGFloat) {
-        // GeometryReader reports the primary column after the inspector has
-        // taken its share.  Keep the three-pane layout at the normal 1,180pt
-        // window, and fall back to the sheet when the remaining list column
-        // would be too narrow to read (roughly the 900pt minimum window).
-        let compact = width < 600
-        compactLayout = compact
-        // Hiding the system inspector can expand the content column. Keep the
-        // user's explicit visibility choice off after that transition instead
-        // of immediately reopening it and oscillating at the breakpoint.
-        if compact && inspectorVisible {
-            inspectorVisible = false
-        }
-        if !compact {
-            compactInspectorPresented = false
         }
     }
 
@@ -224,12 +169,21 @@ struct ConfigurationWorkbench: View {
 
             List(selection: $selectedID) {
                 ForEach(filteredItems) { item in
-                    ConfigurationWorkbenchRow(item: item)
-                        .tag(item.id)
+                    ConfigurationWorkbenchRow(
+                        item: item,
+                        section: section,
+                        onActivate: onActivate,
+                        onToggleEnabled: onToggleEnabled,
+                        onEdit: onEdit
+                    )
+                    .tag(item.id)
                 }
             }
             .listStyle(.inset)
             .mclashListSurface(horizontalMargin: 8, verticalMargin: 4)
+            .onKeyPress(.return) {
+                editSelectedItem() ? .handled : .ignored
+            }
             .overlay {
                 if filteredItems.isEmpty {
                     ContentUnavailableView {
@@ -258,16 +212,14 @@ struct ConfigurationWorkbench: View {
         }
     }
 
-    private var inspector: some View {
-        Group {
-            if let item = selectedItem {
-                ConfigurationWorkbenchInspector(item: item, section: section, onActivate: onActivate, onToggleEnabled: onToggleEnabled, onEdit: onEdit)
-            } else {
-                ContentUnavailableView(AppLocalization.string("Select an item"), systemImage: "sidebar.right")
-            }
+    @discardableResult
+    private func editSelectedItem() -> Bool {
+        guard let onEdit, let selectedID,
+              filteredItems.contains(where: { $0.id == selectedID }) else {
+            return false
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
+        onEdit(section, selectedID)
+        return true
     }
 
     private var sectionSubtitle: String {
@@ -281,10 +233,6 @@ struct ConfigurationWorkbench: View {
         case .sources: AppLocalization.string("Sources provide node data only.")
         case .workspaces: AppLocalization.string("The current configuration connects all sections.")
         }
-    }
-
-    private var inspectorButtonTitle: String {
-        compactLayout || !inspectorVisible ? "Show Inspector" : "Hide Inspector"
     }
 
     private var addButtonTitle: String {
@@ -363,6 +311,11 @@ private struct ListFilterBar: View {
 
 private struct ConfigurationWorkbenchRow: View {
     let item: ConfigurationWorkbenchItem
+    let section: ConfigurationWorkbenchSection
+    var onActivate: ((UUID) -> Void)?
+    var onToggleEnabled: ((ConfigurationWorkbenchSection, UUID) -> Void)?
+    var onEdit: ((ConfigurationWorkbenchSection, UUID) -> Void)?
+
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: item.symbol).foregroundStyle(.tint).frame(width: 24)
@@ -370,64 +323,54 @@ private struct ConfigurationWorkbenchRow: View {
                 Text(item.title).font(.body.weight(.medium)).lineLimit(1)
                 Text(item.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                onEdit?(section, item.id)
+            }
             Spacer(minLength: 4)
-            if let isEnabled = item.isEnabled {
+            if onActivate != nil {
+                Button(AppLocalization.string("Use This Configuration")) {
+                    onActivate?(item.id)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            if let isEnabled = item.isEnabled, onToggleEnabled != nil {
+                Button(AppLocalization.string(isEnabled ? "Disable" : "Enable")) {
+                    onToggleEnabled?(section, item.id)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else if let isEnabled = item.isEnabled {
                 Image(systemName: isEnabled ? "circle.fill" : "circle")
                     .font(.caption2)
                     .foregroundStyle(isEnabled ? .green : .secondary)
                     .accessibilityLabel(AppLocalization.string(isEnabled ? "Enabled" : "Disabled"))
             }
+            if onEdit != nil {
+                Button(AppLocalization.string("Edit")) {
+                    onEdit?(section, item.id)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
         .padding(.vertical, 6)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct ConfigurationWorkbenchInspector: View {
-    let item: ConfigurationWorkbenchItem
-    let section: ConfigurationWorkbenchSection
-    var onActivate: ((UUID) -> Void)?
-    var onToggleEnabled: ((ConfigurationWorkbenchSection, UUID) -> Void)?
-    var onEdit: ((ConfigurationWorkbenchSection, UUID) -> Void)?
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: MClashLayout.panelSpacing) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: item.symbol)
-                        .font(.title2.weight(.semibold))
-                        .foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title)
-                            .font(.title2.weight(.semibold))
-                            .textSelection(.enabled)
-                        Text(item.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                Text(item.detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if onActivate != nil {
-                    Button(AppLocalization.string("Use This Configuration")) { onActivate?(item.id) }
-                        .buttonStyle(.borderedProminent)
-                }
-                if let isEnabled = item.isEnabled, onToggleEnabled != nil {
-                    Button(AppLocalization.string(isEnabled ? "Disable" : "Enable")) {
-                        onToggleEnabled?(section, item.id)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                if let onEdit {
-                    Button(AppLocalization.string("Edit")) { onEdit(section, item.id) }
-                        .buttonStyle(.bordered)
-                }
-                Divider()
-                ForEach(Array(item.metadata.enumerated()), id: \.offset) { _, pair in
-                    LabeledContent(pair.0, value: pair.1)
+        .contextMenu {
+            if let onEdit {
+                Button(AppLocalization.string("Edit")) { onEdit(section, item.id) }
+            }
+            if let isEnabled = item.isEnabled, let onToggleEnabled {
+                Button(AppLocalization.string(isEnabled ? "Disable" : "Enable")) {
+                    onToggleEnabled(section, item.id)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(MClashLayout.pagePadding)
+            if let onActivate {
+                Button(AppLocalization.string("Use This Configuration")) {
+                    onActivate(item.id)
+                }
+            }
         }
         .accessibilityElement(children: .contain)
     }
