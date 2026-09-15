@@ -426,7 +426,7 @@ actor CoreSupervisor {
             let launchWasCancelled = error is CancellationError
                 || runGeneration != desiredRunGeneration
             expectedStopIDs.insert(managed.id)
-            process.terminate()
+            if process.isRunning { process.terminate() }
             if managedProcess?.id == managed.id {
                 managedProcess = nil
                 cleanup(managed)
@@ -537,6 +537,8 @@ actor CoreSupervisor {
         guard let managedProcess, managedProcess.id == id else { return }
         let expected = expectedStopIDs.remove(id) != nil
         let configuration = lastLaunchConfiguration
+        let wasRunning: Bool
+        if case .running = currentState { wasRunning = true } else { wasRunning = false }
 
         cleanup(managedProcess)
         self.managedProcess = nil
@@ -556,6 +558,10 @@ actor CoreSupervisor {
         )
         emitLog(message, stream: .supervisor)
         transition(to: .failed(message))
+
+        // The pending start owns startup failure. A second restart here races
+        // its readiness check and can replace the original error with cancellation.
+        guard wasRunning else { return }
 
         guard crashTimestamps.count <= maximumCrashRestarts, let configuration else {
             emitLog("Automatic restart paused after repeated failures.", stream: .supervisor)
