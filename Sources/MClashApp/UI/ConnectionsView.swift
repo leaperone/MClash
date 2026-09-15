@@ -89,40 +89,85 @@ struct ConnectionsView: View {
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, 10)
             Divider()
-            if model.flowLedger.entries.isEmpty {
-                ContentUnavailableView {
-                    Label(AppLocalization.string("No observed flows yet"), systemImage: "point.3.connected.trianglepath.dotted")
-                } description: {
-                    Text(AppLocalization.string("MClash records application flows and rule decisions when Application Routing is enabled. Xray provides aggregate byte totals, not per-connection records."))
-                }
-            } else if model.runtimeBackend == .xray, !model.xrayAccessRecords.isEmpty {
+            if !model.xrayAccessRecords.isEmpty {
                 xrayAccessTable
-            } else {
+            } else if !model.flowLedger.entries.isEmpty {
                 routeWorkspace
+            } else {
+                ContentUnavailableView {
+                    Label("Waiting for traffic", systemImage: "point.3.connected.trianglepath.dotted")
+                } description: {
+                    Text("MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed.")
+                }
             }
         }
     }
 
     private var xrayAccessTable: some View {
-        Table(model.xrayAccessRecords) {
+        Group {
+            if filteredXrayAccessRecords.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else {
+                Table(filteredXrayAccessRecords) {
             TableColumn("Time") { record in
                 Text(AppLocalization.date(record.timestamp, dateStyle: .omitted, timeStyle: .shortened))
                     .monospacedDigit()
             }
             .width(min: 90, ideal: 120)
+            TableColumn("Source") { record in
+                Text(record.source ?? "—").lineLimit(1).help(record.source ?? "No source was reported")
+            }
+            .width(min: 120, ideal: 180)
             TableColumn("Destination") { record in
                 Text(record.destination).lineLimit(1).help(record.destination)
             }
             .width(min: 180, ideal: 300)
             TableColumn("Path") { record in
-                Text(record.outbound ?? record.inbound ?? "—").lineLimit(1)
+                Text(xrayPathTitle(record)).lineLimit(1).help(xrayPathHelp(record))
             }
             .width(min: 140, ideal: 240)
             TableColumn("Transport") { record in
                 Text(record.transport.uppercased()).font(.caption.monospaced())
             }
             .width(min: 70, ideal: 90)
+            TableColumn("Evidence") { _ in
+                Label("Access log", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .help("Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total.")
+            }
+            .width(min: 110, ideal: 140)
+                }
+            }
         }
+    }
+
+    private var filteredXrayAccessRecords: [XrayAccessRecord] {
+        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.xrayAccessRecords }
+        return model.xrayAccessRecords.filter { record in
+            [
+                record.source,
+                record.destination,
+                record.transport,
+                record.inbound,
+                record.outbound,
+                xrayPathTitle(record),
+            ]
+            .compactMap { $0 }
+            .contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private func xrayPathTitle(_ record: XrayAccessRecord) -> String {
+        let parts = [record.inbound, record.outbound].compactMap { $0 }
+        return parts.isEmpty ? "—" : parts.joined(separator: " → ")
+    }
+
+    private func xrayPathHelp(_ record: XrayAccessRecord) -> String {
+        let parts = [record.inbound, record.outbound].compactMap { $0 }
+        return parts.isEmpty
+            ? "No entrance or node was reported for this connection event."
+            : parts.joined(separator: " → ")
     }
 
     @ViewBuilder
