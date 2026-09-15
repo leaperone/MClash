@@ -238,7 +238,7 @@ struct ConfigurationEditorSheet: View {
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 150)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
-                Text(AppLocalization.string("Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path."))
+                Text(AppLocalization.string("Optional local entries, one rule per line. A remote list is loaded into the selected cache path."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -924,7 +924,7 @@ struct ConfigurationEditorSheet: View {
                        && entrance.kind == entranceKind
                }) {
                 errorMessage = AppLocalization.string(
-                    "Only one entrance of each type can be enabled in the current Mihomo runtime."
+                    "Only one entrance of each type can be enabled in the current runtime."
                 )
                 return
             }

@@ -1618,6 +1618,8 @@ final class AutomationCommandGateway {
                 "kind": .string("imported"),
                 "originalFileName": .string(fileName),
             ])
+        case .pastedLinks:
+            origin = .object(["kind": .string("pastedLinks")])
         case let .remote(metadata):
             origin = .object([
                 "kind": .string("remote"),

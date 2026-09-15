@@ -2453,3 +2453,39 @@
 "Health-check timing or failure thresholds are outside the supported range." = "Les délais ou seuils de défaillance dépassent la plage prise en charge.";
 
 "Expected HTTP status must be codes or ranges such as 204 or 200-299." = "Le statut HTTP attendu doit être un code ou une plage, comme 204 ou 200-299.";
+
+"Node Sources" = "Node Sources";
+
+"Add nodes" = "Add nodes";
+
+"Paste links" = "Paste links";
+
+"Add node links" = "Add node links";
+
+"Read clipboard" = "Read clipboard";
+
+"Paste one or more share links. MClash will check them before adding the nodes to your configuration." = "Paste one or more share links. MClash will check them before adding the nodes to your configuration.";
+
+"Name (optional)" = "Name (optional)";
+
+"Preview" = "Preview";
+
+"Usable nodes" = "Usable nodes";
+
+"Ignored lines" = "Ignored lines";
+
+"Adding nodes…" = "Adding nodes…";
+
+"No usable proxy links were found." = "No usable proxy links were found.";
+
+"Pasted Nodes" = "Pasted Nodes";
+
+"Pasted node links" = "Pasted node links";
+
+"MClash flow records" = "MClash flow records";
+
+"No observed flows yet" = "No observed flows yet";
+
+"MClash records application flows and rule decisions when Application Routing is enabled. Xray provides aggregate byte totals, not per-connection records." = "MClash records application flows and rule decisions when Application Routing is enabled. Xray provides aggregate byte totals, not per-connection records.";
+
+"Routes appear as traffic decisions and MClash flow records are observed." = "Routes appear as traffic decisions and MClash flow records are observed.";

@@ -275,7 +275,7 @@ struct ConfigurationWorkbench: View {
         case .nodes: AppLocalization.string("Search by name, host, protocol or source.")
         case .proxyGroups: AppLocalization.string("Pin nodes or describe automatic membership conditions.")
         case .rules: AppLocalization.string("Rules are evaluated from the lowest priority number.")
-        case .ruleSets: AppLocalization.string("Reusable Mihomo rule collections with an explicit source and format.")
+        case .ruleSets: AppLocalization.string("Reusable rule collections with an explicit source and format.")
         case .entrances: AppLocalization.string("Choose where traffic enters the unified policy.")
         case .dns: AppLocalization.string("MClash resolves DNS using this shared policy.")
         case .sources: AppLocalization.string("Sources provide node data only.")

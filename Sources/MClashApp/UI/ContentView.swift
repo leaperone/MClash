@@ -14,7 +14,7 @@ struct ContentView: View {
             List(selection: $model.selection) {
                 Section(AppLocalization.string("Everyday")) {
                     destinationRow(.overview, title: "Status")
-                    destinationRow(.sources, title: "Subscriptions")
+                    destinationRow(.sources, title: "Node Sources")
                     destinationRow(.proxyGroups, title: "Nodes")
                     destinationRow(.entrances, title: "How to Connect")
                 }

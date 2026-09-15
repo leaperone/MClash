@@ -34,12 +34,14 @@ struct ConnectionsView: View {
 
     @ViewBuilder
     private func liveWorkspace(presentation: ConnectionPresentationSnapshot) -> some View {
-        if !model.isConnected {
+        if model.runtimeBackend == .xray {
+            xrayObservedWorkspace
+        } else if !model.isConnected {
             DisconnectedUnavailableView(
                 model: model,
                 title: "Connect to inspect traffic",
                 systemImage: "arrow.left.arrow.right",
-                description: "Live connections are streamed from the local Mihomo controller."
+                description: "Live flow records are collected by MClash when routing is enabled."
             )
         } else if !presentation.hasSnapshot,
                   let health = model.liveStreamHealth[.connections],
@@ -50,7 +52,7 @@ struct ConnectionsView: View {
                 Text(
                     liveStreamDetail(
                         health,
-                        source: AppLocalization.string("Mihomo connections")
+                        source: AppLocalization.string("MClash flow records")
                     )
                 )
             } actions: {
@@ -79,12 +81,33 @@ struct ConnectionsView: View {
     }
 
     @ViewBuilder
+    private var xrayObservedWorkspace: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Label(AppLocalization.string("MClash flow records"), systemImage: "waveform.path.ecg")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, 10)
+            Divider()
+            if model.flowLedger.entries.isEmpty {
+                ContentUnavailableView {
+                    Label(AppLocalization.string("No observed flows yet"), systemImage: "point.3.connected.trianglepath.dotted")
+                } description: {
+                    Text(AppLocalization.string("MClash records application flows and rule decisions when Application Routing is enabled. Xray provides aggregate byte totals, not per-connection records."))
+                }
+            } else {
+                routeWorkspace
+            }
+        }
+    }
+
+    @ViewBuilder
     private var applicationWorkspace: some View {
         if model.flowLedger.entries.isEmpty {
             ContentUnavailableView(
                 "No observed application traffic",
                 systemImage: "square.stack.3d.up",
-                description: Text("Applications appear after Mihomo or App Routing observes a flow.")
+                description: Text("Applications appear after MClash observes a routed flow.")
             )
         } else if filteredApplications.isEmpty {
             ContentUnavailableView.search(text: searchText)
@@ -155,7 +178,7 @@ struct ConnectionsView: View {
             ContentUnavailableView(
                 "No observed routes",
                 systemImage: "point.3.connected.trianglepath.dotted",
-                description: Text("Routes appear as traffic decisions and Mihomo connections are observed.")
+                description: Text(AppLocalization.string("Routes appear as traffic decisions and MClash flow records are observed."))
             )
         } else if filteredRoutes.isEmpty {
             ContentUnavailableView.search(text: searchText)
@@ -1238,19 +1261,20 @@ struct ConnectionsView: View {
     private var trafficDataNotice: String? {
         switch workspace {
         case .live:
+            if model.runtimeBackend == .xray { return nil }
             guard model.isConnected,
                   model.liveStreamHealth[.connections]?.hasCurrentData != true else {
                 return nil
             }
             return liveStreamDetail(
                 model.liveStreamHealth[.connections] ?? .inactive,
-                source: AppLocalization.string("Mihomo connections")
+                source: AppLocalization.string("MClash flow records")
             )
         case .apps, .routes, .history:
             var staleSources: [String] = []
-            if model.isConnected,
+            if model.runtimeBackend != .xray, model.isConnected,
                model.liveStreamHealth[.connections]?.hasCurrentData != true {
-                staleSources.append(AppLocalization.string("Mihomo connections"))
+                staleSources.append(AppLocalization.string("MClash flow records"))
             }
             if appRoutingIsActive,
                model.liveStreamHealth[.appRouting]?.hasCurrentData != true {
@@ -1262,7 +1286,7 @@ struct ConnectionsView: View {
                     ? model.liveStreamHealth[.connections].map {
                         liveStreamDetail(
                             $0,
-                            source: AppLocalization.string("Mihomo connections")
+                            source: AppLocalization.string("MClash flow records")
                         )
                     }
                     : nil,
@@ -2361,10 +2385,10 @@ private func trafficCoverageHelp(_ traffic: FlowLedgerTrafficAggregate) -> Strin
 private func routeTitle(_ route: FlowLedgerRouteKey) -> String {
     switch route {
     case let .mihomo(rule, _, chain):
-        return chain.last ?? rule ?? "Mihomo"
+        return chain.last ?? rule ?? "Runtime"
     case let .unresolvedMihomo(rule):
-        return rule.map { AppLocalization.format("Mihomo · %@", $0) }
-            ?? AppLocalization.string("Mihomo · resolving")
+        return rule.map { AppLocalization.format("Runtime · %@", $0) }
+            ?? AppLocalization.string("Runtime · resolving")
     case .direct:
         return AppLocalization.string("Direct")
     case .rejected:
@@ -2386,14 +2410,14 @@ private func routeSubtitle(
         let path = chain.joined(separator: " → ")
         return nonEmpty(decision)
             ?? nonEmpty(path)
-            ?? AppLocalization.string("Mihomo route")
+            ?? AppLocalization.string("Runtime route")
     case let .unresolvedMihomo(rule):
         return rule.map {
             AppLocalization.format(
-                "App rule %@ · awaiting Mihomo correlation",
+                "App rule %@ · awaiting runtime flow evidence",
                 $0
             )
-        } ?? AppLocalization.string("Awaiting Mihomo correlation")
+        } ?? AppLocalization.string("Awaiting runtime flow evidence")
     case .direct:
         return FlowLedgerTrafficPresentation.directRouteDetail(traffic)
     case .rejected:
@@ -2450,7 +2474,7 @@ private func captureOriginTitle(_ origin: FlowLedgerCaptureOrigin) -> String {
 
 private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
     switch outcome {
-    case .viaMihomo: AppLocalization.string("Via Mihomo")
+    case .viaMihomo: AppLocalization.string("Via MClash")
     case .direct: AppLocalization.string("Direct")
     case .rejected: AppLocalization.string("Rejected")
     case .failOpen: AppLocalization.string("Fail Open")

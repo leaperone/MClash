@@ -644,6 +644,7 @@ final class AppModel {
     }
     var controllerState: ControllerState = .idle
     private(set) var pendingSubscriptionImport: SubscriptionImportRequest?
+    private(set) var pendingNodeLinkImport: String?
     private(set) var pendingMode: String?
     private(set) var pendingSystemProxyEnabled: Bool?
     private(set) var pendingNetworkCaptureEnabled: Bool?
@@ -1483,6 +1484,10 @@ final class AppModel {
         controllerState == .ready
     }
 
+    var runtimeBackend: ProxyRuntimeBackend {
+        usesXrayRuntime ? .xray : .mihomoCompatibility
+    }
+
     var liveDataIsDegraded: Bool {
         !degradedStreams.isEmpty
     }
@@ -1890,6 +1895,9 @@ final class AppModel {
                 case let .imported(originalFileName):
                     sourceKind = .localFile
                     location = originalFileName
+                case .pastedLinks:
+                    sourceKind = .pastedConfig
+                    location = "clipboard"
                 case let .remote(remote):
                     sourceKind = .subscription
                     location = remote.url.absoluteString
@@ -1927,7 +1935,18 @@ final class AppModel {
                     synchronizationDiagnosticsBySource[sourceID, default: []].append(diagnostic)
                     continue
                 }
-                let report = NodeOnlyImporter().importNodes(sourceID: sourceID, yaml: data, now: now)
+                let importedNodes: [Node]
+                let importDiagnostics: [ConfigurationDiagnostic]
+                if case .pastedLinks = profile.origin {
+                    let preview = NodeLinkImporter().preview(.init(sourceID: sourceID, text: String(decoding: data, as: UTF8.self), now: now))
+                    importedNodes = preview.nodes
+                    importDiagnostics = preview.diagnostics
+                } else {
+                    let report = NodeOnlyImporter().importNodes(sourceID: sourceID, yaml: data, now: now)
+                    importedNodes = report.nodes
+                    importDiagnostics = report.diagnostics
+                }
+                let importHasErrors = importDiagnostics.contains { $0.severity == .error }
                 var source = document.sources.first(where: { $0.id == sourceID }) ?? Source(
                     id: sourceID,
                     kind: sourceKind,
@@ -1942,7 +1961,7 @@ final class AppModel {
                 let existingSourceNodeIDs = Set(document.nodes.compactMap { node in
                     node.sourceLinks.contains(sourceID) ? node.id : nil
                 })
-                let parseWasPartial = report.diagnostics.contains { diagnostic in
+                let parseWasPartial = importDiagnostics.contains { diagnostic in
                     switch diagnostic.code {
                     case "node_unsupported_protocol", "node_missing_endpoint", "node_invalid_endpoint":
                         true
@@ -1950,18 +1969,18 @@ final class AppModel {
                         false
                     }
                 }
-                let degradedRefresh = !report.hasErrors && parseWasPartial
-                let degradedEmptyRefresh = !report.hasErrors
-                    && report.nodes.isEmpty
+                let degradedRefresh = !importHasErrors && parseWasPartial
+                let degradedEmptyRefresh = !importHasErrors
+                    && importedNodes.isEmpty
                     && !existingSourceNodeIDs.isEmpty
-                let refreshAuthoritative = !report.hasErrors
+                let refreshAuthoritative = !importHasErrors
                     && !degradedRefresh
                     && !degradedEmptyRefresh
                 source.lastSuccessfulParseAt = refreshAuthoritative
                     ? now
                     : source.lastSuccessfulParseAt
                 source.rawSnapshotReference = profile.id.description
-                source.parseDiagnostics = report.diagnostics
+                source.parseDiagnostics = importDiagnostics
                 sourceRefreshSucceeded[sourceID] = refreshAuthoritative
                 if degradedRefresh || degradedEmptyRefresh {
                     let diagnostic = ConfigurationDiagnostic(
@@ -1983,11 +2002,11 @@ final class AppModel {
 
                 let sourceSnapshotNodes = document.nodes
                 let reportCountByFingerprint = Dictionary(
-                    grouping: report.nodes,
+                    grouping: importedNodes,
                     by: { $0.fingerprint }
                 ).mapValues(\.count)
                 var claimedIndices = Set<Int>()
-                for node in report.nodes {
+                for node in importedNodes {
                     let matchingIndices = sourceSnapshotNodes.indices.filter {
                         sourceSnapshotNodes[$0].fingerprint == node.fingerprint
                             || Node.makeFingerprint(
@@ -4132,7 +4151,7 @@ final class AppModel {
                 automaticUpdatesEnabled: automaticUpdatesEnabled,
                 updateIntervalHours: updateIntervalHours
             )
-        case .local, .imported:
+        case .local, .imported, .pastedLinks:
             _ = try await profileStore.renameProfile(id, to: name)
         }
         profiles = try await profileStore.profiles()
@@ -4140,6 +4159,12 @@ final class AppModel {
     }
 
     func handleIncomingURL(_ url: URL) async {
+        let directPreview = previewNodeLinks(url.absoluteString)
+        if !directPreview.nodes.isEmpty {
+            pendingNodeLinkImport = url.absoluteString
+            selection = .sources
+            return
+        }
         do {
             let request = try SubscriptionURLRouter.parse(url)
             pendingSubscriptionImport = request
@@ -4153,6 +4178,42 @@ final class AppModel {
 
     func cancelPendingSubscriptionImport() {
         pendingSubscriptionImport = nil
+    }
+
+    func cancelPendingNodeLinkImport() {
+        pendingNodeLinkImport = nil
+    }
+
+    func previewNodeLinks(_ text: String) -> NodeLinkImportPreview {
+        NodeLinkImporter().preview(.init(text: text))
+    }
+
+    @discardableResult
+    func importNodeLinks(name: String, text: String, activate: Bool = false) async throws -> ProfileMetadata {
+        guard begin(.importProfile) else { throw AppModelError.operationInProgress }
+        defer { end(.importProfile) }
+        guard let profileStore else { throw AppModelError.profileStoreUnavailable }
+        let preview = previewNodeLinks(text)
+        guard !preview.nodes.isEmpty else {
+            throw AppModelError.profileActivationFailed(
+                AppLocalization.string("No usable proxy links were found.")
+            )
+        }
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profile = try await profileStore.createPastedLinksProfile(
+            name: normalizedName.isEmpty ? AppLocalization.string("Pasted Nodes") : normalizedName,
+            links: text
+        )
+        let previousProfileID = activeProfileID
+        do {
+            profiles = try await profileStore.profiles()
+            await synchronizeConfigurationSources()
+            if activate { try await performActivateProfile(profile.id) }
+            errorMessage = nil
+            return profile
+        } catch {
+            try await rollbackNewProfile(profile.id, previousProfileID: previousProfileID, activationError: error)
+        }
     }
 
     @discardableResult
@@ -9843,7 +9904,7 @@ final class AppModel {
             // Lightweight mode deliberately trades background traffic-history
             // completeness for lower steady-state CPU and wakeups. Opening a
             // surface that needs connection data immediately resumes the feed.
-            shouldRun: client.supportsConnectionInspection && (policy.connections || !lightweightMode),
+            shouldRun: runtimeBackend != .xray && client.supportsConnectionInspection && (policy.connections || !lightweightMode),
             task: &connectionsTask
         ) {
             connectionStreamIntervalMilliseconds = connectionIntervalMilliseconds

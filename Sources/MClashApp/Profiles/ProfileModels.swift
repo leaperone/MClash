@@ -213,6 +213,7 @@ extension RemoteSubscriptionMetadata: Codable {
 public enum ProfileOrigin: Equatable, Sendable {
     case local
     case imported(originalFileName: String)
+    case pastedLinks
     case remote(RemoteSubscriptionMetadata)
 }
 
@@ -226,6 +227,7 @@ extension ProfileOrigin: Codable {
     private enum Kind: String, Codable {
         case local
         case imported
+        case pastedLinks
         case remote
     }
 
@@ -238,6 +240,8 @@ extension ProfileOrigin: Codable {
             self = .imported(
                 originalFileName: try container.decode(String.self, forKey: .originalFileName)
             )
+        case .pastedLinks:
+            self = .pastedLinks
         case .remote:
             self = .remote(
                 try container.decode(RemoteSubscriptionMetadata.self, forKey: .remote)
@@ -253,6 +257,8 @@ extension ProfileOrigin: Codable {
         case let .imported(originalFileName):
             try container.encode(Kind.imported, forKey: .kind)
             try container.encode(originalFileName, forKey: .originalFileName)
+        case .pastedLinks:
+            try container.encode(Kind.pastedLinks, forKey: .kind)
         case let .remote(remote):
             try container.encode(Kind.remote, forKey: .kind)
             try container.encode(remote, forKey: .remote)

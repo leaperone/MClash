@@ -507,7 +507,7 @@ private struct RuleCriterion: Identifiable, Equatable {
                     return AppLocalization.string("GEO values must not contain commas.")
                 }
             case .geoIP6:
-                return AppLocalization.string("Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks.")
+                return AppLocalization.string("IPv6 country rules are not supported here. Use an IPv6 CIDR rule instead.")
             case .geoSite:
                 guard !trimmed.contains(",") else {
                     return AppLocalization.string("GEO values must not contain commas.")

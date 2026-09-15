@@ -230,7 +230,7 @@ struct ConfigurationView: View {
                         }
                     }
                     .frame(maxWidth: 360, alignment: .leading)
-                    .help(AppLocalization.string("The selected group is used by Mihomo GLOBAL mode."))
+                    .help(AppLocalization.string("The selected group is the shared exit for all traffic."))
                 }
             }
         }
@@ -242,15 +242,37 @@ struct ConfigurationView: View {
 /// workbench API so navigation can be migrated independently later.
 struct ConfigurationSourcesView: View {
     @Bindable var model: AppModel
-    @State private var editRequest: ConfigurationEditRequest?
+    @State private var showingNodeLinkSheet = false
     var body: some View {
         ConfigurationWorkbench(
-            title: AppLocalization.string("Subscriptions"),
+            title: AppLocalization.string("Node Sources"),
             sections: [.sources],
             items: model.configurationWorkbenchItems,
             onAdd: { _ in Task { await model.importConfigurationSource() } },
             statusMessage: model.configurationStatusMessage
         )
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 10) {
+                Label(AppLocalization.string("Add nodes"), systemImage: "plus.circle")
+                    .font(.headline)
+                Spacer()
+                Button(AppLocalization.string("Paste links"), systemImage: "link.badge.plus") {
+                    showingNodeLinkSheet = true
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canPerform(.importProfile))
+            }
+            .padding(.horizontal, MClashLayout.pagePadding)
+            .padding(.vertical, 10)
+            .background(.bar)
+            .overlay(alignment: .bottom) { Divider() }
+        }
+        .sheet(isPresented: $showingNodeLinkSheet) {
+            NodeLinkImportSheet(model: model, isPresented: $showingNodeLinkSheet, initialText: model.pendingNodeLinkImport ?? "")
+        }
+        .onChange(of: model.pendingNodeLinkImport) { _, value in
+            if value != nil { showingNodeLinkSheet = true }
+        }
     }
 }
 
@@ -1345,7 +1367,7 @@ private extension ConfigurationWorkbenchItem {
                 ),
                 symbol: source.kind == .subscription ? "link" : "folder",
                 detail: AppLocalization.string(
-                    "Imported source. MClash uses it for node data only; source strategy sections are ignored."
+                    "This source provides node connection data. Routing choices stay in MClash."
                 ),
                 metadata: [
                     (AppLocalization.string("Kind"), source.kind.localizedTitle),

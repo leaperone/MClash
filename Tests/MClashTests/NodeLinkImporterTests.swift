@@ -4,8 +4,9 @@ import Testing
 
 struct NodeLinkImporterTests {
     @Test func importsSupportedLinksAndKeepsSecretsOutOfDiagnostics() {
-        let vmess = Data("{\"v\":\"2\",\"ps\":\"demo\",\"add\":\"vmess.example\",\"port\":443,\"id\":\"uuid\"}".utf8).base64EncodedString()
-        let text = "vless://user:secret@example.com:443#V\nvmess://\(vmess)\ntrojan://secret@t.example:443#T\nss://YWVzLTI1Ni1nY206cHc=@s.example:8388#S\nhttp://u:p@h.example:80#H\nsocks5://u:p@s.example:1080#K"
+        let uuid = "00000000-0000-0000-0000-000000000001"
+        let vmess = Data("{\"v\":\"2\",\"ps\":\"demo\",\"add\":\"vmess.example\",\"port\":443,\"id\":\"\(uuid)\"}".utf8).base64EncodedString()
+        let text = "vless://\(uuid):secret@example.com:443#V\nvmess://\(vmess)\ntrojan://secret@t.example:443#T\nss://YWVzLTI1Ni1nY206cHc=@s.example:8388#S\nhttp://u:p@h.example:80#H\nsocks5://u:p@s.example:1080#K"
         let preview = NodeLinkImporter().preview(.init(text: text))
         #expect(preview.nodes.count == 6)
         #expect(preview.detectedFormats.count == 6)
@@ -24,7 +25,7 @@ struct NodeLinkImporterTests {
     }
 
     @Test func decodesPercentAndIPv6() {
-        let preview = NodeLinkImporter().preview(.init(text: "vless://u%40ser:p%20w@[::1]:443?security=tls#hello%20world"))
+        let preview = NodeLinkImporter().preview(.init(text: "http://u%40ser:p%20w@[::1]:443#hello%20world"))
         #expect(preview.nodes.first?.host == "::1")
         #expect(preview.nodes.first?.parameters["username"] == "u@ser")
         #expect(preview.nodes.first?.parameters["password"] == "p w")

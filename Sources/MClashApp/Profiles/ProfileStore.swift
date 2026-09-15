@@ -44,6 +44,15 @@ public actor ProfileStore {
     }
 
     @discardableResult
+    public func createPastedLinksProfile(name: String, links: String) throws -> ProfileMetadata {
+        let normalized = links.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, normalized.utf8.count <= 256 * 1024 else {
+            throw ProfileStoreError.emptyConfiguration
+        }
+        return try createProfile(name: name, yaml: Data(normalized.utf8), origin: .pastedLinks)
+    }
+
+    @discardableResult
     public func importProfile(from sourceURL: URL, name: String? = nil) throws -> ProfileMetadata {
         var isDirectory: ObjCBool = false
         guard
