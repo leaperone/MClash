@@ -28,7 +28,7 @@ public struct NodeLinkImportPreview: Sendable {
 
 public struct NodeLinkImporter: Sendable {
     private static let inputLimit = 256 * 1024
-    private static let supportedSchemes = Set(["vless", "vmess", "trojan", "ss", "http", "socks5", "hysteria2", "hy2"])
+    private static let supportedSchemes = Set(["vless", "vmess", "trojan", "ss", "http", "socks", "socks5", "hysteria2", "hy2"])
 
     public init() {}
 
@@ -50,7 +50,7 @@ public struct NodeLinkImporter: Sendable {
                 diagnostics.append(diagnostic("unsupported_scheme", "Line \(lineIndex + 1) uses an unsupported link format.", subject: "line-\(lineIndex + 1)"))
                 continue
             }
-            formats.insert(scheme == "hy2" ? "hysteria2" : scheme)
+            formats.insert(Self.detectedFormat(for: scheme))
             do {
                 let candidate = try parse(line, scheme: scheme)
                 let node = try Node(id: NodeID.stable(for: candidate.identity), displayName: candidate.name,
@@ -110,6 +110,14 @@ public struct NodeLinkImporter: Sendable {
         default: throw ImportError.invalid
         }
         return Candidate(proto: proto, host: host, port: port, name: name, parameters: parameters)
+    }
+
+    private static func detectedFormat(for scheme: String) -> String {
+        switch scheme {
+        case "hy2": return "hysteria2"
+        case "socks": return "socks5"
+        default: return scheme
+        }
     }
 
     private func parseVmess(_ value: String) throws -> Candidate {

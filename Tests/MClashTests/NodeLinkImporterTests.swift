@@ -30,4 +30,15 @@ struct NodeLinkImporterTests {
         #expect(preview.nodes.first?.parameters["username"] == "u@ser")
         #expect(preview.nodes.first?.parameters["password"] == "p w")
     }
+
+    @Test("Accepts the common socks scheme and presents it as SOCKS5")
+    func importsSocksAlias() {
+        let preview = NodeLinkImporter().preview(.init(text: "socks://user:password@example.com:1080#SOCKS"))
+        #expect(preview.nodes.count == 1)
+        #expect(preview.nodes.first?.proto == .socks5)
+        #expect(preview.nodes.first?.parameters["username"] == "user")
+        #expect(preview.nodes.first?.parameters["password"] == "password")
+        #expect(preview.detectedFormats == ["socks5"])
+        #expect(preview.diagnostics.isEmpty)
+    }
 }
