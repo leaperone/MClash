@@ -1230,19 +1230,19 @@ struct ProxyGroupPartitionSnapshot {
         var nestedNames = Set<String>()
         for edge in snapshot.topology.edges
         where edge.kind == .member
-            && edge.source != "all traffic"
+            && edge.source != "GLOBAL"
             && snapshot.topology.vertices[edge.source]?.isGroup == true {
             nestedNames.insert(edge.target)
         }
 
         roots = available.filter { group in
-            group.name != "all traffic" && !nestedNames.contains(group.name)
+            group.name != "GLOBAL" && !nestedNames.contains(group.name)
         }
         nested = available.filter { group in
-            group.name != "all traffic" && nestedNames.contains(group.name)
+            group.name != "GLOBAL" && nestedNames.contains(group.name)
         }
         special = routingMode == "rule"
-            ? available.filter { $0.name == "all traffic" }
+            ? available.filter { $0.name == "GLOBAL" }
             : []
     }
 
@@ -1261,19 +1261,19 @@ struct ProxyGroupPartitionSnapshot {
         var nestedNames = Set<String>()
         for edge in model.proxyTopology.edges
         where edge.kind == .member
-            && edge.source != "all traffic"
+            && edge.source != "GLOBAL"
             && model.proxyTopology.vertices[edge.source]?.isGroup == true {
             nestedNames.insert(edge.target)
         }
 
         roots = available.filter { group in
-            group.name != "all traffic" && !nestedNames.contains(group.name)
+            group.name != "GLOBAL" && !nestedNames.contains(group.name)
         }
         nested = available.filter { group in
-            group.name != "all traffic" && nestedNames.contains(group.name)
+            group.name != "GLOBAL" && nestedNames.contains(group.name)
         }
         special = routingMode == "rule"
-            ? available.filter { $0.name == "all traffic" }
+            ? available.filter { $0.name == "GLOBAL" }
             : []
     }
 }
