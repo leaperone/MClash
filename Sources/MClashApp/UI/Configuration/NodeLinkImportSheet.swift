@@ -27,7 +27,7 @@ struct NodeLinkImportSheet: View {
             VStack(alignment: .leading, spacing: 5) {
                 Label(AppLocalization.string("Add node links"), systemImage: "link.badge.plus")
                     .font(.title2.weight(.semibold))
-                Text(AppLocalization.string("Paste share links or a WireGuard configuration. MClash will check them before adding nodes to your configuration."))
+                Text(AppLocalization.string("Paste node links, an encoded node list, or a WireGuard configuration. MClash will check them before adding nodes to your configuration."))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -140,6 +140,7 @@ struct NodeLinkImportSheet: View {
     private func displayedFormat(_ format: String) -> String {
         switch format {
         case "wireguard-config": return AppLocalization.string("WireGuard configuration")
+        case "encoded-links": return AppLocalization.string("Encoded node list")
         case "socks5": return AppLocalization.string("SOCKS5")
         default: return format.uppercased()
         }

@@ -2464,7 +2464,7 @@
 
 "Read clipboard" = "Read clipboard";
 
-"Paste one or more share links. MClash will check them before adding the nodes to your configuration." = "Paste one or more share links. MClash will check them before adding the nodes to your configuration.";
+"Paste node links, an encoded node list, or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "ノードリンク、エンコードされたノード一覧、または WireGuard 設定を貼り付けてください。MClash が確認してからノードを設定に追加します。";
 
 "Name (optional)" = "Name (optional)";
 
@@ -2524,6 +2524,6 @@
 "Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "MClash が Xray のアクセスログから観測した接続イベントです。アプリケーション単位のバイト統計ではありません。";
 "No entrance or node was reported for this connection event." = "この接続イベントには入口またはノードの情報がありません。";
 
-"Paste share links or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "ノード共有リンクまたは WireGuard 設定を貼り付けてください。MClash が確認してからノードを設定に追加します。";
 
 "WireGuard configuration" = "WireGuard 設定";
+"Encoded node list" = "エンコードされたノード一覧";

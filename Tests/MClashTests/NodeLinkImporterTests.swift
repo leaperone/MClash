@@ -96,4 +96,40 @@ struct NodeLinkImporterTests {
         #expect(preview.diagnostics.first?.code == "invalid_wireguard_config")
         #expect(preview.diagnostics.first?.subject == "peer-1.publickey")
     }
+
+    @Test("Decodes a padded Base64 node list without exposing its credentials")
+    func importsPaddedBase64NodeList() {
+        let uuid = "00000000-0000-0000-0000-000000000010"
+        let decoded = "vless://\(uuid):secret@example.com:443#V\nvmess://invalid"
+        let encoded = Data(decoded.utf8).base64EncodedString()
+        let preview = NodeLinkImporter().preview(.init(text: encoded))
+        #expect(preview.nodes.count == 1)
+        #expect(preview.detectedFormats.contains("encoded-links"))
+        #expect(preview.detectedFormats.contains("vless"))
+        #expect(preview.ignoredLines == 0)
+        #expect(preview.diagnostics.count == 1)
+        #expect(preview.diagnostics.allSatisfy { !$0.message.contains("secret") })
+    }
+
+    @Test("Decodes URL-safe unpadded Base64 with whitespace")
+    func importsURLSafeBase64NodeList() {
+        let decoded = "trojan://secret@example.com:443#T\n"
+        let standard = Data(decoded.utf8).base64EncodedString()
+        let unpadded = standard.replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        let preview = NodeLinkImporter().preview(.init(text: "  \(unpadded.prefix(12))\n\(unpadded.dropFirst(12))  "))
+        #expect(preview.nodes.count == 1)
+        #expect(preview.nodes.first?.proto == .trojan)
+        #expect(preview.detectedFormats.contains("encoded-links"))
+        #expect(preview.diagnostics.isEmpty)
+    }
+
+    @Test("Base64 prose is not treated as a node list")
+    func rejectsEncodedProse() {
+        let encoded = Data("this is ordinary text".utf8).base64EncodedString()
+        let preview = NodeLinkImporter().preview(.init(text: encoded))
+        #expect(preview.nodes.isEmpty)
+        #expect(!preview.detectedFormats.contains("encoded-links"))
+    }
 }

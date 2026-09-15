@@ -39,12 +39,38 @@ public struct NodeLinkImporter: Sendable {
         if Self.looksLikeWireGuardConfiguration(request.text) {
             return previewWireGuardConfiguration(request)
         }
+        let plain = parseLines(request.text, sourceID: request.sourceID, now: request.now)
+        guard plain.nodes.isEmpty, let decoded = decodeEncodedNodeList(request.text),
+              containsSupportedLink(in: decoded) else {
+            return plain.preview
+        }
+        let encoded = parseLines(decoded, sourceID: request.sourceID, now: request.now)
+        return .init(
+            nodes: encoded.nodes,
+            diagnostics: encoded.diagnostics,
+            ignoredLines: encoded.ignoredLines,
+            detectedFormats: encoded.detectedFormats + ["encoded-links"]
+        )
+    }
+
+    private struct ParsedLines: Sendable {
+        let nodes: [Node]
+        let diagnostics: [ConfigurationDiagnostic]
+        let ignoredLines: Int
+        let detectedFormats: [String]
+
+        var preview: NodeLinkImportPreview {
+            .init(nodes: nodes, diagnostics: diagnostics, ignoredLines: ignoredLines, detectedFormats: detectedFormats)
+        }
+    }
+
+    private func parseLines(_ text: String, sourceID: SourceID, now: Date) -> ParsedLines {
         var nodes: [Node] = []
         var diagnostics: [ConfigurationDiagnostic] = []
         var seen = Set<String>()
         var formats = Set<String>()
         var ignoredLines = 0
-        for (lineIndex, raw) in request.text.split(whereSeparator: \.isNewline).map(String.init).enumerated() {
+        for (lineIndex, raw) in text.split(whereSeparator: \.isNewline).map(String.init).enumerated() {
             let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !line.isEmpty else { continue }
             let scheme = line.split(separator: ":", maxSplits: 1).first.map(String.init)?.lowercased()
@@ -58,7 +84,7 @@ public struct NodeLinkImporter: Sendable {
                 let candidate = try parse(line, scheme: scheme)
                 let node = try Node(id: NodeID.stable(for: candidate.identity), displayName: candidate.name,
                     protocol: candidate.proto, host: candidate.host, port: candidate.port,
-                    parameters: candidate.parameters, sourceLinks: [request.sourceID], lastSeenAt: request.now)
+                    parameters: candidate.parameters, sourceLinks: [sourceID], lastSeenAt: now)
                 guard seen.insert(node.connectionFingerprint).inserted else {
                     diagnostics.append(diagnostic("duplicate_link", "Line \(lineIndex + 1) repeats an imported node.", subject: "line-\(lineIndex + 1)"))
                     continue
@@ -68,7 +94,34 @@ public struct NodeLinkImporter: Sendable {
                 diagnostics.append(diagnostic("invalid_link", "Line \(lineIndex + 1) is not a valid proxy link.", subject: "line-\(lineIndex + 1)"))
             }
         }
-        return .init(nodes: nodes, diagnostics: diagnostics, ignoredLines: ignoredLines, detectedFormats: formats.sorted())
+        return ParsedLines(nodes: nodes, diagnostics: diagnostics, ignoredLines: ignoredLines, detectedFormats: formats.sorted())
+    }
+
+    private func decodeEncodedNodeList(_ text: String) -> String? {
+        let compact = text.filter { !$0.isWhitespace }
+        guard compact.count >= 8, compact.utf8.count <= Self.inputLimit,
+              compact.allSatisfy({ $0.isASCII && $0.isLetter || $0.isNumber || "+/_=-".contains($0) }) else {
+            return nil
+        }
+        var normalized = compact.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+        guard let data = Data(base64Encoded: normalized),
+              data.count <= Self.inputLimit,
+              let decoded = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return decoded
+    }
+
+    private func containsSupportedLink(in text: String) -> Bool {
+        text.split(whereSeparator: \.isNewline).contains { raw in
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let scheme = line.split(separator: ":", maxSplits: 1).first.map(String.init)?.lowercased() else {
+                return false
+            }
+            return Self.supportedSchemes.contains(scheme)
+        }
     }
 
     private static func looksLikeWireGuardConfiguration(_ text: String) -> Bool {

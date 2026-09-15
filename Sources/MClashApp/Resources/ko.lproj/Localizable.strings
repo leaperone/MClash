@@ -2463,7 +2463,7 @@
 
 "Read clipboard" = "Read clipboard";
 
-"Paste one or more share links. MClash will check them before adding the nodes to your configuration." = "Paste one or more share links. MClash will check them before adding the nodes to your configuration.";
+"Paste node links, an encoded node list, or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "노드 링크, 인코딩된 노드 목록 또는 WireGuard 구성을 붙여넣으세요. MClash가 확인한 후 노드를 구성에 추가합니다.";
 
 "Name (optional)" = "Name (optional)";
 
@@ -2523,6 +2523,6 @@
 "Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "MClash가 Xray 액세스 로그에서 관찰한 연결 이벤트입니다. 앱 단위 바이트 통계가 아닙니다.";
 "No entrance or node was reported for this connection event." = "이 연결 이벤트에는 입구 또는 노드 정보가 없습니다.";
 
-"Paste share links or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "노드 공유 링크 또는 WireGuard 구성을 붙여넣으세요. MClash가 확인한 후 노드를 구성에 추가합니다.";
 
 "WireGuard configuration" = "WireGuard 구성";
+"Encoded node list" = "인코딩된 노드 목록";

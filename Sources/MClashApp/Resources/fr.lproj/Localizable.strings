@@ -2464,7 +2464,7 @@
 
 "Read clipboard" = "Read clipboard";
 
-"Paste one or more share links. MClash will check them before adding the nodes to your configuration." = "Paste one or more share links. MClash will check them before adding the nodes to your configuration.";
+"Paste node links, an encoded node list, or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "Collez des liens de nœuds, une liste de nœuds encodée ou une configuration WireGuard. MClash les vérifiera avant d’ajouter les nœuds à votre configuration.";
 
 "Name (optional)" = "Name (optional)";
 
@@ -2524,6 +2524,6 @@
 "Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "Observé par MClash dans le journal d’accès Xray. Il s’agit d’un événement de connexion, pas d’un total d’octets par application.";
 "No entrance or node was reported for this connection event." = "Aucune entrée ni aucun nœud n’a été signalé pour cet événement.";
 
-"Paste share links or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "Collez des liens de partage ou une configuration WireGuard. MClash les vérifiera avant d’ajouter les nœuds à votre configuration.";
 
 "WireGuard configuration" = "Configuration WireGuard";
+"Encoded node list" = "Liste de nœuds encodée";

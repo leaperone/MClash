@@ -2462,7 +2462,7 @@
 
 "Read clipboard" = "Read clipboard";
 
-"Paste one or more share links. MClash will check them before adding the nodes to your configuration." = "Paste one or more share links. MClash will check them before adding the nodes to your configuration.";
+"Paste node links, an encoded node list, or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "粘贴节点链接、编码后的节点列表或 WireGuard 配置。MClash 会先检查内容，再将节点添加到配置中。";
 
 "Name (optional)" = "Name (optional)";
 
@@ -2522,6 +2522,6 @@
 "Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "MClash 从 Xray 访问日志中观察到。这是一条连接事件，不是应用级字节统计。";
 "No entrance or node was reported for this connection event." = "这条连接事件没有报告入口或节点。";
 
-"Paste share links or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "粘贴节点分享链接或 WireGuard 配置。MClash 会先检查内容，再将节点添加到配置中。";
 
 "WireGuard configuration" = "WireGuard 配置";
+"Encoded node list" = "编码节点列表";
