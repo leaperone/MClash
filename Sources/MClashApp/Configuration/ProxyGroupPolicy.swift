@@ -134,7 +134,10 @@ public enum ProxyGroupPolicy {
             let r = ProxyGroupResolution(destination: .node(manual), orderedCandidates: candidates, selectedMember: manual, reason: "manual_override")
             memo[id] = r; return r
         }
-        let healthy = available.filter { probes[$0]?.isAvailable == true }
+        let healthy = available.filter { nodeID in
+            guard let probe = probes[nodeID], probe.isAvailable else { return false }
+            return now.timeIntervalSince(probe.checkedAt) <= settings.probeInterval
+        }
         let chosen: NodeID?
         var reason = "ordered_fallback"
         switch group.type {
