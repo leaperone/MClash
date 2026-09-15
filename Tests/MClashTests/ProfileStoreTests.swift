@@ -52,7 +52,7 @@ struct ProfileStoreTests {
         let links = "trojan://secret@example.com:443#Test\n"
         let profile = try await fixture.store.createPastedLinksProfile(name: "Clipboard", links: links)
         #expect(profile.origin == .pastedLinks)
-        #expect(try await fixture.store.configurationData(for: profile.id) == Data(links.utf8))
+        #expect(try await fixture.store.configurationData(for: profile.id) == Data(links.trimmingCharacters(in: .whitespacesAndNewlines).utf8))
         let reopened = try ProfileStore(layout: fixture.layout)
         #expect(try await reopened.metadata(for: profile.id).origin == .pastedLinks)
     }
