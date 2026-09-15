@@ -95,9 +95,9 @@ struct ConnectionsView: View {
                 routeWorkspace
             } else {
                 ContentUnavailableView {
-                    Label("Waiting for traffic", systemImage: "point.3.connected.trianglepath.dotted")
+                    Label(AppLocalization.string("Waiting for traffic"), systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text("MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed.")
+                    Text(AppLocalization.string("MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed."))
                 }
             }
         }
@@ -109,31 +109,33 @@ struct ConnectionsView: View {
                 ContentUnavailableView.search(text: searchText)
             } else {
                 Table(filteredXrayAccessRecords) {
-            TableColumn("Time") { record in
+            TableColumn(AppLocalization.string("Time")) { record in
                 Text(AppLocalization.date(record.timestamp, dateStyle: .omitted, timeStyle: .shortened))
                     .monospacedDigit()
             }
             .width(min: 90, ideal: 120)
-            TableColumn("Source") { record in
-                Text(record.source ?? "—").lineLimit(1).help(record.source ?? "No source was reported")
+            TableColumn(AppLocalization.string("Source")) { record in
+                Text(record.source ?? AppLocalization.string("Unknown source"))
+                    .lineLimit(1)
+                    .help(record.source ?? AppLocalization.string("No source was reported"))
             }
             .width(min: 120, ideal: 180)
-            TableColumn("Destination") { record in
+            TableColumn(AppLocalization.string("Destination")) { record in
                 Text(record.destination).lineLimit(1).help(record.destination)
             }
             .width(min: 180, ideal: 300)
-            TableColumn("Path") { record in
+            TableColumn(AppLocalization.string("Path")) { record in
                 Text(xrayPathTitle(record)).lineLimit(1).help(xrayPathHelp(record))
             }
             .width(min: 140, ideal: 240)
-            TableColumn("Transport") { record in
+            TableColumn(AppLocalization.string("Transport")) { record in
                 Text(record.transport.uppercased()).font(.caption.monospaced())
             }
             .width(min: 70, ideal: 90)
-            TableColumn("Evidence") { _ in
-                Label("Access log", systemImage: "checkmark.circle.fill")
+            TableColumn(AppLocalization.string("Evidence")) { _ in
+                Label(AppLocalization.string("Connection event"), systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.secondary)
-                    .help("Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total.")
+                    .help(AppLocalization.string("Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total."))
             }
             .width(min: 110, ideal: 140)
                 }
@@ -166,7 +168,7 @@ struct ConnectionsView: View {
     private func xrayPathHelp(_ record: XrayAccessRecord) -> String {
         let parts = [record.inbound, record.outbound].compactMap { $0 }
         return parts.isEmpty
-            ? "No entrance or node was reported for this connection event."
+            ? AppLocalization.string("No entrance or node was reported for this connection event.")
             : parts.joined(separator: " → ")
     }
 

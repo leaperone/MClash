@@ -2513,3 +2513,13 @@
 "Reusable rule collections with an explicit source and format." = "Reusable rule collections with an explicit source and format.";
 
 "Optional local entries, one rule per line. A remote list is loaded into the selected cache path." = "Optional local entries, one rule per line. A remote list is loaded into the selected cache path.";
+
+"Waiting for traffic" = "等待流量";
+"MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed." = "啟用應用程式分流後，MClash 會記錄應用程式流量和規則決策。觀察到連線後，新的 Xray 連線記錄會顯示在這裡。";
+"Time" = "時間";
+"Unknown source" = "未知來源";
+"No source was reported" = "未回報來源";
+"Evidence" = "證據";
+"Connection event" = "連線事件";
+"Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "MClash 從 Xray 存取日誌中觀察到。這是連線事件，不是應用程式層級的位元組統計。";
+"No entrance or node was reported for this connection event." = "這個連線事件沒有回報入口或節點。";

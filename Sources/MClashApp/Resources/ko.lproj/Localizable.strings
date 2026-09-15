@@ -2512,3 +2512,13 @@
 "Reusable rule collections with an explicit source and format." = "Reusable rule collections with an explicit source and format.";
 
 "Optional local entries, one rule per line. A remote list is loaded into the selected cache path." = "Optional local entries, one rule per line. A remote list is loaded into the selected cache path.";
+
+"Waiting for traffic" = "트래픽 대기 중";
+"MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed." = "앱 라우팅을 켜면 MClash가 앱 트래픽과 규칙 결정을 기록합니다. 연결이 관찰되면 새 Xray 연결 기록이 여기에 표시됩니다.";
+"Time" = "시간";
+"Unknown source" = "알 수 없는 소스";
+"No source was reported" = "소스 정보 없음";
+"Evidence" = "근거";
+"Connection event" = "연결 이벤트";
+"Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "MClash가 Xray 액세스 로그에서 관찰한 연결 이벤트입니다. 앱 단위 바이트 통계가 아닙니다.";
+"No entrance or node was reported for this connection event." = "이 연결 이벤트에는 입구 또는 노드 정보가 없습니다.";

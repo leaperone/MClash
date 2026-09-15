@@ -2513,3 +2513,13 @@
 "Reusable rule collections with an explicit source and format." = "Reusable rule collections with an explicit source and format.";
 
 "Optional local entries, one rule per line. A remote list is loaded into the selected cache path." = "Optional local entries, one rule per line. A remote list is loaded into the selected cache path.";
+
+"Waiting for traffic" = "En attente de trafic";
+"MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed." = "Lorsque le routage des applications est activé, MClash enregistre les flux et les décisions des règles. Les nouveaux événements de connexion Xray apparaissent ici après observation.";
+"Time" = "Heure";
+"Unknown source" = "Source inconnue";
+"No source was reported" = "Aucune source signalée";
+"Evidence" = "Preuve";
+"Connection event" = "Événement de connexion";
+"Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "Observé par MClash dans le journal d’accès Xray. Il s’agit d’un événement de connexion, pas d’un total d’octets par application.";
+"No entrance or node was reported for this connection event." = "Aucune entrée ni aucun nœud n’a été signalé pour cet événement.";
