@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "release_version": "1.6.0-rc.2",
-  "commit": "a1e4d65d6231c21cc3cf5298b0fe9b8adfb6812e",
+  "commit": "502e5f9d41fc68c154cd69b229ddfb4952c61374",
   "status": "passed",
   "backend": "xray",
   "verification_scope": "Source and isolated runtime acceptance before release signing",
-  "generated_at": "2026-09-16T00:00:00+00:00",
+  "generated_at": "2026-09-15T16:46:50+00:00",
   "xray_version": "26.9.9",
   "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
   "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
