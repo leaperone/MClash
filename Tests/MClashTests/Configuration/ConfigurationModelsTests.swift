@@ -17,6 +17,21 @@ struct ConfigurationModelsTests {
         #expect(NodeID.stable(for: old.fingerprint) == NodeID.stable(for: refreshed.fingerprint))
     }
 
+    @Test func wireGuardIdentitySurvivesPrivateKeyAndPSKRotation() throws {
+        let old = try Node(displayName: "WG", protocol: .wireguard, host: "wg.example.com", port: 51820, parameters: [
+            "secret-key": String(repeating: "1", count: 64),
+            "public-key": String(repeating: "2", count: 64),
+            "pre-shared-key": String(repeating: "3", count: 64),
+        ])
+        let refreshed = try Node(displayName: "WG", protocol: .wireguard, host: "wg.example.com", port: 51820, parameters: [
+            "secret-key": String(repeating: "4", count: 64),
+            "public-key": String(repeating: "2", count: 64),
+            "pre-shared-key": String(repeating: "5", count: 64),
+        ])
+        #expect(NodeIdentity(node: old) == NodeIdentity(node: refreshed))
+        #expect(old.fingerprint == refreshed.fingerprint)
+    }
+
     @Test func selectorCombinesPinsAndDynamicIncludeExcludeDeterministically() throws {
         let source = SourceID()
         let us = try Node(displayName: "US 02", protocol: .vless, host: "us-2.example.com", port: 443, sourceLinks: [source])
