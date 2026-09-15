@@ -38,6 +38,26 @@ public struct XrayAccessLogParser: Sendable {
         }
     }
 
+    /// Parses complete lines from an appended log chunk and retains a trailing
+    /// partial line for the next chunk. Xray can flush a record in more than
+    /// one write, so advancing the file offset without this buffer would drop
+    /// that record permanently.
+    public func parse(
+        _ data: Data,
+        pendingLine: inout String,
+        now: Date = Date()
+    ) -> [XrayAccessRecord] {
+        guard !data.isEmpty else { return [] }
+        let combined = pendingLine + String(decoding: data, as: UTF8.self)
+        let lines = combined.split(separator: "\n", omittingEmptySubsequences: false)
+        let hasTrailingNewline = combined.last == "\n"
+        let completeCount = hasTrailingNewline ? lines.count - 1 : max(lines.count - 1, 0)
+        pendingLine = hasTrailingNewline ? "" : String(lines.last ?? "")
+        return lines.prefix(completeCount).compactMap {
+            parse(String($0).trimmingCharacters(in: .whitespacesAndNewlines), now: now)
+        }
+    }
+
     public func parse(_ line: String, now: Date = Date()) -> XrayAccessRecord? {
         let parts = line.split(separator: " ", maxSplits: 4).map(String.init)
         guard parts.count >= 5, parts[2] == "from", parts[4].hasPrefix("accepted ") else { return nil }

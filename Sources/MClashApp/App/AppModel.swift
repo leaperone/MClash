@@ -752,6 +752,8 @@ final class AppModel {
     private var coreLogFlushTask: Task<Void, Never>?
     private var proxyRefreshTask: Task<Void, Never>?
     private var liveFreshnessWatchdogTask: Task<Void, Never>?
+    private var xrayAccessLogFileID: UInt64?
+    private var xrayAccessLogPendingLine = ""
     private var subscriptionUpdateTask: Task<Void, Never>?
     private var controllerGeneration = 0
     private var proxyRefreshRevision = 0
@@ -11935,6 +11937,8 @@ final class AppModel {
         guard runtimeBackend == .xray, let launch = xrayLaunchConfiguration else { return }
         xrayAccessLogTask?.cancel()
         xrayAccessLogOffset = 0
+        xrayAccessLogFileID = nil
+        xrayAccessLogPendingLine = ""
         xrayAccessRecords = []
         let logURL = launch.homeDirectory.appending(path: "access.log")
         xrayAccessLogTask = Task { @MainActor [weak self] in
@@ -11948,14 +11952,25 @@ final class AppModel {
                     }
                     let attributes = try FileManager.default.attributesOfItem(atPath: logURL.path)
                     let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-                    if size < self.xrayAccessLogOffset { self.xrayAccessLogOffset = 0 }
+                    let fileID = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
+                    if fileID != self.xrayAccessLogFileID {
+                        self.xrayAccessLogFileID = fileID
+                        self.xrayAccessLogOffset = 0
+                        self.xrayAccessLogPendingLine = ""
+                    } else if size < self.xrayAccessLogOffset {
+                        self.xrayAccessLogOffset = 0
+                        self.xrayAccessLogPendingLine = ""
+                    }
                     if size > self.xrayAccessLogOffset {
                         let handle = try FileHandle(forReadingFrom: logURL)
                         try handle.seek(toOffset: self.xrayAccessLogOffset)
                         let data = try handle.readToEnd() ?? Data()
                         try handle.close()
                         self.xrayAccessLogOffset = size
-                        let records = parser.parse(data)
+                        let records = parser.parse(
+                            data,
+                            pendingLine: &self.xrayAccessLogPendingLine
+                        )
                         if !records.isEmpty {
                             self.xrayAccessRecords = Array((self.xrayAccessRecords + records).suffix(2_000))
                         }
@@ -11975,6 +11990,9 @@ final class AppModel {
         xrayAccessLogTask?.cancel()
         xrayAccessLogTask = nil
         xrayAccessLogOffset = 0
+        xrayAccessLogFileID = nil
+        xrayAccessLogPendingLine = ""
+        xrayAccessRecords = []
     }
 
     private func appendSupervisorLog(_ message: String) {
