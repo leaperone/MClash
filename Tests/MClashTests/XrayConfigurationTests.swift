@@ -67,7 +67,36 @@ struct XrayConfigurationTests {
         #expect(stream["wsSettings"]?.objectValue?["host"]?.stringValue == "cdn.example")
         #expect(stream["tlsSettings"]?.objectValue?["serverName"]?.stringValue == "tls.example")
         #expect(stream["tlsSettings"]?.objectValue?["alpn"]?.arrayValue == [.string("http/1.1")])
-        #expect(stream["tlsSettings"]?.objectValue?["allowInsecure"]?.boolValue == false)
+        #expect(stream["tlsSettings"]?.objectValue?["allowInsecure"] == nil)
+    }
+
+    @Test("Self-signed nodes must pin the peer certificate because Xray dropped the unverified mode")
+    func pinnedCertificate() throws {
+        let pin = String(repeating: "ab", count: 32)
+        let unpinned = try Node(displayName: "Self-signed", protocol: .hysteria2, host: "hy.example", port: 8443,
+            parameters: ["password": "fixture", "sni": "localhost", "skip-cert-verify": "true"])
+        #expect(throws: XrayNodeRenderError.removedInsecureTLS) { try XrayNodeRenderer.render(unpinned, tag: "hy") }
+
+        let pinned = try Node(displayName: "Self-signed", protocol: .hysteria2, host: "hy.example", port: 8443,
+            parameters: ["password": "fixture", "sni": "localhost", "skip-cert-verify": "true", "pcs": pin])
+        let stream = try #require(XrayNodeRenderer.render(pinned, tag: "hy").objectValue?["streamSettings"]?.objectValue)
+        #expect(stream["tlsSettings"]?.objectValue?["pinnedPeerCertSha256"]?.stringValue == pin)
+        #expect(stream["tlsSettings"]?.objectValue?["allowInsecure"] == nil)
+        #expect(stream["tlsSettings"]?.objectValue?["serverName"]?.stringValue == "localhost")
+
+        let named = try Node(displayName: "Renamed", protocol: .trojan, host: "proxy.example", port: 443,
+            parameters: ["password": "fixture", "skip-cert-verify": "true", "verify-peer-cert-by-name": "proxy.example,alt.example"])
+        let namedStream = try #require(XrayNodeRenderer.render(named, tag: "trojan").objectValue?["streamSettings"]?.objectValue)
+        #expect(namedStream["tlsSettings"]?.objectValue?["verifyPeerCertByName"]?.stringValue == "proxy.example,alt.example")
+
+        // A pin that Xray would reject must fail the node, never the whole configuration.
+        for invalid in ["abc", String(repeating: "a", count: 63), String(repeating: "z", count: 64)] {
+            let node = try Node(displayName: "Bad pin", protocol: .trojan, host: "proxy.example", port: 443,
+                parameters: ["password": "fixture", "pcs": invalid])
+            #expect(throws: XrayNodeRenderError.invalidField("pinned-peer-cert-sha256")) {
+                try XrayNodeRenderer.render(node, tag: "trojan")
+            }
+        }
     }
 
     @Test("Hysteria2 uses its exact endpoint and stream schema")
@@ -234,6 +263,8 @@ struct XrayConfigurationTests {
             (.trojan, ["password": "fixture"]), (.http, [:]), (.https, [:]), (.socks5, [:]),
             (.shadowsocks, ["password": "fixture", "cipher": "aes-128-gcm"]),
             (.hysteria2, ["password": "fixture", "sni": "example.com"]),
+            (.hysteria2, ["password": "fixture", "sni": "localhost", "skip-cert-verify": "true",
+                          "pcs": String(repeating: "ab", count: 32)]),
         ]
         let directory = FileManager.default.temporaryDirectory.appending(path: "xray-schema-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

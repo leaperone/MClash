@@ -6,6 +6,7 @@ public enum XrayNodeRenderError: Error, Equatable, Sendable, LocalizedError {
     case unsupportedOption(String)
     case missingField(String)
     case invalidField(String)
+    case removedInsecureTLS
 
     public var errorDescription: String? {
         switch self {
@@ -13,6 +14,12 @@ public enum XrayNodeRenderError: Error, Equatable, Sendable, LocalizedError {
         case let .unsupportedOption(key): "This node option is not supported by the Xray adapter: \(key)."
         case let .missingField(key): "The node is missing \(key)."
         case let .invalidField(key): "The node has an invalid \(key)."
+        case .removedInsecureTLS:
+            """
+            Xray removed the unverified TLS mode this node asks for with "skip-cert-verify". Pin the server \
+            certificate with "pcs" ("pinnedPeerCertSha256"), or verify it with "vcn" \
+            ("verifyPeerCertByName"), on this node instead.
+            """
         }
     }
 }
@@ -123,10 +130,19 @@ public enum XrayNodeRenderer {
                 "spiderX": .string(spider), "fingerprint": .string(p["client-fingerprint"] ?? "chrome"),
             ])
         } else if try p.bool("tls", default: [.trojan, .https, .hysteria2].contains(node.proto)) {
-            var tls: [String: AutomationJSONValue] = ["serverName": .string(serverName), "allowInsecure": .bool(try p.bool("skip-cert-verify", default: false))]
+            var tls: [String: AutomationJSONValue] = ["serverName": .string(serverName)]
             let alpn = try p.list("alpn")
             if !alpn.isEmpty { tls["alpn"] = .array(alpn.map(AutomationJSONValue.string)) }
             if let fingerprint = p["client-fingerprint"] { tls["fingerprint"] = .string(fingerprint) }
+            // Xray dropped "allowInsecure"; a node that wants to skip verification must pin the peer
+            // certificate or name it instead, and is unusable until it does.
+            let pinned = try p.certificatePins()
+            let verifyNames = try p.verifyNames()
+            if !pinned.isEmpty { tls["pinnedPeerCertSha256"] = .string(pinned.joined(separator: ",")) }
+            if !verifyNames.isEmpty { tls["verifyPeerCertByName"] = .string(verifyNames.joined(separator: ",")) }
+            if try p.bool("skip-cert-verify", default: false), pinned.isEmpty, verifyNames.isEmpty {
+                throw XrayNodeRenderError.removedInsecureTLS
+            }
             stream["security"] = .string("tls")
             stream["tlsSettings"] = .object(tls)
         } else if node.proto == .hysteria2 {
@@ -182,6 +198,8 @@ public enum XrayNodeRenderer {
             let keys: Set<String> = [
                 "uuid", "password", "auth", "username", "encryption", "flow", "cipher", "alterid", "alter-id",
                 "network", "tls", "servername", "sni", "skip-cert-verify", "client-fingerprint", "alpn",
+                "pinned-peer-cert-sha256", "pinnedpeercertsha256", "pcs",
+                "verify-peer-cert-by-name", "verifypeercertbyname", "vcn",
                 "udp", "tfo", "mptcp", "ip-version", "plugin", "obfs", "obfs-password", "ports", "hop-interval",
                 "dialer-proxy", "udp-over-tcp", "smux.enabled", "path", "host", "service-name",
                 "ws-opts.path", "ws-opts.max-early-data", "ws-opts.early-data-header-name",
@@ -231,6 +249,40 @@ public enum XrayNodeRenderer {
                 return value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             }
             return values.keys.filter { $0.hasPrefix(key + "[") }.sorted().compactMap { values[$0] }
+        }
+
+        /// Several subscriptions spell the same pinned-certificate option differently.
+        func firstValue(of keys: [String]) throws -> String? {
+            var found: String?
+            for key in keys {
+                guard let value = self[key] else { continue }
+                if let found, found != value { throw XrayNodeRenderError.invalidField(key) }
+                found = value
+            }
+            return found
+        }
+
+        /// Xray takes the leaf hashes as one comma-separated hex string.
+        func certificatePins() throws -> [String] {
+            guard let value = try firstValue(of: ["pinned-peer-cert-sha256", "pinnedpeercertsha256", "pcs"]) else {
+                return []
+            }
+            return try value.split(separator: ",").map { entry in
+                let hash = entry.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ":", with: "").lowercased()
+                guard hash.count == 64, hash.allSatisfy({ $0.isHexDigit }) else {
+                    throw XrayNodeRenderError.invalidField("pinned-peer-cert-sha256")
+                }
+                return hash
+            }
+        }
+
+        func verifyNames() throws -> [String] {
+            guard let value = try firstValue(of: ["verify-peer-cert-by-name", "verifypeercertbyname", "vcn"]) else {
+                return []
+            }
+            let names = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            guard !names.isEmpty else { throw XrayNodeRenderError.invalidField("verify-peer-cert-by-name") }
+            return names
         }
     }
 }
