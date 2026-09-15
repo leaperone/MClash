@@ -265,6 +265,10 @@ def main():
         assert state["core"]["activeProfileID"] == imported["id"]
         fetch("NODE_A")
         fetch("NODE_A", socks=True)
+        time.sleep(1)
+        access_records = call("traffic.flows.list", {"limit": 200})
+        assert access_records["evidence"] == "mclash-xray-access-records"
+        assert access_records["total"] > 0, "MClash did not ingest Xray access records"
         assert call("routing.proxy.select", {"group": "Auto", "proxy": "B"})["selected"]
         fetch("NODE_B")
         fetch("NODE_B", socks=True)
@@ -396,6 +400,7 @@ def main():
         receipt["healthSettingsRoundTrip"] = True
         receipt["signaturePreserved"] = args.preserve_signature
         receipt["resources"] = dict(coreProcesses=1, coreRSSBytes=core_rss, appRSSBytes=app_rss, connectSeconds=ready_seconds)
+        receipt["xrayAccessRecords"] = access_records["total"]
         args.output.write_text(json.dumps(receipt, indent=2) + "\n")
         print(json.dumps(receipt))
     except BaseException:
