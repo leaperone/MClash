@@ -41,4 +41,19 @@ struct NodeLinkImporterTests {
         #expect(preview.detectedFormats == ["socks5"])
         #expect(preview.diagnostics.isEmpty)
     }
+
+    @Test("Imports a WireGuard share link with peer and address settings")
+    func importsWireGuardLink() {
+        let link = "wireguard://\(String(repeating: "11", count: 32))@wg.example:51820?publickey=\(String(repeating: "22", count: 32))&address=10.0.0.2%2F32&allowedips=0.0.0.0%2F0%2C%3A%3A%2F0&keepalive=25&reserved=0%2C1%2C2&dns=1.1.1.1#WG"
+        let preview = NodeLinkImporter().preview(.init(text: link))
+        #expect(preview.nodes.count == 1)
+        #expect(preview.nodes.first?.proto == .wireguard)
+        #expect(preview.nodes.first?.parameters["secret-key"] == String(repeating: "11", count: 32))
+        #expect(preview.nodes.first?.parameters["public-key"] == String(repeating: "22", count: 32))
+        #expect(preview.nodes.first?.parameters["address"] == "10.0.0.2/32")
+        #expect(preview.nodes.first?.parameters["keep-alive"] == "25")
+        #expect(preview.nodes.first?.parameters["reserved"] == "0,1,2")
+        #expect(preview.nodes.first?.parameters["remote-dns"] == "1.1.1.1")
+        #expect(preview.diagnostics.isEmpty)
+    }
 }

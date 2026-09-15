@@ -28,7 +28,7 @@ public struct NodeLinkImportPreview: Sendable {
 
 public struct NodeLinkImporter: Sendable {
     private static let inputLimit = 256 * 1024
-    private static let supportedSchemes = Set(["vless", "vmess", "trojan", "ss", "http", "socks", "socks5", "hysteria2", "hy2"])
+    private static let supportedSchemes = Set(["vless", "vmess", "trojan", "ss", "http", "socks", "socks5", "hysteria2", "hy2", "wireguard"])
 
     public init() {}
 
@@ -103,6 +103,31 @@ public struct NodeLinkImporter: Sendable {
             parameters["password"] = password
             if let sni = parameters.removeValue(forKey: "sni") { parameters["servername"] = sni }
             proto = .hysteria2
+        case "wireguard":
+            guard let secretKey = decoded(url.user), !secretKey.isEmpty,
+                  let publicKey = firstQueryValue(parameters, keys: ["publickey", "public-key", "peer-public-key"]),
+                  !publicKey.isEmpty else { throw ImportError.invalid }
+            parameters["secret-key"] = secretKey
+            parameters["public-key"] = publicKey
+            if let address = firstQueryValue(parameters, keys: ["address", "addresses"]), !address.isEmpty {
+                parameters["address"] = address
+            }
+            if let allowed = firstQueryValue(parameters, keys: ["allowedips", "allowed-ips"]) {
+                parameters["allowed-ips"] = allowed
+            }
+            if let psk = firstQueryValue(parameters, keys: ["psk", "presharedkey", "pre-shared-key"]) {
+                parameters["pre-shared-key"] = psk
+            }
+            if let keepAlive = firstQueryValue(parameters, keys: ["keepalive", "keep-alive"]) {
+                parameters["keep-alive"] = keepAlive
+            }
+            if let domainStrategy = firstQueryValue(parameters, keys: ["domainstrategy", "domain-strategy"]) {
+                parameters["domain-strategy"] = domainStrategy
+            }
+            if let dns = firstQueryValue(parameters, keys: ["dns", "remote-dns"]) {
+                parameters["remote-dns"] = dns
+            }
+            proto = .wireguard
         case "http", "socks", "socks5":
             if let user = decoded(url.user) { parameters["username"] = user }
             if let password = decoded(url.password) { parameters["password"] = password }
@@ -173,6 +198,10 @@ public struct NodeLinkImporter: Sendable {
             result[item.name.lowercased()] = value
         }
         return result
+    }
+
+    private func firstQueryValue(_ values: [String: String], keys: [String]) -> String? {
+        keys.compactMap { values[$0] }.first
     }
 
     private func normalizeTransportParameters(_ values: inout [String: String]) {

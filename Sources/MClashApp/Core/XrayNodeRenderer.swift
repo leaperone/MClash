@@ -88,6 +88,42 @@ public enum XrayNodeRenderer {
             server["method"] = .string(method)
             server["password"] = .string(try parameters.required("password"))
             settings = ["servers": .array([.object(server)])]
+        case .wireguard:
+            protocolName = "wireguard"
+            let secretKey = try parameters.wireGuardKey("secret-key", aliases: ["private-key", "privatekey"])
+            let publicKey = try parameters.wireGuardKey("public-key", aliases: ["peer-public-key", "peer-publickey"])
+            let addresses = try parameters.list("address")
+            let allowedIPs = try parameters.list("allowed-ips")
+            var peer: [String: AutomationJSONValue] = [
+                "publicKey": .string(publicKey),
+                "endpoint": .string(wireGuardEndpoint(host: node.host, port: node.port)),
+                "allowedIPs": .array((allowedIPs.isEmpty ? ["0.0.0.0/0", "::/0"] : allowedIPs).map(AutomationJSONValue.string)),
+            ]
+            if let preSharedKey = try parameters.optionalWireGuardKey("pre-shared-key", aliases: ["psk", "presharedkey"]) {
+                peer["preSharedKey"] = .string(preSharedKey)
+            }
+            if let keepAlive = try parameters.optionalInt("keep-alive", aliases: ["keepalive"], range: 0...65535) {
+                peer["keepAlive"] = .integer(Int64(keepAlive))
+            }
+            var wireguard: [String: AutomationJSONValue] = [
+                "secretKey": .string(secretKey),
+                "address": .array(addresses.map(AutomationJSONValue.string)),
+                "peers": .array([.object(peer)]),
+                "noKernelTun": .bool(try parameters.bool("no-kernel-tun", default: true)),
+                "domainStrategy": .string(parameters["domain-strategy"] ?? "ForceIP"),
+            ]
+            if let mtu = try parameters.optionalInt("mtu", aliases: [], range: 576...65535) {
+                wireguard["mtu"] = .integer(Int64(mtu))
+            }
+            let remoteDNS = try parameters.list("remote-dns")
+            if !remoteDNS.isEmpty { wireguard["remoteDNS"] = .array(remoteDNS.map(AutomationJSONValue.string)) }
+            if let reserved = try parameters.reservedBytes() {
+                wireguard["reserved"] = .array(reserved.map { .integer(Int64($0)) })
+            }
+            if !addresses.isEmpty {
+                wireguard["address"] = .array(addresses.map(AutomationJSONValue.string))
+            }
+            settings = wireguard
         case .hysteria2:
             protocolName = "hysteria"
             settings = endpoint
@@ -96,8 +132,15 @@ public enum XrayNodeRenderer {
             throw XrayNodeRenderError.unsupportedProtocol(node.proto)
         }
         var result: [String: AutomationJSONValue] = ["tag": .string(tag), "protocol": .string(protocolName), "settings": .object(settings)]
-        result["streamSettings"] = .object(try transport(node, parameters: parameters))
+        if node.proto != .wireguard {
+            result["streamSettings"] = .object(try transport(node, parameters: parameters))
+        }
         return .object(result)
+    }
+
+    private static func wireGuardEndpoint(host: String, port: Int) -> String {
+        let endpointHost = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        return "\(endpointHost):\(port)"
     }
 
     private static func transport(_ node: Node, parameters p: Parameters) throws -> [String: AutomationJSONValue] {
@@ -202,6 +245,9 @@ public enum XrayNodeRenderer {
                 "verify-peer-cert-by-name", "verifypeercertbyname", "vcn",
                 "udp", "tfo", "mptcp", "ip-version", "plugin", "obfs", "obfs-password", "ports", "hop-interval",
                 "dialer-proxy", "udp-over-tcp", "smux.enabled", "path", "host", "service-name",
+                "secret-key", "private-key", "privatekey", "public-key", "publickey", "peer-public-key", "peer-publickey",
+                "address", "addresses", "allowed-ips", "allowedips", "pre-shared-key", "presharedkey", "psk",
+                "keep-alive", "keepalive", "mtu", "no-kernel-tun", "domain-strategy", "domainstrategy", "remote-dns", "dns", "reserved",
                 "ws-opts.path", "ws-opts.max-early-data", "ws-opts.early-data-header-name",
                 "http-upgrade-opts.path", "http-upgrade-opts.max-early-data", "http-upgrade-opts.early-data-header-name",
                 "grpc-opts.grpc-service-name", "reality-opts.public-key", "reality-public-key", "reality-opts.short-id",
@@ -249,6 +295,41 @@ public enum XrayNodeRenderer {
                 return value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             }
             return values.keys.filter { $0.hasPrefix(key + "[") }.sorted().compactMap { values[$0] }
+        }
+
+        func wireGuardKey(_ key: String, aliases: [String]) throws -> String {
+            guard let value = try optionalWireGuardKey(key, aliases: aliases) else {
+                throw XrayNodeRenderError.missingField(key)
+            }
+            return value
+        }
+
+        func optionalWireGuardKey(_ key: String, aliases: [String]) throws -> String? {
+            guard let value = self[key] ?? aliases.compactMap({ self[$0] }).first else { return nil }
+            guard !value.isEmpty else { throw XrayNodeRenderError.invalidField(key) }
+            if value.count == 64, value.allSatisfy({ $0.isHexDigit }) { return value }
+            var encoded = value
+            encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+            let decoded = Data(base64Encoded: encoded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/"))
+            guard decoded?.count == 32 else { throw XrayNodeRenderError.invalidField(key) }
+            return value
+        }
+
+        func optionalInt(_ key: String, aliases: [String], range: ClosedRange<Int>) throws -> Int? {
+            guard let value = self[key] ?? aliases.compactMap({ self[$0] }).first else { return nil }
+            guard let parsed = Int(value), range.contains(parsed) else { throw XrayNodeRenderError.invalidField(key) }
+            return parsed
+        }
+
+        func reservedBytes() throws -> [Int64]? {
+            guard let value = self["reserved"] else { return nil }
+            let parts = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            let bytes = parts.compactMap(Int.init)
+            guard parts.count == 3, bytes.count == 3,
+                  bytes.allSatisfy({ (0...255).contains($0) }) else {
+                throw XrayNodeRenderError.invalidField("reserved")
+            }
+            return bytes.map(Int64.init)
         }
 
         /// Several subscriptions spell the same pinned-certificate option differently.
