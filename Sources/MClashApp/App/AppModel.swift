@@ -4206,6 +4206,10 @@ final class AppModel {
         )
         let previousProfileID = activeProfileID
         do {
+            if activeProfileID == nil {
+                try await profileStore.setActiveProfile(profile.id)
+                activeProfileID = profile.id
+            }
             profiles = try await profileStore.profiles()
             await synchronizeConfigurationSources()
             if activate { try await performActivateProfile(profile.id) }

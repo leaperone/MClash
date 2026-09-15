@@ -34,7 +34,7 @@ public struct NodeLinkImporter: Sendable {
 
     public func preview(_ request: NodeLinkImportRequest) -> NodeLinkImportPreview {
         guard request.text.utf8.count <= Self.inputLimit else {
-            return .init(nodes: [], diagnostics: [diagnostic("input_too_large", "The pasted text is too large to read.")], ignoredLines: 0, detectedFormats: [])
+            return .init(nodes: [], diagnostics: [diagnostic("input_too_large", "The pasted text is too large to read.", subject: "input")], ignoredLines: 0, detectedFormats: [])
         }
         var nodes: [Node] = []
         var diagnostics: [ConfigurationDiagnostic] = []
@@ -47,7 +47,7 @@ public struct NodeLinkImporter: Sendable {
             let scheme = line.split(separator: ":", maxSplits: 1).first.map(String.init)?.lowercased()
             guard let scheme, Self.supportedSchemes.contains(scheme) else {
                 ignoredLines += 1
-                diagnostics.append(diagnostic("unsupported_scheme", "Line \(lineIndex + 1) uses an unsupported link format."))
+                diagnostics.append(diagnostic("unsupported_scheme", "Line \(lineIndex + 1) uses an unsupported link format.", subject: "line-\(lineIndex + 1)"))
                 continue
             }
             formats.insert(scheme == "hy2" ? "hysteria2" : scheme)
@@ -57,12 +57,12 @@ public struct NodeLinkImporter: Sendable {
                     protocol: candidate.proto, host: candidate.host, port: candidate.port,
                     parameters: candidate.parameters, sourceLinks: [request.sourceID], lastSeenAt: request.now)
                 guard seen.insert(node.connectionFingerprint).inserted else {
-                    diagnostics.append(diagnostic("duplicate_link", "Line \(lineIndex + 1) repeats an imported node."))
+                    diagnostics.append(diagnostic("duplicate_link", "Line \(lineIndex + 1) repeats an imported node.", subject: "line-\(lineIndex + 1)"))
                     continue
                 }
                 nodes.append(node)
             } catch {
-                diagnostics.append(diagnostic("invalid_link", "Line \(lineIndex + 1) is not a valid proxy link."))
+                diagnostics.append(diagnostic("invalid_link", "Line \(lineIndex + 1) is not a valid proxy link.", subject: "line-\(lineIndex + 1)"))
             }
         }
         return .init(nodes: nodes, diagnostics: diagnostics, ignoredLines: ignoredLines, detectedFormats: formats.sorted())
@@ -103,7 +103,7 @@ public struct NodeLinkImporter: Sendable {
             parameters["password"] = password
             if let sni = parameters.removeValue(forKey: "sni") { parameters["servername"] = sni }
             proto = .hysteria2
-        case "http", "socks5":
+        case "http", "socks", "socks5":
             if let user = decoded(url.user) { parameters["username"] = user }
             if let password = decoded(url.password) { parameters["password"] = password }
             proto = scheme == "http" ? .http : .socks5
@@ -119,12 +119,13 @@ public struct NodeLinkImporter: Sendable {
               let port = Int(String(describing: object["port"] ?? "")), (1...65_535).contains(port),
               let uuid = object["id"] as? String, UUID(uuidString: uuid) != nil else { throw ImportError.invalid }
         var parameters: [String: String] = ["uuid": uuid]
-        if let network = stringValue(object["net"]) { parameters["network"] = network }
+        if let network = stringValue(object["net"] ?? object["type"]) { parameters["network"] = network }
         if let tls = stringValue(object["tls"]), !tls.isEmpty { parameters["tls"] = tls == "tls" || tls == "true" ? "true" : "false" }
         if let sni = stringValue(object["sni"]), !sni.isEmpty { parameters["servername"] = sni }
         if let hostHeader = stringValue(object["host"]), !hostHeader.isEmpty { parameters["host"] = hostHeader }
         if let path = stringValue(object["path"]), !path.isEmpty { parameters["ws-opts.path"] = path }
         if let cipher = stringValue(object["scy"]), !cipher.isEmpty { parameters["cipher"] = cipher }
+        if let aid = stringValue(object["aid"]), !aid.isEmpty { parameters["alterid"] = aid }
         return Candidate(proto: .vmess, host: host, port: port, name: stringValue(object["ps"]) ?? host, parameters: parameters)
     }
 
@@ -137,6 +138,10 @@ public struct NodeLinkImporter: Sendable {
            let encodedUser = url.user, let data = decodeBase64(encodedUser),
            let methodPassword = String(data: data, encoding: .utf8) {
             return try shadowsocksCandidate(methodPassword: methodPassword, host: host, port: port, name: name ?? host)
+        }
+        if let url = URL(string: "ss://" + withoutName), let host = url.host, let port = url.port,
+           let rawUser = decoded(url.user), rawUser.contains(":") {
+            return try shadowsocksCandidate(methodPassword: rawUser, host: host, port: port, name: name ?? host)
         }
         guard let data = decodeBase64(withoutName), let text = String(data: data, encoding: .utf8),
               let separator = text.firstIndex(of: "@") else { throw ImportError.invalid }
@@ -178,8 +183,8 @@ public struct NodeLinkImporter: Sendable {
         input += String(repeating: "=", count: (4 - input.count % 4) % 4)
         return Data(base64Encoded: input)
     }
-    private func diagnostic(_ code: String, _ message: String) -> ConfigurationDiagnostic {
-        .init(severity: .warning, code: code, subject: "node-link", message: message)
+    private func diagnostic(_ code: String, _ message: String, subject: String) -> ConfigurationDiagnostic {
+        .init(severity: .warning, code: code, subject: subject, message: message)
     }
     private enum ImportError: Error { case invalid }
 }
