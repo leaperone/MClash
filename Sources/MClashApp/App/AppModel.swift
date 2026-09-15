@@ -735,6 +735,9 @@ final class AppModel {
     private var rulesUseGlobalProxy = false
     private var connectionsUseGlobalProxy = false
     private var apiClient: (any ProxyRuntimeClient)?
+    private let usesXrayRuntime: Bool
+    private var xrayLaunchConfiguration: CoreLaunchConfiguration?
+    private var xrayRuntimeController: XrayRuntimeController?
     private var activeControllerEndpoint: URL?
     private var controllerSetupOperation: (id: UUID, endpoint: URL, task: Task<Void, Never>)?
     private var eventTask: Task<Void, Never>?
@@ -840,6 +843,9 @@ final class AppModel {
         let environment = ProcessInfo.processInfo.environment
         testInstance = environment["MCLASH_TEST_MODE"] == "1"
             || CommandLine.arguments.contains("--mclash-test-instance")
+        let selectedBackend = environment["MCLASH_RUNTIME_BACKEND"]
+            ?? (Bundle.main.object(forInfoDictionaryKey: "MClashRuntimeBackend") as? String)
+        usesXrayRuntime = selectedBackend == "xray"
         let defaults: UserDefaults
         if let preferenceDefaults {
             defaults = preferenceDefaults
@@ -2267,12 +2273,12 @@ final class AppModel {
             try await configurationStore.save(document)
             configurationDocument = document
             let sourceDiagnostics = document.sources.flatMap(\.parseDiagnostics)
-            var synchronizationResults = document.diagnostics()
+            var synchronizationResults = document.diagnostics(backend: configurationBackend)
                 + sourceDiagnostics
                 + Array(synchronizationDiagnostics)
             if unifiedConfigurationEnabled {
                 do {
-                    let refreshedCompiledConfiguration = try ConfigurationCompiler().compile(
+                    let refreshedCompiledConfiguration = try configurationCompiler.compile(
                         document: document
                     )
                     compiledConfiguration = refreshedCompiledConfiguration
@@ -2434,7 +2440,7 @@ final class AppModel {
     func applySplitTrafficDocument(_ document: ConfigurationDocument) async throws {
         guard begin(.changeRuntimeSettings) else { throw CancellationError() }
         defer { end(.changeRuntimeSettings) }
-        _ = try ConfigurationCompiler().compile(document: document)
+        _ = try configurationCompiler.compile(document: document)
         try await persistConfigurationDocument(document)
     }
 
@@ -2448,7 +2454,7 @@ final class AppModel {
         // The preset is a convenience authoring operation, not a validation
         // bypass. Prove the complete active workspace before saving it.
         for workspace in result.document.workspaces {
-            _ = try ConfigurationCompiler().compile(
+            _ = try configurationCompiler.compile(
                 document: result.document,
                 workspaceID: workspace.id
             )
@@ -2712,7 +2718,7 @@ final class AppModel {
         var workspaceDiagnostics: [WorkspaceID: [ConfigurationDiagnostic]] = [:]
         if !diagnostics.contains(where: { $0.severity == .error }) {
             for workspace in candidate.workspaces {
-                let values = candidate.diagnostics(for: workspace)
+                let values = candidate.diagnostics(for: workspace, backend: configurationBackend)
                 workspaceDiagnostics[workspace.id] = values
                 diagnostics.append(contentsOf: values)
             }
@@ -2735,7 +2741,7 @@ final class AppModel {
                 $0.id.rawValue.uuidString < $1.id.rawValue.uuidString
             }) {
                 do {
-                    let compiled = try ConfigurationCompiler().compile(
+                    let compiled = try configurationCompiler.compile(
                         document: candidate,
                         workspaceID: workspace.id,
                         validatedDiagnostics: workspaceDiagnostics[workspace.id]
@@ -2878,7 +2884,8 @@ final class AppModel {
         _ document: ConfigurationDocument
     ) -> [ConfigurationDiagnostic] {
         var result = ConfigurationValidator.automationPlanDiagnostics(
-            document: document
+            document: document,
+            backend: configurationBackend
         )
         result += configurationAutomationDuplicateDiagnostics(
             document.sources.map(\.id), code: "duplicate_source"
@@ -3055,7 +3062,7 @@ final class AppModel {
     private func allConfigurationDiagnostics(
         for document: ConfigurationDocument
     ) -> [ConfigurationDiagnostic] {
-        (document.diagnostics() + document.sources.flatMap(\.parseDiagnostics))
+        (document.diagnostics(backend: configurationBackend) + document.sources.flatMap(\.parseDiagnostics))
             .reduce(into: [String: ConfigurationDiagnostic]()) { result, diagnostic in
                 result[diagnostic.id] = diagnostic
             }
@@ -3256,8 +3263,11 @@ final class AppModel {
         try await persistConfigurationDocument(document)
     }
 
+    var configurationBackend: ConfigurationBackend { usesXrayRuntime ? .xray : .mihomo }
+    private var configurationCompiler: ConfigurationCompiler { ConfigurationCompiler(backend: configurationBackend) }
+
     func compileConfiguration(workspaceID: WorkspaceID? = nil) throws -> CompiledConfiguration {
-        try ConfigurationCompiler().compile(
+        try configurationCompiler.compile(
             document: configurationDocument,
             workspaceID: workspaceID
         )
@@ -3307,6 +3317,10 @@ final class AppModel {
         let previousUnifiedConfigurationEnabled = unifiedConfigurationEnabled
         let previousNetworkCapturePreferences = networkCapturePreferences
         let previousActiveConfigURL = activeConfigURL
+        let previousXrayLaunch = xrayLaunchConfiguration
+        let previousXrayController = xrayRuntimeController
+        let previousXrayListener = networkExtensionMihomoListener
+        let previousXrayConfig = try previousXrayLaunch.map { try Data(contentsOf: $0.configURL) }
         let shouldRestoreSystemProxy = systemProxyEnabled
         let previousNetworkCaptureWasActive: Bool = {
             if case .on = networkCaptureState { return true }
@@ -3402,17 +3416,24 @@ final class AppModel {
         do {
             unifiedConfigurationEnabled = true
             try await synchronizeCompiledCaptureState(compiled)
-            let activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
-                activationProfileID,
-                baseConfiguration: compiled.yaml,
-                overrides: compiledRuntimeOverrides(for: activationProfileID),
-                networkExtensionListener: activeNetworkExtensionMihomoListener,
-                profileMixedListener: nil,
-                routeListeners: [],
-                allowedOutboundProxyNames: unifiedRuntimeProxyNames(),
-                in: profileStore,
-                validator: try makeProfileValidator()
-            )
+            let activation: RuntimeConfigurationActivation
+            if usesXrayRuntime {
+                configurationDocument.currentWorkspaceID = workspace.id
+                compiledConfiguration = compiled
+                activation = try await prepareXrayRuntime(profileID: activationProfileID)
+            } else {
+                activation = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
+                    activationProfileID,
+                    baseConfiguration: compiled.yaml,
+                    overrides: compiledRuntimeOverrides(for: activationProfileID),
+                    networkExtensionListener: activeNetworkExtensionMihomoListener,
+                    profileMixedListener: nil,
+                    routeListeners: [],
+                    allowedOutboundProxyNames: unifiedRuntimeProxyNames(),
+                    in: profileStore,
+                    validator: try makeProfileValidator()
+                )
+            }
             activeProfileID = activation.profileID
             activeConfigURL = activation.configurationURL
             compiledConfiguration = compiled
@@ -3577,7 +3598,17 @@ final class AppModel {
             if safeToReconnectPreviousRuntime, let previousProfileID {
                 do {
                     let restored: RuntimeConfigurationActivation
-                    if let previousCompiledConfiguration,
+                    if usesXrayRuntime, let launch = previousXrayLaunch,
+                       let controller = previousXrayController, let data = previousXrayConfig {
+                        try data.write(to: launch.configURL, options: .atomic)
+                        xrayLaunchConfiguration = launch
+                        xrayRuntimeController = controller
+                        networkExtensionMihomoListener = previousXrayListener
+                        restored = RuntimeConfigurationActivation(profileID: previousProfileID,
+                            previousProfileID: previousProfileID, configurationURL: launch.configURL)
+                    } else if usesXrayRuntime {
+                        restored = try await prepareXrayRuntime(profileID: previousProfileID)
+                    } else if let previousCompiledConfiguration,
                        previousUnifiedConfigurationEnabled {
                         restored = try await runtimeOverrideCoordinator.activateCompiledConfiguration(
                             previousProfileID,
@@ -3603,7 +3634,12 @@ final class AppModel {
                     activeConfigURL = restored.configurationURL
                     self.activeProfileID = previousProfileID
                     if shouldReconnect {
-                        if await performConnect() {
+                        let connected: Bool
+                        if usesXrayRuntime, let launch = xrayLaunchConfiguration {
+                            try await startXrayRuntime(launch)
+                            connected = isConnected && controllerIsReady
+                        } else { connected = await performConnect() }
+                        if connected {
                             if previousNetworkCaptureWasActive,
                                !networkCaptureState.isActive(
                                    revision: networkCapturePreferences.snapshot.revision
@@ -3781,6 +3817,7 @@ final class AppModel {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
+            if usesXrayRuntime { try await makeProfileValidator().validate(configurationAt: url) }
             let profile = try await profileStore.importProfile(from: url)
             profiles = try await profileStore.profiles()
             await synchronizeConfigurationSources()
@@ -3811,6 +3848,7 @@ final class AppModel {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
+            if usesXrayRuntime { try await makeProfileValidator().validate(configurationAt: url) }
             _ = try await profileStore.importProfile(from: url)
             profiles = try await profileStore.profiles()
             await synchronizeConfigurationSources()
@@ -3882,6 +3920,7 @@ final class AppModel {
             [.posixPermissions: 0o600],
             ofItemAtPath: stagedURL.path
         )
+        if usesXrayRuntime { try await makeProfileValidator().validate(configurationAt: stagedURL) }
         let previousProfileID = activeProfileID
         let profile = try await profileStore.importProfile(from: stagedURL)
         profiles = try await profileStore.profiles()
@@ -4560,6 +4599,9 @@ final class AppModel {
         _ id: ProfileID,
         validator: any ProfileValidating
     ) async throws -> RuntimeConfigurationActivation {
+        if usesXrayRuntime {
+            return try await prepareXrayRuntime(profileID: id)
+        }
         if !unifiedConfigurationEnabled {
             try await validateProfileRouteListenerTargets(
                 profileRouteListeners(for: id)
@@ -5429,12 +5471,147 @@ final class AppModel {
         }
     }
 
+    private func makeXrayPlan(profileID: ProfileID, apiSocketPath: String, logDirectory: String) throws -> (plan: XrayRuntimePlan, captured: Set<RoutingRuleID>) {
+        guard let workspace = configurationDocument.currentWorkspace else { throw AppModelError.profileStoreUnavailable }
+        var inputs: [XrayInbound] = []
+        let ownedGroups = configurationDocument.proxyGroups.filter { workspace.proxyGroupIDs.contains($0.id) }
+        for entry in configurationDocument.entrances where workspace.entranceIDs.contains(entry.id) && entry.enabled {
+            let kind: XrayInbound.Kind
+            switch entry.kind {
+            case .http: kind = .http
+            case .socks5: kind = .socks
+            case .appRouting: continue
+            case .tun:
+                throw ConfigurationCompilationError.invalidText("The Xray adapter uses the App Routing entrance for macOS capture.")
+            }
+            guard let port = entry.port else { throw ConfigurationCompilationError.invalidText("An enabled proxy entrance is missing its port.") }
+            let target = XrayInbound.Target.rulesWithDefault(entry.defaultAction)
+            inputs.append(.init(tag: entry.name, kind: kind, bindAddress: entry.bindAddress, port: port, target: target))
+        }
+        let mixedPort = effectiveRuntimeOverrides(for: profileID).ports.mixedPort ?? profileRuntimePlan.defaultMixedPort
+        if !inputs.contains(where: { $0.port == mixedPort }) {
+            inputs.append(.init(tag: "mclash-workspace", kind: .mixed, port: mixedPort))
+        }
+        if let listener = activeNetworkExtensionMihomoListener {
+            let authentication = listener.authentication.map { XrayInbound.Authentication(username: $0.username, password: $0.password) }
+            for route in listener.routeListeners {
+                let target: XrayInbound.Target
+                switch route.route.profileRoute {
+                case .rules: target = .rules
+                case .global:
+                    if let group = workspace.globalProxyGroupID ?? ownedGroups.first?.id { target = .group(group) }
+                    else { target = .direct }
+                case let .group(name):
+                    if let group = ownedGroups.first(where: { $0.name == name }) { target = .group(group.id) }
+                    else if let node = configurationDocument.nodes.first(where: { ($0.userAlias ?? $0.displayName) == name }) { target = .node(node.id) }
+                    else { throw ConfigurationCompilationError.invalidText("An App Routing rule references an unavailable target.") }
+                }
+                inputs.append(.init(tag: "mclash-capture-\(route.port)", kind: .socks, port: Int(route.port), target: target, authentication: authentication))
+                inputs.append(.init(tag: "mclash-capture-v6-\(route.port)", kind: .socks, bindAddress: "::1", port: Int(route.port), target: target, authentication: authentication))
+            }
+        }
+        let compiled = try compileConfiguration()
+        let captured = Set(compiled.networkExtensionRules.map(\.id))
+        let plan = try XrayConfigurationCompiler.compile(document: configurationDocument, workspaceID: workspace.id,
+            inbounds: inputs, apiSocketPath: apiSocketPath, capturedRuleIDs: captured, logDirectory: logDirectory)
+        return (plan, captured)
+    }
+
+    private func prepareXrayRuntime(profileID: ProfileID) async throws -> RuntimeConfigurationActivation {
+        guard let profileStore, let profileLayout, let workspace = configurationDocument.currentWorkspace else {
+            throw AppModelError.profileStoreUnavailable
+        }
+        let binary = try XrayBinaryLocator().locate()
+        let directory = profileLayout.runtimeDirectory.appending(path: "Xray", directoryHint: .isDirectory)
+            .appending(path: workspace.id.rawValue.uuidString.lowercased(), directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try geoDataInstaller.installIfNeeded(into: directory)
+        let apiDirectory = URL(fileURLWithPath: "/tmp/mclash-xray-" + UUID().uuidString.prefix(12))
+        try FileManager.default.createDirectory(at: apiDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let socket = apiDirectory.appending(path: "api.sock").path
+        var retainAPIDirectory = false
+        defer { if !retainAPIDirectory { try? FileManager.default.removeItem(at: apiDirectory) } }
+        let (plan, captured) = try makeXrayPlan(profileID: profileID, apiSocketPath: socket, logDirectory: directory.path)
+        configurationDiagnostics = plan.diagnostics
+        let staged = directory.appending(path: "candidate-" + UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: staged) }
+        try plan.encoded().write(to: staged)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: staged.path)
+        let versionBytes = try await supervisor.runCommand(executableURL: binary, arguments: ["version"], directory: directory)
+        let version = String(decoding: versionBytes, as: UTF8.self).split(whereSeparator: \.isWhitespace).dropFirst().first.map(String.init) ?? "unknown"
+        let backend = CoreBackend.xray(apiSocketPath: socket, version: version)
+        try await supervisor.validateWithoutStateChanges(CoreLaunchConfiguration(binaryURL: binary, homeDirectory: directory,
+            configURL: staged, controllerPort: 0, secret: "", backend: backend))
+        let configURL = directory.appending(path: "config.json")
+        let previousProfile = try await profileStore.activeProfileID()
+        let replacer = AtomicFileReplacer()
+        let receipt = try await replacer.replace(destinationURL: configURL, withStagedFile: staged)
+        do {
+            let control = try XrayControlSession(plan: plan, document: configurationDocument, binary: binary,
+                apiSocketPath: socket, directory: directory, commands: supervisor, configurationURL: configURL, capturedRuleIDs: captured)
+            try await profileStore.setActiveProfile(profileID)
+            try await replacer.commit(receipt)
+            xrayLaunchConfiguration = CoreLaunchConfiguration(binaryURL: binary, homeDirectory: directory,
+                configURL: configURL, controllerPort: 0, secret: "", backend: backend)
+            xrayRuntimeController = XrayRuntimeController(control: control, version: version)
+            retainAPIDirectory = true
+        } catch {
+            try? await replacer.rollback(receipt)
+            try? await profileStore.setActiveProfile(previousProfile)
+            throw error
+        }
+        return RuntimeConfigurationActivation(profileID: profileID, previousProfileID: previousProfile, configurationURL: configURL)
+    }
+
+    private func performXrayConnect() async -> Bool {
+        guard let profileID = activeProfileID else {
+            errorMessage = AppLocalization.string("Add or select a profile before connecting.")
+            return false
+        }
+        do {
+            errorMessage = nil
+            if !unifiedConfigurationEnabled {
+                try await prepareDocumentForUnifiedMigration()
+                unifiedConfigurationEnabled = true
+            }
+            let compiled = try compileConfiguration()
+            compiledConfiguration = compiled
+            try await synchronizeCompiledCaptureState(compiled)
+            try await prepareProfileRoutingSessions(for: networkCapturePreferences.enabled ? networkCapturePreferences.snapshot.rules : [], startAuxiliary: false)
+            try await repairManagedMixedPortCollision()
+            let activation = try await prepareXrayRuntime(profileID: profileID)
+            activeConfigURL = activation.configurationURL
+            guard let launch = xrayLaunchConfiguration else { throw AppModelError.profileStoreUnavailable }
+            try await startXrayRuntime(launch)
+            return isConnected && controllerIsReady
+        } catch {
+            await xrayRuntimeController?.stopHealthChecks()
+            await cleanupFailedConnectionAttempt()
+            errorMessage = error.localizedDescription
+            appendSupervisorLog("Xray connection failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func startXrayRuntime(_ launch: CoreLaunchConfiguration) async throws {
+        try await supervisor.start(launch)
+        coreState = await supervisor.state()
+        guard case let .running(session) = coreState else { throw XrayControlError.rejectedUpdate }
+        await controllerDidStart(session)
+        guard controllerIsReady else {
+            throw AppModelError.profileActivationFailed(errorMessage ?? XrayControlError.rejectedUpdate.localizedDescription)
+        }
+        if networkCapturePreferences.enabled { await performNetworkCaptureActivation() }
+        setNetworkEnvironmentRecoveryArmed(true)
+    }
+
     @discardableResult
     private func performConnect() async -> Bool {
         guard !shutdownInProgress else { return false }
         if isConnected, controllerIsReady {
             return true
         }
+        if usesXrayRuntime { return await performXrayConnect() }
         guard activeConfigURL != nil else {
             selection = .profiles
             errorMessage = AppLocalization.string(
@@ -5607,6 +5784,7 @@ final class AppModel {
 
     @discardableResult
     private func stopCore() async -> Bool {
+        await xrayRuntimeController?.stopHealthChecks()
         let stopped = await supervisor.stop()
         coreState = await supervisor.state()
         guard stopped else {
@@ -5702,12 +5880,12 @@ final class AppModel {
 
         // Validate every workspace because the shared document is durable and
         // a mode change must not make a secondary configuration unreadable.
-        let compiledTarget = try ConfigurationCompiler().compile(
+        let compiledTarget = try configurationCompiler.compile(
             document: candidate,
             workspaceID: targetID
         )
         for workspace in candidate.workspaces where workspace.id != targetID {
-            _ = try ConfigurationCompiler().compile(
+            _ = try configurationCompiler.compile(
                 document: candidate,
                 workspaceID: workspace.id
             )
@@ -5824,7 +6002,7 @@ final class AppModel {
         guard previousID != groupID else { return true }
         candidate.workspaces[workspaceIndex].globalProxyGroupID = groupID
         candidate.workspaces[workspaceIndex].revision += 1
-        _ = try ConfigurationCompiler().compile(
+        _ = try configurationCompiler.compile(
             document: candidate,
             workspaceID: targetID
         )
@@ -5881,7 +6059,7 @@ final class AppModel {
             throw error
         }
         if candidate.currentWorkspaceID == targetID {
-            compiledConfiguration = try? ConfigurationCompiler().compile(
+            compiledConfiguration = try? configurationCompiler.compile(
                 document: candidate,
                 workspaceID: targetID
             )
@@ -5889,7 +6067,27 @@ final class AppModel {
         return true
     }
 
+    func refreshRoutingForAutomation() async {
+        if usesXrayRuntime, isConnected, controllerIsReady {
+            await refreshProxyGroups(generation: controllerGeneration)
+        }
+    }
+
     func selectProxy(group: String, proxy: String) async -> Bool {
+        if usesXrayRuntime, unifiedConfigurationEnabled, group == "GLOBAL" {
+            guard let target = configurationDocument.proxyGroups.first(where: { $0.name == proxy && $0.enabled }) else {
+                errorMessage = XrayControlError.invalidSelection.localizedDescription
+                return false
+            }
+            do {
+                let accepted = try await setConfigurationGlobalProxyGroup(target.id)
+                await refreshProxyGroups(generation: controllerGeneration)
+                return accepted
+            } catch {
+                recordOperationFailure(error, context: "Global exit selection")
+                return false
+            }
+        }
         guard begin(.selectProxy(group)) else { return false }
         pendingProxySelections[group] = proxy
         defer {
@@ -6627,7 +6825,7 @@ final class AppModel {
                 candidate.entrances[index].enabled = enabled
             }
             do {
-                let candidateCompiled = try ConfigurationCompiler().compile(
+                let candidateCompiled = try configurationCompiler.compile(
                     document: candidate
                 )
                 if activeProfileID == nil {
@@ -6764,7 +6962,7 @@ final class AppModel {
         guard let store = networkCaptureConfigurationStore,
               let activeProfileID,
               let profileStore,
-              runtimeOverrideCoordinator != nil
+              usesXrayRuntime || runtimeOverrideCoordinator != nil
         else {
             throw AppModelError.profileStoreUnavailable
         }
@@ -7237,7 +7435,7 @@ final class AppModel {
                     throw AppModelError.profileStoreUnavailable
                 }
                 candidate.dnsPolicies[index].takeoverEnabled = enabled
-                let compiled = try ConfigurationCompiler().compile(
+                let compiled = try configurationCompiler.compile(
                     document: candidate
                 )
                 if activeProfileID == nil {
@@ -8905,6 +9103,15 @@ final class AppModel {
     }
 
     private func makeProfileValidator() throws -> ClosureProfileValidator {
+        if usesXrayRuntime {
+            return ClosureProfileValidator { configurationURL in
+                let data = try Data(contentsOf: configurationURL)
+                let report = NodeOnlyImporter().importNodes(sourceID: SourceID(), yaml: data)
+                guard !report.hasErrors, !report.nodes.isEmpty else {
+                    throw ProfileStoreError.emptyConfiguration
+                }
+            }
+        }
         let binaryURL = try binaryLocator.locate()
         let homeDirectory = try validationHomeDirectory()
         try geoDataInstaller.installIfNeeded(into: homeDirectory)
@@ -8965,7 +9172,14 @@ final class AppModel {
         controllerGeneration &+= 1
         let generation = controllerGeneration
         do {
-            let client = try MihomoAPIClient(baseURL: session.endpoint, secret: session.secret)
+            let client: any ProxyRuntimeClient
+            if case .xray = session.backend {
+                guard let xrayRuntimeController else { throw AppModelError.profileStoreUnavailable }
+                try await xrayRuntimeController.control.prepare()
+                client = xrayRuntimeController
+            } else {
+                client = try MihomoAPIClient(baseURL: session.endpoint, secret: session.secret)
+            }
             let initialConfig = try await client.fetchConfig()
             let config = try await ensureLocalProxyListeners(
                 initialConfig,
@@ -8988,7 +9202,12 @@ final class AppModel {
             startControllerStreams(client, generation: generation)
             controllerState = .ready
             errorMessage = nil
-            appendSupervisorLog("Connected to the local Alpha controller.")
+            if usesXrayRuntime {
+                appendSupervisorLog("Connected to the local Xray controller.")
+                await xrayRuntimeController?.startHealthChecks()
+            } else {
+                appendSupervisorLog("Connected to the local Alpha controller.")
+            }
             Task { [weak self] in
                 await self?.loadRules(using: client, generation: generation)
             }
@@ -9453,7 +9672,7 @@ final class AppModel {
         using client: any ProxyRuntimeClient,
         profileID: ProfileID
     ) async {
-        guard closeConnectionsOnRoutingChange else { return }
+        guard closeConnectionsOnRoutingChange, client.supportsConnectionInspection else { return }
         do {
             try await client.closeAllConnections()
             appendSupervisorLog(
@@ -9474,7 +9693,7 @@ final class AppModel {
         using client: any ProxyRuntimeClient,
         generation: Int
     ) async {
-        guard closeConnectionsOnRoutingChange else { return }
+        guard closeConnectionsOnRoutingChange, client.supportsConnectionInspection else { return }
         do {
             try await client.closeAllConnections()
             guard generation == controllerGeneration, isConnected else { return }
@@ -9624,7 +9843,7 @@ final class AppModel {
             // Lightweight mode deliberately trades background traffic-history
             // completeness for lower steady-state CPU and wakeups. Opening a
             // surface that needs connection data immediately resumes the feed.
-            shouldRun: policy.connections || !lightweightMode,
+            shouldRun: client.supportsConnectionInspection && (policy.connections || !lightweightMode),
             task: &connectionsTask
         ) {
             connectionStreamIntervalMilliseconds = connectionIntervalMilliseconds
@@ -9638,7 +9857,7 @@ final class AppModel {
         }
         reconcileControllerStream(
             .logs,
-            shouldRun: policy.logs,
+            shouldRun: policy.logs && client.supportsAPILogs,
             task: &apiLogTask
         ) {
             Task { [weak self] in
@@ -10211,11 +10430,12 @@ final class AppModel {
               let httpPort = localHTTPProxyPort,
               let socksPort = localSOCKSProxyPort else { return false }
         do {
-            let probe = try MihomoAPIClient(
-                baseURL: session.endpoint,
-                secret: session.secret,
-                requestTimeout: 3
-            )
+            let probe: any ProxyRuntimeClient
+            if usesXrayRuntime, let xrayRuntimeController {
+                probe = xrayRuntimeController
+            } else {
+                probe = try MihomoAPIClient(baseURL: session.endpoint, secret: session.secret, requestTimeout: 3)
+            }
             _ = try await probe.fetchVersion()
             guard networkEnvironmentRecoveryCanContinue(generation: generation) else {
                 return false
@@ -12030,7 +12250,8 @@ final class AppModel {
             }
             candidate = current
         }
-        let boundPorts = try RuntimeConfigurationComposer().boundListenerPorts(in: candidate.yaml)
+        let boundPorts = usesXrayRuntime ? configurationEntrancePorts(workspaceID: candidate.workspaceID)
+            : try RuntimeConfigurationComposer().boundListenerPorts(in: candidate.yaml)
         guard boundPorts.contains(managedPort) else {
             return
         }
@@ -12114,9 +12335,20 @@ final class AppModel {
         )
     }
 
+    private func configurationEntrancePorts(workspaceID: WorkspaceID) -> Set<Int> {
+        let workspace = configurationDocument.workspaces.first { $0.id == workspaceID }
+        let entranceIDs = Set(workspace?.entranceIDs ?? [])
+        return Set(configurationDocument.entrances.compactMap { entry in
+            entry.enabled && entranceIDs.contains(entry.id) ? entry.port : nil
+        })
+    }
+
     private func primarySourceBoundListenerPorts(
         profileID: ProfileID
     ) async throws -> Set<Int> {
+        if usesXrayRuntime, let workspace = configurationDocument.currentWorkspace {
+            return configurationEntrancePorts(workspaceID: workspace.id).union([profileRuntimePlan.defaultMixedPort])
+        }
         guard let profileStore else {
             throw AppModelError.profileStoreUnavailable
         }
@@ -13105,6 +13337,13 @@ final class AppModel {
     private func hotReloadActiveProfileRoutingConfigurationIfNeeded(
         profileID: ProfileID
     ) async throws {
+        if usesXrayRuntime {
+            guard let runtime = xrayRuntimeController, let launch = xrayLaunchConfiguration,
+                  case let .xray(socket, _) = launch.backend else { throw AppModelError.profileStoreUnavailable }
+            let (plan, captured) = try makeXrayPlan(profileID: profileID, apiSocketPath: socket, logDirectory: launch.homeDirectory.path)
+            try await runtime.control.reconfigure(plan: plan, document: configurationDocument, capturedRuleIDs: captured)
+            return
+        }
         guard let profileStore, let apiClient else {
             throw AppModelError.profileStoreUnavailable
         }

@@ -100,7 +100,8 @@ public enum XrayNodeRenderer {
             throw XrayNodeRenderError.unsupportedOption("network")
         }
         guard network != "hysteria" || node.proto == .hysteria2 else { throw XrayNodeRenderError.invalidField("network") }
-        var stream: [String: AutomationJSONValue] = ["network": .string(network)]
+        var stream: [String: AutomationJSONValue] = ["network": .string(network),
+            "sockopt": .object(["domainStrategy": .string("ForceIP")])]
         let realityKey = p["reality-opts.public-key"] ?? p["reality-public-key"]
         let serverName = p["servername"] ?? p["sni"] ?? node.host
         if let realityKey {

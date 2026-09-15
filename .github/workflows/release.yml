@@ -114,6 +114,15 @@ jobs:
         shell: zsh {0}
         run: ./scripts/typecheck.sh
 
+      - name: Prepare pinned Xray and verify release gates
+        if: startsWith(needs.prepare.outputs.version, '1.6.')
+        shell: zsh {0}
+        run: |
+          ./scripts/fetch-xray.sh
+          ./scripts/verify-xray.sh
+          python3 scripts/test-xray-release-preflight.py
+          python3 scripts/smoke-test-xray-routing.py --xray Sources/MClashApp/Resources/Core/xray-darwin-arm64 --output .build/xray-routing-ci.json
+          print "MCLASH_XRAY_BINARY=${GITHUB_WORKSPACE}/Sources/MClashApp/Resources/Core/xray-darwin-arm64" >> "$GITHUB_ENV"
       - name: Run unit tests
         shell: zsh {0}
         run: ./scripts/test-direct.sh
@@ -124,6 +133,19 @@ jobs:
       - name: Run integration tests
         shell: zsh {0}
         run: ./scripts/integration-test.sh
+
+      - name: Exercise the Xray application
+        if: startsWith(needs.prepare.outputs.version, '1.6.')
+        env:
+          CONFIGURATION: xray-smoke
+          MCLASH_VERSION: ${{ needs.prepare.outputs.version }}
+          MCLASH_BUNDLE_VERSION: ${{ needs.prepare.outputs.bundle_version }}
+          MCLASH_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+          MCLASH_RUNTIME_BACKEND: xray
+        shell: zsh {0}
+        run: |
+          ./scripts/build-app.sh
+          python3 scripts/smoke-test-xray-app.py .build/xray-smoke/MClash.app --output .build/xray-app-ci.json
 
   release:
     name: Sign, notarize, and publish

@@ -7,6 +7,37 @@ import Testing
 struct XrayConfigurationTests {
     let uuid = "00000000-0000-0000-0000-000000000001"
 
+    @Test("UDP resolver addresses retain their port and unsupported transports are rejected")
+    func dnsAddresses() throws {
+        var document = fixture()
+        document.dnsPolicies[0].mode = .redirHost
+        document.dnsPolicies[0].nameservers = ["udp://127.0.0.1:15353", "[::1]:15354"]
+        let servers = try #require(compile(document).configuration["dns"]?.objectValue?["servers"]?.arrayValue)
+        #expect(servers[0].objectValue?["address"]?.stringValue == "127.0.0.1")
+        #expect(servers[0].objectValue?["port"]?.intValue == 15353)
+        #expect(servers[1].objectValue?["address"]?.stringValue == "::1")
+        #expect(servers[1].objectValue?["port"]?.intValue == 15354)
+        document.dnsPolicies[0].nameservers = ["tls://resolver.example"]
+        #expect(throws: (any Error).self) { try compile(document) }
+    }
+
+    @Test("Capture compilation accepts Xray relay groups without generating Mihomo YAML")
+    func xrayCaptureCompilation() throws {
+        var document = fixture()
+        let node = try Node(displayName: "Hop", protocol: .http, host: "127.0.0.1", port: 19080)
+        let relay = ProxyGroup(name: "Chain", type: .relay, members: [.node(node.id)])
+        document.nodes = [node]
+        document.proxyGroups = [relay]
+        document.workspaces[0].proxyGroupIDs = [relay.id]
+        #expect(throws: (any Error).self) { try ConfigurationCompiler().compile(document: document) }
+        let compiled = try ConfigurationCompiler(backend: .xray).compile(document: document)
+        #expect(compiled.yaml.isEmpty)
+        let before = compiled.configHash
+        document.proxyGroups[0].name = "Renamed chain"
+        #expect(try ConfigurationCompiler(backend: .xray).compile(document: document).configHash != before)
+        #expect(try compile(document).groups[0].type == .relay)
+    }
+
     @Test("Imported nested WebSocket options retain path, Host, SNI and ALPN")
     func importedWebSocket() throws {
         let yaml = """
@@ -110,6 +141,45 @@ struct XrayConfigurationTests {
         #expect(rules[1].objectValue?["port"]?.stringValue == "443")
         #expect(rules[1].objectValue?["network"]?.stringValue == "tcp")
         #expect(rules[1].objectValue?["domain"]?.arrayValue == [.string("domain:example.org")])
+    }
+
+    @Test("Public entrance defaults follow workspace rules while capture targets stay fixed")
+    func entranceRulePrecedence() throws {
+        var document = fixture()
+        let group = ProxyGroup(name: "Default", type: .direct)
+        let rule = RoutingRule(priority: 1, matchers: [.port(443)], action: .reject)
+        document.proxyGroups = [group]
+        document.rules = [rule]
+        document.workspaces[0].proxyGroupIDs = [group.id]
+        document.workspaces[0].ruleIDs = [rule.id]
+        let plan = try XrayConfigurationCompiler.compile(document: document, workspaceID: document.workspaces[0].id,
+            inbounds: [.init(tag: "public", kind: .http, port: 19090, target: .rulesWithDefault(.proxyGroup(group.id))),
+                       .init(tag: "capture", kind: .socks, port: 19091, target: .group(group.id))],
+            apiSocketPath: "/tmp/mcx-test/api.sock")
+        let rules = try #require(plan.configuration["routing"]?.objectValue?["rules"]?.arrayValue)
+        let reject = try #require(rules.firstIndex { $0.objectValue?["ruleTag"]?.stringValue == rule.id.rawValue.uuidString.lowercased() })
+        let fallback = try #require(rules.firstIndex { $0.objectValue?["inboundTag"]?.arrayValue == [.string("public")] })
+        let capture = try #require(rules.firstIndex { $0.objectValue?["inboundTag"]?.arrayValue == [.string("capture")] })
+        #expect(reject < fallback)
+        #expect(capture < reject)
+    }
+
+    @Test("The Xray status projection decodes all required workbench fields")
+    func workbenchProjection() async throws {
+        let document = fixture()
+        let plan = try compile(document)
+        let directory = FileManager.default.temporaryDirectory.appending(path: "xray-projection-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let control = try XrayControlSession(plan: plan, document: document, binary: directory.appending(path: "not-started"),
+            apiSocketPath: directory.appending(path: "api.sock").path, directory: directory, commands: CoreSupervisor())
+        let runtime = XrayRuntimeController(control: control, version: "fixture")
+        let config = try await runtime.fetchConfig()
+        #expect(config.socksPort == 19090)
+        #expect(config.mode == "rule")
+        #expect(!config.tun.enable)
+        #expect(!runtime.supportsConnectionInspection)
+        #expect(!runtime.supportsAPILogs)
     }
 
     @Test("Untranslated application conditions cannot become broad core rules")

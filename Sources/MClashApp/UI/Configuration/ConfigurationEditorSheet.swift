@@ -13,6 +13,15 @@ struct ConfigurationEditorSheet: View {
     @State private var alias = ""
     @State private var enabled = true
     @State private var groupType: ProxyGroupType = .select
+    @State private var healthTestURL = ProxyGroupPolicySettings.defaultTestURL.absoluteString
+    @State private var healthExpectedStatus = "204"
+    @State private var healthIntervalText = "300"
+    @State private var healthTimeoutText = "5"
+    @State private var healthFailureText = "2"
+    @State private var healthRecoveryText = "2"
+    @State private var healthCooldownText = "30"
+    @State private var healthToleranceText = "50"
+    @State private var healthToleranceRatioText = "0.20"
     @State private var selectedNodeIDs: Set<NodeID> = []
     @State private var orderedNodeIDs: [NodeID] = []
     @State private var nodeSelectors: [NodeSelector] = []
@@ -160,6 +169,9 @@ struct ConfigurationEditorSheet: View {
                 orderedNodeIDs: $orderedNodeIDs
             )
             groupSelection
+            if groupType == .fallback || groupType == .urlTest || groupType == .loadBalance {
+                healthCheckEditor
+            }
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -184,6 +196,9 @@ struct ConfigurationEditorSheet: View {
                     orderedNodeIDs: $orderedNodeIDs
                 )
                 groupSelection
+                if groupType == .fallback || groupType == .urlTest || groupType == .loadBalance {
+                    healthCheckEditor
+                }
             }
         case .rules:
             Section(AppLocalization.string("Rule")) {
@@ -327,6 +342,31 @@ struct ConfigurationEditorSheet: View {
                 Text(AppLocalization.string("Sources are refreshed from the original profile and provide node data only."))
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var healthCheckEditor: some View {
+        Section(AppLocalization.string("Health checks")) {
+            TextField(AppLocalization.string("Test URL"), text: $healthTestURL)
+                .textContentType(.URL)
+            TextField(AppLocalization.string("Expected HTTP status"), text: $healthExpectedStatus)
+                .frame(maxWidth: 180)
+            HStack {
+                TextField(AppLocalization.string("Interval (seconds)"), text: $healthIntervalText).frame(maxWidth: 150)
+                TextField(AppLocalization.string("Timeout (seconds)"), text: $healthTimeoutText).frame(maxWidth: 150)
+            }
+            HStack {
+                TextField(AppLocalization.string("Failures to switch"), text: $healthFailureText).frame(maxWidth: 150)
+                TextField(AppLocalization.string("Successes to recover"), text: $healthRecoveryText).frame(maxWidth: 150)
+            }
+            HStack {
+                TextField(AppLocalization.string("Cooldown (seconds)"), text: $healthCooldownText).frame(maxWidth: 150)
+                TextField(AppLocalization.string("Latency tolerance (ms)"), text: $healthToleranceText).frame(maxWidth: 180)
+                TextField(AppLocalization.string("Tolerance ratio"), text: $healthToleranceRatioText).frame(maxWidth: 140)
+            }
+            Text(AppLocalization.string("Use an HTTP or HTTPS URL without credentials. Timeout must be greater than zero."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -546,6 +586,16 @@ struct ConfigurationEditorSheet: View {
             name = configurationDisplayName(group.name)
             groupType = group.type
             enabled = group.enabled
+            let health = group.healthCheck ?? ProxyGroupPolicySettings()
+            healthTestURL = health.testURL.absoluteString
+            healthExpectedStatus = health.expectedStatus
+            healthIntervalText = String(health.probeInterval)
+            healthTimeoutText = String(health.probeTimeout)
+            healthFailureText = String(health.failureThreshold)
+            healthRecoveryText = String(health.recoveryThreshold)
+            healthCooldownText = String(health.selectionCooldown)
+            healthToleranceText = String(health.latencyToleranceMilliseconds)
+            healthToleranceRatioText = String(health.latencyToleranceRatio)
             selectedNodeIDs = Set(group.members.compactMap { if case let .node(nodeID) = $0 { return nodeID }; return nil })
             orderedNodeIDs = group.members.compactMap {
                 if case let .node(nodeID) = $0 { return nodeID }
@@ -681,6 +731,15 @@ struct ConfigurationEditorSheet: View {
                 name.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             guard !normalized.isEmpty else { errorMessage = AppLocalization.string("Name is required."); return }
+            let automaticGroup = groupType == .fallback || groupType == .urlTest || groupType == .loadBalance
+            let existingHealth = document.proxyGroups.first(where: { $0.id.rawValue == id })?.healthCheck
+            let savedHealth: ProxyGroupPolicySettings?
+            if automaticGroup {
+                guard let health = makeHealthCheck() else { return }
+                savedHealth = health
+            } else {
+                savedHealth = existingHealth
+            }
             let selectorPinnedIDs = Set(nodeSelectors.flatMap(\.fixedNodeIDs))
             let explicitNodeIDs = nodeSelectors.isEmpty
                 ? selectedNodeIDs
@@ -702,6 +761,7 @@ struct ConfigurationEditorSheet: View {
                 document.proxyGroups[index].enabled = enabled
                 document.proxyGroups[index].members = memberNodes + memberGroups
                 document.proxyGroups[index].memberSelectors = nodeSelectors
+                document.proxyGroups[index].healthCheck = savedHealth
                 group = document.proxyGroups[index]
             } else if isNew {
                 group = ProxyGroup(
@@ -710,7 +770,8 @@ struct ConfigurationEditorSheet: View {
                     type: groupType,
                     members: memberNodes + memberGroups,
                     memberSelectors: nodeSelectors,
-                    enabled: enabled
+                    enabled: enabled,
+                    healthCheck: savedHealth
                 )
                 document.proxyGroups.append(group)
                 if let workspaceIndex = currentWorkspaceIndex(in: document),
@@ -721,7 +782,7 @@ struct ConfigurationEditorSheet: View {
             let cycle = document.currentWorkspace.flatMap { current -> ConfigurationDiagnostic? in
                 var validationWorkspace = current
                 validationWorkspace.proxyGroupIDs = document.proxyGroups.map(\.id)
-                return document.diagnostics(for: validationWorkspace).first {
+                return document.diagnostics(for: validationWorkspace, backend: model.configurationBackend).first {
                     ($0.code == "group_cycle" || $0.code == "empty_group")
                         && $0.subject == String(describing: group.id.rawValue)
                 }
@@ -962,6 +1023,38 @@ struct ConfigurationEditorSheet: View {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func makeHealthCheck() -> ProxyGroupPolicySettings? {
+        guard let url = URL(string: healthTestURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              url.user == nil, url.password == nil,
+              let interval = TimeInterval(healthIntervalText), interval > 0,
+              let timeout = TimeInterval(healthTimeoutText), timeout > 0,
+              let failures = Int(healthFailureText), failures > 0,
+              let recoveries = Int(healthRecoveryText), recoveries > 0,
+              let cooldown = TimeInterval(healthCooldownText), cooldown >= 0,
+              let tolerance = Int(healthToleranceText), tolerance >= 0,
+              let ratio = Double(healthToleranceRatioText),
+              !healthExpectedStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = AppLocalization.string("Enter a valid HTTP or HTTPS test URL and positive health-check values.")
+            return nil
+        }
+        var settings = ProxyGroupPolicySettings()
+        settings.testURL = url
+        settings.expectedStatus = healthExpectedStatus.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.probeInterval = interval
+        settings.probeTimeout = timeout
+        settings.failureThreshold = failures
+        settings.recoveryThreshold = recoveries
+        settings.selectionCooldown = cooldown
+        settings.latencyToleranceMilliseconds = tolerance
+        settings.latencyToleranceRatio = ratio
+        guard settings.validationError == nil else {
+            errorMessage = settings.validationError
+            return nil
+        }
+        return settings
     }
 
     private var errorIsPresented: Binding<Bool> {

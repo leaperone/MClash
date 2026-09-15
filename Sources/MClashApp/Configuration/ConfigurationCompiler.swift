@@ -21,7 +21,8 @@ public struct CompiledConfiguration: Equatable, Sendable {
         captureRules: [CaptureRule],
         captureEnabled: Bool,
         captureDNSEnabled: Bool,
-        diagnostics: [ConfigurationDiagnostic]
+        diagnostics: [ConfigurationDiagnostic],
+        configHash: String? = nil
     ) {
         self.workspaceID = workspaceID
         self.workspaceRevision = workspaceRevision
@@ -31,7 +32,7 @@ public struct CompiledConfiguration: Equatable, Sendable {
         self.captureEnabled = captureEnabled
         self.captureDNSEnabled = captureDNSEnabled
         self.diagnostics = diagnostics
-        self.configHash = SHA256.hash(data: yaml).map { String(format: "%02x", $0) }.joined()
+        self.configHash = configHash ?? SHA256.hash(data: yaml).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -59,7 +60,9 @@ extension ConfigurationCompilationError: LocalizedError {
 public struct ConfigurationCompiler: Sendable {
     public static let version = "mclash-config-1"
 
-    public init() {}
+    private let backend: ConfigurationBackend
+
+    public init(backend: ConfigurationBackend = .mihomo) { self.backend = backend }
 
     public func compile(
         document: ConfigurationDocument,
@@ -82,7 +85,7 @@ public struct ConfigurationCompiler: Sendable {
                 AppLocalization.string("No MClash workspace is configured.")
             )
         }
-        var diagnostics = validatedDiagnostics ?? document.diagnostics(for: workspace)
+        var diagnostics = validatedDiagnostics ?? document.diagnostics(for: workspace, backend: backend)
 
         // Validation reports duplicate identities, but the compiler must not
         // trap while constructing lookup tables for that diagnostic path.
@@ -163,7 +166,7 @@ public struct ConfigurationCompiler: Sendable {
         }
         let errors = diagnostics.filter { $0.severity == .error }
         guard errors.isEmpty else { throw ConfigurationCompilationError.invalid(errors) }
-        let yaml = render(
+        let yaml = backend == .xray ? "" : render(
             nodes: workspaceNodes,
             nodeNames: runtimeNodeNames,
             groups: resolvedGroups,
@@ -205,6 +208,15 @@ public struct ConfigurationCompiler: Sendable {
             unavailableFallback: .reject
         )
         let workspaceEntrances = workspace.entranceIDs.compactMap { entrancesByID[$0] }
+        let configHash: String?
+        if backend == .xray {
+            let scoped = ConfigurationDocument(nodes: workspaceNodes, proxyGroups: resolvedGroups,
+                rules: workspaceRules, ruleSets: workspaceRuleSets, dnsPolicies: dns.map { [$0] } ?? [],
+                entrances: workspaceEntrances, workspaces: [workspace], currentWorkspaceID: workspace.id)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            configHash = SHA256.hash(data: try encoder.encode(scoped)).map { String(format: "%02x", $0) }.joined()
+        } else { configHash = nil }
         return CompiledConfiguration(
             workspaceID: workspace.id,
             workspaceRevision: workspace.revision,
@@ -216,6 +228,7 @@ public struct ConfigurationCompiler: Sendable {
             },
             captureDNSEnabled: dns?.takeoverEnabled == true,
             diagnostics: diagnostics,
+            configHash: configHash
         )
     }
 

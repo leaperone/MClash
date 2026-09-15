@@ -182,6 +182,7 @@ final class AutomationCommandGateway {
         case "system.capabilities":
             return try encode(Self.capabilitiesForClients)
         case "system.snapshot":
+            await model.refreshRoutingForAutomation()
             return snapshot()
         case "auth.clients.list":
             return try encode(authorizationStore.list())
@@ -397,14 +398,14 @@ final class AutomationCommandGateway {
             let shouldConnect = !model.isConnected && !model.isBusy
             await model.toggleConnection()
             if shouldConnect {
-                try require(model.isConnected, "The Mihomo core did not connect")
+                try require(model.isConnected, "The proxy core did not connect")
             } else {
                 try require(!model.isConnected && !model.isBusy, "The Mihomo core did not stop")
             }
             return coreStatus()
         case "core.connect":
             await model.connect()
-            try require(model.isConnected, "The Mihomo core did not connect")
+            try require(model.isConnected, "The proxy core did not connect")
             return coreStatus()
         case "core.disconnect":
             await model.disconnect()
@@ -567,6 +568,7 @@ final class AutomationCommandGateway {
             let outcome = try await model.resetRuntimeOverrides()
             return .object(["outcome": .string(String(describing: outcome))])
         case "routing.status":
+            await model.refreshRoutingForAutomation()
             return routingStatus()
         case "routing.mode.set":
             let mode = try request.string("mode").lowercased()
@@ -583,8 +585,10 @@ final class AutomationCommandGateway {
                 "mode": .string(mode),
             ])
         case "routing.groups.list":
+            await model.refreshRoutingForAutomation()
             return try routingGroups(request: request)
         case "routing.group.choices.list":
+            await model.refreshRoutingForAutomation()
             let groupName = try request.string("group")
             guard let group = model.proxyGroups.first(where: { $0.name == groupName }) else {
                 throw GatewayError.invalidParameters("Unknown proxy group")

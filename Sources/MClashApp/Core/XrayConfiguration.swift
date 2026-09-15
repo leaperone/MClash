@@ -3,7 +3,14 @@ import MClashAutomationProtocol
 
 public struct XrayInbound: Equatable, Sendable {
     public enum Kind: String, Sendable { case http, socks, mixed }
-    public enum Target: Equatable, Sendable { case rules, group(ProxyGroupID), node(NodeID), direct, reject }
+    public enum Target: Equatable, Sendable {
+        case rules
+        case rulesWithDefault(RoutingAction)
+        case group(ProxyGroupID)
+        case node(NodeID)
+        case direct
+        case reject
+    }
     public struct Authentication: Equatable, Sendable {
         public let username: String
         public let password: String
@@ -46,6 +53,7 @@ public struct XrayRuntimePlan: Equatable, Sendable {
 
     public static func nodeTag(_ id: NodeID) -> String { "n-" + id.rawValue.uuidString.lowercased() }
     public static func groupTag(_ id: ProxyGroupID) -> String { "g-" + id.rawValue.uuidString.lowercased() }
+    public static func probeTag(_ id: NodeID) -> String { "probe-" + id.rawValue.uuidString.lowercased() }
 }
 
 public enum XrayConfigurationCompiler {
@@ -66,7 +74,7 @@ public enum XrayConfigurationCompiler {
               !apiSocketPath.contains("\0"), !apiSocketPath.split(separator: "/").contains("..") else {
             throw ConfigurationCompilationError.invalidText("Xray requires a private absolute Unix socket path shorter than 104 bytes.")
         }
-        var diagnostics = document.diagnostics(for: workspace).filter {
+        var diagnostics = document.diagnostics(for: workspace, backend: .xray).filter {
             $0.code != "unsupported_node_protocol" && $0.code != "unsupported_geoip6"
         }
         let invalid = diagnostics.filter { $0.severity == .error }
@@ -88,7 +96,9 @@ public enum XrayConfigurationCompiler {
         var unavailable: [NodeID: String] = [:]
         var outbounds: [AutomationJSONValue] = [
             .object(["tag": .string("reject"), "protocol": .string("blackhole")]),
-            .object(["tag": .string("direct"), "protocol": .string("freedom")]),
+            .object(["tag": .string("dns-direct"), "protocol": .string("freedom")]),
+            .object(["tag": .string("direct"), "protocol": .string("freedom"),
+                     "streamSettings": .object(["sockopt": .object(["domainStrategy": .string("ForceIP")])])]),
         ]
         for node in nodes {
             let tag = XrayRuntimePlan.nodeTag(node.id)
@@ -130,13 +140,16 @@ public enum XrayConfigurationCompiler {
                     throw ConfigurationCompilationError.invalidText("Selected Xray node is unavailable or unsupported.")
                 }
                 fields = ["outboundTag": .string(tag)]
-            case (.direct, _): fields = ["outboundTag": .string("direct")]
-            case (.global, _): fields = defaultAction
-            case (.rule, let .group(id)):
+            case (_, let .group(id)):
                 guard let tag = groupTags[id] else { throw ConfigurationCompilationError.invalidText("Xray entrance references a missing group.") }
                 fields = ["balancerTag": .string(tag)]
+            case (.direct, _): fields = ["outboundTag": .string("direct")]
+            case (.global, _): fields = defaultAction
             case (.rule, .rules):
                 final.append(route(inbound: inbound.tag, target: defaultAction))
+                continue
+            case let (.rule, .rulesWithDefault(action)):
+                final.append(route(inbound: inbound.tag, target: try XrayRuleRenderer.action(action, groups: groupTags)))
                 continue
             }
             prefix.append(route(inbound: inbound.tag, target: fields))
@@ -146,7 +159,12 @@ public enum XrayConfigurationCompiler {
             prefix.insert(.object(["type": .string("field"), "ruleTag": .string("mclash-dns"),
                 "port": .string("53"), "outboundTag": .string("dns-out")]), at: 0)
         }
-        prefix.insert(route(inbound: "dns-query", target: ["outboundTag": .string("direct")]), at: 0)
+        for node in nodes {
+            if let tag = nodeTags[node.id] {
+                prefix.insert(route(inbound: XrayRuntimePlan.probeTag(node.id), target: ["outboundTag": .string(tag)]), at: 0)
+            }
+        }
+        prefix.insert(route(inbound: "dns-query", target: ["outboundTag": .string("dns-direct")]), at: 0)
         routing = prefix + routing + final
         let balancers: [AutomationJSONValue] = groups.map { group in
             .object(["tag": .string(XrayRuntimePlan.groupTag(group.id)), "selector": .array([.string("reject")]),
@@ -199,20 +217,51 @@ public enum XrayConfigurationCompiler {
         ])
     }
 
+    private static func dnsServer(_ address: String) throws -> [String: AutomationJSONValue] {
+        let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.contains("://"), value.filter({ $0 == ":" }).count > 1, !value.hasPrefix("[") {
+            return ["address": .string(value)]
+        }
+        let uri = value.contains("://") ? value : "udp://" + value
+        guard let url = URLComponents(string: uri), let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil, let scheme = url.scheme?.lowercased(),
+              url.port.map({ (1...65535).contains($0) }) ?? true else {
+            throw ConfigurationCompilationError.invalidText("Invalid Xray DNS server address.")
+        }
+        if scheme == "udp" {
+            guard url.path.isEmpty, url.query == nil, url.fragment == nil else {
+                throw ConfigurationCompilationError.invalidText("A UDP DNS server cannot contain a path or query.")
+            }
+            return ["address": .string(host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))),
+                    "port": .integer(Int64(url.port ?? 53))]
+        }
+        guard ["tcp", "tcp+local", "https", "https+local", "h2c", "h2c+local", "quic+local"].contains(scheme) else {
+            throw ConfigurationCompilationError.invalidText("This DNS transport is not supported by the bundled Xray core.")
+        }
+        return ["address": .string(value)]
+    }
+
     private static func renderDNS(_ policy: DNSPolicy?, nodes: [Node]) throws -> [String: AutomationJSONValue] {
         guard let policy, policy.mode != .system else { return ["servers": .array([.string("localhost")])] }
         let nameservers = policy.nameservers.isEmpty ? ["223.5.5.5", "119.29.29.29"] : policy.nameservers
         var servers: [AutomationJSONValue] = []
         if let bootstrap = policy.proxyServer, !bootstrap.isEmpty {
-            servers.append(.object(["address": .string(bootstrap),
-                "domains": .array(nodes.map { .string("full:" + $0.host) }), "skipFallback": .bool(true)]))
+            var server = try dnsServer(bootstrap)
+            server["domains"] = .array(nodes.map { .string("full:" + $0.host) })
+            server["skipFallback"] = .bool(true)
+            servers.append(.object(server))
         }
         if policy.mode == .fakeIP {
             let endpoints = nodes.map { AutomationJSONValue.string("full:" + $0.host) }
-            servers += nameservers.map { .object(["address": .string($0), "domains": .array(endpoints), "skipFallback": .bool(true)]) }
+            servers += try nameservers.map {
+                var server = try dnsServer($0)
+                server["domains"] = .array(endpoints)
+                server["skipFallback"] = .bool(true)
+                return .object(server)
+            }
             servers.append(.string("fakedns"))
         }
-        servers += (nameservers + policy.fallbackNameservers).map { .string($0) }
+        servers += try (nameservers + policy.fallbackNameservers).map { .object(try dnsServer($0)) }
         for line in policy.rules {
             let fields = line.split(separator: ",", maxSplits: 2).map { $0.trimmingCharacters(in: .whitespaces) }
             guard fields.count == 3 else { throw ConfigurationCompilationError.invalidText("DNS policy rule requires matcher, domain and nameserver.") }
@@ -223,8 +272,10 @@ public enum XrayConfigurationCompiler {
             case "GEOSITE": prefix = "geosite:"
             default: throw ConfigurationCompilationError.invalidText("DNS policy matcher is not supported by Xray.")
             }
-            servers.insert(.object(["address": .string(fields[2]), "domains": .array([.string(prefix + fields[1])]),
-                                   "skipFallback": .bool(true)]), at: 0)
+            var server = try dnsServer(fields[2])
+            server["domains"] = .array([.string(prefix + fields[1])])
+            server["skipFallback"] = .bool(true)
+            servers.insert(.object(server), at: 0)
         }
         return ["servers": .array(servers), "queryStrategy": .string("UseIP"), "tag": .string("dns-query")]
     }

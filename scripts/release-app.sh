@@ -69,12 +69,9 @@ if [[ "${architecture}" != "arm64" ]]; then
 fi
 mihomo_alpha_select_architecture "${architecture}"
 if [[ "${version}" == 1.6.* && "${MCLASH_RUNTIME_BACKEND:-xray}" == "xray" ]]; then
+  [[ -f "${XRAY_RESOURCE_PATH}" ]] || "${repo_root}/scripts/fetch-xray.sh"
   xray_verify_selected_artifact
-  evidence="${repo_root}/ReleaseEvidence/${version}.json"
-  if [[ ! -s "${evidence}" ]] || ! jq -e --arg v "${XRAY_VERSION}" --arg r "${XRAY_REVISION}" '.runtimeBackend == "xray" and .xrayVersion == $v and .xrayRevision == $r' "${evidence}" >/dev/null; then
-    print -u2 "Release evidence must record the current Xray backend, version, and revision: ${evidence}"
-    exit 1
-  fi
+  "${repo_root}/scripts/xray-release-preflight.sh" "${version}"
 fi
 if [[ -z "${notary_profile}" && ( -z "${apple_id}" || -z "${apple_password}" || -z "${apple_team_id}" ) ]]; then
   print -u2 "Set NOTARYTOOL_PROFILE, or APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID."

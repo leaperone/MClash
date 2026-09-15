@@ -9,6 +9,8 @@ public enum ProxyRuntimeBackend: String, Codable, Sendable {
 /// their wire names while the runtime implementation changes.
 public protocol ProxyRuntimeClient: Actor {
     var backend: ProxyRuntimeBackend { get }
+    nonisolated var supportsConnectionInspection: Bool { get }
+    nonisolated var supportsAPILogs: Bool { get }
     func fetchVersion() async throws -> MihomoVersion
     func fetchConfig() async throws -> MihomoConfig
     func fetchRules() async throws -> MihomoRuleCollection
@@ -45,6 +47,9 @@ extension MihomoAPIClient: ProxyRuntimeClient {
 }
 
 public extension ProxyRuntimeClient {
+    nonisolated var supportsConnectionInspection: Bool { true }
+    nonisolated var supportsAPILogs: Bool { true }
+
     func measureDelay(proxy: String, targetURL: URL, expectedStatus: String?) async throws -> Int {
         try await measureDelay(
             proxy: proxy,

@@ -157,20 +157,21 @@ public struct ProxyGroup: Codable, Hashable, Identifiable, Sendable {
     /// source refresh and are intentionally kept separate from those pins.
     public var members: [ProxyGroupMember]
     public var memberSelectors: [NodeSelector]
+    public var healthCheck: ProxyGroupPolicySettings?
     public var enabled: Bool
 
-    public init(id: ProxyGroupID = ProxyGroupID(), name: String, type: ProxyGroupType = .select, members: [ProxyGroupMember] = [], memberSelectors: [NodeSelector] = [], enabled: Bool = true) {
-        self.id=id; self.name=name; self.type=type; self.members=members; self.memberSelectors=memberSelectors; self.enabled=enabled
+    public init(id: ProxyGroupID = ProxyGroupID(), name: String, type: ProxyGroupType = .select, members: [ProxyGroupMember] = [], memberSelectors: [NodeSelector] = [], enabled: Bool = true, healthCheck: ProxyGroupPolicySettings? = nil) {
+        self.id=id; self.name=name; self.type=type; self.members=members; self.memberSelectors=memberSelectors; self.enabled=enabled; self.healthCheck=healthCheck
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, type, members, memberSelectors, enabled }
+    private enum CodingKeys: String, CodingKey { case id, name, type, members, memberSelectors, enabled, healthCheck }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(id: try c.decode(ProxyGroupID.self, forKey: .id), name: try c.decode(String.self, forKey: .name), type: try c.decode(ProxyGroupType.self, forKey: .type), members: try c.decodeIfPresent([ProxyGroupMember].self, forKey: .members) ?? [], memberSelectors: try c.decodeIfPresent([NodeSelector].self, forKey: .memberSelectors) ?? [], enabled: try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true)
+        self.init(id: try c.decode(ProxyGroupID.self, forKey: .id), name: try c.decode(String.self, forKey: .name), type: try c.decode(ProxyGroupType.self, forKey: .type), members: try c.decodeIfPresent([ProxyGroupMember].self, forKey: .members) ?? [], memberSelectors: try c.decodeIfPresent([NodeSelector].self, forKey: .memberSelectors) ?? [], enabled: try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true, healthCheck: try c.decodeIfPresent(ProxyGroupPolicySettings.self, forKey: .healthCheck))
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id); try c.encode(name, forKey: .name); try c.encode(type, forKey: .type); try c.encode(members, forKey: .members); try c.encode(memberSelectors, forKey: .memberSelectors); try c.encode(enabled, forKey: .enabled)
+        try c.encode(id, forKey: .id); try c.encode(name, forKey: .name); try c.encode(type, forKey: .type); try c.encode(members, forKey: .members); try c.encode(memberSelectors, forKey: .memberSelectors); try c.encode(enabled, forKey: .enabled); try c.encodeIfPresent(healthCheck, forKey: .healthCheck)
     }
 }
 

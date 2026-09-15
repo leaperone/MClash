@@ -31,3 +31,5 @@ Sources/MClashApp/Resources/Core/mihomo-alpha-*
 
 # Xray binaries are fetched from the pinned official artifact.
 Sources/MClashApp/Resources/Core/xray-*
+
+__pycache__/

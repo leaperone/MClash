@@ -318,6 +318,7 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
     let memberCount: Int?
     var memberSelectors: [ConfigurationAutomationNodeSelector]?
     let selectorCount: Int?
+    var healthCheck: ProxyGroupPolicySettings?
     var enabled: Bool
 
     init(_ group: ProxyGroup) {
@@ -328,6 +329,7 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
         memberCount = group.members.count
         memberSelectors = nil
         selectorCount = group.memberSelectors.count
+        healthCheck = group.healthCheck
         enabled = group.enabled
     }
 
@@ -359,6 +361,11 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
         } else {
             resolvedSelectors = existing?.memberSelectors ?? []
         }
+        if let healthCheck, let validationError = healthCheck.validationError {
+            throw ConfigurationAutomationError.invalidInput(
+                "proxyGroups.healthCheck: \(validationError)"
+            )
+        }
         return ProxyGroup(
             id: ProxyGroupID(rawValue: try automationUUID(id, field: "proxyGroups.id")),
             name: name,
@@ -366,7 +373,8 @@ struct ConfigurationAutomationProxyGroup: Codable, Equatable, Sendable {
             members: try membersUpdate?.map { try $0.value() }
                 ?? existing?.members ?? [],
             memberSelectors: resolvedSelectors,
-            enabled: enabled
+            enabled: enabled,
+            healthCheck: healthCheck ?? existing?.healthCheck
         )
     }
 }

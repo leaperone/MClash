@@ -52,7 +52,7 @@ public struct ConfigurationDocument: Codable, Equatable, Sendable {
         return workspaces.first(where: { $0.id == currentWorkspaceID })
     }
 
-    public func diagnostics(for workspace: Workspace? = nil) -> [ConfigurationDiagnostic] {
+    public func diagnostics(for workspace: Workspace? = nil, backend: ConfigurationBackend = .mihomo) -> [ConfigurationDiagnostic] {
         guard let workspace = workspace ?? currentWorkspace else { return [] }
         return ConfigurationValidator.validate(
             workspace: workspace,
@@ -61,7 +61,8 @@ public struct ConfigurationDocument: Codable, Equatable, Sendable {
             rules: rules,
             ruleSets: ruleSets,
             dnsPolicies: dnsPolicies,
-            entrances: entrances
+            entrances: entrances,
+            backend: backend
         )
     }
 }

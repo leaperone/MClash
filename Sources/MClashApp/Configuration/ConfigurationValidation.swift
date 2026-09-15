@@ -1,5 +1,7 @@
 import Foundation
 
+public enum ConfigurationBackend: Sendable { case mihomo, xray }
+
 public enum ConfigurationDiagnosticSeverity: String, Codable, Hashable, Sendable { case warning, error }
 public struct ConfigurationDiagnostic: Codable, Hashable, Sendable, Identifiable {
     public let id: String
@@ -33,7 +35,7 @@ extension ConfigurationModelError: LocalizedError {
 /// Validates references before a compiler or runtime is allowed to consume a workspace.
 /// Diagnostics are sorted by stable code/subject, making output suitable for previews and tests.
 public enum ConfigurationValidator {
-    public static func validate(workspace: Workspace, nodes: [Node], groups: [ProxyGroup], rules: [RoutingRule], ruleSets: [RuleSet] = [], dnsPolicies: [DNSPolicy], entrances: [Entrance]) -> [ConfigurationDiagnostic] {
+    public static func validate(workspace: Workspace, nodes: [Node], groups: [ProxyGroup], rules: [RoutingRule], ruleSets: [RuleSet] = [], dnsPolicies: [DNSPolicy], entrances: [Entrance], backend: ConfigurationBackend = .mihomo) -> [ConfigurationDiagnostic] {
         var result: [ConfigurationDiagnostic] = []
         let resourceDiagnostics = workspaceResourceDiagnostics(
             workspace: workspace,
@@ -105,6 +107,9 @@ public enum ConfigurationValidator {
         var runtimeNames: [Data: [String]] = [:]
         for group in workspaceGroups {
             let subject = group.id.rawValue.uuidString.lowercased()
+            if let issue = group.healthCheck?.validationError {
+                result.append(.init(severity: .error, code: "invalid_health_check", subject: subject, message: issue))
+            }
             if invalidGroupName(group.name) {
                 result.append(.init(severity: .error, code: "invalid_group_name", subject: subject, message: AppLocalization.string("Proxy group names cannot be empty or contain commas or line breaks.")))
             }
@@ -243,7 +248,7 @@ public enum ConfigurationValidator {
         }
         guard dnsIDs.contains(workspace.dnsPolicyID) else { result.append(.error("missing_dns_policy", workspace.dnsPolicyID, AppLocalization.string("Workspace references a DNS policy that does not exist."))); return sorted(result) }
         for group in groups where enabledGroupIDs.contains(group.id) {
-            if group.type == .relay {
+            if backend == .mihomo, group.type == .relay {
                 result.append(.init(severity: .error, code: "unsupported_relay_group", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Relay proxy groups are not supported by the bundled Mihomo core.")))
             }
             guard group.type != .direct && group.type != .reject else { continue }
@@ -449,7 +454,8 @@ public enum ConfigurationValidator {
     private static func sorted(_ values: [ConfigurationDiagnostic]) -> [ConfigurationDiagnostic] { values.sorted { $0.id < $1.id } }
 
     static func automationPlanDiagnostics(
-        document: ConfigurationDocument
+        document: ConfigurationDocument,
+        backend: ConfigurationBackend = .mihomo
     ) -> [ConfigurationDiagnostic] {
         var result: [ConfigurationDiagnostic] = []
         func appendLimit(_ exceeded: Bool, _ subject: String) {
@@ -503,7 +509,7 @@ public enum ConfigurationValidator {
                 selectorConditionTotal += conditionCount
                 selectorFixedNodeIDTotal += selector.fixedNodeIDs.count
             }
-            if group.enabled, group.type == .relay {
+            if backend == .mihomo, group.enabled, group.type == .relay {
                 result.append(.init(severity: .error, code: "unsupported_relay_group", subject: String(describing: group.id.rawValue), message: AppLocalization.string("Relay proxy groups are not supported by the bundled Mihomo core.")))
             }
         }

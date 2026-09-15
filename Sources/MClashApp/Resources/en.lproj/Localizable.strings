@@ -2422,3 +2422,33 @@
 "Create a configuration before setting traffic paths." = "Create a configuration before setting traffic paths.";
 "Browser path uses HTTP or SOCKS5." = "Browser path uses HTTP or SOCKS5.";
 "Choose a source that still exists." = "Choose a source that still exists.";
+
+"Health checks" = "Health checks";
+
+"Test URL" = "Test URL";
+
+"Expected HTTP status" = "Expected HTTP status";
+
+"Interval (seconds)" = "Interval (seconds)";
+
+"Timeout (seconds)" = "Timeout (seconds)";
+
+"Failures to switch" = "Failures to switch";
+
+"Successes to recover" = "Successes to recover";
+
+"Cooldown (seconds)" = "Cooldown (seconds)";
+
+"Latency tolerance (ms)" = "Latency tolerance (ms)";
+
+"Tolerance ratio" = "Tolerance ratio";
+
+"Use an HTTP or HTTPS URL without credentials. Timeout must be greater than zero." = "Use an HTTP or HTTPS URL without credentials. Timeout must be greater than zero.";
+
+"Enter a valid HTTP or HTTPS test URL and positive health-check values." = "Enter a valid HTTP or HTTPS test URL and positive health-check values.";
+
+"Health-check URL must use HTTP or HTTPS without credentials." = "Health-check URL must use HTTP or HTTPS without credentials.";
+
+"Health-check timing or failure thresholds are outside the supported range." = "Health-check timing or failure thresholds are outside the supported range.";
+
+"Expected HTTP status must be codes or ranges such as 204 or 200-299." = "Expected HTTP status must be codes or ranges such as 204 or 200-299.";
