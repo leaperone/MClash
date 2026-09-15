@@ -1,31 +1,32 @@
 import Foundation
 
-/// The result of one runtime probe. A probe is usable only for the exact
-/// connection fingerprint that was tested.
-public struct GroupProbeResult: Equatable, Sendable {
-    public enum Outcome: Equatable, Sendable {
+public struct GroupProbeResult: Codable, Equatable, Sendable {
+    public enum Outcome: Codable, Equatable, Sendable {
         case available(latencyMilliseconds: Int)
         case failed(stage: String)
     }
 
     public let nodeID: NodeID
     public let connectionFingerprint: String
+    public let targetURL: URL
     public let checkedAt: Date
     public let outcome: Outcome
 
-    public init(nodeID: NodeID, connectionFingerprint: String, checkedAt: Date, outcome: Outcome) {
+    public init(nodeID: NodeID, connectionFingerprint: String, checkedAt: Date, outcome: Outcome,
+                targetURL: URL = ProxyGroupPolicySettings.defaultTestURL) {
         self.nodeID = nodeID
         self.connectionFingerprint = connectionFingerprint
+        self.targetURL = targetURL
         self.checkedAt = checkedAt
         self.outcome = outcome
     }
 }
 
-public struct GroupSelectionState: Equatable, Sendable {
-    public let member: NodeID
+public struct GroupSelectionState: Codable, Equatable, Sendable {
+    public let member: ProxyGroupMember
     public let selectedAt: Date
 
-    public init(member: NodeID, selectedAt: Date) {
+    public init(member: ProxyGroupMember, selectedAt: Date) {
         self.member = member
         self.selectedAt = selectedAt
     }
@@ -35,163 +36,191 @@ public enum ProxyGroupPolicyDestination: Equatable, Sendable {
     case node(NodeID)
     case direct
     case reject
+    case balance([NodeID])
+    case chain([NodeID])
     case unsupported(String)
 }
 
 public struct ProxyGroupResolution: Equatable, Sendable {
     public let destination: ProxyGroupPolicyDestination
-    public let orderedCandidates: [NodeID]
-    public let selectedMember: NodeID?
+    public var orderedCandidates: [NodeID] = []
+    public var selectedMember: ProxyGroupMember?
     public let reason: String
-
-    public init(destination: ProxyGroupPolicyDestination, orderedCandidates: [NodeID] = [], selectedMember: NodeID? = nil, reason: String) {
-        self.destination = destination
-        self.orderedCandidates = orderedCandidates
-        self.selectedMember = selectedMember
-        self.reason = reason
-    }
 }
 
 public struct ProxyGroupPolicySettings: Equatable, Sendable {
-    public var probeInterval: TimeInterval
-    public var probeTimeout: TimeInterval
-    public var selectionCooldown: TimeInterval
-    public var latencyToleranceMilliseconds: Int
-    public var latencyToleranceRatio: Double
+    public static let defaultTestURL = URL(string: "https://www.gstatic.com/generate_204")!
+    public var testURL = defaultTestURL
+    public var probeInterval: TimeInterval = 300
+    public var probeTimeout: TimeInterval = 5
+    public var selectionCooldown: TimeInterval = 30
+    public var latencyToleranceMilliseconds = 50
+    public var latencyToleranceRatio = 0.20
+    public var failureThreshold = 2
+    public var recoveryThreshold = 2
 
-    public init(probeInterval: TimeInterval = 300, probeTimeout: TimeInterval = 5, selectionCooldown: TimeInterval = 30, latencyToleranceMilliseconds: Int = 50, latencyToleranceRatio: Double = 0.20) {
-        self.probeInterval = max(0, probeInterval)
-        self.probeTimeout = max(0.001, probeTimeout)
-        self.selectionCooldown = max(0, selectionCooldown)
-        self.latencyToleranceMilliseconds = max(0, latencyToleranceMilliseconds)
-        self.latencyToleranceRatio = max(0, latencyToleranceRatio)
-    }
+    public init() {}
 }
 
 public enum ProxyGroupPolicy {
     public static func resolve(
         document: ConfigurationDocument,
         workspace: Workspace? = nil,
-        persistedOverrides: [ProxyGroupID: NodeID] = [:],
+        persistedOverrides: [ProxyGroupID: ProxyGroupMember] = [:],
         probes: [GroupProbeResult] = [],
         previousSelections: [ProxyGroupID: GroupSelectionState] = [:],
         now: Date = Date(),
         settings: ProxyGroupPolicySettings = ProxyGroupPolicySettings()
     ) -> [ProxyGroupID: ProxyGroupResolution] {
-        let workspaceNodeIDs = workspace.map { Set($0.nodeIDs) }
-        let nodes = document.nodes.reduce(into: [NodeID: Node]()) { result, node in
-            guard workspaceNodeIDs?.contains(node.id) ?? true else { return }
-            if result[node.id] == nil { result[node.id] = node }
+        let nodeScope = Set(workspace?.nodeIDs ?? [])
+        let nodes = Dictionary(document.nodes.filter {
+            nodeScope.isEmpty || nodeScope.contains($0.id)
+        }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let groups = Dictionary(document.proxyGroups.filter {
+            $0.enabled && (workspace?.proxyGroupIDs.contains($0.id) ?? true)
+        }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let usable = probes.filter { probe in
+            guard let node = nodes[probe.nodeID], node.connectionFingerprint == probe.connectionFingerprint,
+                  probe.targetURL == settings.testURL else { return false }
+            let age = now.timeIntervalSince(probe.checkedAt)
+            return age >= 0 && age <= settings.probeInterval * 3 + settings.probeTimeout
+        }.sorted { $0.checkedAt > $1.checkedAt }
+        let histories = Dictionary(grouping: usable, by: \.nodeID)
+        var resolver = Resolver(nodes: nodes, groups: groups, histories: histories, overrides: persistedOverrides,
+                                previous: previousSelections, now: now, settings: settings)
+        for id in groups.keys.sorted(by: { $0.rawValue.uuidString < $1.rawValue.uuidString }) {
+            _ = resolver.resolve(id, path: [])
         }
-        let groups = document.proxyGroups.reduce(into: [ProxyGroupID: ProxyGroup]()) { result, group in
-            guard group.enabled, workspace?.proxyGroupIDs.contains(group.id) ?? true else { return }
-            if result[group.id] == nil { result[group.id] = group }
-        }
-        let currentProbes = newestProbes(probes, nodes: nodes)
-        var memo: [ProxyGroupID: ProxyGroupResolution] = [:]
-        var visiting = Set<ProxyGroupID>()
-        for id in groups.keys.sorted(by: stableIDOrder) {
-            _ = resolveGroup(id, groups: groups, nodes: nodes, probes: currentProbes, overrides: persistedOverrides, previous: previousSelections, now: now, settings: settings, memo: &memo, visiting: &visiting)
-        }
-        return memo
+        return resolver.results
     }
 
-    private static func resolveGroup(_ id: ProxyGroupID, groups: [ProxyGroupID: ProxyGroup], nodes: [NodeID: Node], probes: [NodeID: GroupProbeResult], overrides: [ProxyGroupID: NodeID], previous: [ProxyGroupID: GroupSelectionState], now: Date, settings: ProxyGroupPolicySettings, memo: inout [ProxyGroupID: ProxyGroupResolution], visiting: inout Set<ProxyGroupID>) -> ProxyGroupResolution {
-        if let result = memo[id] { return result }
-        guard let group = groups[id] else { return ProxyGroupResolution(destination: .reject, reason: "missing_group") }
-        guard visiting.insert(id).inserted else { return ProxyGroupResolution(destination: .unsupported("cycle"), reason: "cycle_detected") }
-        defer { visiting.remove(id) }
+    private struct Candidate {
+        let member: ProxyGroupMember
+        let destination: ProxyGroupPolicyDestination
+        let healthy: Bool?
+        let recovered: Bool
+        let latency: Int?
+        let nodes: [NodeID]
+    }
 
-        if group.type == .direct { let r = ProxyGroupResolution(destination: .direct, reason: "direct"); memo[id] = r; return r }
-        if group.type == .reject { let r = ProxyGroupResolution(destination: .reject, reason: "reject"); memo[id] = r; return r }
-        if group.type == .loadBalance { let r = ProxyGroupResolution(destination: .unsupported("load_balance"), reason: "unsupported_group_type"); memo[id] = r; return r }
-        if group.type == .relay { let r = ProxyGroupResolution(destination: .unsupported("relay"), reason: "unsupported_group_type"); memo[id] = r; return r }
+    private struct Resolver {
+        let nodes: [NodeID: Node]
+        let groups: [ProxyGroupID: ProxyGroup]
+        let histories: [NodeID: [GroupProbeResult]]
+        let overrides: [ProxyGroupID: ProxyGroupMember]
+        let previous: [ProxyGroupID: GroupSelectionState]
+        let now: Date
+        let settings: ProxyGroupPolicySettings
+        var results: [ProxyGroupID: ProxyGroupResolution] = [:]
 
-        var candidates: [NodeID] = []
-        var seen = Set<NodeID>()
-        var childError: String?
-        let selectedIDs = group.members.compactMap { member -> NodeID? in
+        mutating func resolve(_ id: ProxyGroupID, path: Set<ProxyGroupID>) -> ProxyGroupResolution {
+            if path.contains(id) { return .init(destination: .unsupported("cycle"), reason: "cycle_detected") }
+            if let result = results[id] { return result }
+            guard let group = groups[id] else { return .init(destination: .reject, reason: "missing_group") }
+            let result = evaluate(group, path: path.union([id]))
+            results[id] = result
+            return result
+        }
+
+        mutating func evaluate(_ group: ProxyGroup, path: Set<ProxyGroupID>) -> ProxyGroupResolution {
+            if group.type == .direct { return .init(destination: .direct, reason: "direct") }
+            if group.type == .reject { return .init(destination: .reject, reason: "reject") }
+            var seen = Set<ProxyGroupMember>()
+            let selected = NodeSelectorResolver.resolve(selectors: group.memberSelectors,
+                nodes: nodes.values.sorted { $0.id.rawValue.uuidString < $1.id.rawValue.uuidString })
+            let members = (group.members + selected.nodeIDs.map(ProxyGroupMember.node)).filter { seen.insert($0).inserted }
+            var candidates: [Candidate] = []
+            for member in members {
+                if let candidate = candidate(member, path: path) {
+                    if case .unsupported("cycle") = candidate.destination {
+                        return .init(destination: candidate.destination, reason: "cycle_detected")
+                    }
+                    candidates.append(candidate)
+                }
+            }
+            var seenNodes = Set<NodeID>()
+            let ordered = candidates.flatMap(\.nodes).filter { seenNodes.insert($0).inserted }
+            func result(_ candidate: Candidate?, _ reason: String) -> ProxyGroupResolution {
+                .init(destination: candidate?.destination ?? .reject, orderedCandidates: ordered,
+                      selectedMember: candidate?.member, reason: reason)
+            }
+            if let manual = overrides[group.id] {
+                return result(candidates.first { $0.member == manual }, "manual_override")
+            }
+            switch group.type {
+            case .select:
+                return result(candidates.first, candidates.isEmpty ? "no_supported_members" : "first_member")
+            case .fallback:
+                let eligible = candidates.filter { $0.healthy != false }
+                guard let first = eligible.first else { return result(nil, "all_members_unavailable") }
+                if let old = previous[group.id], let current = eligible.first(where: { $0.member == old.member }),
+                   first.member != current.member, !first.recovered {
+                    return result(current, "awaiting_recovery")
+                }
+                return result(first, "priority")
+            case .urlTest:
+                let eligible = candidates.filter { $0.healthy != false }
+                let measured = eligible.filter { $0.latency != nil }
+                guard let best = measured.min(by: { ($0.latency ?? Int.max) < ($1.latency ?? Int.max) }) else {
+                    return result(eligible.first, eligible.isEmpty ? "all_members_unavailable" : "awaiting_probe")
+                }
+                if let old = previous[group.id], let current = eligible.first(where: { $0.member == old.member }),
+                   let currentLatency = current.latency, let bestLatency = best.latency,
+                   current.member != best.member {
+                    if now.timeIntervalSince(old.selectedAt) < settings.selectionCooldown {
+                        return result(current, "cooldown")
+                    }
+                    let margin = max(settings.latencyToleranceMilliseconds,
+                                     Int(Double(currentLatency) * settings.latencyToleranceRatio))
+                    if currentLatency - bestLatency < margin { return result(current, "within_tolerance") }
+                }
+                return result(best, "lowest_latency")
+            case .loadBalance:
+                let pool = candidates.filter { $0.healthy != false }.flatMap(\.nodes)
+                return .init(destination: pool.isEmpty ? .reject : .balance(pool), orderedCandidates: ordered, reason: "load_balance")
+            case .relay:
+                let chain = candidates.compactMap { value -> NodeID? in
+                    if case let .node(id) = value.destination { return id }; return nil
+                }
+                guard chain.count == members.count, !chain.isEmpty else {
+                    return .init(destination: .unsupported("relay_member"), orderedCandidates: ordered, reason: "invalid_relay")
+                }
+                return .init(destination: .chain(chain), orderedCandidates: ordered, reason: "relay_order")
+            case .direct, .reject:
+                return .init(destination: .reject, reason: "empty_group")
+            }
+        }
+
+        mutating func candidate(_ member: ProxyGroupMember, path: Set<ProxyGroupID>) -> Candidate? {
             switch member {
-            case .node(let nodeID): return nodeID
-            case .group(let childID):
-                let child = resolveGroup(childID, groups: groups, nodes: nodes, probes: probes, overrides: overrides, previous: previous, now: now, settings: settings, memo: &memo, visiting: &visiting)
-                if case .unsupported(let error) = child.destination { childError = error; return nil }
-                return child.selectedMember
+            case let .node(id):
+                guard let node = nodes[id], node.enabled, node.proto != .unknown,
+                      node.health.availability != .sourceRemoved, node.health.availability != .unsupported else { return nil }
+                let history = histories[id] ?? []
+                let fresh = history.first.map { now.timeIntervalSince($0.checkedAt) <= settings.probeInterval + settings.probeTimeout } ?? false
+                let failedCount = history.prefix { if case .failed = $0.outcome { return true }; return false }.count
+                let successCount = history.prefix { if case .available = $0.outcome { return true }; return false }.count
+                let failed = fresh && failedCount >= settings.failureThreshold
+                let latency: Int? = if fresh, case let .available(value)? = history.first?.outcome, value > 0 { value } else { nil }
+                return Candidate(member: member, destination: .node(id), healthy: failed ? false : latency.map { _ in true },
+                                 recovered: fresh && successCount >= settings.recoveryThreshold, latency: latency, nodes: [id])
+            case let .group(id):
+                let child = resolve(id, path: path)
+                switch child.destination {
+                case .reject:
+                    if groups[id]?.type != .reject { return nil }
+                    return Candidate(member: member, destination: .reject, healthy: true, recovered: true, latency: nil, nodes: [])
+                case .direct:
+                    return Candidate(member: member, destination: .direct, healthy: true, recovered: true, latency: nil, nodes: [])
+                case let .node(nodeID):
+                    guard let leaf = candidate(.node(nodeID), path: path) else { return nil }
+                    return Candidate(member: member, destination: leaf.destination, healthy: leaf.healthy,
+                                     recovered: leaf.recovered, latency: leaf.latency, nodes: child.orderedCandidates)
+                case .unsupported, .balance, .chain:
+                    return Candidate(member: member, destination: child.destination, healthy: true, recovered: true,
+                                     latency: nil, nodes: child.orderedCandidates)
+                }
             }
         }
-        if let childError {
-            let r = ProxyGroupResolution(destination: .unsupported(childError), reason: childError == "cycle" ? "cycle_detected" : "child_unsupported")
-            memo[id] = r
-            return r
-        }
-        for nodeID in selectedIDs where nodes[nodeID] != nil && seen.insert(nodeID).inserted { candidates.append(nodeID) }
-        let selectorIDs = NodeSelectorResolver.resolve(selectors: group.memberSelectors, nodes: Array(nodes.values)).nodeIDs
-        for nodeID in selectorIDs where seen.insert(nodeID).inserted { candidates.append(nodeID) }
-        let available = candidates.filter { nodes[$0]?.enabled == true && nodes[$0]?.proto != .unknown }
-        guard !available.isEmpty else { let r = ProxyGroupResolution(destination: .reject, orderedCandidates: candidates, reason: "no_supported_members"); memo[id] = r; return r }
-
-        if let manual = overrides[id], available.contains(manual) {
-            let r = ProxyGroupResolution(destination: .node(manual), orderedCandidates: candidates, selectedMember: manual, reason: "manual_override")
-            memo[id] = r; return r
-        }
-        let healthy = available.filter { nodeID in
-            guard let probe = probes[nodeID], probe.isAvailable else { return false }
-            return now.timeIntervalSince(probe.checkedAt) <= settings.probeInterval
-        }
-        let chosen: NodeID?
-        var reason = "ordered_fallback"
-        switch group.type {
-        case .urlTest:
-            chosen = chooseURLTest(available: available, healthy: healthy, probes: probes, previous: previous[id], now: now, settings: settings)
-            reason = chosen == previous[id]?.member && chosen != nil ? "cooldown" : "url_test"
-        case .fallback, .select:
-            let allHaveFreshProbes = available.allSatisfy { probe in
-                guard let result = probes[probe] else { return false }
-                return now.timeIntervalSince(result.checkedAt) <= settings.probeInterval
-            }
-            chosen = healthy.first ?? (allHaveFreshProbes ? nil : available.first)
-            reason = healthy.isEmpty ? (allHaveFreshProbes ? "all_probes_failed" : "fallback_without_healthy_probe") : "first_healthy"
-        default:
-            chosen = nil
-        }
-        guard let chosen else { let r = ProxyGroupResolution(destination: .reject, orderedCandidates: candidates, reason: "unsupported_selection"); memo[id] = r; return r }
-        let r = ProxyGroupResolution(destination: .node(chosen), orderedCandidates: candidates, selectedMember: chosen, reason: reason)
-        memo[id] = r
-        return r
     }
-
-    private static func chooseURLTest(available: [NodeID], healthy: [NodeID], probes: [NodeID: GroupProbeResult], previous: GroupSelectionState?, now: Date, settings: ProxyGroupPolicySettings) -> NodeID? {
-        guard !healthy.isEmpty else { return available.first }
-        let ranked = healthy.sorted { lhs, rhs in
-            let l = probes[lhs]!.latency
-            let r = probes[rhs]!.latency
-            return l == r ? stableIDOrder(lhs, rhs) : l < r
-        }
-        guard let best = ranked.first else { return nil }
-        if let previous, available.contains(previous.member), now.timeIntervalSince(previous.selectedAt) < settings.selectionCooldown, let old = probes[previous.member]?.latency {
-            let threshold = max(settings.latencyToleranceMilliseconds, Int(Double(old) * settings.latencyToleranceRatio))
-            if probes[best]!.latency >= old - threshold { return previous.member }
-        }
-        return best
-    }
-
-    private static func newestProbes(_ values: [GroupProbeResult], nodes: [NodeID: Node]) -> [NodeID: GroupProbeResult] {
-        var result: [NodeID: GroupProbeResult] = [:]
-        for probe in values where nodes[probe.nodeID]?.connectionFingerprint == probe.connectionFingerprint {
-            if result[probe.nodeID] == nil || result[probe.nodeID]!.checkedAt < probe.checkedAt { result[probe.nodeID] = probe }
-        }
-        return result
-    }
-
-    private static func stableIDOrder(_ lhs: NodeID, _ rhs: NodeID) -> Bool { lhs.rawValue.uuidString < rhs.rawValue.uuidString }
-}
-
-private extension GroupProbeResult.Outcome {
-    var isAvailable: Bool { if case .available = self { return true }; return false }
-    var latency: Int { if case .available(let value) = self { return max(1, value) }; return Int.max }
-}
-
-private extension GroupProbeResult {
-    var isAvailable: Bool { outcome.isAvailable }
-    var latency: Int { outcome.latency }
 }
