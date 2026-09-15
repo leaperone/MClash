@@ -435,6 +435,27 @@ public struct NodeOnlyImporter: Sendable {
         return .sequence(values)
     }
 
+    func expandedParameters(_ parameters: [String: String]) -> [String: String] {
+        var expanded: [String: String] = [:]
+        func flatten(_ fragment: YAMLFragment, key: String) {
+            switch fragment {
+            case let .scalar(value, _): expanded[key] = value
+            case let .mapping(fields):
+                for (child, value) in fields { flatten(value, key: key + "." + child) }
+            case let .sequence(values):
+                for (index, value) in values.enumerated() { flatten(value, key: key + "[\(index)]") }
+            }
+        }
+        for (key, value) in parameters {
+            if let fragment = parseFlowFragment(value) {
+                flatten(fragment, key: key)
+            } else {
+                expanded[key] = value
+            }
+        }
+        return expanded
+    }
+
     private func renderFlow(_ fragment: YAMLFragment) -> String {
         switch fragment {
         case let .scalar(value, quoted):

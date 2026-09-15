@@ -28,3 +28,6 @@ Sources/MClashApp/Resources/Core/mihomo-alpha-*
 # Local Git worktrees
 /.planning/
 /.worktrees/
+
+# Xray binaries are fetched from the pinned official artifact.
+Sources/MClashApp/Resources/Core/xray-*
