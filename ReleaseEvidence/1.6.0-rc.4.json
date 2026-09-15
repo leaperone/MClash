@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_version": "1.6.0-rc.4",
-  "commit": "3c351afcba1927b2cb7e9beb786660ec73e2d119",
+  "commit": "22b7b1be954dc6603f77759d5d26caf4f8d7f2d3",
   "status": "passed",
   "backend": "xray",
   "verification_scope": "Source and isolated runtime acceptance before release signing",
