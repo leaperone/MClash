@@ -95,9 +95,33 @@ struct ConnectionsView: View {
                 } description: {
                     Text(AppLocalization.string("MClash records application flows and rule decisions when Application Routing is enabled. Xray provides aggregate byte totals, not per-connection records."))
                 }
+            } else if model.runtimeBackend == .xray, !model.xrayAccessRecords.isEmpty {
+                xrayAccessTable
             } else {
                 routeWorkspace
             }
+        }
+    }
+
+    private var xrayAccessTable: some View {
+        Table(model.xrayAccessRecords) {
+            TableColumn("Time") { record in
+                Text(AppLocalization.date(record.timestamp, dateStyle: .omitted, timeStyle: .shortened))
+                    .monospacedDigit()
+            }
+            .width(min: 90, ideal: 120)
+            TableColumn("Destination") { record in
+                Text(record.destination).lineLimit(1).help(record.destination)
+            }
+            .width(min: 180, ideal: 300)
+            TableColumn("Path") { record in
+                Text(record.outbound ?? record.inbound ?? "—").lineLimit(1)
+            }
+            .width(min: 140, ideal: 240)
+            TableColumn("Transport") { record in
+                Text(record.transport.uppercased()).font(.caption.monospaced())
+            }
+            .width(min: 70, ideal: 90)
         }
     }
 

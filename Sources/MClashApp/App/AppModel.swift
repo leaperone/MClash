@@ -578,6 +578,7 @@ final class AppModel {
     private(set) var connectionPresentationRevision: UInt64 = 0
     private(set) var recentlyClosedConnections: [ClosedConnectionRecord] = []
     private(set) var flowLedger = FlowLedger(activeConnections: [])
+    private(set) var xrayAccessRecords: [XrayAccessRecord] = []
     private(set) var appRoutingFlowEntries: [UUID: FlowLedgerEntry] = [:] {
         didSet {
             appRoutingActivityPresentationRevision &+= 1
@@ -787,6 +788,8 @@ final class AppModel {
     private var flowLedgerPresentationRefreshPending = false
     private var flowLedgerAccountingRefreshPending = false
     private var flowLedgerActiveBuildNeedsAccounting = false
+    private var xrayAccessLogTask: Task<Void, Never>?
+    private var xrayAccessLogOffset: UInt64 = 0
     private var prepared = false
     private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
     private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
@@ -5666,6 +5669,7 @@ final class AppModel {
         guard controllerIsReady else {
             throw AppModelError.profileActivationFailed(errorMessage ?? XrayControlError.rejectedUpdate.localizedDescription)
         }
+        startXrayAccessLogMonitor()
         if networkCapturePreferences.enabled { await performNetworkCaptureActivation() }
         setNetworkEnvironmentRecoveryArmed(true)
     }
@@ -10207,6 +10211,7 @@ final class AppModel {
         controllerSetupOperation?.task.cancel()
         controllerSetupOperation = nil
         cancelControllerStreamTasks()
+        stopXrayAccessLogMonitor()
         controllerGeneration &+= 1
         invalidateProxyRefreshes()
         apiClient = nil
@@ -11924,6 +11929,52 @@ final class AppModel {
         apiLogTask = nil
         proxyRefreshTask = nil
         liveFreshnessWatchdogTask = nil
+    }
+
+    private func startXrayAccessLogMonitor() {
+        guard runtimeBackend == .xray, let launch = xrayLaunchConfiguration else { return }
+        xrayAccessLogTask?.cancel()
+        xrayAccessLogOffset = 0
+        xrayAccessRecords = []
+        let logURL = launch.homeDirectory.appending(path: "access.log")
+        xrayAccessLogTask = Task { @MainActor [weak self] in
+            let parser = XrayAccessLogParser()
+            while !Task.isCancelled {
+                guard let self else { return }
+                do {
+                    guard FileManager.default.fileExists(atPath: logURL.path) else {
+                        try await Task.sleep(for: .milliseconds(500))
+                        continue
+                    }
+                    let attributes = try FileManager.default.attributesOfItem(atPath: logURL.path)
+                    let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+                    if size < self.xrayAccessLogOffset { self.xrayAccessLogOffset = 0 }
+                    if size > self.xrayAccessLogOffset {
+                        let handle = try FileHandle(forReadingFrom: logURL)
+                        try handle.seek(toOffset: self.xrayAccessLogOffset)
+                        let data = try handle.readToEnd() ?? Data()
+                        try handle.close()
+                        self.xrayAccessLogOffset = size
+                        let records = parser.parse(data)
+                        if !records.isEmpty {
+                            self.xrayAccessRecords = Array((self.xrayAccessRecords + records).suffix(2_000))
+                        }
+                    }
+                    try await Task.sleep(for: .milliseconds(500))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self.appendSupervisorLog("MClash could not read Xray flow records: \(error.localizedDescription)")
+                    return
+                }
+            }
+        }
+    }
+
+    private func stopXrayAccessLogMonitor() {
+        xrayAccessLogTask?.cancel()
+        xrayAccessLogTask = nil
+        xrayAccessLogOffset = 0
     }
 
     private func appendSupervisorLog(_ message: String) {

@@ -872,7 +872,7 @@ final class AutomationCommandGateway {
         case "traffic.connections.list":
             if model.runtimeBackend == .xray {
                 return try paged(
-                    model.appRoutingActivities,
+                    model.xrayAccessRecords,
                     request: request,
                     maximumLimit: 200
                 ).mergingObject([
@@ -887,14 +887,12 @@ final class AutomationCommandGateway {
                 maximumLimit: 100
             ).mergingObject(["freshness": freshness(.connections)])
         case "traffic.flows.list":
-            return try paged(
-                model.appRoutingActivities,
-                request: request,
-                maximumLimit: 200
-            ).mergingObject([
-                "freshness": freshness(.appRouting),
-                "evidence": .string("mclash-flow-records"),
-            ])
+            if model.runtimeBackend == .xray {
+                return try paged(model.xrayAccessRecords, request: request, maximumLimit: 200)
+                    .mergingObject(["freshness": freshness(.appRouting), "evidence": .string("mclash-xray-access-records")])
+            }
+            return try paged(model.appRoutingActivities, request: request, maximumLimit: 200)
+                .mergingObject(["freshness": freshness(.appRouting), "evidence": .string("mclash-flow-records")])
         case "traffic.connections.close":
             try require(
                 await model.closeConnection(try request.string("id")),
