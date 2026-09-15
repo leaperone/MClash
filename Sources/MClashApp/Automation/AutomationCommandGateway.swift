@@ -870,11 +870,31 @@ final class AutomationCommandGateway {
         case "traffic.snapshot":
             return trafficSnapshot()
         case "traffic.connections.list":
+            if model.runtimeBackend == .xray {
+                return try paged(
+                    model.appRoutingActivities,
+                    request: request,
+                    maximumLimit: 200
+                ).mergingObject([
+                    "freshness": freshness(.appRouting),
+                    "evidence": .string("mclash-flow-records"),
+                    "note": .string("Xray does not expose per-connection records; these rows are MClash flow records."),
+                ])
+            }
             return try paged(
                 model.connections?.connections ?? [],
                 request: request,
                 maximumLimit: 100
             ).mergingObject(["freshness": freshness(.connections)])
+        case "traffic.flows.list":
+            return try paged(
+                model.appRoutingActivities,
+                request: request,
+                maximumLimit: 200
+            ).mergingObject([
+                "freshness": freshness(.appRouting),
+                "evidence": .string("mclash-flow-records"),
+            ])
         case "traffic.connections.close":
             try require(
                 await model.closeConnection(try request.string("id")),
@@ -2446,7 +2466,8 @@ final class AutomationCommandGateway {
         capability("appRouting.activities.clear", "Clear App Routing activities", .destructive),
         capability("appRouting.activities.list", "List cached App Routing activities", .read),
         capability("traffic.snapshot", "Read cached traffic statistics", .read),
-        capability("traffic.connections.list", "List cached live connections", .read),
+        capability("traffic.connections.list", "List cached live connections or MClash flow records", .read),
+        capability("traffic.flows.list", "List MClash flow records with rule and destination evidence", .read),
         capability("traffic.connections.close", "Close one connection", .write),
         capability("traffic.connections.closeAll", "Close all connections", .destructive),
         capability("traffic.closed.clear", "Clear the closed-connection session list", .destructive),
@@ -2633,6 +2654,7 @@ final class AutomationCommandGateway {
         ],
         "appRouting.activities.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
         "traffic.connections.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
+        "traffic.flows.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
         "traffic.connections.close": ["id": .required(.string)],
         "traffic.closed.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
         "traffic.history.setPersistent": ["enabled": .required(.bool)],
@@ -2931,6 +2953,7 @@ final class AutomationCommandGateway {
         "appRouting.candidates.list",
         "appRouting.activities.list",
         "traffic.connections.list",
+        "traffic.flows.list",
         "traffic.closed.list",
         "traffic.history.summary",
         "traffic.history.applications.list",
