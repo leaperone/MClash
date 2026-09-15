@@ -734,7 +734,7 @@ final class AppModel {
     private var auxiliaryLaunchConfigurations: [ProfileID: CoreLaunchConfiguration] = [:]
     private var rulesUseGlobalProxy = false
     private var connectionsUseGlobalProxy = false
-    private var apiClient: MihomoAPIClient?
+    private var apiClient: (any ProxyRuntimeClient)?
     private var activeControllerEndpoint: URL?
     private var controllerSetupOperation: (id: UUID, endpoint: URL, task: Task<Void, Never>)?
     private var eventTask: Task<Void, Never>?
@@ -9002,7 +9002,7 @@ final class AppModel {
     }
 
     private func applyUnifiedGlobalSelectionIfNeeded(
-        using client: MihomoAPIClient
+        using client: any ProxyRuntimeClient
     ) async {
         guard unifiedConfigurationEnabled,
               let workspace = configurationDocument.currentWorkspace,
@@ -9094,7 +9094,7 @@ final class AppModel {
 
     private func ensureLocalProxyListeners(
         _ initialConfig: MihomoConfig,
-        using client: MihomoAPIClient
+        using client: any ProxyRuntimeClient
     ) async throws -> MihomoConfig {
         managedMixedPort = nil
         let requestedMixedPort = activeProfileID == nil
@@ -9316,7 +9316,7 @@ final class AppModel {
     private func profileProxyOperationContext(
         for profileID: ProfileID
     ) async -> (
-        client: MihomoAPIClient,
+        client: any ProxyRuntimeClient,
         snapshot: ProfileProxyWorkspaceSnapshot
     )? {
         var snapshot = profileProxyWorkspaceState(for: profileID).snapshot
@@ -9450,7 +9450,7 @@ final class AppModel {
     }
 
     private func closeProfileConnectionsAfterRoutingChange(
-        using client: MihomoAPIClient,
+        using client: any ProxyRuntimeClient,
         profileID: ProfileID
     ) async {
         guard closeConnectionsOnRoutingChange else { return }
@@ -9471,7 +9471,7 @@ final class AppModel {
     }
 
     private func closeConnectionsAfterRoutingChange(
-        using client: MihomoAPIClient,
+        using client: any ProxyRuntimeClient,
         generation: Int
     ) async {
         guard closeConnectionsOnRoutingChange else { return }
@@ -9490,7 +9490,7 @@ final class AppModel {
         }
     }
 
-    private func loadRules(using client: MihomoAPIClient, generation: Int) async {
+    private func loadRules(using client: any ProxyRuntimeClient, generation: Int) async {
         do {
             let collection = try await client.fetchRules()
             guard generation == controllerGeneration, isConnected else { return }
@@ -9505,7 +9505,7 @@ final class AppModel {
         }
     }
 
-    private func loadProviders(using client: MihomoAPIClient, generation: Int) async {
+    private func loadProviders(using client: any ProxyRuntimeClient, generation: Int) async {
         var failures: [String] = []
         var loadedAtLeastOneCollection = false
 
@@ -9566,7 +9566,7 @@ final class AppModel {
         }
     }
 
-    private func startControllerStreams(_ client: MihomoAPIClient, generation: Int) {
+    private func startControllerStreams(_ client: any ProxyRuntimeClient, generation: Int) {
         cancelControllerStreamTasks()
         degradedStreams = []
         reconcileControllerTelemetry(
@@ -9588,7 +9588,7 @@ final class AppModel {
     }
 
     private func reconcileControllerTelemetry(
-        client providedClient: MihomoAPIClient? = nil,
+        client providedClient: (any ProxyRuntimeClient)? = nil,
         generation providedGeneration: Int? = nil
     ) {
         let policy = presentationTelemetryPolicy
@@ -9731,7 +9731,7 @@ final class AppModel {
         }
     }
 
-    private func monitorProxyState(_ client: MihomoAPIClient, generation: Int) async {
+    private func monitorProxyState(_ client: any ProxyRuntimeClient, generation: Int) async {
         var consecutiveFailures = 0
         while streamShouldContinue(generation) {
             var requestRevision: Int?
@@ -9766,7 +9766,7 @@ final class AppModel {
         }
     }
 
-    private func monitorTraffic(_ client: MihomoAPIClient, generation: Int) async {
+    private func monitorTraffic(_ client: any ProxyRuntimeClient, generation: Int) async {
         var attempt = 0
         while streamShouldContinue(generation) {
             do {
@@ -9802,7 +9802,7 @@ final class AppModel {
     }
 
     private func monitorConnections(
-        _ client: MihomoAPIClient,
+        _ client: any ProxyRuntimeClient,
         generation: Int,
         intervalMilliseconds: Int
     ) async {
@@ -9841,7 +9841,7 @@ final class AppModel {
         }
     }
 
-    private func monitorLogs(_ client: MihomoAPIClient, generation: Int) async {
+    private func monitorLogs(_ client: any ProxyRuntimeClient, generation: Int) async {
         var attempt = 0
         while streamShouldContinue(generation) {
             do {
@@ -13028,7 +13028,7 @@ final class AppModel {
         _ data: Data,
         destinationURL: URL,
         stagingDirectory: URL,
-        client: MihomoAPIClient,
+        client: any ProxyRuntimeClient,
         verification: () async throws -> Void = {}
     ) async throws -> Bool {
         let previousData = try Data(contentsOf: destinationURL)

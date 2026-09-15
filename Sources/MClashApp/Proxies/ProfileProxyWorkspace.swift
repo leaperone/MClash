@@ -127,7 +127,7 @@ struct ProfileProxyWorkspaceSnapshotBuilder: Sendable {
 /// Internal seam used by model tests. Production resolution always inspects
 /// the existing primary controller or the already-running auxiliary fleet.
 enum ProfileProxyControllerResolution: Sendable {
-    case available(MihomoAPIClient)
+    case available(any ProxyRuntimeClient)
     case unavailable(ProfileProxyWorkspaceUnavailability)
 }
 
