@@ -36,6 +36,9 @@ public struct NodeLinkImporter: Sendable {
         guard request.text.utf8.count <= Self.inputLimit else {
             return .init(nodes: [], diagnostics: [diagnostic("input_too_large", "The pasted text is too large to read.", subject: "input")], ignoredLines: 0, detectedFormats: [])
         }
+        if Self.looksLikeWireGuardConfiguration(request.text) {
+            return previewWireGuardConfiguration(request)
+        }
         var nodes: [Node] = []
         var diagnostics: [ConfigurationDiagnostic] = []
         var seen = Set<String>()
@@ -66,6 +69,46 @@ public struct NodeLinkImporter: Sendable {
             }
         }
         return .init(nodes: nodes, diagnostics: diagnostics, ignoredLines: ignoredLines, detectedFormats: formats.sorted())
+    }
+
+    private static func looksLikeWireGuardConfiguration(_ text: String) -> Bool {
+        let sections = text.split(whereSeparator: \.isNewline).compactMap { raw -> String? in
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.hasPrefix("[") && line.hasSuffix("]") else { return nil }
+            return line.dropFirst().dropLast().trimmingCharacters(in: .whitespaces).lowercased()
+        }
+        return sections.contains("interface") && sections.contains("peer")
+    }
+
+    private func previewWireGuardConfiguration(_ request: NodeLinkImportRequest) -> NodeLinkImportPreview {
+        do {
+            let candidates = try parseWireGuardConfiguration(request.text)
+            var seen = Set<String>()
+            var nodes: [Node] = []
+            var diagnostics: [ConfigurationDiagnostic] = []
+            for (index, candidate) in candidates.enumerated() {
+                let node = try Node(
+                    id: NodeID.stable(for: candidate.identity),
+                    displayName: candidate.name,
+                    protocol: candidate.proto,
+                    host: candidate.host,
+                    port: candidate.port,
+                    parameters: candidate.parameters,
+                    sourceLinks: [request.sourceID],
+                    lastSeenAt: request.now
+                )
+                guard seen.insert(node.connectionFingerprint).inserted else {
+                    diagnostics.append(diagnostic("duplicate_wireguard_peer", "Peer \(index + 1) repeats an imported endpoint.", subject: "peer-\(index + 1)"))
+                    continue
+                }
+                nodes.append(node)
+            }
+            return .init(nodes: nodes, diagnostics: diagnostics, ignoredLines: 0, detectedFormats: ["wireguard-config"])
+        } catch let error as ImportError {
+            return .init(nodes: [], diagnostics: [diagnostic("invalid_wireguard_config", error.message, subject: error.subject)], ignoredLines: 0, detectedFormats: ["wireguard-config"])
+        } catch {
+            return .init(nodes: [], diagnostics: [diagnostic("invalid_wireguard_config", "The WireGuard configuration could not be read.", subject: "wireguard")], ignoredLines: 0, detectedFormats: ["wireguard-config"])
+        }
     }
 
     private struct Candidate {
@@ -135,6 +178,115 @@ public struct NodeLinkImporter: Sendable {
         default: throw ImportError.invalid
         }
         return Candidate(proto: proto, host: host, port: port, name: name, parameters: parameters)
+    }
+
+    private func parseWireGuardConfiguration(_ text: String) throws -> [Candidate] {
+        enum Section { case none, interface, peer }
+        var section: Section = .none
+        var interface: [String: String] = [:]
+        var peers: [[String: String]] = []
+        var currentPeer: [String: String]?
+
+        for (lineNumber, raw) in text.split(whereSeparator: \.isNewline).map(String.init).enumerated() {
+            let withoutHashComment = raw.split(separator: "#", maxSplits: 1).first.map(String.init) ?? raw
+            let withoutComment = withoutHashComment.split(separator: ";", maxSplits: 1).first.map(String.init) ?? withoutHashComment
+            let line = withoutComment.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty { continue }
+            if line.hasPrefix("[") && line.hasSuffix("]") {
+                if case .peer = section, let currentPeer { peers.append(currentPeer) }
+                currentPeer = nil
+                switch line.dropFirst().dropLast().trimmingCharacters(in: .whitespaces).lowercased() {
+                case "interface": section = .interface
+                case "peer": section = .peer
+                default: throw ImportError.wireGuard("Line \(lineNumber + 1): unknown section.", subject: "line-\(lineNumber + 1)")
+                }
+                continue
+            }
+            guard let equals = line.firstIndex(of: "=") else {
+                throw ImportError.wireGuard("Line \(lineNumber + 1): expected Key = Value.", subject: "line-\(lineNumber + 1)")
+            }
+            let key = line[..<equals].trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "_", with: "-")
+            let value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty else {
+                throw ImportError.wireGuard("Line \(lineNumber + 1): key and value are required.", subject: "line-\(lineNumber + 1)")
+            }
+            switch section {
+            case .interface: interface[key] = value
+            case .peer:
+                if currentPeer == nil { currentPeer = [:] }
+                currentPeer?[key] = value
+            case .none:
+                throw ImportError.wireGuard("Line \(lineNumber + 1): key appears before a section.", subject: "line-\(lineNumber + 1)")
+            }
+        }
+        if case .peer = section, let currentPeer { peers.append(currentPeer) }
+        guard let secretKey = interface["privatekey"], validWireGuardKey(secretKey) else {
+            throw ImportError.wireGuard("Interface: PrivateKey must be a valid 32-byte WireGuard key.", subject: "interface.privatekey")
+        }
+        guard !peers.isEmpty else {
+            throw ImportError.wireGuard("The configuration must contain at least one Peer section.", subject: "peer")
+        }
+        let address = interface["address"]
+        let mtu = interface["mtu"]
+        if let mtu, (Int(mtu).map { !(576...65535).contains($0) } ?? true) {
+            throw ImportError.wireGuard("Interface: MTU must be between 576 and 65535.", subject: "interface.mtu")
+        }
+        let reserved = interface["reserved"]
+        if let reserved, !validReserved(reserved) {
+            throw ImportError.wireGuard("Interface: Reserved must contain exactly three bytes from 0 to 255.", subject: "interface.reserved")
+        }
+        var result: [Candidate] = []
+        for (index, peer) in peers.enumerated() {
+            guard let publicKey = peer["publickey"], validWireGuardKey(publicKey) else {
+                throw ImportError.wireGuard("Peer \(index + 1): PublicKey must be a valid 32-byte WireGuard key.", subject: "peer-\(index + 1).publickey")
+            }
+            guard let endpoint = peer["endpoint"], let parsedEndpoint = splitEndpoint(endpoint) else {
+                throw ImportError.wireGuard("Peer \(index + 1): Endpoint must include a host and port.", subject: "peer-\(index + 1).endpoint")
+            }
+            if let psk = peer["presharedkey"], !validWireGuardKey(psk) {
+                throw ImportError.wireGuard("Peer \(index + 1): PresharedKey must be a valid 32-byte key.", subject: "peer-\(index + 1).presharedkey")
+            }
+            if let keepAlive = peer["persistentkeepalive"], (Int(keepAlive).map { !(0...65535).contains($0) } ?? true) {
+                throw ImportError.wireGuard("Peer \(index + 1): PersistentKeepalive is invalid.", subject: "peer-\(index + 1).persistentkeepalive")
+            }
+            var parameters = ["secret-key": secretKey, "public-key": publicKey, "no-kernel-tun": "true"]
+            if let address { parameters["address"] = address }
+            if let mtu { parameters["mtu"] = mtu }
+            if let reserved { parameters["reserved"] = reserved }
+            if let dns = interface["dns"] { parameters["remote-dns"] = dns }
+            if let allowed = peer["allowedips"] { parameters["allowed-ips"] = allowed }
+            if let psk = peer["presharedkey"] { parameters["pre-shared-key"] = psk }
+            if let keepAlive = peer["persistentkeepalive"] { parameters["keep-alive"] = keepAlive }
+            result.append(Candidate(proto: .wireguard, host: parsedEndpoint.host, port: parsedEndpoint.port, name: parsedEndpoint.host, parameters: parameters))
+        }
+        return result
+    }
+
+    private func splitEndpoint(_ value: String) -> (host: String, port: Int)? {
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("[") {
+            guard let close = value.firstIndex(of: "]"), value[close...].hasPrefix("]:") else { return nil }
+            let host = String(value[value.index(after: value.startIndex)..<close])
+            guard let port = Int(value[value.index(close, offsetBy: 2)...]), (1...65535).contains(port) else { return nil }
+            return (host, port)
+        }
+        guard let colon = value.lastIndex(of: ":"), value.firstIndex(of: ":") == colon else { return nil }
+        let host = String(value[..<colon])
+        guard !host.isEmpty, let port = Int(value[value.index(after: colon)...]), (1...65535).contains(port) else { return nil }
+        return (host, port)
+    }
+
+    private func validWireGuardKey(_ value: String) -> Bool {
+        if value.count == 64, value.allSatisfy({ $0.isHexDigit }) { return true }
+        var encoded = value
+        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+        let data = Data(base64Encoded: encoded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/"))
+        return data?.count == 32
+    }
+
+    private func validReserved(_ value: String) -> Bool {
+        let parts = value.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        return parts.count == 3 && parts.allSatisfy { (0...255).contains($0) }
     }
 
     private static func detectedFormat(for scheme: String) -> String {
@@ -223,5 +375,22 @@ public struct NodeLinkImporter: Sendable {
     private func diagnostic(_ code: String, _ message: String, subject: String) -> ConfigurationDiagnostic {
         .init(severity: .warning, code: code, subject: subject, message: message)
     }
-    private enum ImportError: Error { case invalid }
+    private enum ImportError: Error {
+        case invalid
+        case wireGuard(String, subject: String)
+
+        var message: String {
+            switch self {
+            case .invalid: return "The proxy link is invalid."
+            case let .wireGuard(message, _): return message
+            }
+        }
+
+        var subject: String {
+            switch self {
+            case .invalid: return "link"
+            case let .wireGuard(_, subject): return subject
+            }
+        }
+    }
 }

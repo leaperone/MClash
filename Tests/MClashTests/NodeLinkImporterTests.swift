@@ -56,4 +56,44 @@ struct NodeLinkImporterTests {
         #expect(preview.nodes.first?.parameters["remote-dns"] == "1.1.1.1")
         #expect(preview.diagnostics.isEmpty)
     }
+
+    @Test("Imports native WireGuard configuration text and creates one node per peer")
+    func importsWireGuardConfigurationText() {
+        let config = """
+        [Interface]
+        PrivateKey = \(String(repeating: "11", count: 32))
+        Address = 10.0.0.2/32, fd00::2/128
+        DNS = 1.1.1.1
+        MTU = 1420
+
+        [Peer]
+        PublicKey = \(String(repeating: "22", count: 32))
+        Endpoint = wg.example:51820
+        AllowedIPs = 0.0.0.0/0, ::/0
+        PersistentKeepalive = 25
+        """
+        let preview = NodeLinkImporter().preview(.init(text: config))
+        #expect(preview.nodes.count == 1)
+        #expect(preview.detectedFormats == ["wireguard-config"])
+        #expect(preview.nodes.first?.proto == .wireguard)
+        #expect(preview.nodes.first?.parameters["address"] == "10.0.0.2/32, fd00::2/128")
+        #expect(preview.nodes.first?.parameters["allowed-ips"] == "0.0.0.0/0, ::/0")
+        #expect(preview.nodes.first?.parameters["remote-dns"] == "1.1.1.1")
+        #expect(preview.nodes.first?.parameters["keep-alive"] == "25")
+        #expect(preview.diagnostics.isEmpty)
+    }
+
+    @Test("WireGuard configuration diagnostics identify missing peer fields")
+    func rejectsIncompleteWireGuardConfiguration() {
+        let config = """
+        [Interface]
+        PrivateKey = \(String(repeating: "11", count: 32))
+        [Peer]
+        Endpoint = wg.example:51820
+        """
+        let preview = NodeLinkImporter().preview(.init(text: config))
+        #expect(preview.nodes.isEmpty)
+        #expect(preview.diagnostics.first?.code == "invalid_wireguard_config")
+        #expect(preview.diagnostics.first?.subject == "peer-1.publickey")
+    }
 }

@@ -2523,3 +2523,7 @@
 "Connection event" = "Evento de conexión";
 "Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "Observado por MClash desde el registro de acceso de Xray. Es un evento de conexión, no un total de bytes por aplicación.";
 "No entrance or node was reported for this connection event." = "Este evento no incluye una entrada ni un nodo.";
+
+"Paste share links or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "Pega enlaces compartidos o una configuración de WireGuard. MClash los comprobará antes de añadir nodos a la configuración.";
+
+"WireGuard configuration" = "Configuración de WireGuard";
