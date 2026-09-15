@@ -293,7 +293,7 @@ fi
 if [[ "${code_sign_identity}" == "-" ]]; then
   codesign --force --sign - "${contents}/Helpers/mclashctl"
   codesign --force --sign - "${packaged_core}"
-  (( xray_enabled )) && codesign --force --sign - "${contents}/Resources/Core/mclash-xray"
+  (( xray_enabled )) && codesign --force --sign - --identifier mclash-xray "${contents}/Resources/Core/mclash-xray"
   codesign --force \
     --entitlements "${network_extension_devid_entitlements}" \
     --sign - "${system_extension}"
@@ -414,7 +414,7 @@ else
   codesign --force --options runtime --timestamp \
     --sign "${code_sign_identity}" "${packaged_core}"
   if (( xray_enabled )); then
-    codesign --force --options runtime --timestamp --sign "${code_sign_identity}" "${contents}/Resources/Core/mclash-xray"
+    codesign --force --options runtime --timestamp --sign "${code_sign_identity}" --identifier mclash-xray "${contents}/Resources/Core/mclash-xray"
   fi
   codesign --force --options runtime --timestamp \
     --entitlements "${network_extension_devid_entitlements}" \

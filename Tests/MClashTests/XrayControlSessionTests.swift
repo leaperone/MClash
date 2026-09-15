@@ -6,7 +6,7 @@ import Testing
 @Suite("Xray live control", .serialized,
        .enabled(if: ProcessInfo.processInfo.environment["MCLASH_XRAY_BINARY"] != nil))
 struct XrayControlSessionTests {
-    @Test("Routing and listener changes retain the core process and roll back failed writes")
+    @Test("Routing and listener changes retain the core process and roll back failed writes", .timeLimit(.minutes(1)))
     func transactions() async throws {
         let root = URL(fileURLWithPath: "/tmp/mct-" + UUID().uuidString.prefix(12))
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -20,7 +20,7 @@ struct XrayControlSessionTests {
         origin.standardError = FileHandle.nullDevice
         try Data("control-payload".utf8).write(to: root.appending(path: "payload"))
         try origin.run()
-        defer { if origin.isRunning { origin.terminate(); origin.waitUntilExit() } }
+        defer { if origin.isRunning { origin.terminate() } }
         let commands = CoreSupervisor()
         let target = "http://127.0.0.1:\(originPort)/payload"
         var originReady = false

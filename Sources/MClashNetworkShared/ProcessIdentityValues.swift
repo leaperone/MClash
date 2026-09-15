@@ -188,6 +188,7 @@ public struct TrustedMClashComponentPolicy: Sendable {
 
     private static let signingIdentifiers: Set<String> = [
         "mclash-mihomo",
+        "mclash-xray",
         "one.leaper.mclash.network-extension",
     ]
 

@@ -56,14 +56,16 @@ The user authorized implementation through a test Release. A prerelease can be p
 - [x] Pinned core archive, binary, source revision, and notices checked.
 - [x] Actual supervised process readiness, invalid-config rejection, payload forwarding, and stop checked.
 - [x] Actual Xray group selection preserves an established stream and changes the route for new connections.
-- [ ] Complete app checks for source import, selection, modes, invalid-source rollback, automatic fallback, URL selection, balancing, and relay chains.
-- [ ] Transactional rule and capture-listener updates checked against the actual core.
+- [x] Complete app checks for source import, selection, modes, invalid-source rollback, automatic fallback, URL selection, balancing, and relay chains.
+- [x] Transactional rule and capture-listener updates checked against the actual core.
 - [ ] Group health editing and persisted configuration checked through the app.
 - [ ] Protocol interoperability and DNS behavior recorded with explicit limits.
 - [ ] Full typecheck, unit tests, integration tests, and release gate pass at the frozen source commit.
 - [ ] Signed, notarized prerelease is published, downloaded, and checked.
 
 The checked lifecycle and routing gates are backed by `scripts/smoke-test-xray-supervisor.sh` and `scripts/smoke-test-xray-routing.py`. The workbench acceptance tool is `scripts/smoke-test-xray-app.py`. `ReleaseEvidence/<version>.json` records the final tested source and commands. A passing compile does not establish runtime or Network Extension acceptance.
+
+The first RC supports inline text rule-set entries. Automatic remote rule-set refresh, MRS, DNS-over-TLS, process-name-only rules, and live Fake-IP acceptance remain outside its verified compatibility set. Application identifiers, complete process paths, and user IDs use App Routing. Xray is signed with the stable `mclash-xray` identifier so the signed Network Extension can bypass its own proxy traffic.
 
 ## Measurements
 

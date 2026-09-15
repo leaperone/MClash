@@ -104,6 +104,18 @@ struct ProcessIdentityValueTests {
             teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
         )))
         #expect(policy.contains(resolution(
+            signingIdentifier: "mclash-xray",
+            teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
+        )))
+        #expect(!policy.contains(resolution(
+            signingIdentifier: "mclash-xray",
+            teamIdentifier: "ATTACKER123"
+        )))
+        #expect(!policy.contains(resolution(
+            signingIdentifier: "mclash-xray-copy",
+            teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
+        )))
+        #expect(policy.contains(resolution(
             signingIdentifier: "one.leaper.mclash.network-extension",
             teamIdentifier: TrustedMClashComponentPolicy.teamIdentifier
         )))
@@ -139,6 +151,8 @@ struct ProcessIdentityValueTests {
 
         #expect(policy.contains(metadataSigningIdentifier: "one.leaper.mclash.network-extension"))
         #expect(policy.contains(metadataSigningIdentifier: "  MClash-Mihomo  "))
+        #expect(policy.contains(metadataSigningIdentifier: "mclash-xray"))
+        #expect(!policy.contains(metadataSigningIdentifier: "mclash-xray-copy"))
         #expect(!policy.contains(metadataSigningIdentifier: "one.leaper.mclash"))
         #expect(!policy.contains(metadataSigningIdentifier: "mclash"))
         #expect(!policy.contains(metadataSigningIdentifier: "one.leaper.mclash.fake"))

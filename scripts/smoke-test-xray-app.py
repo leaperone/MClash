@@ -359,7 +359,7 @@ def main():
             document["proxyGroups"].append(probe_group)
             for index, node in enumerate(candidates):
                 document["nodeSettings"].append(dict(id=node["id"], userAliasUpdate=f"Network sample {index + 1}"))
-            document["workspaces"][0]["proxyGroupIDs"].append(probe_group["id"])
+            document["workspaces"][0]["proxyGroupIDsUpdate"] = [group["id"] for group in document["proxyGroups"]]
             document["workspaces"][0]["globalProxyGroupID"] = probe_group["id"]
             call("configuration.apply", {"document": document, "expectedRevision": snapshot["configurationRevision"]})
             snapshot = call("configuration.snapshot")

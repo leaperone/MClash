@@ -272,7 +272,7 @@ sign_application() {
   sign_path "${automation_cli}" --entitlements "${cli_devid_entitlements}"
   sign_path "${core}"
   if [[ -f "${xray_core}" ]]; then
-    sign_path "${xray_core}"
+    sign_path "${xray_core}" --identifier mclash-xray
   fi
   sign_path "${system_extension}" --entitlements "${network_extension_devid_entitlements}"
   sign_path "${app}" --entitlements "${host_devid_entitlements}"
