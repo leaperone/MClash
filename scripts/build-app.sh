@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="${0:A:h:h}"
 source "${repo_root}/scripts/mihomo-alpha-common.sh"
+source "${repo_root}/scripts/xray-common.sh"
 
 configuration="${CONFIGURATION:-release}"
 app_version="${MCLASH_BUNDLE_VERSION:-${MCLASH_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${repo_root}/Support/Info.plist")}}"
@@ -63,6 +64,12 @@ if [[ ! -f "${MIHOMO_ALPHA_RESOURCE_PATH}" ]]; then
   "${repo_root}/scripts/fetch-mihomo-alpha.sh" --architecture "${architecture}"
 fi
 mihomo_alpha_verify_selected_artifact
+xray_enabled=0
+if [[ "${app_version}" == 1.6.* && "${MCLASH_RUNTIME_BACKEND:-xray}" == "xray" ]]; then
+  xray_enabled=1
+  [[ -f "${XRAY_RESOURCE_PATH}" ]] || "${repo_root}/scripts/fetch-xray.sh"
+  xray_verify_selected_artifact
+fi
 
 geodata_source="${MCLASH_GEODATA_DIR:-${build_root}/GeoData}"
 geodata_fetch_arguments=(--output "${geodata_source}")
@@ -218,6 +225,9 @@ cp "${network_extension_info_source}" "${system_extension_contents}/Info.plist"
 cp "${login_agent_source}" "${contents}/Library/LaunchAgents/one.leaper.mclash.login.plist"
 plutil -lint "${contents}/Library/LaunchAgents/one.leaper.mclash.login.plist" >/dev/null
 cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+if (( xray_enabled )); then
+  cp "${XRAY_RESOURCE_PATH}" "${contents}/Resources/Core/mclash-xray"
+fi
 ditto "${geodata_source}" "${contents}/Resources/GeoData"
 cp "${license_source}" "${contents}/Resources/GeoData/LICENSE.txt"
 cp "${repo_root}/Sources/MClashApp/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"
@@ -228,6 +238,11 @@ cp "${mclash_license}" "${contents}/Resources/MClash-LICENSE.txt"
 cp "${license_source}" "${contents}/Resources/ThirdParty/mihomo-LICENSE.txt"
 cp "${corresponding_source}" "${contents}/Resources/ThirdParty/mihomo-SOURCE.txt"
 cp "${notice_source}" "${contents}/Resources/ThirdParty/mihomo-NOTICE.md"
+if (( xray_enabled )); then
+  cp "${repo_root}/Sources/MClashApp/Resources/ThirdParty/xray-LICENSE.txt" "${contents}/Resources/ThirdParty/xray-LICENSE.txt"
+  cp "${repo_root}/Sources/MClashApp/Resources/ThirdParty/xray-SOURCE.txt" "${contents}/Resources/ThirdParty/xray-SOURCE.txt"
+  cp "${repo_root}/ThirdParty/xray/NOTICE.md" "${contents}/Resources/ThirdParty/xray-NOTICE.md"
+fi
 cp "${sparkle_framework_dir}/LICENSE" "${contents}/Resources/ThirdParty/Sparkle-LICENSE.txt"
 "${repo_root}/scripts/verify-mihomo-geodata.sh" "${contents}/Resources/GeoData"
 recorded_hash="$(mihomo_alpha_recorded_hash "${MIHOMO_ALPHA_RESOURCE_NAME}")"
@@ -248,6 +263,9 @@ fi
   -c "Add :MClashMihomoAlphaRawSHA256 string ${recorded_hash}" \
   -c "Add :MClashSourceRevision string ${source_revision}" \
   "${contents}/Info.plist"
+if (( xray_enabled )); then
+  /usr/libexec/PlistBuddy -c "Add :MClashRuntimeBackend string xray" -c "Add :MClashXrayVersion string ${XRAY_VERSION}" -c "Add :MClashXrayRevision string ${XRAY_REVISION}" -c "Add :MClashXrayRawSHA256 string ${XRAY_RAW_SHA256}" "${contents}/Info.plist"
+fi
 /usr/libexec/PlistBuddy \
   -c 'Set :CFBundleExecutable MClashNetworkExtension' \
   -c "Set :CFBundleShortVersionString ${app_version}" \
@@ -267,9 +285,15 @@ if [[ "${packaged_hash}" != "${recorded_hash}" ]]; then
 fi
 
 packaged_core="${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+if (( xray_enabled )); then
+  cp "${XRAY_RESOURCE_PATH}" "${contents}/Resources/Core/mclash-xray"
+  xray_packaged_hash="$(shasum -a 256 "${contents}/Resources/Core/mclash-xray" | awk '{print $1}')"
+  [[ "${xray_packaged_hash}" == "${XRAY_RAW_SHA256}" ]] || { print -u2 "Packaged Xray SHA-256 changed before signing"; exit 1; }
+fi
 if [[ "${code_sign_identity}" == "-" ]]; then
   codesign --force --sign - "${contents}/Helpers/mclashctl"
   codesign --force --sign - "${packaged_core}"
+  (( xray_enabled )) && codesign --force --sign - "${contents}/Resources/Core/mclash-xray"
   codesign --force \
     --entitlements "${network_extension_devid_entitlements}" \
     --sign - "${system_extension}"
@@ -373,7 +397,7 @@ else
     "${system_extension}/Contents/embedded.provisionprofile"
 
   sparkle_version_root="${contents}/Frameworks/Sparkle.framework/Versions/B"
-  codesign --force --options runtime --timestamp \
+    codesign --force --options runtime --timestamp \
     --sign "${code_sign_identity}" "${sparkle_version_root}/XPCServices/Installer.xpc"
   codesign --force --options runtime --timestamp \
     --preserve-metadata=entitlements \
@@ -389,6 +413,9 @@ else
     --sign "${code_sign_identity}" "${contents}/Helpers/mclashctl"
   codesign --force --options runtime --timestamp \
     --sign "${code_sign_identity}" "${packaged_core}"
+  if (( xray_enabled )); then
+    codesign --force --options runtime --timestamp --sign "${code_sign_identity}" "${contents}/Resources/Core/mclash-xray"
+  fi
   codesign --force --options runtime --timestamp \
     --entitlements "${network_extension_devid_entitlements}" \
     --sign "${code_sign_identity}" "${system_extension}"

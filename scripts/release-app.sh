@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="${0:A:h:h}"
 source "${repo_root}/scripts/mihomo-alpha-common.sh"
+source "${repo_root}/scripts/xray-common.sh"
 version="${MCLASH_VERSION:-}"
 bundle_version="${MCLASH_BUNDLE_VERSION:-${version%%[-+]*}}"
 build_number="${MCLASH_BUILD_NUMBER:-}"
@@ -67,6 +68,14 @@ if [[ "${architecture}" != "arm64" ]]; then
   exit 2
 fi
 mihomo_alpha_select_architecture "${architecture}"
+if [[ "${version}" == 1.6.* && "${MCLASH_RUNTIME_BACKEND:-xray}" == "xray" ]]; then
+  xray_verify_selected_artifact
+  evidence="${repo_root}/ReleaseEvidence/${version}.json"
+  if [[ ! -s "${evidence}" ]] || ! jq -e --arg v "${XRAY_VERSION}" --arg r "${XRAY_REVISION}" '.runtimeBackend == "xray" and .xrayVersion == $v and .xrayRevision == $r' "${evidence}" >/dev/null; then
+    print -u2 "Release evidence must record the current Xray backend, version, and revision: ${evidence}"
+    exit 1
+  fi
+fi
 if [[ -z "${notary_profile}" && ( -z "${apple_id}" || -z "${apple_password}" || -z "${apple_team_id}" ) ]]; then
   print -u2 "Set NOTARYTOOL_PROFILE, or APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID."
   exit 2
@@ -211,6 +220,7 @@ sign_application() {
   local app="$1"
   local sparkle="${app}/Contents/Frameworks/Sparkle.framework"
   local core="${app}/Contents/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+  local xray_core="${app}/Contents/Resources/Core/mclash-xray"
   local automation_cli="${app}/Contents/Helpers/mclashctl"
   local system_extension="${app}/Contents/Library/SystemExtensions/${network_extension_bundle_id}.systemextension"
 
@@ -239,6 +249,10 @@ sign_application() {
     print -u2 "Bundled core is missing: ${core}"
     exit 1
   fi
+  if [[ "${version}" == 1.6.* && "${MCLASH_RUNTIME_BACKEND:-xray}" == "xray" && ! -f "${xray_core}" ]]; then
+    print -u2 "Bundled Xray core is missing: ${xray_core}"
+    exit 1
+  fi
   if [[ ! -x "${automation_cli}" ]]; then
     print -u2 "Bundled automation CLI is missing: ${automation_cli}"
     exit 1
@@ -260,6 +274,9 @@ sign_application() {
 
   sign_path "${automation_cli}" --entitlements "${cli_devid_entitlements}"
   sign_path "${core}"
+  if [[ -f "${xray_core}" ]]; then
+    sign_path "${xray_core}"
+  fi
   sign_path "${system_extension}" --entitlements "${network_extension_devid_entitlements}"
   sign_path "${app}" --entitlements "${host_devid_entitlements}"
 
