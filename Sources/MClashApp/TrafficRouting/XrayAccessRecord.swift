@@ -49,12 +49,12 @@ public struct XrayAccessLogParser: Sendable {
         let route = routeStart.map { String(accepted[$0...]) }
         let transport: String
         let destination: String
-        if let colon = sourceAndTarget.firstIndex(of: ":") {
-            transport = String(sourceAndTarget[..<colon])
-            destination = String(sourceAndTarget[sourceAndTarget.index(after: colon)...])
-        } else if sourceAndTarget.hasPrefix("//") {
+        if sourceAndTarget.hasPrefix("//") {
             transport = "http"
             destination = String(sourceAndTarget.dropFirst(2))
+        } else if let colon = sourceAndTarget.firstIndex(of: ":") {
+            transport = String(sourceAndTarget[..<colon])
+            destination = String(sourceAndTarget[sourceAndTarget.index(after: colon)...])
         } else {
             transport = "unknown"
             destination = sourceAndTarget
