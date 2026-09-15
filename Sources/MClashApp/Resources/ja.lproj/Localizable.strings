@@ -2423,3 +2423,33 @@
 "Create a configuration before setting traffic paths." = "トラフィック経路を設定する前に構成を作成してください。";
 "Browser path uses HTTP or SOCKS5." = "ブラウザ経路は HTTP または SOCKS5 を使います。";
 "Choose a source that still exists." = "まだ存在するソースを選んでください。";
+
+"Health checks" = "ヘルスチェック";
+
+"Test URL" = "テスト URL";
+
+"Expected HTTP status" = "期待する HTTP ステータス";
+
+"Interval (seconds)" = "間隔（秒）";
+
+"Timeout (seconds)" = "タイムアウト（秒）";
+
+"Failures to switch" = "切り替えまでの失敗回数";
+
+"Successes to recover" = "復帰までの成功回数";
+
+"Cooldown (seconds)" = "切り替え待機時間（秒）";
+
+"Latency tolerance (ms)" = "遅延の許容差（ミリ秒）";
+
+"Tolerance ratio" = "遅延の許容比率";
+
+"Use an HTTP or HTTPS URL without credentials. Timeout must be greater than zero." = "認証情報を含まない HTTP または HTTPS URL を使用してください。タイムアウトはゼロより大きい値にしてください。";
+
+"Enter a valid HTTP or HTTPS test URL and positive health-check values." = "有効な HTTP または HTTPS のテスト URL とヘルスチェックの値を入力してください。";
+
+"Health-check URL must use HTTP or HTTPS without credentials." = "ヘルスチェック URL は認証情報を含まない HTTP または HTTPS にしてください。";
+
+"Health-check timing or failure thresholds are outside the supported range." = "ヘルスチェックの時間または失敗しきい値が対応範囲外です。";
+
+"Expected HTTP status must be codes or ranges such as 204 or 200-299." = "期待する HTTP ステータスには 204 や 200-299 のようなコードまたは範囲を指定してください。";

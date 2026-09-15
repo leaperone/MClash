@@ -1050,8 +1050,8 @@ struct ConfigurationEditorSheet: View {
         settings.selectionCooldown = cooldown
         settings.latencyToleranceMilliseconds = tolerance
         settings.latencyToleranceRatio = ratio
-        guard settings.validationError == nil else {
-            errorMessage = settings.validationError
+        if let issue = settings.validationError {
+            errorMessage = AppLocalization.string(issue)
             return nil
         }
         return settings

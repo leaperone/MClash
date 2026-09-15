@@ -2423,3 +2423,33 @@
 "Create a configuration before setting traffic paths." = "Crea una configuración antes de definir las rutas de tráfico.";
 "Browser path uses HTTP or SOCKS5." = "La ruta del navegador usa HTTP o SOCKS5.";
 "Choose a source that still exists." = "Elige una fuente que aún exista.";
+
+"Health checks" = "Comprobaciones de disponibilidad";
+
+"Test URL" = "URL de prueba";
+
+"Expected HTTP status" = "Estado HTTP esperado";
+
+"Interval (seconds)" = "Intervalo (segundos)";
+
+"Timeout (seconds)" = "Tiempo límite (segundos)";
+
+"Failures to switch" = "Fallos antes del cambio";
+
+"Successes to recover" = "Éxitos antes de recuperar";
+
+"Cooldown (seconds)" = "Espera entre cambios (segundos)";
+
+"Latency tolerance (ms)" = "Tolerancia de latencia (ms)";
+
+"Tolerance ratio" = "Tolerancia relativa de latencia";
+
+"Use an HTTP or HTTPS URL without credentials. Timeout must be greater than zero." = "Usa una URL HTTP o HTTPS sin credenciales. El tiempo límite debe ser mayor que cero.";
+
+"Enter a valid HTTP or HTTPS test URL and positive health-check values." = "Introduce una URL de prueba HTTP o HTTPS válida y valores de comprobación válidos.";
+
+"Health-check URL must use HTTP or HTTPS without credentials." = "La URL de comprobación debe usar HTTP o HTTPS sin credenciales.";
+
+"Health-check timing or failure thresholds are outside the supported range." = "Los tiempos o umbrales de fallo están fuera del intervalo admitido.";
+
+"Expected HTTP status must be codes or ranges such as 204 or 200-299." = "El estado HTTP esperado debe ser un código o intervalo como 204 o 200-299.";

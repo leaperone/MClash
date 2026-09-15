@@ -110,7 +110,9 @@ def dns_through_socks(port):
         control.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
         response = bytearray()
         while len(response) < 10:
-            response.extend(control.recv(10 - len(response)))
+            chunk = control.recv(10 - len(response))
+            assert chunk, "SOCKS listener closed the UDP association"
+            response.extend(chunk)
         assert response[:4] == b"\x05\x00\x00\x01", response[:4]
         endpoint = (socket.inet_ntoa(response[4:8]), struct.unpack("!H", response[8:10])[0])
         name = "capture-dns.mclash.invalid"
@@ -254,7 +256,9 @@ def main():
 
         fixture_source = base64.b64encode(f"proxies:\n  - name: Source fixture\n    type: http\n    server: 127.0.0.1\n    port: {proxy_a.server_address[1]}\n".encode()).decode()
         imported = call("profiles.import", {"dataBase64": fixture_source, "fileName": "fixture.yaml", "activate": True})
+        connection_started = time.monotonic()
         call("core.connect")
+        ready_seconds = round(time.monotonic() - connection_started, 3)
         state = call("status")
         assert state["core"]["connected"], state
         assert "26.9.9" in state["core"]["version"], state["core"]
@@ -317,6 +321,13 @@ def main():
         fetch("DIRECT")
         assert f"127.0.0.1:{proxy_b.server_address[1]}" in proxy_a.connect_targets[before_a:]
         assert f"127.0.0.1:{origin.server_address[1]}" in proxy_b.connect_targets[before_b:]
+        listener_pids = set()
+        for port in [http_port, socks_port]:
+            listener_pids.update(subprocess.check_output(["/usr/sbin/lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"], text=True).split())
+        assert len(listener_pids) == 1, "HTTP and SOCKS listeners use different core processes"
+        core_pid = listener_pids.pop()
+        core_rss = int(subprocess.check_output(["/bin/ps", "-o", "rss=", "-p", core_pid], text=True)) * 1024
+        app_rss = int(subprocess.check_output(["/bin/ps", "-o", "rss=", "-p", str(process.pid)], text=True)) * 1024
         snapshot = call("configuration.snapshot")
         before_activation = copy.deepcopy(snapshot["document"])
         occupied = copy.deepcopy(before_activation)
@@ -384,6 +395,7 @@ def main():
         receipt["failedActivationRollback"] = True
         receipt["healthSettingsRoundTrip"] = True
         receipt["signaturePreserved"] = args.preserve_signature
+        receipt["resources"] = dict(coreProcesses=1, coreRSSBytes=core_rss, appRSSBytes=app_rss, connectSeconds=ready_seconds)
         args.output.write_text(json.dumps(receipt, indent=2) + "\n")
         print(json.dumps(receipt))
     except BaseException:

@@ -2423,3 +2423,33 @@
 "Create a configuration before setting traffic paths." = "請先建立設定，再設定流量路徑。";
 "Browser path uses HTTP or SOCKS5." = "瀏覽器路徑使用 HTTP 或 SOCKS5。";
 "Choose a source that still exists." = "請選擇仍然存在的來源。";
+
+"Health checks" = "健康檢查";
+
+"Test URL" = "測速 URL";
+
+"Expected HTTP status" = "預期 HTTP 狀態碼";
+
+"Interval (seconds)" = "間隔（秒）";
+
+"Timeout (seconds)" = "逾時（秒）";
+
+"Failures to switch" = "連續失敗切換次數";
+
+"Successes to recover" = "連續成功恢復次數";
+
+"Cooldown (seconds)" = "切換冷卻時間（秒）";
+
+"Latency tolerance (ms)" = "延遲容差（毫秒）";
+
+"Tolerance ratio" = "相對延遲容差";
+
+"Use an HTTP or HTTPS URL without credentials. Timeout must be greater than zero." = "使用不含登入資訊的 HTTP 或 HTTPS URL，逾時必須大於零。";
+
+"Enter a valid HTTP or HTTPS test URL and positive health-check values." = "請輸入有效的 HTTP 或 HTTPS 測速 URL 和健康檢查數值。";
+
+"Health-check URL must use HTTP or HTTPS without credentials." = "健康檢查 URL 必須使用 HTTP 或 HTTPS，且不能包含登入資訊。";
+
+"Health-check timing or failure thresholds are outside the supported range." = "健康檢查時間或失敗閾值超出支援範圍。";
+
+"Expected HTTP status must be codes or ranges such as 204 or 200-299." = "預期 HTTP 狀態應為狀態碼或範圍，例如 204 或 200-299。";

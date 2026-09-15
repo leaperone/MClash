@@ -2767,8 +2767,15 @@ final class AutomationCommandGateway {
             let object = try configurationObject(value, path: "document.proxyGroups[\(index)]")
             try rejectUnknownConfigurationKeys(object, allowed: [
                 "id", "name", "type", "membersUpdate", "memberCount",
-                "memberSelectors", "selectorCount", "enabled",
+                "memberSelectors", "selectorCount", "healthCheck", "enabled",
             ], path: "document.proxyGroups[\(index)]")
+            if let health = object["healthCheck"], health != .null {
+                let path = "document.proxyGroups[\(index)].healthCheck"
+                try rejectUnknownConfigurationKeys(try configurationObject(health, path: path), allowed: [
+                    "testURL", "expectedStatus", "probeInterval", "probeTimeout", "selectionCooldown",
+                    "latencyToleranceMilliseconds", "latencyToleranceRatio", "failureThreshold", "recoveryThreshold",
+                ], path: path)
+            }
             if let members = object["membersUpdate"] {
                 for (memberIndex, member) in try configurationArray(members, path: "document.proxyGroups[\(index)].membersUpdate").enumerated() {
                     try rejectUnknownConfigurationKeys(

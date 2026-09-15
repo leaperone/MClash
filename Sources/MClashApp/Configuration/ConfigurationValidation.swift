@@ -108,7 +108,7 @@ public enum ConfigurationValidator {
         for group in workspaceGroups {
             let subject = group.id.rawValue.uuidString.lowercased()
             if let issue = group.healthCheck?.validationError {
-                result.append(.init(severity: .error, code: "invalid_health_check", subject: subject, message: issue))
+                result.append(.init(severity: .error, code: "invalid_health_check", subject: subject, message: AppLocalization.string(issue)))
             }
             if invalidGroupName(group.name) {
                 result.append(.init(severity: .error, code: "invalid_group_name", subject: subject, message: AppLocalization.string("Proxy group names cannot be empty or contain commas or line breaks.")))

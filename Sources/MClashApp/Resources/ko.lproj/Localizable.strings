@@ -2422,3 +2422,33 @@
 "Create a configuration before setting traffic paths." = "트래픽 경로를 설정하기 전에 구성을 만드세요.";
 "Browser path uses HTTP or SOCKS5." = "브라우저 경로는 HTTP 또는 SOCKS5를 사용합니다.";
 "Choose a source that still exists." = "아직 있는 소스를 선택하세요.";
+
+"Health checks" = "상태 확인";
+
+"Test URL" = "테스트 URL";
+
+"Expected HTTP status" = "예상 HTTP 상태 코드";
+
+"Interval (seconds)" = "간격(초)";
+
+"Timeout (seconds)" = "제한 시간(초)";
+
+"Failures to switch" = "전환까지의 실패 횟수";
+
+"Successes to recover" = "복구까지의 성공 횟수";
+
+"Cooldown (seconds)" = "전환 대기 시간(초)";
+
+"Latency tolerance (ms)" = "지연 허용 오차(ms)";
+
+"Tolerance ratio" = "지연 허용 비율";
+
+"Use an HTTP or HTTPS URL without credentials. Timeout must be greater than zero." = "인증 정보가 없는 HTTP 또는 HTTPS URL을 사용하세요. 제한 시간은 0보다 커야 합니다.";
+
+"Enter a valid HTTP or HTTPS test URL and positive health-check values." = "유효한 HTTP 또는 HTTPS 테스트 URL과 상태 확인 값을 입력하세요.";
+
+"Health-check URL must use HTTP or HTTPS without credentials." = "상태 확인 URL은 인증 정보가 없는 HTTP 또는 HTTPS여야 합니다.";
+
+"Health-check timing or failure thresholds are outside the supported range." = "상태 확인 시간 또는 실패 임계값이 지원 범위를 벗어났습니다.";
+
+"Expected HTTP status must be codes or ranges such as 204 or 200-299." = "예상 HTTP 상태는 204 또는 200-299 같은 코드나 범위여야 합니다.";
