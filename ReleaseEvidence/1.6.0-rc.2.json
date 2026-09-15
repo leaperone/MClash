@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "release_version": "1.6.0-rc.2",
-  "commit": "502e5f9d41fc68c154cd69b229ddfb4952c61374",
+  "commit": "5068cbc766b84d632bfa78d6aebab6cd44d9ff1e",
   "status": "passed",
   "backend": "xray",
   "verification_scope": "Source and isolated runtime acceptance before release signing",
-  "generated_at": "2026-09-15T16:46:50+00:00",
+  "generated_at": "2026-09-15T17:08:54Z",
   "xray_version": "26.9.9",
   "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
   "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
@@ -47,7 +47,11 @@
     "backend": "xray",
     "http": true,
     "socks5": true,
-    "modeChanges": ["global", "direct", "rule"],
+    "modeChanges": [
+      "global",
+      "direct",
+      "rule"
+    ],
     "selectionAndClear": true,
     "globalExitChange": true,
     "disconnect": true,
@@ -57,7 +61,10 @@
     "automaticFallback": 11.839,
     "automaticRecovery": 11.988,
     "expectedStatusEnforced": true,
-    "loadBalance": ["NODE_A", "NODE_B"],
+    "loadBalance": [
+      "NODE_A",
+      "NODE_B"
+    ],
     "relayChain": true,
     "dnsPolicy": {
       "directResolution": true,
@@ -79,7 +86,13 @@
     "owner": "MClash",
     "xrayRole": "protocol connection and forwarding",
     "accessLogRecords": 5,
-    "fields": ["timestamp", "entrance", "destination", "transport", "outbound"],
+    "fields": [
+      "timestamp",
+      "entrance",
+      "destination",
+      "transport",
+      "outbound"
+    ],
     "applicationIdentity": "provided separately by App Routing when available",
     "perConnectionByteCounters": "not claimed from Xray access logs"
   },
