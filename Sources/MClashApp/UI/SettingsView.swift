@@ -307,7 +307,7 @@ struct SettingsView: View {
                     }
 
                     DisclosureGroup("Core Details", isExpanded: $coreDetailsExpanded) {
-                        LabeledContent("Distribution", value: "Bundled mihomo Alpha")
+                        LabeledContent("Distribution", value: "Bundled proxy core Alpha")
                         LabeledContent(
                             "Version",
                             value: model.runningSession?.version
@@ -811,7 +811,7 @@ private struct RuntimeSettingsEditor: View {
                     DisclosureGroup("DNS", isExpanded: $dnsExpanded) {
                         Toggle("Override the profile DNS section", isOn: dnsOverrideEnabled)
                         if overrides.dns != nil {
-                            Text("This replaces the complete DNS section; fields left on Use Default use mihomo defaults, not values from the profile.")
+                            Text("This replaces the complete DNS section; fields left on Use Default use proxy core defaults, not values from the profile.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             OptionalBooleanPicker("DNS service", value: dnsBinding(\.enable))

@@ -102,7 +102,7 @@ struct ProxiesView: View {
                             description: Text(
                                 routingMode == "global"
                                     ? AppLocalization.string(
-                                        "The active core did not expose the GLOBAL group."
+                                        "The active core did not expose the all traffic group."
                                     )
                                     : AppLocalization.string(
                                         "The active configuration did not expose a selectable proxy group."
@@ -714,7 +714,7 @@ struct ProxiesView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Automatic selection is pinned")
                     .font(.callout.weight(.medium))
-                Text("Preferred node: \(fixed). The active node still follows mihomo health checks.")
+                Text("Preferred node: \(fixed). The active node still follows proxy core health checks.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1230,19 +1230,19 @@ struct ProxyGroupPartitionSnapshot {
         var nestedNames = Set<String>()
         for edge in snapshot.topology.edges
         where edge.kind == .member
-            && edge.source != "GLOBAL"
+            && edge.source != "all traffic"
             && snapshot.topology.vertices[edge.source]?.isGroup == true {
             nestedNames.insert(edge.target)
         }
 
         roots = available.filter { group in
-            group.name != "GLOBAL" && !nestedNames.contains(group.name)
+            group.name != "all traffic" && !nestedNames.contains(group.name)
         }
         nested = available.filter { group in
-            group.name != "GLOBAL" && nestedNames.contains(group.name)
+            group.name != "all traffic" && nestedNames.contains(group.name)
         }
         special = routingMode == "rule"
-            ? available.filter { $0.name == "GLOBAL" }
+            ? available.filter { $0.name == "all traffic" }
             : []
     }
 
@@ -1261,19 +1261,19 @@ struct ProxyGroupPartitionSnapshot {
         var nestedNames = Set<String>()
         for edge in model.proxyTopology.edges
         where edge.kind == .member
-            && edge.source != "GLOBAL"
+            && edge.source != "all traffic"
             && model.proxyTopology.vertices[edge.source]?.isGroup == true {
             nestedNames.insert(edge.target)
         }
 
         roots = available.filter { group in
-            group.name != "GLOBAL" && !nestedNames.contains(group.name)
+            group.name != "all traffic" && !nestedNames.contains(group.name)
         }
         nested = available.filter { group in
-            group.name != "GLOBAL" && nestedNames.contains(group.name)
+            group.name != "all traffic" && nestedNames.contains(group.name)
         }
         special = routingMode == "rule"
-            ? available.filter { $0.name == "GLOBAL" }
+            ? available.filter { $0.name == "all traffic" }
             : []
     }
 }
