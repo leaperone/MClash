@@ -413,6 +413,7 @@ def main():
         receipt["dnsPolicy"] = {"directResolution": True, "socksUDPCapture": True}
         receipt["failedActivationRollback"] = True
         receipt["healthSettingsRoundTrip"] = True
+        receipt["encodedSourceImport"] = True
         receipt["signaturePreserved"] = args.preserve_signature
         receipt["resources"] = dict(coreProcesses=1, coreRSSBytes=core_rss, appRSSBytes=app_rss, connectSeconds=ready_seconds)
         receipt["xrayAccessRecords"] = access_records["total"]
