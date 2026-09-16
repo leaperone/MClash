@@ -1450,7 +1450,7 @@
 "Root group %@ is unavailable." = "根分组 %@ 不可用。";
 "Route Pipeline" = "路由流程";
 "Route confirmed" = "路由已确认";
-"Route confirmed by Mihomo /connections" = "proxy core /connections 已确认路由";
+"Route confirmed by Mihomo /connections" = "连接记录已确认路由";
 "Route unavailable" = "路由不可用";
 "Routes" = "路由";
 "Routing Note" = "路由说明";
@@ -1491,7 +1491,7 @@
 "Sent to Mihomo" = "已发送到 proxy core";
 "Sent to Mihomo %@" = "已发送到 proxy core %@";
 "Sent to Mihomo awaiting connections confirmation" = "已发送到 proxy core，正在等待连接确认";
-"Sent to Mihomo; awaiting /connections confirmation" = "已发送到 proxy core；正在等待 /connections 确认";
+"Sent to Mihomo; awaiting /connections confirmation" = "已通过代理发送；正在等待路由确认";
 "Settings applied · Core restarted." = "设置已应用 · 内核已重新启动。";
 "Settings are already up to date." = "设置已是最新状态。";
 "Settings saved for the next connection." = "设置已保存，将在下次连接时生效。";
@@ -1757,9 +1757,9 @@
 "Via Mihomo" = "通过 proxy core";
 "Wait a moment, then retry loading this Profile." = "请稍候，然后重新加载此配置。";
 "Waiting for Connection" = "正在等待连接";
-"Waiting for Mihomo metadata" = "正在等待 proxy core 元数据";
+"Waiting for Mihomo metadata" = "正在等待路由详情";
 "Waiting for active connections" = "正在等待活跃连接";
-"Waiting for an associated Mihomo connection" = "正在等待关联的 proxy core 连接";
+"Waiting for an associated Mihomo connection" = "正在等待连接详情";
 "Why this rule matched" = "此规则为何匹配";
 "[output truncated by MClash]" = "[输出已被 MClash 截断]";
 "active profile: %@" = "当前配置：%@";
@@ -2513,13 +2513,13 @@
 "Optional local entries, one rule per line. A remote list is loaded into the selected cache path." = "Optional local entries, one rule per line. A remote list is loaded into the selected cache path.";
 
 "Waiting for traffic" = "等待流量";
-"MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed." = "启用应用分流后，MClash 会记录应用流量和规则决策。观察到连接后，新的 Xray 连接记录会显示在这里。";
+"MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed." = "启用应用分流后，MClash 会记录应用流量和规则决策。观察到连接后，新的连接记录会显示在这里。";
 "Time" = "时间";
 "Unknown source" = "未知来源";
 "No source was reported" = "未报告来源";
 "Evidence" = "证据";
 "Connection event" = "连接事件";
-"Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "MClash 从 Xray 访问日志中观察到。这是一条连接事件，不是应用级字节统计。";
+"Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "MClash 从连接记录中观察到。这是一条连接事件，不是应用级字节统计。";
 "No entrance or node was reported for this connection event." = "这条连接事件没有报告入口或节点。";
 
 

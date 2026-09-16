@@ -269,6 +269,52 @@ struct ReleasePackagingTests {
         #expect(workflow.contains("macos-arm64.delta(N)"))
     }
 
+    @Test("Xray package layout rejects every extra core")
+    func xrayPackageLayoutRejectsLegacyCore() throws {
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mclash-xray-layout-\(UUID().uuidString)")
+        let app = temporary.appendingPathComponent("MClash.app")
+        let core = app.appendingPathComponent("Contents/Resources/Core")
+        let thirdParty = app.appendingPathComponent("Contents/Resources/ThirdParty")
+        try FileManager.default.createDirectory(at: core, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: thirdParty, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+
+        let info: [String: Any] = ["MClashRuntimeBackend": "xray"]
+        let infoData = try PropertyListSerialization.data(
+            fromPropertyList: info,
+            format: .xml,
+            options: 0
+        )
+        try infoData.write(to: app.appendingPathComponent("Contents/Info.plist"))
+        let xray = core.appendingPathComponent("mclash-xray")
+        try Data("fixture".utf8).write(to: xray)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: xray.path
+        )
+
+        let accepted = try run(
+            "/usr/bin/python3",
+            [repositoryRoot.appendingPathComponent("scripts/test-xray-package-layout.py").path, app.path]
+        )
+        #expect(accepted.status == 0, Comment(rawValue: accepted.output))
+
+        try Data("legacy".utf8).write(
+            to: core.appendingPathComponent("mclash-mihomo")
+        )
+        let rejected = try run(
+            "/usr/bin/python3",
+            [repositoryRoot.appendingPathComponent("scripts/test-xray-package-layout.py").path, app.path]
+        )
+        #expect(rejected.status != 0)
+        #expect(rejected.output.contains("must contain only mclash-xray"))
+
+        let workflow = try source(".github/workflows/release.yml")
+        #expect(workflow.contains("test-xray-package-layout.py"))
+        #expect(workflow.contains("checksums must not contain legacy core source"))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -289,5 +335,24 @@ struct ReleasePackagingTests {
             contentsOf: repositoryRoot.appendingPathComponent(path),
             encoding: .utf8
         )
+    }
+
+    private func run(_ executable: String, _ arguments: [String]) throws -> (
+        status: Int32,
+        output: String
+    ) {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        process.waitUntilExit()
+        let output = String(
+            decoding: pipe.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        )
+        return (process.terminationStatus, output)
     }
 }

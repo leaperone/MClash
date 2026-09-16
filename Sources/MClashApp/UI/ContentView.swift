@@ -257,17 +257,20 @@ struct ContentView: View {
     }
 
     private var sidebarConnectionValue: String {
-        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
-        case .live: AppLocalization.number(model.connections?.connections.count ?? 0)
+        switch model.liveStreamHealth[model.connectionRecordStream]?.phase ?? .inactive {
+        case .live: AppLocalization.number(model.connectionRecordCount)
         case .connecting: "…"
         case .reconnecting, .stale, .inactive: "—"
         }
     }
 
     private var sidebarConnectionAccessibilityLabel: String {
-        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
+        switch model.liveStreamHealth[model.connectionRecordStream]?.phase ?? .inactive {
         case .live:
-            let count = model.connections?.connections.count ?? 0
+            let count = model.connectionRecordCount
+            if model.runtimeBackend == .xray {
+                return AppLocalization.format("%@ records", AppLocalization.number(count))
+            }
             return AppLocalization.format(
                 count == 1 ? "%@ active connection" : "%@ active connections",
                 AppLocalization.number(count)

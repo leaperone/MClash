@@ -15,6 +15,10 @@ apple_password="${APPLE_APP_SPECIFIC_PASSWORD:-}"
 apple_team_id="${APPLE_TEAM_ID:-}"
 release_notes="${MCLASH_RELEASE_NOTES:-${repo_root}/ReleaseNotes/${version}.md}"
 architecture="${MCLASH_ARCHITECTURE:-$(uname -m)}"
+legacy_core_enabled=1
+if [[ "${version}" == 1.6.* && "${MCLASH_RUNTIME_BACKEND:-xray}" == "xray" ]]; then
+  legacy_core_enabled=0
+fi
 host_devid_profile="${MCLASH_HOST_DEVID_PROFILE_PATH:-}"
 network_extension_devid_profile="${MCLASH_NETWORK_EXTENSION_DEVID_PROFILE_PATH:-}"
 host_devid_entitlements="${MCLASH_HOST_DEVID_ENTITLEMENTS:-${repo_root}/Support/Signing/MClash-DeveloperID.entitlements}"
@@ -67,7 +71,9 @@ if [[ "${architecture}" != "arm64" ]]; then
   print -u2 "The current release manifest only supports arm64, not ${architecture}."
   exit 2
 fi
-mihomo_alpha_select_architecture "${architecture}"
+if (( legacy_core_enabled )); then
+  mihomo_alpha_select_architecture "${architecture}"
+fi
 if [[ "${version}" == 1.6.* && "${MCLASH_RUNTIME_BACKEND:-xray}" == "xray" ]]; then
   [[ -f "${XRAY_RESOURCE_PATH}" ]] || "${repo_root}/scripts/fetch-xray.sh"
   xray_verify_selected_artifact
@@ -242,7 +248,7 @@ sign_application() {
     sign_path "${sparkle}"
   fi
 
-  if [[ ! -f "${core}" ]]; then
+  if (( legacy_core_enabled )) && [[ ! -f "${core}" ]]; then
     print -u2 "Bundled core is missing: ${core}"
     exit 1
   fi
@@ -270,7 +276,9 @@ sign_application() {
     "${system_extension}/Contents/embedded.provisionprofile"
 
   sign_path "${automation_cli}" --entitlements "${cli_devid_entitlements}"
-  sign_path "${core}"
+  if (( legacy_core_enabled )); then
+    sign_path "${core}"
+  fi
   if [[ -f "${xray_core}" ]]; then
     sign_path "${xray_core}" --identifier mclash-xray
   fi
@@ -360,19 +368,18 @@ export MCLASH_RELEASE_TAG="${release_tag}"
   "${appcast}" \
   "${release_notes}" \
   "${delta_manifest}"
-"${repo_root}/scripts/package-mihomo-source.sh" "${mihomo_source}"
+if (( legacy_core_enabled )); then
+  "${repo_root}/scripts/package-mihomo-source.sh" "${mihomo_source}"
+fi
 sparkle_tools="$(${repo_root}/scripts/fetch-sparkle-tools.sh)"
 cp "${sparkle_tools}/LICENSE" "${sparkle_license}"
 
 (
   cd "${release_dir}"
-  checksum_assets=(
-    "${dmg:t}" \
-    "${update_zip:t}" \
-    "${appcast:t}" \
-    "${mihomo_source:t}" \
-    "${sparkle_license:t}"
-  )
+  checksum_assets=("${dmg:t}" "${update_zip:t}" "${appcast:t}" "${sparkle_license:t}")
+  if (( legacy_core_enabled )); then
+    checksum_assets+=("${mihomo_source:t}")
+  fi
   for delta in MClash-${version}-from-*-macos-arm64.delta(N); do
     checksum_assets+=("${delta}")
   done
@@ -383,7 +390,9 @@ print "Release assets ready in ${release_dir}:"
 print "  ${dmg:t}"
 print "  ${update_zip:t}"
 print "  ${appcast:t}"
-print "  ${mihomo_source:t}"
+if (( legacy_core_enabled )); then
+  print "  ${mihomo_source:t}"
+fi
 print "  ${sparkle_license:t}"
 for delta in "${release_dir}"/MClash-${version}-from-*-macos-arm64.delta(N); do
   print "  ${delta:t}"

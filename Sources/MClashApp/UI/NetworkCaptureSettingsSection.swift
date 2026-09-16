@@ -2139,7 +2139,7 @@ private struct AppRoutingFlowInspector: View {
         }
         if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
             return AppLocalization.string(
-                "Sent to proxy core; awaiting /connections confirmation"
+                "Sent to Mihomo; awaiting /connections confirmation"
             )
         }
         return AppLocalization.string("Waiting for an associated Mihomo connection")

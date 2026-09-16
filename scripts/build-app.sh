@@ -58,15 +58,18 @@ if [[ ! -d "${sparkle_framework}" ]]; then
   exit 1
 fi
 
-mihomo_alpha_select_architecture "${architecture}"
-
-if [[ ! -f "${MIHOMO_ALPHA_RESOURCE_PATH}" ]]; then
-  "${repo_root}/scripts/fetch-mihomo-alpha.sh" --architecture "${architecture}"
-fi
-mihomo_alpha_verify_selected_artifact
 xray_enabled=0
 if [[ "${app_version}" == 1.6.* && "${MCLASH_RUNTIME_BACKEND:-xray}" == "xray" ]]; then
   xray_enabled=1
+fi
+legacy_core_enabled=$(( xray_enabled == 0 ))
+if (( legacy_core_enabled )); then
+  mihomo_alpha_select_architecture "${architecture}"
+  if [[ ! -f "${MIHOMO_ALPHA_RESOURCE_PATH}" ]]; then
+    "${repo_root}/scripts/fetch-mihomo-alpha.sh" --architecture "${architecture}"
+  fi
+  mihomo_alpha_verify_selected_artifact
+else
   [[ -f "${XRAY_RESOURCE_PATH}" ]] || "${repo_root}/scripts/fetch-xray.sh"
   xray_verify_selected_artifact
 fi
@@ -77,21 +80,25 @@ if [[ "${code_sign_identity}" != "-" || "${MCLASH_REFRESH_GEODATA:-0}" == "1" ]]
   geodata_fetch_arguments+=(--refresh)
 fi
 "${repo_root}/scripts/fetch-mihomo-geodata.sh" "${geodata_fetch_arguments[@]}"
-"${repo_root}/scripts/smoke-test-mihomo-geodata.sh" \
-  "${MIHOMO_ALPHA_RESOURCE_PATH}" \
-  "${geodata_source}"
+if (( legacy_core_enabled )); then
+  "${repo_root}/scripts/smoke-test-mihomo-geodata.sh" \
+    "${MIHOMO_ALPHA_RESOURCE_PATH}" \
+    "${geodata_source}"
+else
+  "${repo_root}/scripts/verify-mihomo-geodata.sh" "${geodata_source}"
+fi
 
 license_source="${repo_root}/Sources/MClashApp/Resources/ThirdParty/mihomo-LICENSE.txt"
 corresponding_source="${repo_root}/Sources/MClashApp/Resources/ThirdParty/mihomo-SOURCE.txt"
 notice_source="${repo_root}/ThirdParty/mihomo/NOTICE.md"
 mclash_license="${repo_root}/LICENSE"
 for required_file in "${mclash_license}" "${license_source}" "${corresponding_source}" "${notice_source}"; do
-  if [[ ! -s "${required_file}" ]]; then
+  if (( legacy_core_enabled )) && [[ ! -s "${required_file}" ]]; then
     print -u2 "Missing required mihomo distribution material: ${required_file}"
     exit 1
   fi
 done
-if ! grep -Fq "${MIHOMO_ALPHA_REVISION}" "${corresponding_source}"; then
+if (( legacy_core_enabled )) && ! grep -Fq "${MIHOMO_ALPHA_REVISION}" "${corresponding_source}"; then
   print -u2 "mihomo-SOURCE.txt does not reference the pinned revision ${MIHOMO_ALPHA_REVISION}."
   exit 1
 fi
@@ -224,7 +231,9 @@ cp "${repo_root}/Support/Info.plist" "${contents}/Info.plist"
 cp "${network_extension_info_source}" "${system_extension_contents}/Info.plist"
 cp "${login_agent_source}" "${contents}/Library/LaunchAgents/one.leaper.mclash.login.plist"
 plutil -lint "${contents}/Library/LaunchAgents/one.leaper.mclash.login.plist" >/dev/null
-cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+if (( legacy_core_enabled )); then
+  cp "${MIHOMO_ALPHA_RESOURCE_PATH}" "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
+fi
 if (( xray_enabled )); then
   cp "${XRAY_RESOURCE_PATH}" "${contents}/Resources/Core/mclash-xray"
 fi
@@ -235,9 +244,11 @@ for localization_source in "${repo_root}"/Sources/MClashApp/Resources/*.lproj(N/
   ditto "${localization_source}" "${contents}/Resources/${localization_source:t}"
 done
 cp "${mclash_license}" "${contents}/Resources/MClash-LICENSE.txt"
-cp "${license_source}" "${contents}/Resources/ThirdParty/mihomo-LICENSE.txt"
-cp "${corresponding_source}" "${contents}/Resources/ThirdParty/mihomo-SOURCE.txt"
-cp "${notice_source}" "${contents}/Resources/ThirdParty/mihomo-NOTICE.md"
+if (( legacy_core_enabled )); then
+  cp "${license_source}" "${contents}/Resources/ThirdParty/mihomo-LICENSE.txt"
+  cp "${corresponding_source}" "${contents}/Resources/ThirdParty/mihomo-SOURCE.txt"
+  cp "${notice_source}" "${contents}/Resources/ThirdParty/mihomo-NOTICE.md"
+fi
 if (( xray_enabled )); then
   cp "${repo_root}/Sources/MClashApp/Resources/ThirdParty/xray-LICENSE.txt" "${contents}/Resources/ThirdParty/xray-LICENSE.txt"
   cp "${repo_root}/Sources/MClashApp/Resources/ThirdParty/xray-SOURCE.txt" "${contents}/Resources/ThirdParty/xray-SOURCE.txt"
@@ -245,7 +256,10 @@ if (( xray_enabled )); then
 fi
 cp "${sparkle_framework_dir}/LICENSE" "${contents}/Resources/ThirdParty/Sparkle-LICENSE.txt"
 "${repo_root}/scripts/verify-mihomo-geodata.sh" "${contents}/Resources/GeoData"
-recorded_hash="$(mihomo_alpha_recorded_hash "${MIHOMO_ALPHA_RESOURCE_NAME}")"
+recorded_hash=""
+if (( legacy_core_enabled )); then
+  recorded_hash="$(mihomo_alpha_recorded_hash "${MIHOMO_ALPHA_RESOURCE_NAME}")"
+fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${app_version}" \
   -c "Set :CFBundleVersion ${build_number}" \
   "${contents}/Info.plist"
@@ -258,11 +272,13 @@ else
     'Add :NSSystemExtensionUsageDescription string MClash uses a network system extension to apply per-application proxy and DNS routing rules.' \
     "${contents}/Info.plist"
 fi
-/usr/libexec/PlistBuddy -c \
-  "Add :MClashMihomoAlphaVersion string ${MIHOMO_ALPHA_VERSION}" \
-  -c "Add :MClashMihomoAlphaRawSHA256 string ${recorded_hash}" \
-  -c "Add :MClashSourceRevision string ${source_revision}" \
-  "${contents}/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :MClashSourceRevision string ${source_revision}" "${contents}/Info.plist"
+if (( legacy_core_enabled )); then
+  /usr/libexec/PlistBuddy -c \
+    "Add :MClashMihomoAlphaVersion string ${MIHOMO_ALPHA_VERSION}" \
+    -c "Add :MClashMihomoAlphaRawSHA256 string ${recorded_hash}" \
+    "${contents}/Info.plist"
+fi
 if (( xray_enabled )); then
   /usr/libexec/PlistBuddy -c "Add :MClashRuntimeBackend string xray" -c "Add :MClashXrayVersion string ${XRAY_VERSION}" -c "Add :MClashXrayRevision string ${XRAY_REVISION}" -c "Add :MClashXrayRawSHA256 string ${XRAY_RAW_SHA256}" "${contents}/Info.plist"
 fi
@@ -278,13 +294,16 @@ if grep -Eq '\$\([^)]+\)' "${system_extension_contents}/Info.plist"; then
   exit 1
 fi
 
-packaged_hash="$(shasum -a 256 "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}" | awk '{ print $1 }')"
-if [[ "${packaged_hash}" != "${recorded_hash}" ]]; then
-  print -u2 "Packaged mihomo Alpha SHA-256 changed while assembling the app"
-  exit 1
+packaged_hash=""
+packaged_core=""
+if (( legacy_core_enabled )); then
+  packaged_hash="$(shasum -a 256 "${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}" | awk '{ print $1 }')"
+  if [[ "${packaged_hash}" != "${recorded_hash}" ]]; then
+    print -u2 "Packaged mihomo Alpha SHA-256 changed while assembling the app"
+    exit 1
+  fi
+  packaged_core="${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
 fi
-
-packaged_core="${contents}/Resources/Core/${MIHOMO_ALPHA_BUNDLE_NAME}"
 if (( xray_enabled )); then
   cp "${XRAY_RESOURCE_PATH}" "${contents}/Resources/Core/mclash-xray"
   xray_packaged_hash="$(shasum -a 256 "${contents}/Resources/Core/mclash-xray" | awk '{print $1}')"
@@ -292,7 +311,7 @@ if (( xray_enabled )); then
 fi
 if [[ "${code_sign_identity}" == "-" ]]; then
   codesign --force --sign - "${contents}/Helpers/mclashctl"
-  codesign --force --sign - "${packaged_core}"
+  if (( legacy_core_enabled )); then codesign --force --sign - "${packaged_core}"; fi
   (( xray_enabled )) && codesign --force --sign - --identifier mclash-xray "${contents}/Resources/Core/mclash-xray"
   codesign --force \
     --entitlements "${network_extension_devid_entitlements}" \
@@ -411,8 +430,10 @@ else
   codesign --force --options runtime --timestamp \
     --entitlements "${cli_devid_entitlements}" \
     --sign "${code_sign_identity}" "${contents}/Helpers/mclashctl"
-  codesign --force --options runtime --timestamp \
-    --sign "${code_sign_identity}" "${packaged_core}"
+  if (( legacy_core_enabled )); then
+    codesign --force --options runtime --timestamp \
+      --sign "${code_sign_identity}" "${packaged_core}"
+  fi
   if (( xray_enabled )); then
     codesign --force --options runtime --timestamp --sign "${code_sign_identity}" --identifier mclash-xray "${contents}/Resources/Core/mclash-xray"
   fi
@@ -423,7 +444,9 @@ else
     --entitlements "${host_devid_entitlements}" \
     --sign "${code_sign_identity}" "${app_bundle}"
 fi
-codesign --verify --strict --verbose=2 "${packaged_core}"
+if (( legacy_core_enabled )); then
+  codesign --verify --strict --verbose=2 "${packaged_core}"
+fi
 codesign --verify --strict --verbose=2 "${contents}/Helpers/mclashctl"
 if [[ -d "${system_extension}" ]]; then
   codesign --verify --strict --verbose=2 "${system_extension}"
@@ -475,4 +498,8 @@ if [[ "${code_sign_identity}" != "-" ]]; then
     exit 1
   fi
 fi
-print "Built MClash ${app_version} (${build_number}) at ${app_bundle} with mihomo ${MIHOMO_ALPHA_VERSION} (${packaged_hash})"
+if (( xray_enabled )); then
+  print "Built MClash ${app_version} (${build_number}) at ${app_bundle} with Xray ${XRAY_VERSION} (${XRAY_RAW_SHA256})"
+else
+  print "Built MClash ${app_version} (${build_number}) at ${app_bundle} with mihomo ${MIHOMO_ALPHA_VERSION} (${packaged_hash})"
+fi

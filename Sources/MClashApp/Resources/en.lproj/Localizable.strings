@@ -1451,7 +1451,7 @@
 "Root group %@ is unavailable." = "Root group %@ is unavailable.";
 "Route Pipeline" = "Route Pipeline";
 "Route confirmed" = "Route confirmed";
-"Route confirmed by Mihomo /connections" = "Route confirmed by proxy core /connections";
+"Route confirmed by Mihomo /connections" = "Route confirmed by connection records";
 "Route unavailable" = "Route unavailable";
 "Routes" = "Routes";
 "Routing Note" = "Routing Note";
@@ -1492,7 +1492,7 @@
 "Sent to Mihomo" = "Sent to proxy core";
 "Sent to Mihomo %@" = "Sent to proxy core %@";
 "Sent to Mihomo awaiting connections confirmation" = "Sent to proxy core awaiting connections confirmation";
-"Sent to Mihomo; awaiting /connections confirmation" = "Sent to proxy core; awaiting /connections confirmation";
+"Sent to Mihomo; awaiting /connections confirmation" = "Sent through proxy; awaiting route confirmation";
 "Settings applied · Core restarted." = "Settings applied · Core restarted.";
 "Settings are already up to date." = "Settings are already up to date.";
 "Settings saved for the next connection." = "Settings saved for the next connection.";
@@ -1758,9 +1758,9 @@
 "Via Mihomo" = "Via proxy core";
 "Wait a moment, then retry loading this Profile." = "Wait a moment, then retry loading this Profile.";
 "Waiting for Connection" = "Waiting for Connection";
-"Waiting for Mihomo metadata" = "Waiting for proxy core metadata";
+"Waiting for Mihomo metadata" = "Waiting for route details";
 "Waiting for active connections" = "Waiting for active connections";
-"Waiting for an associated Mihomo connection" = "Waiting for an associated proxy core connection";
+"Waiting for an associated Mihomo connection" = "Waiting for connection details";
 "Why this rule matched" = "Why this rule matched";
 "[output truncated by MClash]" = "[output truncated by MClash]";
 "active profile: %@" = "active profile: %@";
@@ -2514,13 +2514,13 @@
 "Optional local entries, one rule per line. A remote list is loaded into the selected cache path." = "Optional local entries, one rule per line. A remote list is loaded into the selected cache path.";
 
 "Waiting for traffic" = "Waiting for traffic";
-"MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed." = "MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed.";
+"MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed." = "MClash records application flows and rule decisions when Application Routing is enabled. New connection records appear here after a connection is observed.";
 "Time" = "Time";
 "Unknown source" = "Unknown source";
 "No source was reported" = "No source was reported";
 "Evidence" = "Evidence";
 "Connection event" = "Connection event";
-"Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total.";
+"Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "Observed by MClash from its connection records. This is a connection event, not an application-level byte total.";
 "No entrance or node was reported for this connection event." = "No entrance or node was reported for this connection event.";
 
 

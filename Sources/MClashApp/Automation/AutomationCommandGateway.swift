@@ -876,9 +876,9 @@ final class AutomationCommandGateway {
                     request: request,
                     maximumLimit: 200
                 ).mergingObject([
-                    "freshness": freshness(.appRouting),
-                    "evidence": .string("mclash-flow-records"),
-                    "note": .string("Xray does not expose per-connection records; these rows are MClash flow records."),
+                    "freshness": freshness(.xrayAccess),
+                    "evidence": .string("mclash-xray-access-log"),
+                    "note": .string("MClash reads these connection events from the Xray access log. They do not include per-connection byte totals."),
                 ])
             }
             return try paged(
@@ -889,17 +889,29 @@ final class AutomationCommandGateway {
         case "traffic.flows.list":
             if model.runtimeBackend == .xray {
                 return try paged(model.xrayAccessRecords, request: request, maximumLimit: 200)
-                    .mergingObject(["freshness": freshness(.appRouting), "evidence": .string("mclash-xray-access-records")])
+                    .mergingObject(["freshness": freshness(.xrayAccess), "evidence": .string("mclash-xray-access-log")])
             }
             return try paged(model.appRoutingActivities, request: request, maximumLimit: 200)
                 .mergingObject(["freshness": freshness(.appRouting), "evidence": .string("mclash-flow-records")])
         case "traffic.connections.close":
+            if model.runtimeBackend == .xray {
+                throw GatewayError.operationFailed(
+                    "Xray connection records are historical events and cannot be closed from MClash.",
+                    false
+                )
+            }
             try require(
                 await model.closeConnection(try request.string("id")),
                 "The connection could not be closed"
             )
             return accepted()
         case "traffic.connections.closeAll":
+            if model.runtimeBackend == .xray {
+                throw GatewayError.operationFailed(
+                    "Xray connection records are historical events and cannot be closed from MClash.",
+                    false
+                )
+            }
             try require(
                 await model.closeAllConnections(),
                 "Connections could not be closed"
@@ -1765,8 +1777,13 @@ final class AutomationCommandGateway {
             "downloadBytesPerSecond": .integer(model.traffic.download),
             "uploadTotal": .integer(model.traffic.uploadTotal),
             "downloadTotal": .integer(model.traffic.downloadTotal),
-            "connectionCount": .integer(Int64(model.connections?.connections.count ?? 0)),
-            "memoryBytes": model.connections?.memory.map {
+            "connectionCount": .integer(Int64(model.runtimeBackend == .xray
+                ? model.xrayAccessRecords.count
+                : model.connections?.connections.count ?? 0)),
+            "connectionCountMeaning": .string(model.runtimeBackend == .xray
+                ? "recordedEvents"
+                : "activeConnections"),
+            "memoryBytes": model.runtimeBackend == .xray ? .null : model.connections?.memory.map {
                 .unsignedInteger($0)
             } ?? .null,
             "freshness": freshness(.traffic),

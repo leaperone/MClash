@@ -91,6 +91,7 @@ final class AppModel {
     enum LiveStream: CaseIterable, Hashable {
         case traffic
         case connections
+        case xrayAccess
         case logs
         case proxies
         case appRouting
@@ -99,6 +100,7 @@ final class AppModel {
             switch self {
             case .traffic: AppLocalization.string("traffic rate")
             case .connections: AppLocalization.string("connection")
+            case .xrayAccess: AppLocalization.string("Connection event")
             case .logs: AppLocalization.string("log")
             case .proxies: AppLocalization.string("proxy state")
             case .appRouting: AppLocalization.string("App Routing activity")
@@ -1493,12 +1495,28 @@ final class AppModel {
         usesXrayRuntime ? .xray : .mihomoCompatibility
     }
 
+    var connectionRecordCount: Int {
+        usesXrayRuntime ? xrayAccessRecords.count : connections?.connections.count ?? 0
+    }
+
+    var connectionRecordStream: LiveStream {
+        usesXrayRuntime ? .xrayAccess : .connections
+    }
+
+    var connectionRecordDataIsCurrent: Bool {
+        liveStreamHealth[connectionRecordStream]?.hasCurrentData == true
+    }
+
+    var connectionCountPresentationTitle: String {
+        AppLocalization.string("Connections")
+    }
+
     var liveDataIsDegraded: Bool {
         !degradedStreams.isEmpty
     }
 
     var liveMetricsAreDegraded: Bool {
-        degradedStreams.contains(.traffic) || degradedStreams.contains(.connections)
+        degradedStreams.contains(.traffic) || degradedStreams.contains(connectionRecordStream)
     }
 
     var presentationTelemetryPolicy: PresentationTelemetryPolicy {
@@ -9999,6 +10017,7 @@ final class AppModel {
         let deadlines: [(LiveStream, TimeInterval)] = [
             policy.traffic ? (.traffic, 4) : nil,
             policy.connections ? (.connections, 6) : nil,
+            runtimeBackend == .xray ? (.xrayAccess, 6) : nil,
             policy.proxies ? (.proxies, 15) : nil,
             policy.appRoutingActivity ? (.appRouting, 5) : nil,
         ].compactMap { $0 }
@@ -11940,9 +11959,13 @@ final class AppModel {
         xrayAccessLogFileID = nil
         xrayAccessLogPendingLine = ""
         xrayAccessRecords = []
+        liveStreamHealth[.xrayAccess] = .connecting(
+            previousSampleAt: liveStreamHealth[.xrayAccess]?.lastReceivedAt
+        )
         let logURL = launch.homeDirectory.appending(path: "access.log")
         xrayAccessLogTask = Task { @MainActor [weak self] in
             let parser = XrayAccessLogParser()
+            var consecutiveFailures = 0
             while !Task.isCancelled {
                 guard let self else { return }
                 do {
@@ -11975,12 +11998,18 @@ final class AppModel {
                             self.xrayAccessRecords = Array((self.xrayAccessRecords + records).suffix(2_000))
                         }
                     }
+                    self.markStreamHealthy(.xrayAccess)
+                    consecutiveFailures = 0
                     try await Task.sleep(for: .milliseconds(500))
                 } catch is CancellationError {
                     return
                 } catch {
-                    self.appendSupervisorLog("MClash could not read Xray flow records: \(error.localizedDescription)")
-                    return
+                    consecutiveFailures += 1
+                    self.markStreamDegraded(.xrayAccess, error: error, attempt: consecutiveFailures)
+                    if consecutiveFailures == 1 {
+                        self.appendSupervisorLog("MClash could not read Xray flow records: \(error.localizedDescription)")
+                    }
+                    try? await Task.sleep(for: .seconds(1))
                 }
             }
         }
@@ -11993,6 +12022,7 @@ final class AppModel {
         xrayAccessLogFileID = nil
         xrayAccessLogPendingLine = ""
         xrayAccessRecords = []
+        liveStreamHealth[.xrayAccess] = .inactive
     }
 
     private func appendSupervisorLog(_ message: String) {

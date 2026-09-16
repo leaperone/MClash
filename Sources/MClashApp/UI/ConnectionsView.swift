@@ -742,7 +742,7 @@ struct ConnectionsView: View {
 
             Spacer(minLength: 12)
 
-            if workspace == .live {
+            if workspace == .live, model.runtimeBackend != .xray {
                 liveSnapshotControls(presentation: presentation, compact: false)
             }
 
@@ -810,7 +810,7 @@ struct ConnectionsView: View {
                 .help(trafficDataNotice ?? trafficHeaderSummary(presentation: presentation))
                 .accessibilityLabel(trafficHeaderSummary(presentation: presentation))
 
-                if workspace == .live {
+                if workspace == .live, model.runtimeBackend != .xray {
                     liveSnapshotControls(presentation: presentation, compact: true)
                         Text(defaultLiveWorkspaceTitle)
                         .font(.caption)
@@ -983,15 +983,16 @@ struct ConnectionsView: View {
                     }
                     .disabled(selectedConnection == nil)
 
-                    Divider()
-
-                    Button("Close All", role: .destructive) {
-                        confirmingCloseAll = true
+                    if model.runtimeBackend != .xray {
+                        Divider()
+                        Button("Close All", role: .destructive) {
+                            confirmingCloseAll = true
+                        }
+                        .disabled(
+                            !presentation.hasConnections
+                                || !model.canPerform(.closeAllConnections)
+                        )
                     }
-                    .disabled(
-                        !presentation.hasConnections
-                            || !model.canPerform(.closeAllConnections)
-                    )
                 } else {
                     Button("Clear History", role: .destructive) {
                         confirmingClearTrafficHistory = true
@@ -1040,7 +1041,11 @@ struct ConnectionsView: View {
         if trafficDataNotice != nil {
             return AppLocalization.string("Traffic data reconnecting")
         }
-        if workspace == .live { return presentation.connectionCountLabel }
+        if workspace == .live {
+            return model.runtimeBackend == .xray
+                ? xrayRecordHeaderSummary
+                : presentation.connectionCountLabel
+        }
         return workspaceSummary
     }
 
@@ -1051,6 +1056,7 @@ struct ConnectionsView: View {
             return AppLocalization.string("Live data reconnecting · last-known rows shown")
         }
         if workspace == .live {
+            if model.runtimeBackend == .xray { return xrayRecordHeaderSummary }
             var parts = [presentation.connectionCountLabel]
             if liveUpdatesPaused {
                 parts.insert(AppLocalization.string("Paused snapshot"), at: 0)
@@ -1075,6 +1081,16 @@ struct ConnectionsView: View {
             )
         }
         return workspaceSummary
+    }
+
+    private var xrayRecordHeaderSummary: String {
+        guard model.connectionRecordDataIsCurrent else {
+            return AppLocalization.string("Waiting for traffic")
+        }
+        return AppLocalization.format(
+            "%@ records",
+            formattedCount(model.connectionRecordCount)
+        )
     }
 
     @ViewBuilder
