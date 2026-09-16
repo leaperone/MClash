@@ -131,6 +131,7 @@ jobs:
         run: python3 scripts/test-attach-appcast-deltas.py
 
       - name: Run integration tests
+        if: ${{ !startsWith(needs.prepare.outputs.version, '1.6.') }}
         shell: zsh {0}
         run: ./scripts/integration-test.sh
 

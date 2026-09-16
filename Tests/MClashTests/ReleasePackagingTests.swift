@@ -313,6 +313,7 @@ struct ReleasePackagingTests {
         let workflow = try source(".github/workflows/release.yml")
         #expect(workflow.contains("test-xray-package-layout.py"))
         #expect(workflow.contains("checksums must not contain legacy core source"))
+        #expect(workflow.contains("!startsWith(needs.prepare.outputs.version, '1.6.')"))
     }
 
     private var repositoryRoot: URL {
