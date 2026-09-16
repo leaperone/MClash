@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "release_version": "1.6.0-rc.8",
+  "commit": "32abfffc2dbd800e8f848638c037a1731d14fc84",
+  "status": "passed",
+  "backend": "xray",
+  "verification_scope": "Source and isolated runtime acceptance before release signing",
+  "generated_at": "2026-09-16T04:56:47Z",
+  "xray_version": "26.9.9",
+  "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
+  "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+  "capabilities": [
+    "nodeSources",
+    "pastedNodeLinks",
+    "pastedSourcePersistence",
+    "groupSelect",
+    "groupFallback",
+    "groupURLTest",
+    "groupLoadBalance",
+    "groupRelay",
+    "routingRules",
+    "httpIngress",
+    "socksIngress",
+    "dnsPolicy",
+    "mclashFlowRecords",
+    "xrayAccessRecords"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh (pinned Xray binary)",
+    "MCLASH_XRAY_BINARY=... .build/direct-tests/MClashPackageTests",
+    "./scripts/integration-test.sh",
+    "python3 scripts/test-xray-release-preflight.py",
+    "python3 scripts/smoke-test-xray-app.py .build/rc8-local/MClash.app --output .planning/m16/rc8-local-smoke.json",
+    "python3 .planning/m16/probe-wireguard-payload.py",
+    "NodeLinkImporterTests including socks://, wireguard://, native WireGuard INI, and Base64 node lists",
+    "ConfigurationOrchestrationTests including Base64 remote node source",
+    "Xray configuration schema test with WireGuard outbound",
+    "LocalizationTests including import copy",
+    "./scripts/create-dmg.sh with transient hdiutil verification retry"
+  ],
+  "test_counts": {
+    "app": 514,
+    "network_shared": 114,
+    "network_extension": 29,
+    "automation": 6,
+    "appcast_script": 3
+  },
+  "application_acceptance": {
+    "passed": true,
+    "backend": "xray",
+    "http": true,
+    "socks5": true,
+    "modeChanges": [
+      "global",
+      "direct",
+      "rule"
+    ],
+    "selectionAndClear": true,
+    "globalExitChange": true,
+    "disconnect": true,
+    "sourceActivation": true,
+    "invalidSourceRejected": true,
+    "automaticURLTest": 2.618,
+    "automaticFallback": 11.839,
+    "automaticRecovery": 11.988,
+    "expectedStatusEnforced": true,
+    "loadBalance": [
+      "NODE_A",
+      "NODE_B"
+    ],
+    "relayChain": true,
+    "dnsPolicy": {
+      "directResolution": true,
+      "socksUDPCapture": true
+    },
+    "failedActivationRollback": true,
+    "healthSettingsRoundTrip": true,
+    "xrayAccessRecords": 5,
+    "pastedSourcePersistence": true,
+    "signaturePreserved": false,
+    "resources": {
+      "coreProcesses": 1,
+      "coreRSSBytes": 35569664,
+      "appRSSBytes": 90800128,
+      "connectSeconds": 1.548
+    },
+    "encodedSourceImport": true,
+    "wireGuardLoopbackEncryptedPayload": true,
+    "wireGuardLoopbackStopsWithServer": true
+  },
+  "traffic_evidence": {
+    "owner": "MClash",
+    "xrayRole": "protocol connection and forwarding",
+    "accessLogRecords": 5,
+    "fields": [
+      "timestamp",
+      "entrance",
+      "destination",
+      "transport",
+      "outbound"
+    ],
+    "applicationIdentity": "provided separately by App Routing when available",
+    "perConnectionByteCounters": "not claimed from Xray access logs"
+  },
+  "component_signing_identifier": "mclash-xray",
+  "preserved_local_version": "1.3.7",
+  "limits": [
+    "Evidence uses an isolated ad-hoc application bundle. Developer ID signing and notarization are release workflow gates.",
+    "Production Network Extension and system proxy were not changed. Actual signed-provider activation and live Fake-IP remain unverified.",
+    "Public endpoint availability varies by node; no claim is made that every imported source node is reachable.",
+    "Hysteria2 was checked against the pinned core schema, without a live Hysteria2 endpoint.",
+    "Rule sets require inline text entries; remote rule-set refresh, MRS, DNS-over-TLS and process-name-only rules remain unsupported."
+  ],
+  "post_publish_checks": [
+    "Download published ZIP and verify SHA256SUMS",
+    "Verify Developer ID signatures and core identifier",
+    "Validate notarization ticket and Gatekeeper assessment",
+    "Exercise downloaded application in isolated storage"
+  ]
+}
