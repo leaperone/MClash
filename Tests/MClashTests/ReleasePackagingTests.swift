@@ -276,8 +276,10 @@ struct ReleasePackagingTests {
         let app = temporary.appendingPathComponent("MClash.app")
         let core = app.appendingPathComponent("Contents/Resources/Core")
         let thirdParty = app.appendingPathComponent("Contents/Resources/ThirdParty")
+        let geo = app.appendingPathComponent("Contents/Resources/GeoData")
         try FileManager.default.createDirectory(at: core, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: thirdParty, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: geo, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
 
         let info: [String: Any] = ["MClashRuntimeBackend": "xray"]
@@ -293,6 +295,16 @@ struct ReleasePackagingTests {
             [.posixPermissions: 0o755],
             ofItemAtPath: xray.path
         )
+        try Data("license".utf8).write(to: geo.appendingPathComponent("LICENSE.txt"))
+        var geoManifest: [String] = []
+        for name in ["geoip.dat", "geosite.dat"] {
+            let file = geo.appendingPathComponent(name)
+            try Data(name.utf8).write(to: file)
+            let hash = try BundledGeoDataInstaller.sha256(at: file)
+            geoManifest.append("\(hash)  \(name)")
+        }
+        try Data((geoManifest.joined(separator: "\n") + "\n").utf8)
+            .write(to: geo.appendingPathComponent("XRAY-SHA256SUMS"))
 
         let accepted = try run(
             "/usr/bin/python3",
@@ -314,6 +326,9 @@ struct ReleasePackagingTests {
         #expect(workflow.contains("test-xray-package-layout.py"))
         #expect(workflow.contains("checksums must not contain legacy core source"))
         #expect(workflow.contains("!startsWith(needs.prepare.outputs.version, '1.6.')"))
+        let buildScript = try source("scripts/build-app.sh")
+        #expect(buildScript.contains("XRAY_GEOIP_RESOURCE_PATH"))
+        #expect(buildScript.contains("verify-xray-geodata.sh"))
     }
 
     private var repositoryRoot: URL {

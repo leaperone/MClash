@@ -75,8 +75,11 @@ if (( legacy_core_enabled )); then
   mihomo_alpha_select_architecture "${architecture}"
 fi
 if [[ "${version}" == 1.6.* && "${MCLASH_RUNTIME_BACKEND:-xray}" == "xray" ]]; then
-  [[ -f "${XRAY_RESOURCE_PATH}" ]] || "${repo_root}/scripts/fetch-xray.sh"
+  if [[ ! -f "${XRAY_RESOURCE_PATH}" || ! -f "${XRAY_GEOIP_RESOURCE_PATH}" || ! -f "${XRAY_GEOSITE_RESOURCE_PATH}" ]]; then
+    "${repo_root}/scripts/fetch-xray.sh"
+  fi
   xray_verify_selected_artifact
+  xray_verify_geodata_artifacts
   "${repo_root}/scripts/xray-release-preflight.sh" "${version}"
 fi
 if [[ -z "${notary_profile}" && ( -z "${apple_id}" || -z "${apple_password}" || -z "${apple_team_id}" ) ]]; then

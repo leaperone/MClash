@@ -11,6 +11,7 @@ struct BundledGeoDataInstaller: Sendable {
         "GeoSite.dat",
         "ASN.mmdb",
     ]
+    static let xrayFileNames = ["geoip.dat", "geosite.dat"]
 
     private let sourceDirectory: URL?
 
@@ -49,12 +50,41 @@ struct BundledGeoDataInstaller: Sendable {
         // build script to contain this directory.
         guard let sourceDirectory else { return }
 
-        let expectedHashes = try readManifest(
-            at: sourceDirectory.appending(path: "SHA256SUMS")
-        )
-        guard Set(expectedHashes.keys) == Set(Self.requiredFileNames) else {
-            throw BundledGeoDataError.incompleteManifest
+        let xrayManifest = sourceDirectory.appending(path: "XRAY-SHA256SUMS")
+        if fileManager.fileExists(atPath: xrayManifest.path) {
+            let expectedHashes = try readManifest(
+                at: xrayManifest,
+                allowedFileNames: Set(Self.xrayFileNames)
+            )
+            for fileName in Self.xrayFileNames {
+                let source = sourceDirectory.appending(path: fileName)
+                guard fileManager.fileExists(atPath: source.path) else {
+                    throw BundledGeoDataError.missingBundledFile(fileName)
+                }
+                guard try Self.sha256(at: source) == expectedHashes[fileName] else {
+                    throw BundledGeoDataError.integrityMismatch(fileName)
+                }
+            }
+            try fileManager.createDirectory(
+                at: homeDirectory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            for fileName in Self.xrayFileNames {
+                try installFile(
+                    source: sourceDirectory.appending(path: fileName),
+                    destination: homeDirectory.appending(path: fileName),
+                    fileName: fileName,
+                    fileManager: fileManager
+                )
+            }
+            return
         }
+
+        let expectedHashes = try readManifest(
+            at: sourceDirectory.appending(path: "SHA256SUMS"),
+            allowedFileNames: Set(Self.requiredFileNames)
+        )
 
         // Validate the complete bundled snapshot before changing either home.
         for fileName in Self.requiredFileNames {
@@ -102,6 +132,33 @@ struct BundledGeoDataInstaller: Sendable {
                 throw error
             }
         }
+
+    }
+
+    private func installFile(
+        source: URL,
+        destination: URL,
+        fileName: String,
+        fileManager: FileManager
+    ) throws {
+        if fileManager.fileExists(atPath: destination.path) {
+            let attributes = try fileManager.attributesOfItem(atPath: destination.path)
+            if (attributes[.size] as? NSNumber)?.int64Value ?? 0 > 0 {
+                return
+            }
+            try fileManager.removeItem(at: destination)
+        }
+
+        let staged = destination.deletingLastPathComponent()
+            .appending(path: ".mclash-\(fileName)-\(UUID().uuidString).tmp")
+        do {
+            try fileManager.copyItem(at: source, to: staged)
+            try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: staged.path)
+            try fileManager.moveItem(at: staged, to: destination)
+        } catch {
+            try? fileManager.removeItem(at: staged)
+            throw error
+        }
     }
 
     static func sha256(at url: URL) throws -> String {
@@ -109,7 +166,7 @@ struct BundledGeoDataInstaller: Sendable {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func readManifest(at url: URL) throws -> [String: String] {
+    private func readManifest(at url: URL, allowedFileNames: Set<String>) throws -> [String: String] {
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
             throw BundledGeoDataError.manifestMissing
         }
@@ -124,11 +181,14 @@ struct BundledGeoDataInstaller: Sendable {
             let fileName = String(fields[1]).trimmingCharacters(in: CharacterSet(charactersIn: "*"))
             guard hash.count == 64,
                   hash.allSatisfy(\.isHexDigit),
-                  Self.requiredFileNames.contains(fileName),
+                  allowedFileNames.contains(fileName),
                   result[fileName] == nil else {
                 throw BundledGeoDataError.invalidManifest
             }
             result[fileName] = hash
+        }
+        guard Set(result.keys) == allowedFileNames else {
+            throw BundledGeoDataError.incompleteManifest
         }
         return result
     }

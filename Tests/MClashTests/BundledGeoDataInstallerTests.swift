@@ -26,6 +26,37 @@ struct BundledGeoDataInstallerTests {
         )
     }
 
+    @Test("Xray snapshots install lowercase GEO databases without legacy aliases")
+    func installsXraySnapshot() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "mclash-xray-geodata-test-\(UUID().uuidString)")
+        let source = root.appending(path: "bundle")
+        let home = root.appending(path: "home")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var manifest: [String] = []
+        for fileName in BundledGeoDataInstaller.xrayFileNames {
+            let file = source.appending(path: fileName)
+            try Data("xray-\(fileName)".utf8).write(to: file)
+            manifest.append("\(try BundledGeoDataInstaller.sha256(at: file))  \(fileName)")
+        }
+        try Data((manifest.joined(separator: "\n") + "\n").utf8)
+            .write(to: source.appending(path: "XRAY-SHA256SUMS"))
+
+        try BundledGeoDataInstaller(sourceDirectory: source).installIfNeeded(into: home)
+
+        for fileName in BundledGeoDataInstaller.xrayFileNames {
+            #expect(FileManager.default.fileExists(atPath: home.appending(path: fileName).path))
+        }
+        let names = try Set(FileManager.default.contentsOfDirectory(
+            at: home,
+            includingPropertiesForKeys: nil
+        ).map(\.lastPathComponent))
+        #expect(names == Set(BundledGeoDataInstaller.xrayFileNames))
+    }
+
     @Test("An empty destination is repaired from the bundle")
     func replacesEmptyDestination() throws {
         let fixture = try Fixture()

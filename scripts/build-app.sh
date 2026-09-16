@@ -70,22 +70,39 @@ if (( legacy_core_enabled )); then
   fi
   mihomo_alpha_verify_selected_artifact
 else
-  [[ -f "${XRAY_RESOURCE_PATH}" ]] || "${repo_root}/scripts/fetch-xray.sh"
+  if [[ ! -f "${XRAY_RESOURCE_PATH}" || ! -f "${XRAY_GEOIP_RESOURCE_PATH}" || ! -f "${XRAY_GEOSITE_RESOURCE_PATH}" ]]; then
+    "${repo_root}/scripts/fetch-xray.sh"
+  fi
   xray_verify_selected_artifact
+  xray_verify_geodata_artifacts
 fi
 
-geodata_source="${MCLASH_GEODATA_DIR:-${build_root}/GeoData}"
-geodata_fetch_arguments=(--output "${geodata_source}")
-if [[ "${code_sign_identity}" != "-" || "${MCLASH_REFRESH_GEODATA:-0}" == "1" ]]; then
-  geodata_fetch_arguments+=(--refresh)
+if (( xray_enabled )); then
+  geodata_source="${build_root}/GeoData"
+else
+  geodata_source="${MCLASH_GEODATA_DIR:-${build_root}/GeoData}"
 fi
-"${repo_root}/scripts/fetch-mihomo-geodata.sh" "${geodata_fetch_arguments[@]}"
 if (( legacy_core_enabled )); then
+  geodata_fetch_arguments=(--output "${geodata_source}")
+  if [[ "${code_sign_identity}" != "-" || "${MCLASH_REFRESH_GEODATA:-0}" == "1" ]]; then
+    geodata_fetch_arguments+=(--refresh)
+  fi
+  "${repo_root}/scripts/fetch-mihomo-geodata.sh" "${geodata_fetch_arguments[@]}"
   "${repo_root}/scripts/smoke-test-mihomo-geodata.sh" \
     "${MIHOMO_ALPHA_RESOURCE_PATH}" \
     "${geodata_source}"
 else
-  "${repo_root}/scripts/verify-mihomo-geodata.sh" "${geodata_source}"
+  mkdir -p "${geodata_source}"
+  rm -f "${geodata_source}/GeoIP.dat" "${geodata_source}/GeoSite.dat" \
+    "${geodata_source}/geoip.dat" "${geodata_source}/geosite.dat" \
+    "${geodata_source}/SHA256SUMS" "${geodata_source}/XRAY-SHA256SUMS"
+  cp "${XRAY_GEOIP_RESOURCE_PATH}" "${geodata_source}/geoip.dat"
+  cp "${XRAY_GEOSITE_RESOURCE_PATH}" "${geodata_source}/geosite.dat"
+  {
+    print "$(shasum -a 256 "${geodata_source}/geoip.dat" | awk '{print $1}')  geoip.dat"
+    print "$(shasum -a 256 "${geodata_source}/geosite.dat" | awk '{print $1}')  geosite.dat"
+  } > "${geodata_source}/XRAY-SHA256SUMS"
+  "${repo_root}/scripts/verify-xray-geodata.sh" "${geodata_source}"
 fi
 
 license_source="${repo_root}/Sources/MClashApp/Resources/ThirdParty/mihomo-LICENSE.txt"
@@ -255,7 +272,11 @@ if (( xray_enabled )); then
   cp "${repo_root}/ThirdParty/xray/NOTICE.md" "${contents}/Resources/ThirdParty/xray-NOTICE.md"
 fi
 cp "${sparkle_framework_dir}/LICENSE" "${contents}/Resources/ThirdParty/Sparkle-LICENSE.txt"
-"${repo_root}/scripts/verify-mihomo-geodata.sh" "${contents}/Resources/GeoData"
+if (( legacy_core_enabled )); then
+  "${repo_root}/scripts/verify-mihomo-geodata.sh" "${contents}/Resources/GeoData"
+else
+  "${repo_root}/scripts/verify-xray-geodata.sh" "${contents}/Resources/GeoData"
+fi
 recorded_hash=""
 if (( legacy_core_enabled )); then
   recorded_hash="$(mihomo_alpha_recorded_hash "${MIHOMO_ALPHA_RESOURCE_NAME}")"

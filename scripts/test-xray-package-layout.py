@@ -30,6 +30,21 @@ def main() -> int:
         raise SystemExit("The legacy proxy core must not be bundled in a 1.6 Xray app")
     if any(path.name.startswith("mihomo-") for path in (contents / "Resources/ThirdParty").glob("*")):
         raise SystemExit("Legacy proxy-core distribution material must not be bundled")
+    geo = contents / "Resources/GeoData"
+    geo_entries = sorted(path.name for path in geo.iterdir()) if geo.is_dir() else []
+    expected_geo = ["LICENSE.txt", "XRAY-SHA256SUMS", "geoip.dat", "geosite.dat"]
+    if geo_entries != expected_geo:
+        raise SystemExit(f"Xray apps must contain only Xray GEO data, found {geo_entries}")
+    import hashlib
+    for name in ("geoip.dat", "geosite.dat"):
+        expected = next(
+            line.split()[0]
+            for line in (geo / "XRAY-SHA256SUMS").read_text().splitlines()
+            if len(line.split()) == 2 and line.split()[1] == name
+        )
+        actual = hashlib.sha256((geo / name).read_bytes()).hexdigest()
+        if actual != expected:
+            raise SystemExit(f"Xray GEO data checksum mismatch: {name}")
     print(f"Xray package layout passed for {app}")
     return 0
 
