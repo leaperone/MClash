@@ -327,8 +327,11 @@ struct ReleasePackagingTests {
         #expect(workflow.contains("checksums must not contain legacy core source"))
         #expect(workflow.contains("!startsWith(needs.prepare.outputs.version, '1.6.')"))
         let buildScript = try source("scripts/build-app.sh")
+        let fetchXrayScript = try source("scripts/fetch-xray.sh")
         #expect(buildScript.contains("XRAY_GEOIP_RESOURCE_PATH"))
         #expect(buildScript.contains("verify-xray-geodata.sh"))
+        #expect(fetchXrayScript.contains("artifact_path="))
+        #expect(!fetchXrayScript.contains("\n  path="))
     }
 
     private var repositoryRoot: URL {

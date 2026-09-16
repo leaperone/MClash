@@ -24,7 +24,7 @@ for pair in \
   "${XRAY_GEOSITE_RESOURCE_NAME}:${XRAY_GEOSITE_RESOURCE_PATH}"
 do
   name="${pair%%:*}"
-  path="${pair#*:}"
+  artifact_path="${pair#*:}"
   hash="$(shasum -a 256 "${download_dir}/${name}" | awk '{print $1}')"
   [[ "${hash}" == "$(xray_recorded_geo_hash "${name}")" ]] || { print -u2 "Xray GEO database checksum mismatch: ${name}"; exit 1; }
   chmod 644 "${download_dir}/${name}"
