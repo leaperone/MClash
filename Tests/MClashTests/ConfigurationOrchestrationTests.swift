@@ -224,6 +224,18 @@ struct ConfigurationOrchestrationTests {
         #expect(report.diagnostics.contains { $0.code == "strategy_sections_ignored" })
     }
 
+    @Test func nodeOnlyImporterAcceptsBase64NodeLists() throws {
+        let sourceID = SourceID()
+        let uuid = "00000000-0000-0000-0000-000000000021"
+        let links = "vless://\(uuid)@vless.example:443#V\ntrojan://secret@trojan.example:443#T\n"
+        let encoded = Data(links.utf8).base64EncodedString()
+        let report = NodeOnlyImporter().importNodes(sourceID: sourceID, yaml: Data(encoded.utf8))
+        #expect(report.nodes.count == 2)
+        #expect(Set(report.nodes.map(\.proto)) == [.vless, .trojan])
+        #expect(report.diagnostics.isEmpty)
+        #expect(report.ignoredSections.isEmpty)
+    }
+
     @Test func nodeOnlyImporterOnlyTreatsZeroIndentStrategyKeysAsTopLevel() throws {
         let sourceID = SourceID()
         let yaml = """

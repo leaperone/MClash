@@ -4,7 +4,7 @@ MClash presents one simple idea to ordinary users. Add node sources, choose how 
 
 ## Add nodes
 
-Node sources include subscriptions, local files, and pasted share links. Pasted links can contain VLESS, VMess, Trojan, Shadowsocks, HTTP, SOCKS5, and Hysteria2 entries. The import sheet previews usable nodes, ignored lines, detected formats, and diagnostics before it writes a source.
+Node sources include subscriptions, local files, and pasted share links. Pasted input can contain VLESS, VMess, Trojan, Shadowsocks, HTTP, SOCKS5, Hysteria2, WireGuard links, native WireGuard configuration text, or a Base64 node list. Remote sources use the same bounded link decoder when their response is not YAML. The import sheet previews usable nodes, ignored lines, detected formats, and diagnostics before it writes a source.
 
 The parser stores credentials only in the private node source. Diagnostics and list rows never include credentials. A pasted source persists as its own source and refresh does not erase the user's groups or rules.
 

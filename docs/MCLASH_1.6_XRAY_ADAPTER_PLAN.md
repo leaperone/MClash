@@ -33,7 +33,7 @@ The default 1.6 backend is Xray. Existing Mihomo code and resources remain avail
 - Rules and capture listeners can change through the existing configuration operations. Invalid candidates restore the previous runtime and durable state.
 - Workspace-owned selections survive active source changes.
 
-Unsupported nodes stay visible with a reason and cannot silently fall back to a different backend. The renderer covers VLESS, VMess, Trojan, Shadowsocks, HTTP, HTTPS, SOCKS5, Hysteria2, and WireGuard client outbounds. WireGuard share links and native `[Interface]`/`[Peer]` text validate 32-byte keys, addresses, reserved bytes, MTU, and peer routing fields before generating Xray JSON. Each protocol needs both schema validation and a traffic probe before interoperability is claimed. TUIC, unknown plugins, and unsupported transport options are not silently approximated.
+Unsupported nodes stay visible with a reason and cannot silently fall back to a different backend. The renderer covers VLESS, VMess, Trojan, Shadowsocks, HTTP, HTTPS, SOCKS5, Hysteria2, and WireGuard client outbounds. WireGuard share links and native `[Interface]`/`[Peer]` text validate 32-byte keys, addresses, reserved bytes, MTU, and peer routing fields before generating Xray JSON. Pasted and remote Base64 node lists use the same link parser and decoded-size bound. Each protocol needs both schema validation and a traffic probe before interoperability is claimed. TUIC, unknown plugins, and unsupported transport options are not silently approximated.
 
 Xray does not provide a Mihomo-compatible connection list or API log stream. Those operations report their limitations. Existing captured-flow records and Xray process logs remain separate sources of diagnostics.
 
