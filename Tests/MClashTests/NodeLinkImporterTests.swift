@@ -132,4 +132,20 @@ struct NodeLinkImporterTests {
         #expect(preview.nodes.isEmpty)
         #expect(!preview.detectedFormats.contains("encoded-links"))
     }
+
+    @Test("WireGuard diagnostics reject malformed CIDR values before activation")
+    func rejectsMalformedWireGuardCIDR() {
+        let config = """
+        [Interface]
+        PrivateKey = \(String(repeating: "11", count: 32))
+        Address = 10.0.0.2/99
+        [Peer]
+        PublicKey = \(String(repeating: "22", count: 32))
+        Endpoint = wg.example:51820
+        AllowedIPs = 0.0.0.0/0
+        """
+        let preview = NodeLinkImporter().preview(.init(text: config))
+        #expect(preview.nodes.isEmpty)
+        #expect(preview.diagnostics.first?.subject == "interface.address")
+    }
 }

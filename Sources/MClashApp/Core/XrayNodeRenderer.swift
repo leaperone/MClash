@@ -1,5 +1,6 @@
 import Foundation
 import MClashAutomationProtocol
+import MClashNetworkShared
 
 public enum XrayNodeRenderError: Error, Equatable, Sendable, LocalizedError {
     case unsupportedProtocol(NodeProtocol)
@@ -92,8 +93,8 @@ public enum XrayNodeRenderer {
             protocolName = "wireguard"
             let secretKey = try parameters.wireGuardKey("secret-key", aliases: ["private-key", "privatekey"])
             let publicKey = try parameters.wireGuardKey("public-key", aliases: ["peer-public-key", "peer-publickey"])
-            let addresses = try parameters.list("address")
-            let allowedIPs = try parameters.list("allowed-ips")
+            let addresses = try parameters.cidrList("address")
+            let allowedIPs = try parameters.cidrList("allowed-ips")
             var peer: [String: AutomationJSONValue] = [
                 "publicKey": .string(publicKey),
                 "endpoint": .string(wireGuardEndpoint(host: node.host, port: node.port)),
@@ -110,7 +111,7 @@ public enum XrayNodeRenderer {
                 "address": .array(addresses.map(AutomationJSONValue.string)),
                 "peers": .array([.object(peer)]),
                 "noKernelTun": .bool(try parameters.bool("no-kernel-tun", default: true)),
-                "domainStrategy": .string(parameters["domain-strategy"] ?? "ForceIP"),
+                "domainStrategy": .string(try parameters.wireGuardDomainStrategy()),
             ]
             if let mtu = try parameters.optionalInt("mtu", aliases: [], range: 576...65535) {
                 wireguard["mtu"] = .integer(Int64(mtu))
@@ -295,6 +296,25 @@ public enum XrayNodeRenderer {
                 return value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             }
             return values.keys.filter { $0.hasPrefix(key + "[") }.sorted().compactMap { values[$0] }
+        }
+
+        func cidrList(_ key: String) throws -> [String] {
+            let values = try list(key)
+            guard values.allSatisfy({ (try? IPNetwork($0)) != nil }) else {
+                throw XrayNodeRenderError.invalidField(key)
+            }
+            return values
+        }
+
+        func wireGuardDomainStrategy() throws -> String {
+            switch (self["domain-strategy"] ?? "forceip").lowercased() {
+            case "forceip": return "ForceIP"
+            case "forceipv4": return "ForceIPv4"
+            case "forceipv6": return "ForceIPv6"
+            case "forceipv4v6": return "ForceIPv4v6"
+            case "forceipv6v4": return "ForceIPv6v4"
+            default: throw XrayNodeRenderError.invalidField("domain-strategy")
+            }
         }
 
         func wireGuardKey(_ key: String, aliases: [String]) throws -> String {

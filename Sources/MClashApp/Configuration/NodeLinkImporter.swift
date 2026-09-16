@@ -1,4 +1,5 @@
 import Foundation
+import MClashNetworkShared
 
 public struct NodeLinkImportRequest: Sendable {
     public let sourceID: SourceID
@@ -206,9 +207,11 @@ public struct NodeLinkImporter: Sendable {
             parameters["secret-key"] = secretKey
             parameters["public-key"] = publicKey
             if let address = firstQueryValue(parameters, keys: ["address", "addresses"]), !address.isEmpty {
+                guard validCIDRList(address) else { throw ImportError.invalid }
                 parameters["address"] = address
             }
             if let allowed = firstQueryValue(parameters, keys: ["allowedips", "allowed-ips"]) {
+                guard validCIDRList(allowed) else { throw ImportError.invalid }
                 parameters["allowed-ips"] = allowed
             }
             if let psk = firstQueryValue(parameters, keys: ["psk", "presharedkey", "pre-shared-key"]) {
@@ -280,6 +283,9 @@ public struct NodeLinkImporter: Sendable {
             throw ImportError.wireGuard("The configuration must contain at least one Peer section.", subject: "peer")
         }
         let address = interface["address"]
+        if let address, !validCIDRList(address) {
+            throw ImportError.wireGuard("Interface: Address must contain valid IPv4 or IPv6 CIDR values.", subject: "interface.address")
+        }
         let mtu = interface["mtu"]
         if let mtu, (Int(mtu).map { !(576...65535).contains($0) } ?? true) {
             throw ImportError.wireGuard("Interface: MTU must be between 576 and 65535.", subject: "interface.mtu")
@@ -308,6 +314,9 @@ public struct NodeLinkImporter: Sendable {
             if let reserved { parameters["reserved"] = reserved }
             if let dns = interface["dns"] { parameters["remote-dns"] = dns }
             if let allowed = peer["allowedips"] { parameters["allowed-ips"] = allowed }
+            if let allowed = peer["allowedips"], !validCIDRList(allowed) {
+                throw ImportError.wireGuard("Peer \(index + 1): AllowedIPs must contain valid IPv4 or IPv6 CIDR values.", subject: "peer-\(index + 1).allowedips")
+            }
             if let psk = peer["presharedkey"] { parameters["pre-shared-key"] = psk }
             if let keepAlive = peer["persistentkeepalive"] { parameters["keep-alive"] = keepAlive }
             result.append(Candidate(proto: .wireguard, host: parsedEndpoint.host, port: parsedEndpoint.port, name: parsedEndpoint.host, parameters: parameters))
@@ -340,6 +349,13 @@ public struct NodeLinkImporter: Sendable {
     private func validReserved(_ value: String) -> Bool {
         let parts = value.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
         return parts.count == 3 && parts.allSatisfy { (0...255).contains($0) }
+    }
+
+    private func validCIDRList(_ value: String) -> Bool {
+        let values = value.split(separator: ",").map {
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return !values.isEmpty && values.allSatisfy { (try? IPNetwork($0)) != nil }
     }
 
     private static func detectedFormat(for scheme: String) -> String {
