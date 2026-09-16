@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "release_version": "1.6.0-rc.9",
-  "commit": "292ad69298b1e371dbc61f14709fcbfc1e8e0350",
+  "commit": "c53dd6209c1a2e9a1070294b75f31da124bee057",
   "status": "passed",
   "backend": "xray",
   "verification_scope": "Source, Xray-only package layout, and isolated runtime acceptance before release signing",
-  "generated_at": "2026-09-17T00:00:00Z",
+  "generated_at": "2026-09-17T00:18:00Z",
   "xray_version": "26.9.9",
   "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
   "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
@@ -63,9 +63,9 @@
     "disconnect": true,
     "sourceActivation": true,
     "invalidSourceRejected": true,
-    "automaticURLTest": 2.612,
-    "automaticFallback": 11.733,
-    "automaticRecovery": 12.166,
+    "automaticURLTest": 2.606,
+    "automaticFallback": 11.772,
+    "automaticRecovery": 12.393,
     "expectedStatusEnforced": true,
     "loadBalance": [
       "NODE_A",
@@ -82,9 +82,9 @@
     "signaturePreserved": false,
     "resources": {
       "coreProcesses": 1,
-      "coreRSSBytes": 39288832,
-      "appRSSBytes": 94945280,
-      "connectSeconds": 1.502
+      "coreRSSBytes": 39337984,
+      "appRSSBytes": 95371264,
+      "connectSeconds": 1.514
     },
     "xrayAccessRecords": 5,
     "xrayConnectionRecordCount": 5,
