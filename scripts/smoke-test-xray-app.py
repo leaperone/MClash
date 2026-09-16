@@ -256,6 +256,21 @@ def main():
 
         fixture_source = base64.b64encode(f"proxies:\n  - name: Source fixture\n    type: http\n    server: 127.0.0.1\n    port: {proxy_a.server_address[1]}\n".encode()).decode()
         imported = call("profiles.import", {"dataBase64": fixture_source, "fileName": "fixture.yaml", "activate": True})
+        encoded_nodes = "vless://00000000-0000-0000-0000-000000000031@encoded-source.invalid:443#Encoded source node\n"
+        encoded_profile = call(
+            "profiles.import",
+            {
+                "dataBase64": base64.b64encode(encoded_nodes.encode()).decode(),
+                "fileName": "encoded-source.yaml",
+                "activate": False,
+            },
+        )
+        encoded_snapshot = call("configuration.snapshot", {"nodeLimit": 200})
+        assert any(
+            encoded_profile["id"] in node.get("sourceLinks", [])
+            and node.get("proto") == "vless"
+            for node in encoded_snapshot["nodes"]["items"]
+        ), "MClash did not import an encoded remote-style node source"
         connection_started = time.monotonic()
         call("core.connect")
         ready_seconds = round(time.monotonic() - connection_started, 3)

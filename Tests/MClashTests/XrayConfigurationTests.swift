@@ -292,6 +292,24 @@ struct XrayConfigurationTests {
         }
     }
 
+    @Test("WireGuard URI without an address omits an empty local address list")
+    func wireGuardOptionalAddress() throws {
+        let node = try Node(
+            displayName: "WireGuard",
+            protocol: .wireguard,
+            host: "wg.example",
+            port: 51820,
+            parameters: [
+                "secret-key": String(repeating: "11", count: 32),
+                "public-key": String(repeating: "22", count: 32),
+            ]
+        )
+        let settings = try #require(
+            XrayNodeRenderer.render(node, tag: "wg").objectValue?["settings"]?.objectValue
+        )
+        #expect(settings["address"] == nil)
+    }
+
     private func fixture() -> ConfigurationDocument {
         let dns = DNSPolicy(name: "System", mode: .system)
         let workspace = Workspace(name: "Test", dnsPolicyID: dns.id)

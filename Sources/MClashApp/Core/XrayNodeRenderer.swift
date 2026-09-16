@@ -108,7 +108,6 @@ public enum XrayNodeRenderer {
             }
             var wireguard: [String: AutomationJSONValue] = [
                 "secretKey": .string(secretKey),
-                "address": .array(addresses.map(AutomationJSONValue.string)),
                 "peers": .array([.object(peer)]),
                 "noKernelTun": .bool(try parameters.bool("no-kernel-tun", default: true)),
                 "domainStrategy": .string(try parameters.wireGuardDomainStrategy()),
