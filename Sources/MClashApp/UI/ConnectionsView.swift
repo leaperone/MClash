@@ -227,7 +227,7 @@ struct ConnectionsView: View {
             Table(filteredApplications, selection: $selectedApplicationID) {
                 TableColumn("Application") { aggregate in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(aggregate.application.displayName)
+                        Text(aggregate.application.isAttributed ? aggregate.application.displayName : AppLocalization.string("Unattributed"))
                             .fontWeight(.medium)
                             .lineLimit(1)
                         if let identifier = aggregate.application.bundleIdentifier {
@@ -241,17 +241,18 @@ struct ConnectionsView: View {
                 }
                 .width(min: 180, ideal: 260)
 
-                TableColumn("Active") { aggregate in
-                    Text(formattedCount(aggregate.activeCount))
+                TableColumn(AppLocalization.string("Records")) { aggregate in
+                    Text(formattedCount(aggregate.entryCount))
                         .monospacedDigit()
                 }
                 .width(70)
 
                 TableColumn("Traffic") { aggregate in
-                    Text(formattedLedgerBytes(aggregate.traffic.exactTotalBytes))
+                    Text(FlowLedgerTrafficPresentation.totalTitle(aggregate.traffic))
                         .monospacedDigit()
                         .foregroundStyle(
                             aggregate.traffic.notMeasuredAfterHandoffCount > 0
+                                || aggregate.traffic.notAvailableCount > 0
                                 ? Color.orange
                                 : Color.primary
                         )
@@ -310,17 +311,18 @@ struct ConnectionsView: View {
                 }
                 .width(min: 240, ideal: 380)
 
-                TableColumn("Active") { aggregate in
-                    Text(formattedCount(aggregate.activeCount))
+                TableColumn(AppLocalization.string("Records")) { aggregate in
+                    Text(formattedCount(aggregate.entryCount))
                         .monospacedDigit()
                 }
                 .width(70)
 
                 TableColumn("Traffic") { aggregate in
-                    Text(formattedLedgerBytes(aggregate.traffic.exactTotalBytes))
+                    Text(FlowLedgerTrafficPresentation.totalTitle(aggregate.traffic))
                         .monospacedDigit()
                         .foregroundStyle(
                             aggregate.traffic.notMeasuredAfterHandoffCount > 0
+                                || aggregate.traffic.notAvailableCount > 0
                                 ? Color.orange
                                 : Color.primary
                         )
@@ -341,7 +343,7 @@ struct ConnectionsView: View {
                 ContentUnavailableView(
                     "No session traffic history",
                     systemImage: "clock.arrow.circlepath",
-                    description: Text("Completed connection details appear here for this app session. Persistent totals, when enabled, remain available above without storing destinations.")
+                    description: Text("Connection events and completed flows appear here for this session. Saved totals do not include destinations.")
                 )
             } else if filteredHistory.isEmpty {
                 ContentUnavailableView.search(text: searchText)
@@ -522,7 +524,7 @@ struct ConnectionsView: View {
     }
 
     private func historyCompactDetail(_ entry: FlowLedgerEntry) -> String {
-        let ended = entry.endedAt.map {
+        let ended = (entry.state == .observed ? entry.startedAt : entry.endedAt).map {
             AppLocalization.date($0, dateStyle: .omitted, timeStyle: .shortened)
         } ?? "—"
         return "\(historyRouteTitle(entry)) · \(profileTitle(entry.trafficTarget)) · \(ended)"
@@ -535,7 +537,7 @@ struct ConnectionsView: View {
             historyRuleHelp(entry),
             historyRouteHelp(entry),
             profileTitle(entry.trafficTarget),
-            entry.endedAt.map { AppLocalization.date($0) } ?? "—"
+            entry.state == .observed ? AppLocalization.string("Connection event") : entry.endedAt.map { AppLocalization.date($0) } ?? "—"
         )
     }
 
@@ -1381,16 +1383,20 @@ struct ConnectionsView: View {
             return AppLocalization.string("Preparing aggregate totals…")
         }
         let bytes = persistentByteCount(snapshot.totals.exactTotalBytes)
-        let completed = formattedCount(Int(clamping: snapshot.totals.completedFlowCount))
+        let completed = formattedCount(Int(clamping: snapshot.totals.recordedFlowCount))
+        if snapshot.totals.coverage.exactDirectionCount == 0,
+           snapshot.totals.coverage.notMeasuredDirectionCount > 0 {
+            return AppLocalization.format("%@ records · byte totals unavailable", completed)
+        }
         if let lastUpdatedAt {
             return AppLocalization.format(
-                "%@ measured · %@ completed · updated %@",
+                "%@ measured · %@ records · updated %@",
                 bytes,
                 completed,
                 AppLocalization.relativeDate(lastUpdatedAt)
             )
         }
-        return AppLocalization.format("%@ measured · %@ completed", bytes, completed)
+        return AppLocalization.format("%@ measured · %@ records", bytes, completed)
     }
 
     private var persistentTrafficHistorySnapshot: TrafficHistorySnapshot? {
@@ -1402,8 +1408,8 @@ struct ConnectionsView: View {
 
     private var hasTrafficHistoryToClear: Bool {
         !historicalEntries.isEmpty
-            || (model.trafficHistoryTodaySnapshot?.totals.completedFlowCount ?? 0) > 0
-            || (model.trafficHistoryWeekSnapshot?.totals.completedFlowCount ?? 0) > 0
+            || (model.trafficHistoryTodaySnapshot?.totals.recordedFlowCount ?? 0) > 0
+            || (model.trafficHistoryWeekSnapshot?.totals.recordedFlowCount ?? 0) > 0
     }
 
     private func persistentByteCount(_ bytes: UInt64) -> String {
@@ -2594,6 +2600,8 @@ private func routeTitle(_ route: FlowLedgerRouteKey) -> String {
     switch route {
     case let .mihomo(rule, _, chain):
         return chain.last ?? rule ?? "Runtime"
+    case let .xray(chain):
+        return chain.last ?? "Xray"
     case let .unresolvedMihomo(rule):
         return rule.map { AppLocalization.format("Runtime · %@", $0) }
             ?? AppLocalization.string("Runtime · resolving")
@@ -2619,6 +2627,8 @@ private func routeSubtitle(
         return nonEmpty(decision)
             ?? nonEmpty(path)
             ?? AppLocalization.string("Runtime route")
+    case let .xray(chain):
+        return chain.joined(separator: " → ")
     case let .unresolvedMihomo(rule):
         return rule.map {
             AppLocalization.format(
@@ -2649,6 +2659,8 @@ private func routeHelp(
             ? AppLocalization.string("No proxy chain reported")
             : chain.joined(separator: " → ")
         return [nonEmpty(decision), path].compactMap { $0 }.joined(separator: "\n")
+    case let .xray(chain):
+        return chain.joined(separator: " → ")
     default:
         return "\(routeTitle(route))\n\(routeSubtitle(route, traffic: traffic))"
     }
@@ -2683,6 +2695,7 @@ private func captureOriginTitle(_ origin: FlowLedgerCaptureOrigin) -> String {
 private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
     switch outcome {
     case .viaMihomo: AppLocalization.string("Via MClash")
+    case .viaXray: AppLocalization.string("Via Xray")
     case .direct: AppLocalization.string("Direct")
     case .rejected: AppLocalization.string("Rejected")
     case .failOpen: AppLocalization.string("Fail Open")
@@ -2693,6 +2706,7 @@ private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
 private func outcomeColor(_ outcome: FlowLedgerOutcome) -> Color {
     switch outcome {
     case .viaMihomo: .green
+    case .viaXray: .green
     case .direct: .secondary
     case .rejected, .relayFailed: .red
     case .failOpen: .orange
@@ -2700,6 +2714,9 @@ private func outcomeColor(_ outcome: FlowLedgerOutcome) -> Color {
 }
 
 private func ledgerTrafficTitle(_ entry: FlowLedgerEntry) -> String {
+    if entry.upload == .notAvailable || entry.download == .notAvailable {
+        return AppLocalization.string("Byte totals unavailable")
+    }
     if entry.upload == .notMeasuredAfterHandoff
         || entry.download == .notMeasuredAfterHandoff {
         return AppLocalization.string("Not measured")
@@ -2714,6 +2731,11 @@ private func ledgerTrafficTitle(_ entry: FlowLedgerEntry) -> String {
 }
 
 private func ledgerTrafficHelp(_ entry: FlowLedgerEntry) -> String {
+    if entry.upload == .notAvailable || entry.download == .notAvailable {
+        return AppLocalization.string(
+            "This Xray connection event does not include per-connection byte totals."
+        )
+    }
     if entry.upload == .notMeasuredAfterHandoff
         || entry.download == .notMeasuredAfterHandoff {
         return AppLocalization.string(

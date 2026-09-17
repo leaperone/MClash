@@ -138,7 +138,7 @@
 "Connect directly" = "Connect directly";
 "Connect the active profile when MClash opens" = "Connect the active profile when MClash opens";
 "Connecting…" = "Connecting…";
-"Connection Inspector" = "Connection Inspector";
+"Connection Inspector" = "Connection details";
 "Connection data is stale while the live stream reconnects." = "Connection data is stale while the live stream reconnects.";
 "Connections bypass proxy groups until Rule or Global mode is selected." = "Connections bypass proxy groups until Rule or all traffic mode is selected.";
 "Connections unavailable" = "Connections unavailable";
@@ -449,7 +449,7 @@
 "Topology" = "Topology";
 "Topology zoom" = "Topology zoom";
 "Traffic" = "Traffic";
-"Traffic Workspace" = "Traffic Workspace";
+"Traffic Workspace" = "View";
 "Transferred" = "Transferred";
 "Transparent Proxy Ports" = "Transparent Proxy Ports";
 "Transport" = "Transport";
@@ -665,7 +665,7 @@
 "App Routing is not intercepting traffic" = "App Routing is not intercepting traffic";
 "Per-application rules are currently not being applied." = "Per-application rules are currently not being applied.";
 "A previous network state could not be fully restored" = "A previous network state could not be fully restored";
-"App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change." = "App Routing, the proxy core core, or the macOS System Proxy may not match the state from before the failed change.";
+"App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change." = "App Routing, the proxy core, or the macOS System Proxy may not match the state from before the failed change.";
 "App Routing stopped after DNS verification failed" = "App Routing stopped after DNS verification failed";
 "DNS routing is unverified" = "DNS routing is unverified";
 "MClash stopped application capture and DNS together; macOS system DNS was restored." = "MClash stopped application capture and DNS together; macOS system DNS was restored.";
@@ -1232,7 +1232,7 @@
 "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@" = "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@";
 "MClash could not read the persistent traffic history: %@" = "MClash could not read the persistent traffic history: %@";
 "MClash could not restore the previous macOS proxy settings, so the running core was left active." = "MClash could not restore the previous macOS proxy settings, so the running core was left active.";
-"MClash could not stop Network Extension capture, so the mihomo core was left active." = "MClash could not stop Network Extension capture, so the proxy core core was left active.";
+"MClash could not stop Network Extension capture, so the mihomo core was left active." = "MClash could not stop Network Extension capture, so the proxy core was left active.";
 "MClash could not update the traffic history retention period: %@" = "MClash could not update the traffic history retention period: %@";
 "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@" = "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@";
 "MClash could not write the persistent traffic history: %@" = "MClash could not write the persistent traffic history: %@";
@@ -1240,7 +1240,7 @@
 "MClash is still finishing startup activation. Quit was cancelled so macOS network state cannot be abandoned mid-transaction." = "MClash is still finishing startup activation. Quit was cancelled so macOS network state cannot be abandoned mid-transaction.";
 "MClash opened traffic history but could not verify it: %@" = "MClash opened traffic history but could not verify it: %@";
 "MClash preserved the invalid document at %@ and regenerated a safe plan for the current default profile. Review the per-profile Mixed ports before re-enabling auxiliary sessions." = "MClash preserved the invalid document at %@ and regenerated a safe plan for the current default profile. Review the per-profile Mixed ports before re-enabling auxiliary sessions.";
-"MClash will restart the Mihomo core, which can close current connections." = "MClash will restart the proxy core core, which can close current connections.";
+"MClash will restart the Mihomo core, which can close current connections." = "MClash will restart the proxy core, which can close current connections.";
 "MClash, %@" = "MClash, %@";
 "MClash, connected, controls unavailable: %@" = "MClash, connected, controls unavailable: %@";
 "MClash, core running, macOS System Proxy off" = "MClash, core running, macOS System Proxy off";
@@ -1789,7 +1789,7 @@
 "macOS notification permission was not granted." = "macOS notification permission was not granted.";
 "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application" = "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application";
 "macOS rejected the proxy preference changes while committing them." = "macOS rejected the proxy preference changes while committing them.";
-"mihomo core: %@" = "proxy core core: %@";
+"mihomo core: %@" = "proxy core: %@";
 "mihomo did not accept MClash's temporary local proxy port %@." = "proxy core did not accept MClash's temporary local proxy port %@.";
 "mihomo did not apply the requested %@ listener port %@; it reported %@." = "proxy core did not apply the requested %@ listener port %@; it reported %@.";
 "mihomo proxy" = "proxy core proxy";
@@ -1892,7 +1892,7 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "Enabled HTTP and SOCKS entrances must share one proxy core bind address.";
 "Enabled entrances cannot share a listening port." = "Enabled entrances cannot share a listening port.";
 "Entrance port must be between 1 and 65535." = "Entrance port must be between 1 and 65535.";
-"Fallback" = "Fallback";
+"Fallback" = "Automatic failover";
 "Fingerprint" = "Fingerprint";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "Imported source. MClash uses it for node data only; source strategy sections are ignored.";
 "Kind" = "Kind";
@@ -1932,7 +1932,7 @@
 "Rule set contains an invalid rule entry." = "Rule set contains an invalid rule entry.";
 "Rule set name cannot be empty." = "Rule set name cannot be empty.";
 "Rule targets a proxy group that is not available." = "Rule targets a proxy group that is not available.";
-"Select" = "Select";
+"Select" = "Manual selection";
 "Source Removed" = "Source Removed";
 "System Capability" = "System Capability";
 "The MClash Workspace could not be started." = "The MClash Workspace could not be started.";
@@ -1950,7 +1950,7 @@
 "The selected MClash workspace no longer exists." = "The selected MClash workspace no longer exists.";
 "The source store could not be initialized." = "The source store could not be initialized.";
 "The unified node, group, rule, DNS and workspace configuration cannot be read or saved. Existing legacy profiles remain available for recovery." = "The unified node, group, rule, DNS and workspace configuration cannot be read or saved. Existing legacy profiles remain available for recovery.";
-"URL Test" = "URL Test";
+"URL Test" = "Automatic selection";
 "Unsupported" = "Unsupported";
 "Used by" = "Used by";
 "Workspace" = "Workspace";
@@ -1994,7 +1994,7 @@
 "Node parameters cannot override name, type, server, or port." = "Node parameters cannot override name, type, server, or port.";
 "Only one enabled entrance of each kind is supported per workspace." = "Only one enabled entrance of each kind is supported per workspace.";
 "Proxy group nesting cannot exceed 64 levels." = "Proxy group nesting cannot exceed 64 levels.";
-"Relay proxy groups are not supported by the bundled Mihomo core." = "Relay proxy groups are not supported by the bundled proxy core core.";
+"Relay proxy groups are not supported by the bundled Mihomo core." = "Relay proxy groups are not supported by the bundled proxy core.";
 "Routing rule transport must be TCP or UDP." = "Routing rule transport must be TCP or UDP.";
 "Routing rules expand beyond the supported limit." = "Routing rules expand beyond the supported limit.";
 "TUN entrances are not supported." = "TUN entrances are not supported.";
@@ -2208,6 +2208,7 @@
 "Rules are edited in the unified rule editor." = "Rules are edited in the unified rule editor.";
 "Only one entrance of each type can be enabled in the current Mihomo runtime." = "Only one entrance of each type can be enabled in the current proxy core runtime.";
 "Apply changes" = "Apply changes";
+"Saved changes are not active yet." = "Saved changes are not active yet.";
 "MClash could not synchronize the refreshed runtime configuration: %@" = "MClash could not synchronize the refreshed runtime configuration: %@";
 "MClash could not compile the refreshed configuration: %@" = "MClash could not compile the refreshed configuration: %@";
 "Node group — create a group first" = "Node group — create a group first";
@@ -2365,7 +2366,7 @@
 "Process path must be an absolute path without line breaks." = "Process path must be an absolute path without line breaks.";
 "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set." = "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set.";
 "Add this app to a rule…" = "Add this app to a rule…";
-"A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable proxy core proxy group %@.";
+"A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable proxy group %@.";
 "An enabled entrance bind address cannot contain line breaks." = "An enabled entrance bind address cannot contain line breaks.";
 "Entrance names beginning with mclash- are reserved for internal listeners." = "Entrance names beginning with mclash- are reserved for internal listeners.";
 "Switch" = "Switch";
@@ -2491,7 +2492,7 @@
 
 "No runtime flow association" = "No runtime flow association";
 
-"proxy core proxy" = "proxy core proxy";
+"proxy core proxy" = "proxy";
 
 "Runtime · resolving" = "Runtime · resolving";
 
@@ -2590,3 +2591,17 @@
 "Xray access log contains an overlong partial line" = "Xray access log contains an overlong partial line";
 "Xray access log is not available" = "Xray access log is not available";
 "Xray log rotation is already in progress." = "Xray log rotation is already in progress.";
+"Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged." = "Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged.";
+"Add common selection methods for any node source. Groups include new nodes when your sources refresh." = "Add common selection methods for any node source. Groups include new nodes when your sources refresh.";
+"Via Xray" = "Via Xray";
+"Byte totals unavailable" = "Byte totals unavailable";
+"This Xray connection event does not include per-connection byte totals." = "This Xray connection event does not include per-connection byte totals.";
+"%@ connection events have no byte totals" = "%@ connection events have no byte totals";
+"%@ connection events have no byte totals from the backend." = "%@ connection events have no byte totals from the backend.";
+"%@ was measured separately. %@" = "%@ was measured separately. %@";
+"Xray route observed" = "Xray route observed";
+"Records" = "Records";
+"%@ measured · %@ records" = "%@ measured · %@ records";
+"%@ measured · %@ records · updated %@" = "%@ measured · %@ records · updated %@";
+"%@ records · byte totals unavailable" = "%@ records · byte totals unavailable";
+"Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "Connection events and completed flows appear here for this session. Saved totals do not include destinations.";

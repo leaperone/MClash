@@ -11,16 +11,19 @@ enum TrafficHistoryRetention: Int, CaseIterable, Sendable {
 enum TrafficHistoryMeasurement: Hashable, Sendable {
     case exact(UInt64)
     case notMeasuredAfterHandoff
+    case notAvailable
     case notApplicable
 }
 
 enum TrafficHistorySource: String, CaseIterable, Sendable {
     case mihomo
+    case xray
     case appRouting
 }
 
 enum TrafficHistoryOutcome: String, CaseIterable, Sendable {
     case viaMihomo
+    case viaXray
     case direct
     case rejected
     case failOpen
@@ -86,6 +89,7 @@ private extension TrafficHistoryApplication.Identity {
 
 enum TrafficHistoryRouteKind: String, CaseIterable, Sendable {
     case mihomo
+    case xray
     case direct
     case rejected
     case failOpen
@@ -131,6 +135,7 @@ private extension TrafficHistoryRouteKind {
     var defaultLabel: String {
         switch self {
         case .mihomo: "Mihomo"
+        case .xray: "Xray"
         case .direct: "Direct"
         case .rejected: "Rejected"
         case .failOpen: "Fail-open"
@@ -212,14 +217,44 @@ struct TrafficHistoryCoverage: Equatable, Sendable {
 }
 
 struct TrafficHistoryTotals: Equatable, Sendable {
-    let completedFlowCount: UInt64
+    let recordedFlowCount: UInt64
     let exactUploadBytes: UInt64
     let exactDownloadBytes: UInt64
     let coverage: TrafficHistoryCoverage
 
+    init(
+        recordedFlowCount: UInt64,
+        exactUploadBytes: UInt64,
+        exactDownloadBytes: UInt64,
+        coverage: TrafficHistoryCoverage
+    ) {
+        self.recordedFlowCount = recordedFlowCount
+        self.exactUploadBytes = exactUploadBytes
+        self.exactDownloadBytes = exactDownloadBytes
+        self.coverage = coverage
+    }
+
+    init(
+        completedFlowCount: UInt64,
+        exactUploadBytes: UInt64,
+        exactDownloadBytes: UInt64,
+        coverage: TrafficHistoryCoverage
+    ) {
+        self.init(
+            recordedFlowCount: completedFlowCount,
+            exactUploadBytes: exactUploadBytes,
+            exactDownloadBytes: exactDownloadBytes,
+            coverage: coverage
+        )
+    }
+
     var exactTotalBytes: UInt64 {
         trafficHistorySaturatingAdd(exactUploadBytes, exactDownloadBytes)
     }
+
+    /// Compatibility name for automation clients written before records and
+    /// completed connections were separated in the UI.
+    var completedFlowCount: UInt64 { recordedFlowCount }
 }
 
 struct TrafficHistoryApplicationSnapshot: Equatable, Sendable, Identifiable {

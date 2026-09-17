@@ -254,10 +254,13 @@ fi
 if (( xray_enabled )); then
   cp "${XRAY_RESOURCE_PATH}" "${contents}/Resources/Core/mclash-xray"
 fi
-ditto "${geodata_source}" "${contents}/Resources/GeoData"
 if (( legacy_core_enabled )); then
+  ditto "${geodata_source}" "${contents}/Resources/GeoData"
   cp "${license_source}" "${contents}/Resources/GeoData/LICENSE.txt"
 else
+  for geodata_name in geoip.dat geosite.dat XRAY-SHA256SUMS; do
+    cp "${geodata_source}/${geodata_name}" "${contents}/Resources/GeoData/${geodata_name}"
+  done
   cp "${repo_root}/Sources/MClashApp/Resources/ThirdParty/xray-LICENSE.txt" "${contents}/Resources/GeoData/LICENSE.txt"
 fi
 cp "${repo_root}/Sources/MClashApp/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"

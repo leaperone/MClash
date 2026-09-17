@@ -1529,6 +1529,7 @@ final class AutomationCommandGateway {
             "workspaceName": workspace.map { .string($0.name) } ?? .null,
             "routingMode": workspace.map { .string($0.routingMode.rawValue) } ?? .null,
             "sourcePolicy": .string("nodes-only"),
+            "hasUnappliedChanges": .bool(model.configurationHasUnappliedChanges),
             "nodeCount": .integer(Int64(model.configurationDocument.nodes.count)),
             "groupCount": .integer(Int64(model.configurationDocument.proxyGroups.count)),
             "ruleCount": .integer(Int64(model.configurationDocument.rules.count)),
@@ -2020,6 +2021,12 @@ final class AutomationCommandGateway {
             "totals": trafficHistoryTotals(snapshot.totals),
             "applicationCount": .integer(Int64(snapshot.applications.count)),
             "routeCount": .integer(Int64(snapshot.routes.count)),
+            "byteTotalsUnavailable": .bool(
+                snapshot.routes.contains {
+                    $0.route.kind == .xray
+                        && $0.totals.coverage.notMeasuredDirectionCount > 0
+                }
+            ),
         ])
     }
 
@@ -2027,7 +2034,8 @@ final class AutomationCommandGateway {
         _ totals: TrafficHistoryTotals
     ) -> AutomationJSONValue {
         .object([
-            "completedFlowCount": .unsignedInteger(totals.completedFlowCount),
+            "recordedFlowCount": .unsignedInteger(totals.recordedFlowCount),
+            "completedFlowCount": .unsignedInteger(totals.recordedFlowCount),
             "exactUploadBytes": .unsignedInteger(totals.exactUploadBytes),
             "exactDownloadBytes": .unsignedInteger(totals.exactDownloadBytes),
             "exactTotalBytes": .unsignedInteger(totals.exactTotalBytes),
@@ -2091,6 +2099,7 @@ final class AutomationCommandGateway {
             "notMeasuredAfterHandoffCount": .integer(
                 Int64(traffic.notMeasuredAfterHandoffCount)
             ),
+            "notAvailableCount": .integer(Int64(traffic.notAvailableCount)),
             "notApplicableCount": .integer(Int64(traffic.notApplicableCount)),
         ])
     }
@@ -2162,6 +2171,11 @@ final class AutomationCommandGateway {
                 } ?? .null,
                 "chain": .array(chain.map(AutomationJSONValue.string)),
             ])
+        case let .xray(chain):
+            return .object([
+                "kind": .string("xray"),
+                "chain": .array(chain.map(AutomationJSONValue.string)),
+            ])
         case let .unresolvedMihomo(rule):
             return .object([
                 "kind": .string("unresolvedMihomo"),
@@ -2182,9 +2196,11 @@ final class AutomationCommandGateway {
         let identifier: String = switch entry.id {
         case let .appRouting(id): "app:\(id.uuidString.lowercased())"
         case let .mihomo(id): "mihomo:\(id)"
+        case let .xray(id): "xray:\(id.uuidString.lowercased())"
         }
         let state: String = switch entry.state {
         case .active: "active"
+        case .observed: "observed"
         case .completed: "completed"
         case .rejected: "rejected"
         case .failed: "failed"
@@ -2228,6 +2244,8 @@ final class AutomationCommandGateway {
             .object(["kind": .string("exact"), "bytes": .unsignedInteger(bytes)])
         case .notMeasuredAfterHandoff:
             .object(["kind": .string("notMeasuredAfterHandoff")])
+        case .notAvailable:
+            .object(["kind": .string("notAvailable")])
         case .notApplicable:
             .object(["kind": .string("notApplicable")])
         }
@@ -2237,6 +2255,7 @@ final class AutomationCommandGateway {
         .object([
             "connections": freshness(.connections),
             "appRouting": freshness(.appRouting),
+            "xrayAccess": freshness(.xrayAccess),
         ])
     }
 

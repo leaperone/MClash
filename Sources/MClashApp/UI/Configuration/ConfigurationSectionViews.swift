@@ -51,17 +51,27 @@ struct ConfigurationView: View {
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(.green)
                                 } else {
-                                    Button(AppLocalization.string("Apply changes")) {
-                                        Task {
-                                            do {
-                                                try await model.activateConfigurationWorkspace(workspace.id)
-                                            } catch {
-                                                model.errorMessage = error.localizedDescription
+                                    VStack(alignment: .trailing, spacing: 6) {
+                                        Label(
+                                            AppLocalization.string("Saved changes are not active yet."),
+                                            systemImage: "clock.badge.exclamationmark"
+                                        )
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                        .multilineTextAlignment(.trailing)
+                                        Button(AppLocalization.string("Apply changes")) {
+                                            Task {
+                                                do {
+                                                    try await model.activateConfigurationWorkspace(workspace.id)
+                                                } catch {
+                                                    model.errorMessage = error.localizedDescription
+                                                }
                                             }
                                         }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                        .accessibilityIdentifier("configuration.apply-workspace")
                                     }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
                                 }
                             } else {
                                 Button(AppLocalization.string("Use This Configuration")) {
@@ -154,7 +164,12 @@ struct ConfigurationView: View {
     }
 
     private func configurationIsApplied(_ workspace: Workspace) -> Bool {
-        model.configurationDiagnostics.contains(where: { $0.code == "configuration_compile_failed" }) == false
+        if model.runtimeBackend == .xray {
+            return model.isConnected && model.controllerIsReady
+                && !model.configurationHasUnappliedChanges
+                && model.configurationDocument.currentWorkspace?.id == workspace.id
+        }
+        return model.configurationDiagnostics.contains(where: { $0.code == "configuration_compile_failed" }) == false
             && model.compiledConfiguration?.workspaceID == workspace.id
             && model.compiledConfiguration?.workspaceRevision == workspace.revision
     }
@@ -482,7 +497,7 @@ struct ConfigurationProxyGroupsView: View {
                 }
             }
         } message: {
-            Text(AppLocalization.string("Adds Node Selection, US/JP/HK priority, Auto, Manual, Failover, Residential and Direct groups. Existing rules are redirected to Node Selection; source rules are not imported."))
+            Text(AppLocalization.string("Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged."))
         }
     }
 
@@ -692,9 +707,7 @@ struct ConfigurationProxyGroupsView: View {
     }
 
     private var commonPresetInstalled: Bool {
-        model.configurationDocument.proxyGroups.contains {
-            $0.name == ConfigurationProxyGroupPreset.mainGroupName
-        }
+        ConfigurationStarterGroups.isInstalled(in: model.configurationDocument)
     }
 
     private var commonStrategyGroups: some View {
@@ -706,20 +719,10 @@ struct ConfigurationProxyGroupsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(AppLocalization.string("Node Selection setup"))
                     .font(.headline)
-                Text(AppLocalization.string("One stable parent for rules, with regional and automatic child groups that refresh with your sources."))
+                Text(AppLocalization.string("Add common selection methods for any node source. Groups include new nodes when your sources refresh."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(
-                    [
-                        AppLocalization.string("Rules"),
-                        configurationDisplayName(ConfigurationProxyGroupPreset.mainGroupName),
-                        AppLocalization.string("US / United States"),
-                        AppLocalization.string("Nodes"),
-                    ].joined(separator: " → ")
-                )
-                .font(.caption2.monospaced())
-                .foregroundStyle(.tertiary)
             }
             Spacer(minLength: MClashLayout.compactSpacing)
             if commonPresetInstalled {

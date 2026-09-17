@@ -100,6 +100,10 @@ actor XrayControlSession {
         try await applyPolicy(candidate)
     }
 
+    func configurationState() -> ConfigurationRuntimeState? {
+        ConfigurationRuntimeState(document: document, workspaceID: plan.workspace.id)
+    }
+
     func groupResolutions() -> [ProxyGroupID: ProxyGroupResolution] { resolutions }
     func overrides() -> [ProxyGroupID: ProxyGroupMember] { saved.overrides }
     func probeResults() -> [GroupProbeResult] { saved.probes }

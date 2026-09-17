@@ -138,7 +138,7 @@
 "Connect directly" = "Connectez-vous directement";
 "Connect the active profile when MClash opens" = "Connectez le profil actif à l'ouverture de MClash";
 "Connecting…" = "Connexion…";
-"Connection Inspector" = "Inspecteur de connexion";
+"Connection Inspector" = "Détails de connexion";
 "Connection data is stale while the live stream reconnects." = "Les données de connexion sont obsolètes pendant la reconnexion du flux en direct.";
 "Connections bypass proxy groups until Rule or Global mode is selected." = "Les connexions contournent les groupes proxy jusqu'à ce que le mode Règle ou all traffic soit sélectionné.";
 "Connections unavailable" = "Connexions indisponibles";
@@ -450,7 +450,7 @@
 "Topology" = "Topologie";
 "Topology zoom" = "Zoom topologique";
 "Traffic" = "Trafic";
-"Traffic Workspace" = "Espace de travail de trafic";
+"Traffic Workspace" = "Affichage";
 "Transferred" = "Transféré";
 "Transparent Proxy Ports" = "Ports proxy transparents";
 "Transport" = "Transport";
@@ -2209,6 +2209,7 @@
 "Rules are edited in the unified rule editor." = "Les règles se modifient dans l’éditeur de règles unifié.";
 "Only one entrance of each type can be enabled in the current Mihomo runtime." = "Un seul point d’entrée de chaque type peut être activé dans l’exécution proxy core actuelle.";
 "Apply changes" = "Appliquer les modifications";
+"Saved changes are not active yet." = "Les modifications enregistrées ne sont pas encore actives.";
 "MClash could not synchronize the refreshed runtime configuration: %@" = "MClash n’a pas pu synchroniser la configuration d’exécution actualisée : %@";
 "MClash could not compile the refreshed configuration: %@" = "MClash n’a pas pu compiler la configuration actualisée : %@";
 "Node group — create a group first" = "Groupe de nœuds — créez d’abord un groupe";
@@ -2366,7 +2367,7 @@
 "Process path must be an absolute path without line breaks." = "Process path must be an absolute path without line breaks.";
 "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set." = "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set.";
 "Add this app to a rule…" = "Add this app to a rule…";
-"A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable proxy core proxy group %@.";
+"A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable proxy group %@.";
 "An enabled entrance bind address cannot contain line breaks." = "An enabled entrance bind address cannot contain line breaks.";
 "Entrance names beginning with mclash- are reserved for internal listeners." = "Entrance names beginning with mclash- are reserved for internal listeners.";
 "Switch" = "Switch";
@@ -2492,7 +2493,7 @@
 
 "No runtime flow association" = "No runtime flow association";
 
-"proxy core proxy" = "proxy core proxy";
+"proxy core proxy" = "proxy";
 
 "Runtime · resolving" = "Runtime · resolving";
 
@@ -2591,3 +2592,17 @@
 "Xray access log contains an overlong partial line" = "Xray access log contains an overlong partial line";
 "Xray access log is not available" = "Xray access log is not available";
 "Xray log rotation is already in progress." = "Xray log rotation is already in progress.";
+"Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged." = "Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged.";
+"Add common selection methods for any node source. Groups include new nodes when your sources refresh." = "Add common selection methods for any node source. Groups include new nodes when your sources refresh.";
+"Via Xray" = "Via Xray";
+"Byte totals unavailable" = "Totaux d’octets indisponibles";
+"This Xray connection event does not include per-connection byte totals." = "Cet événement de connexion Xray ne fournit pas le total d’octets par connexion.";
+"%@ connection events have no byte totals" = "%@ événements de connexion sans total d’octets";
+"%@ connection events have no byte totals from the backend." = "%@ événements de connexion ne fournissent pas de total d’octets du moteur.";
+"%@ was measured separately. %@" = "%@ a été mesuré séparément. %@";
+"Xray route observed" = "Route Xray observée";
+"Records" = "Enregistrements";
+"%@ measured · %@ records" = "%@ mesurés · %@ enregistrements";
+"%@ measured · %@ records · updated %@" = "%@ mesurés · %@ enregistrements · mis à jour %@";
+"%@ records · byte totals unavailable" = "%@ enregistrements · totaux d’octets indisponibles";
+"Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "Les événements et les connexions terminées de cette session apparaissent ici. Les totaux enregistrés ne contiennent pas les destinations.";

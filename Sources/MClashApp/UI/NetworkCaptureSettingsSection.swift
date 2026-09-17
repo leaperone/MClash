@@ -1409,7 +1409,7 @@ struct AppRoutingView: View {
     private var appRoutingEnableConfirmationMessage: String {
         var effects = [
             AppLocalization.string(
-                "MClash will restart the proxy core core, which can close current connections."
+                "MClash will restart the proxy core, which can close current connections."
             ),
             AppLocalization.string("macOS may ask you to approve the MClash Network Filter.")
         ]
@@ -2089,6 +2089,8 @@ private struct AppRoutingFlowInspector: View {
             routeIsConfirmed
                 ? AppLocalization.string("Mihomo route confirmed")
                 : mihomoEvidenceTitle
+        case .viaXray:
+            AppLocalization.string("Xray route observed")
         case .direct:
             activity.payloadBytesAreMeasured == true
                 ? AppLocalization.string("Direct · relayed and measured")
@@ -2109,6 +2111,7 @@ private struct AppRoutingFlowInspector: View {
     private var outcomeSymbol: String {
         switch ledgerEntry?.outcome {
         case .viaMihomo: "point.3.connected.trianglepath.dotted"
+        case .viaXray: "point.3.connected.trianglepath.dotted"
         case .direct: "arrow.right"
         case .rejected: "xmark.octagon.fill"
         case .failOpen: "arrow.uturn.right"
@@ -2178,6 +2181,8 @@ private struct AppRoutingFlowInspector: View {
             formattedByteCount(Int64(clamping: bytes))
         case .notMeasuredAfterHandoff:
             AppLocalization.string("Not measured after handoff")
+        case .notAvailable:
+            AppLocalization.string("Byte totals unavailable")
         case .notApplicable:
             AppLocalization.string("No payload relayed")
         }

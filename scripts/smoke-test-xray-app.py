@@ -395,6 +395,65 @@ def main():
         assert connection_records["total"] >= access_records["total"]
         close_error = call("traffic.connections.closeAll", expect_error=True)
         assert "historical events" in close_error["message"]
+
+        ledger_apps = ledger_routes = ledger_history = None
+        for _ in range(32):
+            ledger_apps = call("traffic.ledger.applications.list", {"limit": 200})
+            ledger_routes = call("traffic.ledger.routes.list", {"limit": 200})
+            ledger_history = call("traffic.ledger.history.list", {"limit": 100})
+            if ledger_apps["total"] > 0 and ledger_routes["total"] > 0 and ledger_history["total"] > 0:
+                break
+            time.sleep(0.25)
+        assert ledger_apps["total"] > 0, "Xray events did not enter the application ledger"
+        assert ledger_routes["total"] > 0, "Xray events did not enter the route ledger"
+        assert ledger_history["total"] > 0, "Xray events did not enter the ledger history"
+        assert all(item["state"] == "observed" and item["endedAt"] is None for item in ledger_history["items"]), "Access events were presented as ended connections"
+        assert ledger_routes["freshness"]["xrayAccess"]["current"], "Ledger freshness ignored Xray records"
+        assert any(
+            item["application"]["key"]["kind"] == "unattributed"
+            and item["traffic"]["notAvailableCount"] > 0
+            for item in ledger_apps["items"]
+        ), "Xray application events were reported with fabricated byte totals"
+        assert any(
+            item["route"]["kind"] == "xray"
+            and item["traffic"]["notAvailableCount"] > 0
+            for item in ledger_routes["items"]
+        ), "Xray route evidence did not reach the route ledger"
+
+        call("traffic.history.setPersistent", {"enabled": True})
+        fetch("NODE_A")
+        fetch("NODE_A", socks=True)
+        history_summary = {"available": False}
+        for _ in range(32):
+            history_summary = call("traffic.history.summary", {"period": "today"})
+            if history_summary.get("available") and history_summary.get("totals", {}).get("recordedFlowCount", 0) > 0:
+                break
+            time.sleep(0.25)
+        assert history_summary.get("available"), "Persistent traffic history did not open"
+        assert history_summary["totals"]["recordedFlowCount"] > 0, "Xray events did not reach persistent history"
+        assert history_summary["byteTotalsUnavailable"], "Persistent history hid the Xray byte-total limitation"
+        history_applications = call("traffic.history.applications.list", {"period": "today", "limit": 200})
+        history_routes = call("traffic.history.routes.list", {"period": "today", "limit": 200})
+        assert history_applications["total"] > 0, "Persistent application history is empty"
+        assert any(item["kind"] == "xray" for item in history_routes["items"]), "Persistent Xray route history is empty"
+        pending_snapshot = call("configuration.snapshot", {"nodeLimit": 200})
+        pending_document = copy.deepcopy(pending_snapshot["document"])
+        pending_group = next(entry for entry in pending_document["proxyGroups"] if entry["name"] == "Auto")
+        pending_group["healthCheck"]["latencyToleranceMilliseconds"] = 75
+        call("configuration.apply", {
+            "document": pending_document,
+            "expectedRevision": pending_snapshot["configurationRevision"],
+        })
+        pending_status = call("status")
+        assert pending_status["configuration"]["hasUnappliedChanges"], "Saved configuration changes were reported as active"
+        pending_snapshot = call("configuration.snapshot", {"nodeLimit": 200})
+        call("configuration.workspace.activate", {
+            "id": pending_document["workspaces"][0]["id"],
+            "expectedRevision": pending_snapshot["configurationRevision"],
+        })
+        applied_status = call("status")
+        assert not applied_status["configuration"]["hasUnappliedChanges"], "Applying saved changes left a pending state"
+        pending_apply_receipt = {"savedShownPending": True, "applyClearedPending": True}
         if args.ui_only:
             from xray_ui_probe import exercise_ui
             ui_receipt = exercise_ui(call, capture_app_window, process, proxy_a, args.ui_output)
@@ -583,10 +642,22 @@ def main():
         receipt["xrayConnectionRecordCount"] = traffic_snapshot["connectionCount"]
         receipt["xrayConnectionRecordEvidence"] = connection_records["evidence"]
         receipt["xrayCloseRejected"] = True
+        receipt["flowLedger"] = {
+            "applications": ledger_apps["total"],
+            "routes": ledger_routes["total"],
+            "events": ledger_history["total"],
+            "xrayByteTotalsUnavailable": True,
+        }
+        receipt["trafficHistory"] = {
+            "available": history_summary.get("available", False),
+            "recordedFlowCount": history_summary.get("totals", {}).get("recordedFlowCount", 0),
+            "xrayRoute": True,
+        }
         if recovery_receipt:
             receipt["coreRecovery"] = recovery_receipt
         if retention_receipt:
             receipt["logRetention"] = retention_receipt
+        receipt["pendingApply"] = pending_apply_receipt
         if args.ui_output:
             receipt["pasteUI"] = {"invalidTextRejected": True, "validLinkPreview": True, "sourcePersisted": True, "sourceRenamed": True}
             receipt["connectionUI"] = {"rowSelected": True, "detailsVisible": True}

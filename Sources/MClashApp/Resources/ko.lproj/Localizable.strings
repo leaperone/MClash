@@ -137,7 +137,7 @@
 "Connect directly" = "직접 연결";
 "Connect the active profile when MClash opens" = "MClash를 열 때 활성 프로파일 연결";
 "Connecting…" = "연결 중…";
-"Connection Inspector" = "연결 인스펙터";
+"Connection Inspector" = "연결 세부 정보";
 "Connection data is stale while the live stream reconnects." = "라이브 스트림을 다시 연결하는 동안 연결 데이터가 최신 상태가 아닙니다.";
 "Connections bypass proxy groups until Rule or Global mode is selected." = "규칙 또는 글로벌 모드를 선택할 때까지 연결은 프록시 그룹을 우회합니다.";
 "Connections unavailable" = "연결을 사용할 수 없음";
@@ -448,7 +448,7 @@
 "Topology" = "토폴로지";
 "Topology zoom" = "토폴로지 확대/축소";
 "Traffic" = "트래픽";
-"Traffic Workspace" = "트래픽 작업 공간";
+"Traffic Workspace" = "보기";
 "Transferred" = "전송량";
 "Transparent Proxy Ports" = "투명 프록시 포트";
 "Transport" = "전송 방식";
@@ -2208,6 +2208,7 @@
 "Rules are edited in the unified rule editor." = "규칙은 통합 규칙 편집기에서 편집합니다.";
 "Only one entrance of each type can be enabled in the current Mihomo runtime." = "현재 proxy core 런타임에서는 각 유형의 진입점 하나만 활성화할 수 있습니다.";
 "Apply changes" = "변경 사항 적용";
+"Saved changes are not active yet." = "저장된 변경 사항이 아직 적용되지 않았습니다.";
 "MClash could not synchronize the refreshed runtime configuration: %@" = "MClash가 새로 고친 런타임 구성을 동기화하지 못했습니다: %@";
 "MClash could not compile the refreshed configuration: %@" = "MClash가 새로 고친 구성을 컴파일하지 못했습니다: %@";
 "Node group — create a group first" = "노드 그룹 — 먼저 그룹을 만드세요";
@@ -2365,7 +2366,7 @@
 "Process path must be an absolute path without line breaks." = "Process path must be an absolute path without line breaks.";
 "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set." = "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set.";
 "Add this app to a rule…" = "Add this app to a rule…";
-"A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable proxy core proxy group %@.";
+"A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable proxy group %@.";
 "An enabled entrance bind address cannot contain line breaks." = "An enabled entrance bind address cannot contain line breaks.";
 "Entrance names beginning with mclash- are reserved for internal listeners." = "Entrance names beginning with mclash- are reserved for internal listeners.";
 "Switch" = "Switch";
@@ -2491,7 +2492,7 @@
 
 "No runtime flow association" = "No runtime flow association";
 
-"proxy core proxy" = "proxy core proxy";
+"proxy core proxy" = "proxy";
 
 "Runtime · resolving" = "Runtime · resolving";
 
@@ -2590,3 +2591,17 @@
 "Xray access log contains an overlong partial line" = "Xray access log contains an overlong partial line";
 "Xray access log is not available" = "Xray access log is not available";
 "Xray log rotation is already in progress." = "Xray log rotation is already in progress.";
+"Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged." = "Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged.";
+"Add common selection methods for any node source. Groups include new nodes when your sources refresh." = "Add common selection methods for any node source. Groups include new nodes when your sources refresh.";
+"Via Xray" = "Xray 경유";
+"Byte totals unavailable" = "바이트 합계를 사용할 수 없음";
+"This Xray connection event does not include per-connection byte totals." = "이 Xray 연결 이벤트에는 연결별 바이트 합계가 없습니다.";
+"%@ connection events have no byte totals" = "바이트 합계가 없는 연결 이벤트 %@개";
+"%@ connection events have no byte totals from the backend." = "백엔드에서 바이트 합계를 제공하지 않는 연결 이벤트가 %@개 있습니다.";
+"%@ was measured separately. %@" = "%@의 바이트는 별도로 측정되었습니다. %@";
+"Xray route observed" = "Xray 경로 관찰됨";
+"Records" = "기록";
+"%@ measured · %@ records" = "측정 %@ · 기록 %@개";
+"%@ measured · %@ records · updated %@" = "측정 %@ · 기록 %@개 · 업데이트 %@";
+"%@ records · byte totals unavailable" = "기록 %@개 · 바이트 합계 없음";
+"Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "이번 세션의 연결 이벤트와 종료된 연결을 표시합니다. 저장된 합계에는 대상이 포함되지 않습니다。";

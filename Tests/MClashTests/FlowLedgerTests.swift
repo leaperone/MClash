@@ -340,6 +340,67 @@ struct FlowLedgerTests {
         )
     }
 
+    @Test("Xray access events feed route and application aggregates without byte claims")
+    func xrayAccessProjection() throws {
+        let eventID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000021"))
+        let record = XrayAccessRecord(
+            id: eventID,
+            timestamp: baseDate,
+            source: "127.0.0.1:50000",
+            destination: "[2001:db8::1]:443",
+            transport: "tcp",
+            inbound: "HTTP",
+            outbound: "n-node"
+        )
+        let ledger = FlowLedger(
+            mihomoConnections: [],
+            xrayAccessRecords: [record]
+        )
+
+        let entry = try #require(ledger.entries.first)
+        #expect(entry.id == .xray(eventID))
+        #expect(entry.state == .observed)
+        #expect(entry.endedAt == nil)
+        #expect(entry.outcome == .viaXray)
+        #expect(entry.destination.ipAddress == "2001:db8::1")
+        #expect(entry.destination.port == 443)
+        #expect(entry.upload == .notAvailable)
+        #expect(entry.download == .notAvailable)
+        guard case let .xray(chain) = entry.routeKey else {
+            Issue.record("Xray event did not produce an Xray route aggregate")
+            return
+        }
+        #expect(chain == ["n-node"])
+        #expect(ledger.completedEntries == [entry])
+        #expect(ledger.applicationAggregates.first?.application == .unattributed)
+        #expect(ledger.applicationAggregates.first?.traffic.notAvailableCount == 1)
+        #expect(ledger.routeAggregates.first?.traffic.notAvailableCount == 1)
+    }
+
+    @Test("App capture events are represented once when Xray also logs the capture")
+    func xrayCaptureDoesNotDuplicateAppRouting() throws {
+        let activity = appActivity(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000022")!,
+            relayLocalPort: 55_001
+        )
+        let record = XrayAccessRecord(
+            timestamp: activity.startedAt,
+            source: "127.0.0.1:55001",
+            destination: "example.com:443",
+            transport: "tcp",
+            inbound: "mclash-capture-55001",
+            outbound: "n-node"
+        )
+        let ledger = FlowLedger(
+            mihomoConnections: [],
+            xrayAccessRecords: [record],
+            appRoutingActivities: [activity]
+        )
+
+        #expect(ledger.entries.count == 1)
+        #expect(ledger.entries.first?.id == .appRouting(activity.id))
+    }
+
     @Test("Closed state, end time, and recent limiting are deterministic")
     func recentlyClosedAndRecentEntries() throws {
         let older = try connection(

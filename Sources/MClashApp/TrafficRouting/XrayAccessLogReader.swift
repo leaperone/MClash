@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 public enum XrayAccessLogReaderError: Error, Equatable, LocalizedError, Sendable {
     case missing
@@ -98,9 +99,19 @@ public actor XrayAccessLogReader {
             }
             var searchStart = pendingBytes.startIndex
             var processedEnd = pendingBytes.startIndex
+            let pendingOffset = offset - UInt64(pendingBytes.count)
             while let newline = pendingBytes[searchStart...].firstIndex(of: 0x0A) {
                 let line = pendingBytes[searchStart..<newline]
-                if let text = String(data: line, encoding: .utf8), let record = parser.parse(text) {
+                let lineOffset = pendingOffset + UInt64(searchStart - pendingBytes.startIndex)
+                // Reopening the same log preserves identity. Equal lines at
+                // different offsets still represent distinct events.
+                var digest = SHA256()
+                digest.update(data: Data("\(url.path)|\(fileInfo.st_dev)|\(currentFileID)|\(lineOffset)|".utf8))
+                digest.update(data: line)
+                let bytes = Array(digest.finalize().prefix(16))
+                let id = UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                                     bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+                if let text = String(data: line, encoding: .utf8), let record = parser.parse(text, id: id) {
                     records.append(record)
                 }
                 processedEnd = pendingBytes.index(after: newline)

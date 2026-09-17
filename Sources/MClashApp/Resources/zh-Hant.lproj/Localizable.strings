@@ -137,7 +137,7 @@
 "Connect directly" = "直接連線";
 "Connect the active profile when MClash opens" = "MClash 開啟時連線目前設定檔";
 "Connecting…" = "正在連線…";
-"Connection Inspector" = "連線檢查器";
+"Connection Inspector" = "連線詳情";
 "Connection data is stale while the live stream reconnects." = "即時資料流重新連線期間，連線資料可能已過時。";
 "Connections bypass proxy groups until Rule or Global mode is selected." = "選擇規則或全域模式前，連線會繞過代理群組。";
 "Connections unavailable" = "連線不可用";
@@ -449,7 +449,7 @@
 "Topology" = "拓撲";
 "Topology zoom" = "拓撲縮放";
 "Traffic" = "連線紀錄";
-"Traffic Workspace" = "流量工作區";
+"Traffic Workspace" = "檢視";
 "Transferred" = "已傳輸";
 "Transparent Proxy Ports" = "透明代理連接埠";
 "Transport" = "傳輸";
@@ -2209,6 +2209,7 @@
 "Rules are edited in the unified rule editor." = "規則請使用統一規則編輯器編輯。";
 "Only one entrance of each type can be enabled in the current Mihomo runtime." = "目前代理服務執行環境中每種入口類型只能啟用一個。";
 "Apply changes" = "套用變更";
+"Saved changes are not active yet." = "已儲存的變更尚未生效。";
 "MClash could not synchronize the refreshed runtime configuration: %@" = "MClash 無法同步更新後的執行配置：%@";
 "MClash could not compile the refreshed configuration: %@" = "MClash 無法編譯更新後的配置：%@";
 "Node group — create a group first" = "節點群組——請先建立節點群組";
@@ -2591,3 +2592,17 @@
 "Xray access log contains an overlong partial line" = "連接記錄包含過長的條目，已跳過該條目";
 "Xray access log is not available" = "連接記錄暫時不可用";
 "Xray log rotation is already in progress." = "正在整理連接記錄，請稍候。";
+"Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged." = "使用已啟用的節點加入手動選擇、自動測速和自動切換分組。保留現有分組和路由目標。";
+"Add common selection methods for any node source. Groups include new nodes when your sources refresh." = "為任何節點來源加入常用選擇方式。更新來源後，新節點會自動加入分組。";
+"Via Xray" = "通過 Xray";
+"Byte totals unavailable" = "無法取得位元組總量";
+"This Xray connection event does not include per-connection byte totals." = "這筆 Xray 連線事件不包含單一連線的位元組總量。";
+"%@ connection events have no byte totals" = "%@ 筆連線事件沒有位元組總量";
+"%@ connection events have no byte totals from the backend." = "%@ 筆連線事件沒有核心提供的位元組總量。";
+"%@ was measured separately. %@" = "%@ 的位元組由其他路徑測量。%@";
+"Xray route observed" = "已觀察到 Xray 路由";
+"Records" = "記錄數";
+"%@ measured · %@ records" = "已測量 %@ · %@ 筆記錄";
+"%@ measured · %@ records · updated %@" = "已測量 %@ · %@ 筆記錄 · %@ 更新";
+"%@ records · byte totals unavailable" = "%@ 筆記錄 · 未提供位元組總量";
+"Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "此處顯示本次工作階段觀察到的連線事件和已結束的連線。儲存的彙總不包含存取目標。";

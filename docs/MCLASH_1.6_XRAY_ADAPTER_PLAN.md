@@ -18,7 +18,7 @@ The initial per-node process design was rejected after a live prototype. Indepen
 | CoreSupervisor | Validate candidate configuration and supervise the bundled process. |
 | Existing macOS capture | Capture application traffic and relay it to authenticated private listeners. |
 
-The default 1.6 backend is Xray. Existing Mihomo code and resources remain available for legacy compatibility and regression tests. Xray mode does not consume subscription rules, DNS, proxy groups, or controller settings.
+The default 1.6 backend is Xray. Compatibility code remains only for migration and regression tests. Xray mode consumes the same MClash-owned sources, nodes, groups, rules, DNS policy, entrances, and workspaces as every other runtime path.
 
 ## Supported behavior
 
@@ -35,7 +35,7 @@ The default 1.6 backend is Xray. Existing Mihomo code and resources remain avail
 
 Unsupported nodes stay visible with a reason and cannot silently fall back to a different backend. The renderer covers VLESS, VMess, Trojan, Shadowsocks, HTTP, HTTPS, SOCKS5, Hysteria2, and WireGuard client outbounds. WireGuard share links and native `[Interface]`/`[Peer]` text validate 32-byte keys, addresses, reserved bytes, MTU, and peer routing fields before generating Xray JSON. Pasted and remote Base64 node lists use the same link parser and decoded-size bound. Each protocol needs both schema validation and a traffic probe before interoperability is claimed. TUIC, unknown plugins, and unsupported transport options are not silently approximated.
 
-Xray does not provide a Mihomo-compatible connection list or API log stream. Those operations report their limitations. Existing captured-flow records and Xray process logs remain separate sources of diagnostics.
+Xray does not provide the old controller connection list or API log stream. MClash reads Xray access events itself, projects them into the Flow Ledger, and exposes one application, route, and history view. Access events carry no per-connection byte counters, so the UI reports that limitation instead of showing zero bytes.
 
 ## Pinned core
 
@@ -47,9 +47,9 @@ The release uses official Xray 26.9.9 prerelease, source revision `52a412d9e2f5c
 2. Pin Xray and prove start, readiness, invalid-candidate handling, and stop.
 3. Compile nodes, DNS, entrances, and rules; prove actual routing changes and stream preservation.
 4. Integrate group policies, probes, persistence, and health settings into the app and CLI.
-5. Freeze source, run acceptance, sign and notarize an immutable `1.6.0-rc.N` prerelease, download it, and verify the artifact.
+5. Freeze source, run acceptance, sign and notarize one `1.6.0` release, download it, and verify the artifact.
 
-The user authorized implementation through a test Release. A prerelease can be published from the verified feature branch without merging the stable branch. It must not advance the stable update feed or overwrite the locally installed production app during verification.
+The user authorized implementation through one final 1.6.0 Release. Build and verify the signed candidate before creating the stable tag. Do not overwrite the locally installed production app during verification.
 
 ## Acceptance gates
 
@@ -58,14 +58,14 @@ The user authorized implementation through a test Release. A prerelease can be p
 - [x] Actual Xray group selection preserves an established stream and changes the route for new connections.
 - [x] Complete app checks for source import, selection, modes, invalid-source rollback, automatic fallback, URL selection, balancing, and relay chains.
 - [x] Transactional rule and capture-listener updates checked against the actual core.
-- [ ] Group health editing and persisted configuration checked through the app.
-- [ ] Protocol interoperability and DNS behavior recorded with explicit limits.
-- [ ] Full typecheck, unit tests, integration tests, and release gate pass at the frozen source commit.
-- [ ] Signed, notarized prerelease is published, downloaded, and checked.
+- [x] Group health editing and persisted configuration checked through the app.
+- [x] Protocol interoperability and DNS behavior recorded with explicit limits.
+- [x] Full typecheck, unit tests, integration tests, and release gate pass at the frozen source commit.
+- [ ] Signed, notarized 1.6.0 is published, downloaded, and checked.
 
 The checked lifecycle and routing gates are backed by `scripts/smoke-test-xray-supervisor.sh` and `scripts/smoke-test-xray-routing.py`. The workbench acceptance tool is `scripts/smoke-test-xray-app.py`. `ReleaseEvidence/<version>.json` records the final tested source and commands. A passing compile does not establish runtime or Network Extension acceptance.
 
-The first RC supports inline text rule-set entries. Automatic remote rule-set refresh, MRS, DNS-over-TLS, process-name-only rules, and live Fake-IP acceptance remain outside its verified compatibility set. Application identifiers, complete process paths, and user IDs use App Routing. Xray is signed with the stable `mclash-xray` identifier so the signed Network Extension can bypass its own proxy traffic.
+The 1.6.0 release supports inline text rule-set entries. Automatic remote rule-set refresh, MRS, DNS-over-TLS, process-name-only rules, and live Fake-IP acceptance remain outside its verified compatibility set. Application identifiers, complete process paths, and user IDs use App Routing. Xray is signed with the stable `mclash-xray` identifier so the signed Network Extension can bypass its own proxy traffic.
 
 ## Measurements
 
@@ -73,6 +73,6 @@ The initial single-process routing prototype reached readiness in 41.52 ms and u
 
 ## Release checks
 
-`scripts/xray-release-preflight.sh` requires a clean worktree, an exact source commit or its evidence-only child, matching core provenance, release notes, and validation commands. A failed or cancelled release tag remains immutable. Fixes use the next RC number.
+`scripts/xray-release-preflight.sh` requires a clean worktree, an exact source commit or its evidence-only child, matching core provenance, release notes, and validation commands. If the candidate fails, fix the source, rerun the gates, and create no release until the complete 1.6.0 candidate passes.
 
 All local app acceptance uses unique application storage and automation namespaces. It does not modify `/Applications/MClash.app` or the active production Network Extension. Signed-provider activation and public-network endpoint checks must be identified explicitly when they have not been exercised.

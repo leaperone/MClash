@@ -36,7 +36,21 @@ enum FlowLedgerAssociationPresentation {
 }
 
 enum FlowLedgerTrafficPresentation {
+    static func totalTitle(_ traffic: FlowLedgerTrafficAggregate) -> String {
+        if traffic.exactTotalBytes == 0,
+           traffic.notAvailableCount > 0 || traffic.notMeasuredAfterHandoffCount > 0 {
+            return AppLocalization.string("Not measured")
+        }
+        return formattedLedgerTraffic(traffic.exactTotalBytes)
+    }
+
     static func directRouteDetail(_ traffic: FlowLedgerTrafficAggregate) -> String {
+        if traffic.notAvailableCount > 0 {
+            return AppLocalization.format(
+                "%@ connection events have no byte totals",
+                formattedCount(traffic.notAvailableCount)
+            )
+        }
         let unmeasuredCount = traffic.notMeasuredAfterHandoffCount
         guard unmeasuredCount > 0 else {
             return AppLocalization.string("Relayed locally; payload measured")
@@ -56,6 +70,18 @@ enum FlowLedgerTrafficPresentation {
     }
 
     static func coverageHelp(_ traffic: FlowLedgerTrafficAggregate) -> String {
+        if traffic.notAvailableCount > 0 {
+            let events = AppLocalization.format(
+                "%@ connection events have no byte totals from the backend.",
+                formattedCount(traffic.notAvailableCount)
+            )
+            if traffic.exactTotalBytes == 0 { return events }
+            return AppLocalization.format(
+                "%@ was measured separately. %@",
+                formattedLedgerTraffic(traffic.exactTotalBytes),
+                events
+            )
+        }
         let unmeasuredCount = traffic.notMeasuredAfterHandoffCount
         guard unmeasuredCount > 0 else {
             if traffic.notApplicableCount > 0, traffic.exactTotalBytes == 0 {

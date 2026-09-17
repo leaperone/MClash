@@ -4,6 +4,22 @@ import Testing
 
 @Suite("Xray access log reader")
 struct XrayAccessLogReaderTests {
+    @Test("Reopening a log preserves event identities without merging equal lines")
+    func stableEventIdentities() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("access.log")
+        try Data((line(1) + line(1)).utf8).write(to: url)
+        let first = try await XrayAccessLogReader(url: url).poll()
+        let reopened = try await XrayAccessLogReader(url: url).poll()
+        #expect(first.count == 2)
+        #expect(first.map(\.id) == reopened.map(\.id))
+        #expect(Set(first.map(\.id)).count == 2)
+        try Data((line(2) + line(2)).utf8).write(to: url)
+        let rewritten = try await XrayAccessLogReader(url: url).poll()
+        #expect(Set(first.map(\.id)).isDisjoint(with: rewritten.map(\.id)))
+    }
+
     @Test("Opening a large existing log reads recent records without replaying old traffic")
     func readsOnlyRecentTail() async throws {
         let directory = try temporaryDirectory()

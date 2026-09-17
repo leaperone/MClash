@@ -137,7 +137,7 @@
 "Connect directly" = "直接连接";
 "Connect the active profile when MClash opens" = "MClash 打开时连接当前配置";
 "Connecting…" = "正在连接…";
-"Connection Inspector" = "连接检查器";
+"Connection Inspector" = "连接详情";
 "Connection data is stale while the live stream reconnects." = "实时数据流重连期间，连接数据可能已过时。";
 "Connections bypass proxy groups until Rule or Global mode is selected." = "选择规则或全局模式前，连接会绕过代理分组。";
 "Connections unavailable" = "连接不可用";
@@ -449,7 +449,7 @@
 "Topology" = "拓扑";
 "Topology zoom" = "拓扑缩放";
 "Traffic" = "连接记录";
-"Traffic Workspace" = "流量工作区";
+"Traffic Workspace" = "查看";
 "Transferred" = "已传输";
 "Transparent Proxy Ports" = "透明代理端口";
 "Transport" = "传输";
@@ -2207,6 +2207,7 @@
 "Rules are edited in the unified rule editor." = "规则请使用统一规则编辑器进行编辑。";
 "Only one entrance of each type can be enabled in the current Mihomo runtime." = "当前代理服务每种入口类型只能启用一个。";
 "Apply changes" = "应用更改";
+"Saved changes are not active yet." = "已保存的更改尚未生效。";
 "MClash could not synchronize the refreshed runtime configuration: %@" = "MClash 无法同步刷新后的运行配置：%@";
 "MClash could not compile the refreshed configuration: %@" = "MClash 无法编译刷新后的配置：%@";
 "Node group — create a group first" = "节点组——请先创建节点组";
@@ -2589,3 +2590,17 @@
 "Xray access log contains an overlong partial line" = "连接记录包含过长的条目，已跳过该条目";
 "Xray access log is not available" = "连接记录暂时不可用";
 "Xray log rotation is already in progress." = "正在整理连接记录，请稍候。";
+"Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged." = "使用已启用的节点添加手动选择、自动测速和自动切换分组。保留已有分组和路由目标。";
+"Add common selection methods for any node source. Groups include new nodes when your sources refresh." = "为任意节点来源添加常用选择方式。刷新来源后，新节点会自动加入分组。";
+"Via Xray" = "通过 Xray";
+"Byte totals unavailable" = "字节总量不可用";
+"This Xray connection event does not include per-connection byte totals." = "这条 Xray 连接事件不包含单连接字节总量。";
+"%@ connection events have no byte totals" = "%@ 条连接事件没有字节总量";
+"%@ connection events have no byte totals from the backend." = "%@ 条连接事件没有来自内核的字节总量。";
+"%@ was measured separately. %@" = "%@ 的字节由其他路径测量。%@";
+"Xray route observed" = "已观察到 Xray 路由";
+"Records" = "记录数";
+"%@ measured · %@ records" = "已测量 %@ · %@ 条记录";
+"%@ measured · %@ records · updated %@" = "已测量 %@ · %@ 条记录 · %@ 更新";
+"%@ records · byte totals unavailable" = "%@ 条记录 · 未提供字节总量";
+"Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "此处显示本次会话观察到的连接事件和已结束的连接。保存的汇总不包含访问目标。";

@@ -11,6 +11,13 @@ def exercise_log_retention(call, fetch, app_pid, support):
     assert directory.resolve().parent == (support / "Runtime/Xray").resolve()
     before_pids = _child_xray_pids(app_pid)
     assert len(before_pids) == 1, "Log rotation needs one owned Xray process"
+    assert call("routing.proxy.select", {"group": "Auto", "proxy": "Source fixture"})["selected"]
+    listener_names = {
+        listener["name"]
+        for listener in call("status")["core"].get("listeners", [])
+        if listener.get("kind") in {"http", "socks", "socks5", "mixed"}
+    }
+    assert len(listener_names) == 2, "Retention fixture must have HTTP and SOCKS entrances"
     paths = [directory / name for name in ("access.log", "error.log")]
     block = b"#" + b"x" * 1022 + b"\n"
     for path in paths:
@@ -38,7 +45,7 @@ def exercise_log_retention(call, fetch, app_pid, support):
             page = call("traffic.flows.list", {"offset": page["total"] - 200, "limit": 200})
         records = page["items"]
         entrances = {record.get("inbound") for record in records if record["destination"].startswith(host + ":")}
-        if entrances == {"HTTP", "SOCKS"}:
+        if listener_names.issubset(entrances):
             break
         assert time.monotonic() < deadline, "New records did not arrive after log rotation"
         time.sleep(0.2)

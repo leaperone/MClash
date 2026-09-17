@@ -39,8 +39,15 @@ def exercise_recovery(call, fetch, app_pid):
     if len(before) != 1:
         raise AssertionError(f"expected exactly one Xray child under app {app_pid}, got {before}")
     old_pid = before[0]
+    assert call("routing.proxy.select", {"group": "Auto", "proxy": "Source fixture"})["selected"]
     if old_pid not in _child_xray_pids(app_pid):
         raise AssertionError("Owned Xray child exited before the recovery probe could signal it")
+    listener_names = {
+        listener["name"]
+        for listener in call("status")["core"].get("listeners", [])
+        if listener.get("kind") in {"http", "socks", "socks5", "mixed"}
+    }
+    assert len(listener_names) == 2, "Recovery fixture must have HTTP and SOCKS entrances"
     os.kill(old_pid, signal.SIGTERM)
     started = time.monotonic()
     replacement = None
@@ -65,11 +72,12 @@ def exercise_recovery(call, fetch, app_pid):
     while time.monotonic() - started < RECOVERY_DEADLINE_SECONDS:
         observed = [record for record in call("traffic.flows.list", {"limit": 200})["items"]
                     if record["destination"].startswith(unique_host + ":")]
-        if {record.get("inbound") for record in observed} == {"HTTP", "SOCKS"}:
+        observed_inbounds = {record.get("inbound") for record in observed}
+        if listener_names.issubset(observed_inbounds):
             break
         time.sleep(0.2)
     else:
-        raise AssertionError("HTTP and SOCKS connection records did not resume after the owned core restarted")
+        raise AssertionError("Connection records did not resume after the owned core restarted")
     elapsed = round(time.monotonic() - started, 3)
     call("core.disconnect")
     time.sleep(2)

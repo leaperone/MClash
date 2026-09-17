@@ -920,7 +920,7 @@ private struct TrafficHistoryStoredMeasurement {
         case let .exact(bytes):
             kind = "exact"
             self.bytes = bytes > UInt64(Int64.max) ? Int64.max : Int64(bytes)
-        case .notMeasuredAfterHandoff:
+        case .notMeasuredAfterHandoff, .notAvailable:
             kind = "not_measured"
             bytes = nil
         case .notApplicable:
@@ -976,7 +976,7 @@ private struct TrafficHistoryStoredDelta {
 
     var totals: TrafficHistoryTotals {
         TrafficHistoryTotals(
-            completedFlowCount: UInt64(values[0]),
+            recordedFlowCount: UInt64(values[0]),
             exactUploadBytes: UInt64(values[1]),
             exactDownloadBytes: UInt64(values[2]),
             coverage: TrafficHistoryCoverage(

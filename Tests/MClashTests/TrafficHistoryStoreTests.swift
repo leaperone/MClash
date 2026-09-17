@@ -131,7 +131,7 @@ struct TrafficHistoryStoreTests {
             now: baseDate.addingTimeInterval(60),
             calendar: utcCalendar
         )
-        #expect(snapshot.totals.completedFlowCount == 3)
+        #expect(snapshot.totals.recordedFlowCount == 3)
         #expect(snapshot.totals.exactUploadBytes == 120)
         #expect(snapshot.totals.exactDownloadBytes == 880)
         #expect(snapshot.totals.coverage.exactDirectionCount == 2)
@@ -152,7 +152,7 @@ struct TrafficHistoryStoreTests {
             now: baseDate.addingTimeInterval(60),
             calendar: utcCalendar
         )
-        #expect(persisted.totals.completedFlowCount == 3)
+        #expect(persisted.totals.recordedFlowCount == 3)
     }
 
     @Test("Integer aggregation saturates instead of overflowing or becoming negative")
@@ -179,7 +179,7 @@ struct TrafficHistoryStoreTests {
         #expect(snapshot.totals.exactUploadBytes == UInt64(Int64.max))
         #expect(snapshot.totals.exactDownloadBytes == UInt64(Int64.max))
         #expect(snapshot.totals.exactTotalBytes == UInt64.max - 1)
-        #expect(snapshot.totals.completedFlowCount == 2)
+        #expect(snapshot.totals.recordedFlowCount == 2)
     }
 
     @Test("Invalid checkpoint input rejects the whole batch before any aggregate changes")
@@ -198,7 +198,7 @@ struct TrafficHistoryStoreTests {
             now: baseDate.addingTimeInterval(60),
             calendar: utcCalendar
         )
-        #expect(snapshot.totals.completedFlowCount == 0)
+        #expect(snapshot.totals.recordedFlowCount == 0)
     }
 
     @Test("Clear advances generation, rejects replay before baseline, and keeps source cursor")
@@ -227,7 +227,7 @@ struct TrafficHistoryStoreTests {
             calendar: utcCalendar
         )
         #expect(snapshot.baseline.generation == 2)
-        #expect(snapshot.totals.completedFlowCount == 1)
+        #expect(snapshot.totals.recordedFlowCount == 1)
     }
 
     @Test("Retention supports 7, 30, and 90 days and pruning removes expired buckets")
@@ -263,7 +263,7 @@ struct TrafficHistoryStoreTests {
             now: baseDate.addingTimeInterval(60),
             calendar: utcCalendar
         )
-        #expect(week.totals.completedFlowCount == 1)
+        #expect(week.totals.recordedFlowCount == 1)
         #expect(week.totals.exactTotalBytes == 70)
         #expect(
             try sqliteIntScalar(
@@ -359,7 +359,7 @@ struct TrafficHistoryStoreTests {
                 sql: "SELECT COUNT(*) FROM flow_checkpoint"
             ) == 0
         )
-        #expect(model.trafficHistoryTodaySnapshot?.totals.completedFlowCount == 0)
+        #expect(model.trafficHistoryTodaySnapshot?.totals.recordedFlowCount == 0)
     }
 
     @Test("Newer and corrupted databases return explicit unavailable states")

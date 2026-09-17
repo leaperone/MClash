@@ -38,7 +38,7 @@ public struct XrayAccessLogParser: Sendable {
         }
     }
 
-    public func parse(_ line: String, now: Date = Date()) -> XrayAccessRecord? {
+    public func parse(_ line: String, now: Date = Date(), id: UUID = UUID()) -> XrayAccessRecord? {
         let parts = line.split(maxSplits: 4, whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
         guard parts.count >= 5, parts[2] == "from", parts[4].hasPrefix("accepted ") else { return nil }
         let date = Self.formatter.date(from: parts[0] + " " + parts[1]) ?? now
@@ -79,7 +79,7 @@ public struct XrayAccessLogParser: Sendable {
         }
         let inbound = route?.inbound
         guard inbound != "dns-query", !(inbound?.hasPrefix("probe-") ?? false) else { return nil }
-        return XrayAccessRecord(timestamp: date, source: source, destination: destination,
+        return XrayAccessRecord(id: id, timestamp: date, source: source, destination: destination,
                                 transport: transport, inbound: inbound,
                                 outbound: route?.outbound)
     }

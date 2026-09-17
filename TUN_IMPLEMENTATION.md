@@ -1,11 +1,11 @@
 # TUN implementation boundary
 
-MClash must not enable mihomo TUN by patching the current user-owned core process. On macOS, route, DNS, and interface changes need a separately signed privileged service with deterministic cleanup. A plain settings toggle would work only on some machines and could leave networking broken after a crash.
+MClash must not enable TUN by patching the current user-owned proxy-core process. On macOS, route, DNS, and interface changes need a separately signed privileged service with deterministic cleanup. A plain settings toggle would work only on some machines and could leave networking broken after a crash.
 
 ## Chosen architecture
 
 1. Ship a separately signed `MClashTunnelService` launch daemon inside the app bundle and register it with `SMAppService`.
-2. Move ownership of the TUN-mode mihomo process to that service. The normal user process remains owned by `CoreSupervisor`; only one owner may run at a time.
+2. Move ownership of the TUN-mode proxy-core process to that service. The normal user process remains owned by `CoreSupervisor`; only one owner may run at a time.
 3. Expose a narrow XPC protocol: service status, install/register, start from a validated app-owned configuration identifier, stop, and restore network state. Do not accept arbitrary executable paths, shell commands, controller secrets, or configuration bytes from untrusted clients.
 4. Verify the connecting client audit token, bundle identifier, Team ID, and designated requirement before accepting a request.
 5. Persist the pre-TUN route and DNS recovery record with mode `0600` before starting. On startup and shutdown, restore an unfinished record before accepting another TUN session.

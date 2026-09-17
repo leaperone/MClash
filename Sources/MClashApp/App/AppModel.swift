@@ -581,8 +581,10 @@ final class AppModel {
     private(set) var recentlyClosedConnections: [ClosedConnectionRecord] = []
     private(set) var flowLedger = FlowLedger(activeConnections: [])
     private(set) var xrayAccessRecords: [XrayAccessRecord] = []
+    private var xrayAccessHistoryClearedAt = Date.distantPast
     private(set) var ruleSetRefreshInProgress = false
     private(set) var ruleSetRefreshMessage: String?
+    private(set) var configurationHasUnappliedChanges = false
     private(set) var appRoutingFlowEntries: [UUID: FlowLedgerEntry] = [:] {
         didSet {
             appRoutingActivityPresentationRevision &+= 1
@@ -2318,6 +2320,7 @@ final class AppModel {
             try await configurationStore.save(document)
             configurationDocument = document
             let sourceDiagnostics = document.sources.flatMap(\.parseDiagnostics)
+            await refreshConfigurationApplicationState()
             var synchronizationResults = document.diagnostics(backend: configurationBackend)
                 + sourceDiagnostics
                 + Array(synchronizationDiagnostics)
@@ -2493,7 +2496,7 @@ final class AppModel {
     func installCommonProxyGroupPreset() async throws -> ConfigurationProxyGroupPreset.Result {
         guard begin(.changeRuntimeSettings) else { throw CancellationError() }
         defer { end(.changeRuntimeSettings) }
-        let result = try ConfigurationProxyGroupPreset.apply(
+        let result = try ConfigurationStarterGroups.apply(
             to: configurationDocument
         )
         // The preset is a convenience authoring operation, not a validation
@@ -2711,6 +2714,22 @@ final class AppModel {
         try await configurationStore.save(document)
         configurationDocument = document
         configurationDiagnostics = diagnostics
+        await refreshConfigurationApplicationState()
+    }
+
+    private func refreshConfigurationApplicationState() async {
+        guard usesXrayRuntime, isConnected, controllerIsReady,
+              let controller = xrayRuntimeController else {
+            configurationHasUnappliedChanges = false
+            return
+        }
+        let generation = controllerGeneration
+        let active = await controller.control.configurationState()
+        guard generation == controllerGeneration, isConnected, controllerIsReady else { return }
+        let desired = configurationDocument.currentWorkspace.flatMap {
+            ConfigurationRuntimeState(document: configurationDocument, workspaceID: $0.id)
+        }
+        configurationHasUnappliedChanges = desired != active || desired == nil
     }
 
     private func ruleSetSourceStore() throws -> RemoteRuleSetSource {
@@ -8794,6 +8813,8 @@ final class AppModel {
         }
 
         clearClosedConnectionHistory()
+        xrayAccessHistoryClearedAt = Date()
+        xrayAccessRecords.removeAll(keepingCapacity: false)
         guard await clearAppRoutingActivity() else {
             guard operationGeneration == trafficHistoryPersistenceOperationGeneration else {
                 trafficHistoryClearInProgress = false
@@ -9405,6 +9426,7 @@ final class AppModel {
             errorMessage = nil
             if usesXrayRuntime {
                 startXrayAccessLogMonitor()
+                await refreshConfigurationApplicationState()
                 appendSupervisorLog("Connected to the local Xray controller.")
                 await xrayRuntimeController?.startHealthChecks()
             } else {
@@ -10341,6 +10363,7 @@ final class AppModel {
     }
 
     private func stopControllerStreams() {
+        configurationHasUnappliedChanges = false
         supervisor.setProcessLogForwardingEnabled(false)
         controllerSetupOperation?.task.cancel()
         controllerSetupOperation = nil
@@ -11726,6 +11749,21 @@ final class AppModel {
         }
     }
 
+    private static func xrayRouteNames(for document: ConfigurationDocument) -> [String: String] {
+        var names: [String: String] = [
+            "direct": AppLocalization.string("Direct"),
+            "reject": AppLocalization.string("Reject"),
+            "dns-out": AppLocalization.string("DNS"),
+        ]
+        for node in document.nodes {
+            names[XrayRuntimePlan.nodeTag(node.id)] = node.userAlias ?? node.displayName
+        }
+        for group in document.proxyGroups {
+            names[XrayRuntimePlan.groupTag(group.id)] = group.name
+        }
+        return names
+    }
+
     private func cancelPresentationFlowLedgerRefresh() {
         guard !flowLedgerAccountingRefreshPending,
               !flowLedgerActiveBuildNeedsAccounting,
@@ -11777,12 +11815,16 @@ final class AppModel {
             let closedConnections = recentlyClosedConnections.map {
                 FlowLedgerClosedConnection(connection: $0.connection, closedAt: $0.closedAt)
             }
+            let xrayAccessRecords = self.xrayAccessRecords
+            let xrayRouteNames = Self.xrayRouteNames(for: self.configurationDocument)
             let activities = appRoutingActivities
             let defaultProfileID = activeProfileID
             let worker = Task.detached(priority: .utility) {
                 FlowLedger(
                     activeConnections: activeConnections,
                     recentlyClosedConnections: closedConnections,
+                    xrayAccessRecords: xrayAccessRecords,
+                    xrayRouteNames: xrayRouteNames,
                     appRoutingActivities: activities,
                     defaultProfileID: defaultProfileID
                 )
@@ -11959,7 +12001,8 @@ final class AppModel {
     private static func trafficHistoryCompletion(
         _ entry: FlowLedgerEntry
     ) -> TrafficHistoryCompletedFlow? {
-        guard !entry.state.isActive, let completedAt = entry.endedAt else { return nil }
+        guard !entry.state.isActive,
+              let completedAt = entry.state == .observed ? entry.startedAt : entry.endedAt else { return nil }
 
         let checkpoint: String
         let source: TrafficHistorySource
@@ -11970,6 +12013,9 @@ final class AppModel {
         case let .mihomo(identifier):
             checkpoint = "mihomo:\(identifier)"
             source = .mihomo
+        case let .xray(identifier):
+            checkpoint = "xray:\(identifier.uuidString)"
+            source = .xray
         }
 
         return TrafficHistoryCompletedFlow(
@@ -12014,6 +12060,14 @@ final class AppModel {
                 ruleName: route.rule,
                 proxyChain: route.chain
             )
+        case .viaXray:
+            let route = entry.mihomoRoute
+            return TrafficHistoryRoute(
+                kind: .xray,
+                displayName: route?.chain.last ?? "Xray",
+                ruleName: route?.rule,
+                proxyChain: route?.chain ?? []
+            )
         case .direct:
             return TrafficHistoryRoute(kind: .direct, displayName: "Direct")
         case .rejected:
@@ -12034,6 +12088,7 @@ final class AppModel {
     ) -> TrafficHistoryOutcome {
         switch outcome {
         case .viaMihomo: .viaMihomo
+        case .viaXray: .viaXray
         case .direct: .direct
         case .rejected: .rejected
         case .failOpen: .failOpen
@@ -12047,6 +12102,7 @@ final class AppModel {
         switch measurement {
         case let .exact(bytes): .exact(bytes)
         case .notMeasuredAfterHandoff: .notMeasuredAfterHandoff
+        case .notAvailable: .notAvailable
         case .notApplicable: .notApplicable
         }
     }
@@ -12065,6 +12121,26 @@ final class AppModel {
         liveFreshnessWatchdogTask = nil
     }
 
+    func ingestXrayAccessRecords(_ records: [XrayAccessRecord]) async {
+        guard !records.isEmpty else { return }
+        var seen = Set(xrayAccessRecords.map(\.id))
+        let additions = records.filter { $0.timestamp >= xrayAccessHistoryClearedAt && seen.insert($0.id).inserted }
+        xrayAccessRecords = Array((xrayAccessRecords + additions).suffix(2_000))
+        scheduleFlowLedgerRefresh()
+        guard trafficHistoryPersistenceChoice == .persistent, !additions.isEmpty else { return }
+        let generation = trafficHistoryPersistenceOperationGeneration
+        let names = Self.xrayRouteNames(for: configurationDocument)
+        let profileID = activeProfileID
+        let ledger = await Task.detached(priority: .utility) {
+            FlowLedger(activeConnections: [], xrayAccessRecords: additions,
+                       xrayRouteNames: names, defaultProfileID: profileID)
+        }.value
+        guard generation == trafficHistoryPersistenceOperationGeneration else { return }
+        // Account for the complete batch before the next read can evict it
+        // from the bounded presentation list.
+        schedulePersistentTrafficHistory(from: ledger)
+    }
+
     private func startXrayAccessLogMonitor() {
         guard runtimeBackend == .xray, let launch = xrayLaunchConfiguration,
               case let .xray(socketPath, _) = launch.backend else { return }
@@ -12072,6 +12148,7 @@ final class AppModel {
         xrayAccessLogMonitorGeneration &+= 1
         let generation = xrayAccessLogMonitorGeneration
         xrayAccessRecords = []
+        scheduleFlowLedgerRefresh()
         liveStreamHealth[.xrayAccess] = .connecting(
             previousSampleAt: liveStreamHealth[.xrayAccess]?.lastReceivedAt
         )
@@ -12093,7 +12170,8 @@ final class AppModel {
                     let records = try await reader.poll()
                     guard self.xrayAccessLogMonitorGeneration == generation else { return }
                     if !records.isEmpty {
-                        self.xrayAccessRecords = Array((self.xrayAccessRecords + records).suffix(2_000))
+                        await self.ingestXrayAccessRecords(records)
+                        guard self.xrayAccessLogMonitorGeneration == generation else { return }
                     }
                     if Date() >= nextRetentionCheck {
                         nextRetentionCheck = Date().addingTimeInterval(30)
@@ -12134,6 +12212,7 @@ final class AppModel {
         xrayAccessLogTask = nil
         xrayAccessLogMonitorGeneration &+= 1
         xrayAccessRecords = []
+        scheduleFlowLedgerRefresh()
         liveStreamHealth[.xrayAccess] = .inactive
     }
 
@@ -13618,6 +13697,7 @@ final class AppModel {
                   case let .xray(socket, _) = launch.backend else { throw AppModelError.profileStoreUnavailable }
             let (plan, captured) = try makeXrayPlan(profileID: profileID, apiSocketPath: socket, logDirectory: launch.homeDirectory.path)
             try await runtime.control.reconfigure(plan: plan, document: configurationDocument, capturedRuleIDs: captured)
+            await refreshConfigurationApplicationState()
             return
         }
         guard let profileStore, let apiClient else {

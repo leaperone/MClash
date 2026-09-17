@@ -56,6 +56,28 @@ struct ContentView: View {
                 destinationView
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .safeAreaInset(edge: .top, spacing: 0) {
+                        if model.runtimeBackend == .xray, model.isConnected,
+                           model.configurationHasUnappliedChanges,
+                           let workspace = model.configurationDocument.currentWorkspace {
+                            HStack(spacing: 12) {
+                                Label(AppLocalization.string("Saved changes are not active yet."), systemImage: "slider.horizontal.3")
+                                    .font(.callout)
+                                Spacer()
+                                Button(AppLocalization.string("Apply changes")) {
+                                    Task {
+                                        do { try await model.activateConfigurationWorkspace(workspace.id) }
+                                        catch { model.errorMessage = error.localizedDescription }
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!model.canPerform(.changeRuntimeSettings))
+                                .accessibilityIdentifier("configuration.apply-saved")
+                            }
+                            .padding(.horizontal, MClashLayout.pagePadding)
+                            .padding(.vertical, 10)
+                            .background(.bar)
+                            .accessibilityIdentifier("configuration.pending-changes")
+                        }
                         if let errorMessage = activeErrorMessage {
                             ErrorBanner(
                                 message: errorMessage,

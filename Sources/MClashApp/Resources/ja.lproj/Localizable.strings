@@ -137,7 +137,7 @@
 "Connect directly" = "直接接続";
 "Connect the active profile when MClash opens" = "MClash の起動時に使用中のプロファイルへ接続";
 "Connecting…" = "接続中…";
-"Connection Inspector" = "接続インスペクタ";
+"Connection Inspector" = "接続の詳細";
 "Connection data is stale while the live stream reconnects." = "ライブストリームの再接続中は、接続データが最新ではありません。";
 "Connections bypass proxy groups until Rule or Global mode is selected." = "ルールまたはグローバルモードを選択するまで、接続はプロキシグループをバイパスします。";
 "Connections unavailable" = "接続情報を利用できません";
@@ -447,7 +447,7 @@
 "Topology" = "トポロジ";
 "Topology zoom" = "トポロジの拡大率";
 "Traffic" = "トラフィック";
-"Traffic Workspace" = "トラフィックワークスペース";
+"Traffic Workspace" = "表示";
 "Transferred" = "転送量";
 "Transparent Proxy Ports" = "透過プロキシポート";
 "Transport" = "トランスポート";
@@ -2209,6 +2209,7 @@
 "Rules are edited in the unified rule editor." = "ルールは統合ルールエディタで編集します。";
 "Only one entrance of each type can be enabled in the current Mihomo runtime." = "現在の proxy core ランタイムでは、各エントリタイプを 1 つだけ有効にできます。";
 "Apply changes" = "変更を適用";
+"Saved changes are not active yet." = "保存した変更はまだ反映されていません。";
 "MClash could not synchronize the refreshed runtime configuration: %@" = "MClash は更新された実行構成を同期できませんでした：%@";
 "MClash could not compile the refreshed configuration: %@" = "MClash は更新された構成をコンパイルできませんでした：%@";
 "Node group — create a group first" = "ノードグループ — 先にグループを作成してください";
@@ -2366,7 +2367,7 @@
 "Process path must be an absolute path without line breaks." = "Process path must be an absolute path without line breaks.";
 "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set." = "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set.";
 "Add this app to a rule…" = "Add this app to a rule…";
-"A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable proxy core proxy group %@.";
+"A managed listener references the unavailable Mihomo proxy group %@." = "A managed listener references the unavailable proxy group %@.";
 "An enabled entrance bind address cannot contain line breaks." = "An enabled entrance bind address cannot contain line breaks.";
 "Entrance names beginning with mclash- are reserved for internal listeners." = "Entrance names beginning with mclash- are reserved for internal listeners.";
 "Switch" = "Switch";
@@ -2492,7 +2493,7 @@
 
 "No runtime flow association" = "No runtime flow association";
 
-"proxy core proxy" = "proxy core proxy";
+"proxy core proxy" = "proxy";
 
 "Runtime · resolving" = "Runtime · resolving";
 
@@ -2591,3 +2592,17 @@
 "Xray access log contains an overlong partial line" = "Xray access log contains an overlong partial line";
 "Xray access log is not available" = "Xray access log is not available";
 "Xray log rotation is already in progress." = "Xray log rotation is already in progress.";
+"Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged." = "Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged.";
+"Add common selection methods for any node source. Groups include new nodes when your sources refresh." = "Add common selection methods for any node source. Groups include new nodes when your sources refresh.";
+"Via Xray" = "Xray 経由";
+"Byte totals unavailable" = "バイト合計は利用できません";
+"This Xray connection event does not include per-connection byte totals." = "この Xray 接続イベントには接続ごとのバイト合計が含まれていません。";
+"%@ connection events have no byte totals" = "バイト合計がない接続イベント %@ 件";
+"%@ connection events have no byte totals from the backend." = "バックエンドからバイト合計を取得できない接続イベントが %@ 件あります。";
+"%@ was measured separately. %@" = "%@ は別の経路で計測されています。%@";
+"Xray route observed" = "Xray 経路を確認しました";
+"Records" = "記録数";
+"%@ measured · %@ records" = "計測 %@ · %@ 件";
+"%@ measured · %@ records · updated %@" = "計測 %@ · %@ 件 · 更新 %@";
+"%@ records · byte totals unavailable" = "%@ 件 · バイト合計なし";
+"Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "このセッションの接続イベントと終了した通信を表示します。保存した集計には接続先を含めません。";
