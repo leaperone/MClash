@@ -2526,3 +2526,10 @@
 
 "WireGuard configuration" = "WireGuard 구성";
 "Encoded node list" = "인코딩된 노드 목록";
+"Proxy Sources" = "프록시 소스";
+"Import file" = "파일 가져오기";
+"Connection records" = "연결 기록";
+"Connection records unavailable" = "연결 기록을 사용할 수 없음";
+"Connection records are collected by MClash while routing is enabled." = "라우팅이 활성화되면 MClash가 연결 기록을 수집합니다.";
+"Waiting for connection records" = "연결 기록을 기다리는 중";
+"MClash will show a record here after it observes a routed connection." = "라우팅된 연결이 관찰되면 MClash가 여기에 기록을 표시합니다.";

@@ -83,53 +83,93 @@ struct ConnectionsView: View {
     @ViewBuilder
     private var xrayObservedWorkspace: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Label(AppLocalization.string("MClash flow records"), systemImage: "waveform.path.ecg")
+            Label(AppLocalization.string("Connection records"), systemImage: "waveform.path.ecg")
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, 10)
             Divider()
-            if !model.xrayAccessRecords.isEmpty {
+            if xrayAccessLogIsUnavailable && !model.xrayAccessRecords.isEmpty {
+                Label(
+                    liveStreamDetail(model.liveStreamHealth[.xrayAccess] ?? .inactive,
+                                     source: AppLocalization.string("Connection records")),
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, 8)
+            }
+            if !model.isConnected {
+                DisconnectedUnavailableView(
+                    model: model,
+                    title: AppLocalization.string("Connect to inspect traffic"),
+                    systemImage: "arrow.left.arrow.right",
+                    description: AppLocalization.string("Connection records are collected by MClash while routing is enabled.")
+                )
+            } else if xrayAccessLogIsUnavailable && model.xrayAccessRecords.isEmpty {
+                ContentUnavailableView {
+                    Label(AppLocalization.string("Connection records unavailable"), systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                } description: {
+                    Text(liveStreamDetail(
+                        model.liveStreamHealth[.xrayAccess] ?? .inactive,
+                        source: AppLocalization.string("Connection records")
+                    ))
+                } actions: {
+                    Button(AppLocalization.string("Reconnect MClash")) {
+                        Task { await model.restartConnection() }
+                    }
+                    .disabled(!model.canPerform(.connection))
+                }
+            } else if !model.xrayAccessRecords.isEmpty {
                 xrayAccessTable
-            } else if !model.flowLedger.entries.isEmpty {
-                routeWorkspace
             } else {
                 ContentUnavailableView {
-                    Label(AppLocalization.string("Waiting for traffic"), systemImage: "point.3.connected.trianglepath.dotted")
+                    Label(AppLocalization.string("Waiting for connection records"), systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text(AppLocalization.string("MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed."))
+                    Text(AppLocalization.string("MClash will show a record here after it observes a routed connection."))
                 }
             }
         }
     }
 
+    private var xrayAccessLogIsUnavailable: Bool {
+        switch model.liveStreamHealth[.xrayAccess]?.phase ?? .inactive {
+        case .reconnecting, .stale:
+            true
+        case .inactive, .connecting, .live:
+            false
+        }
+    }
+
     private var xrayAccessTable: some View {
-        Group {
-            if filteredXrayAccessRecords.isEmpty {
+        let records = filteredXrayAccessRecords
+        return Group {
+            if records.isEmpty {
                 ContentUnavailableView.search(text: searchText)
             } else {
-                Table(filteredXrayAccessRecords) {
+                Table(records) {
             TableColumn(AppLocalization.string("Time")) { record in
-                Text(AppLocalization.date(record.timestamp, dateStyle: .omitted, timeStyle: .shortened))
+                Text(AppLocalization.date(record.record.timestamp, dateStyle: .omitted, timeStyle: .shortened))
                     .monospacedDigit()
             }
             .width(min: 90, ideal: 120)
             TableColumn(AppLocalization.string("Source")) { record in
-                Text(record.source ?? AppLocalization.string("Unknown source"))
+                Text(record.sourceTitle)
                     .lineLimit(1)
-                    .help(record.source ?? AppLocalization.string("No source was reported"))
+                    .help(record.sourceTitle)
             }
             .width(min: 120, ideal: 180)
             TableColumn(AppLocalization.string("Destination")) { record in
-                Text(record.destination).lineLimit(1).help(record.destination)
+                Text(record.record.destination).lineLimit(1).help(record.record.destination)
             }
             .width(min: 180, ideal: 300)
             TableColumn(AppLocalization.string("Path")) { record in
-                Text(xrayPathTitle(record)).lineLimit(1).help(xrayPathHelp(record))
+                Text(record.pathTitle).lineLimit(1).help(record.pathHelp)
             }
             .width(min: 140, ideal: 240)
             TableColumn(AppLocalization.string("Transport")) { record in
-                Text(record.transport.uppercased()).font(.caption.monospaced())
+                Text(record.record.transport.uppercased()).font(.caption.monospaced())
             }
             .width(min: 70, ideal: 90)
             TableColumn(AppLocalization.string("Evidence")) { _ in
@@ -143,33 +183,50 @@ struct ConnectionsView: View {
         }
     }
 
-    private var filteredXrayAccessRecords: [XrayAccessRecord] {
+    private var filteredXrayAccessRecords: [XrayConnectionRecordPresentation] {
         let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return model.xrayAccessRecords }
-        return model.xrayAccessRecords.filter { record in
-            [
-                record.source,
-                record.destination,
-                record.transport,
-                record.inbound,
-                record.outbound,
-                xrayPathTitle(record),
-            ]
-            .compactMap { $0 }
-            .contains { $0.localizedCaseInsensitiveContains(query) }
+        let records = xrayAccessRecords
+        guard !query.isEmpty else { return records }
+        return records.filter { $0.searchableText.contains { $0.localizedCaseInsensitiveContains(query) } }
+    }
+
+    private var xrayAccessRecords: [XrayConnectionRecordPresentation] {
+        let nodeNames = xrayNodeNames
+        let groupNames = xrayGroupNames
+        let localProxyTitle = AppLocalization.string("Local Proxy")
+        let applicationRoutingTitle = AppLocalization.string("Application traffic")
+        let unknownSourceTitle = AppLocalization.string("Unknown source")
+        let missingPathTitle = AppLocalization.string("No entrance or node was reported for this connection event.")
+        return model.xrayAccessRecords.reversed().map { record in
+            XrayConnectionRecordPresentation(
+                record: record,
+                nodeNames: nodeNames,
+                groupNames: groupNames,
+                localProxyTitle: localProxyTitle,
+                applicationRoutingTitle: applicationRoutingTitle,
+                unknownSourceTitle: unknownSourceTitle,
+                missingPathTitle: missingPathTitle
+            )
         }
     }
 
-    private func xrayPathTitle(_ record: XrayAccessRecord) -> String {
-        let parts = [record.inbound, record.outbound].compactMap { $0 }
-        return parts.isEmpty ? "—" : parts.joined(separator: " → ")
+    private var xrayNodeNames: [String: String] {
+        var names = Dictionary(uniqueKeysWithValues: model.configurationDocument.nodes.map { node in
+            (
+                XrayRuntimePlan.nodeTag(node.id),
+                nonEmpty(node.userAlias) ?? node.displayName
+            )
+        })
+        names["direct"] = AppLocalization.string("Direct")
+        names["reject"] = AppLocalization.string("Reject")
+        names["dns-out"] = "DNS"
+        return names
     }
 
-    private func xrayPathHelp(_ record: XrayAccessRecord) -> String {
-        let parts = [record.inbound, record.outbound].compactMap { $0 }
-        return parts.isEmpty
-            ? AppLocalization.string("No entrance or node was reported for this connection event.")
-            : parts.joined(separator: " → ")
+    private var xrayGroupNames: [String: String] {
+        Dictionary(uniqueKeysWithValues: model.configurationDocument.proxyGroups.map { group in
+            (XrayRuntimePlan.groupTag(group.id), group.name)
+        })
     }
 
     @ViewBuilder

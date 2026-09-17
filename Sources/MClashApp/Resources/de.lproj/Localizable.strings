@@ -2527,3 +2527,10 @@
 
 "WireGuard configuration" = "WireGuard-Konfiguration";
 "Encoded node list" = "Codierte Knotenliste";
+"Proxy Sources" = "Proxy-Quellen";
+"Import file" = "Datei importieren";
+"Connection records" = "Verbindungsprotokoll";
+"Connection records unavailable" = "Verbindungsprotokoll nicht verfügbar";
+"Connection records are collected by MClash while routing is enabled." = "MClash erfasst Verbindungen, wenn das Routing aktiviert ist.";
+"Waiting for connection records" = "Warten auf Verbindungsprotokoll";
+"MClash will show a record here after it observes a routed connection." = "Nach einer beobachteten gerouteten Verbindung zeigt MClash hier einen Eintrag an.";

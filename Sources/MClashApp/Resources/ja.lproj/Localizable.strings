@@ -2527,3 +2527,10 @@
 
 "WireGuard configuration" = "WireGuard 設定";
 "Encoded node list" = "エンコードされたノード一覧";
+"Proxy Sources" = "プロキシソース";
+"Import file" = "ファイルを読み込む";
+"Connection records" = "接続記録";
+"Connection records unavailable" = "接続記録を利用できません";
+"Connection records are collected by MClash while routing is enabled." = "ルーティングが有効な間、MClash は接続記録を収集します。";
+"Waiting for connection records" = "接続記録を待機中";
+"MClash will show a record here after it observes a routed connection." = "ルーティングされた接続を確認すると、MClash がここに記録を表示します。";

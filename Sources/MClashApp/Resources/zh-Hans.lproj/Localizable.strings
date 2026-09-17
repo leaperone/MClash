@@ -1891,7 +1891,7 @@
 "Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "已启用的 HTTP 和 SOCKS 入口必须共用同一个代理服务绑定地址。";
 "Enabled entrances cannot share a listening port." = "已启用的入口不能共用监听端口。";
 "Entrance port must be between 1 and 65535." = "入口端口必须介于 1 和 65535 之间。";
-"Fallback" = "故障转移";
+"Fallback" = "自动切换";
 "Fingerprint" = "指纹";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "已导入的来源。MClash 仅使用其中的节点数据；来源中的策略部分会被忽略。";
 "Kind" = "类型";
@@ -1931,7 +1931,7 @@
 "Rule set contains an invalid rule entry." = "规则集包含无效的规则条目。";
 "Rule set name cannot be empty." = "规则集名称不能为空。";
 "Rule targets a proxy group that is not available." = "规则指向了不可用的代理组。";
-"Select" = "选择";
+"Select" = "手动选择";
 "Source Removed" = "来源已移除";
 "System Capability" = "系统能力";
 "The MClash Workspace could not be started." = "无法启动 MClash 工作区。";
@@ -1949,7 +1949,7 @@
 "The selected MClash workspace no longer exists." = "所选 MClash 工作区已不存在。";
 "The source store could not be initialized." = "无法初始化来源存储。";
 "The unified node, group, rule, DNS and workspace configuration cannot be read or saved. Existing legacy profiles remain available for recovery." = "无法读取或保存统一的节点、代理组、规则、DNS 和工作区配置。现有旧版配置仍可用于恢复。";
-"URL Test" = "URL 测试";
+"URL Test" = "自动测速";
 "Unsupported" = "不支持";
 "Used by" = "使用位置";
 "Workspace" = "工作区";
@@ -2452,11 +2452,11 @@
 
 "Expected HTTP status must be codes or ranges such as 204 or 200-299." = "预期 HTTP 状态应为状态码或范围，例如 204 或 200-299。";
 
-"Node Sources" = "Node Sources";
+"Node Sources" = "节点来源";
 
-"Add nodes" = "Add nodes";
+"Add nodes" = "添加节点";
 
-"Paste links" = "Paste links";
+"Paste links" = "粘贴链接";
 
 "Add node links" = "Add node links";
 
@@ -2525,3 +2525,10 @@
 
 "WireGuard configuration" = "WireGuard 配置";
 "Encoded node list" = "编码节点列表";
+"Proxy Sources" = "代理来源";
+"Import file" = "导入文件";
+"Connection records" = "连接记录";
+"Connection records unavailable" = "连接记录不可用";
+"Connection records are collected by MClash while routing is enabled." = "启用路由后，MClash 会收集连接记录。";
+"Waiting for connection records" = "等待连接记录";
+"MClash will show a record here after it observes a routed connection." = "观察到经过路由的连接后，MClash 会在这里显示记录。";

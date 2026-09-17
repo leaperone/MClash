@@ -2527,3 +2527,10 @@
 
 "WireGuard configuration" = "Configuration WireGuard";
 "Encoded node list" = "Liste de nœuds encodée";
+"Proxy Sources" = "Sources proxy";
+"Import file" = "Importer un fichier";
+"Connection records" = "Historique des connexions";
+"Connection records unavailable" = "Historique des connexions indisponible";
+"Connection records are collected by MClash while routing is enabled." = "MClash collecte l’historique des connexions lorsque le routage est activé.";
+"Waiting for connection records" = "En attente de l’historique des connexions";
+"MClash will show a record here after it observes a routed connection." = "MClash affichera un enregistrement après avoir observé une connexion routée.";

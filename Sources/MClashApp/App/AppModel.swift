@@ -1506,7 +1506,9 @@ final class AppModel {
     }
 
     var connectionCountPresentationTitle: String {
-        AppLocalization.string("Connections")
+        usesXrayRuntime
+            ? AppLocalization.string("Connection records")
+            : AppLocalization.string("Connections")
     }
 
     var liveDataIsDegraded: Bool {
