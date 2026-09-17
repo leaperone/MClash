@@ -986,7 +986,7 @@ private struct EditProfileView: View {
     }
 }
 
-private struct AddSubscriptionView: View {
+struct AddSubscriptionView: View {
     private enum Field: Hashable {
         case name
         case address

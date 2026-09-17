@@ -194,16 +194,17 @@ struct ConfigurationWorkbench: View {
                 Text(AppLocalization.number(filteredItems.count))
                     .font(.title3.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
-                Button { onAdd?(section) } label: {
-                    ViewThatFits(in: .horizontal) {
-                        Label(addButtonTitle, systemImage: "plus")
-                        Image(systemName: "plus")
+                if let onAdd {
+                    Button { onAdd(section) } label: {
+                        ViewThatFits(in: .horizontal) {
+                            Label(addButtonTitle, systemImage: "plus")
+                            Image(systemName: "plus")
+                        }
                     }
-                }
-                .buttonStyle(.bordered)
+                    .buttonStyle(.bordered)
                     .help(addButtonTitle)
                     .accessibilityLabel(addButtonTitle)
-                    .disabled(onAdd == nil)
+                }
             }
             .padding(.horizontal, MClashLayout.pagePadding)
             .padding(.top, MClashLayout.pagePadding)

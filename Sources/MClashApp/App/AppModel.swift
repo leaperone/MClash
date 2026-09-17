@@ -449,7 +449,7 @@ final class AppModel {
             case .overview: "Status"
             case .workspaces: "Routing Mode"
             case .nodes: "Node List"
-            case .sources: "Subscriptions"
+            case .sources: "Proxy Sources"
             case .entrances: "How to Connect"
             case .dns: "DNS"
             case .proxies: "Nodes"
@@ -3885,7 +3885,8 @@ final class AppModel {
         let panel = NSOpenPanel()
         panel.title = AppLocalization.string("Add a Configuration Source")
         panel.prompt = AppLocalization.string("Add Source")
-        panel.allowedContentTypes = [.yaml]
+        panel.allowedContentTypes = usesXrayRuntime ? [.yaml, .json, .plainText] : [.yaml]
+        panel.allowsOtherFileTypes = usesXrayRuntime
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -3930,8 +3931,13 @@ final class AppModel {
         }
 
         let safeName = URL(fileURLWithPath: suggestedFileName).lastPathComponent
-        guard !safeName.isEmpty, safeName.utf8.count <= 128,
-              safeName.lowercased().hasSuffix(".yaml") || safeName.lowercased().hasSuffix(".yml") else {
+        guard !safeName.isEmpty, safeName != ".", safeName != "..",
+              !safeName.contains("\0"), safeName.utf8.count <= 128 else {
+            throw AppModelError.profileActivationFailed(
+                AppLocalization.string("The imported filename is invalid.")
+            )
+        }
+        guard usesXrayRuntime || safeName.lowercased().hasSuffix(".yaml") || safeName.lowercased().hasSuffix(".yml") else {
             throw AppModelError.profileActivationFailed(
                 AppLocalization.string(
                     "The imported profile filename must end in .yaml or .yml."

@@ -243,12 +243,12 @@ struct ConfigurationView: View {
 struct ConfigurationSourcesView: View {
     @Bindable var model: AppModel
     @State private var showingNodeLinkSheet = false
+    @State private var showingSubscriptionSheet = false
     var body: some View {
         ConfigurationWorkbench(
             title: AppLocalization.string("Node Sources"),
             sections: [.sources],
             items: model.configurationWorkbenchItems,
-            onAdd: { _ in Task { await model.importConfigurationSource() } },
             statusMessage: model.configurationStatusMessage
         )
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -256,11 +256,22 @@ struct ConfigurationSourcesView: View {
                 Label(AppLocalization.string("Add nodes"), systemImage: "plus.circle")
                     .font(.headline)
                 Spacer()
+                Button(AppLocalization.string("Import file"), systemImage: "doc.badge.plus") {
+                    Task { await model.importConfigurationSource() }
+                }
+                .disabled(!model.canPerform(.importProfile))
+                .accessibilityIdentifier("sources.import-file")
+                Button(AppLocalization.string("Add Subscription"), systemImage: "arrow.down.circle") {
+                    showingSubscriptionSheet = true
+                }
+                .disabled(!model.canPerform(.addRemoteProfile))
+                .accessibilityIdentifier("sources.add-subscription")
                 Button(AppLocalization.string("Paste links"), systemImage: "link.badge.plus") {
                     showingNodeLinkSheet = true
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canPerform(.importProfile))
+                .accessibilityIdentifier("sources.paste-links")
             }
             .padding(.horizontal, MClashLayout.pagePadding)
             .padding(.vertical, 10)
@@ -269,6 +280,9 @@ struct ConfigurationSourcesView: View {
         }
         .sheet(isPresented: $showingNodeLinkSheet) {
             NodeLinkImportSheet(model: model, isPresented: $showingNodeLinkSheet, initialText: model.pendingNodeLinkImport ?? "")
+        }
+        .sheet(isPresented: $showingSubscriptionSheet) {
+            AddSubscriptionView(model: model, isPresented: $showingSubscriptionSheet)
         }
         .onChange(of: model.pendingNodeLinkImport) { _, value in
             if value != nil { showingNodeLinkSheet = true }

@@ -61,11 +61,6 @@ public actor ProfileStore {
         else {
             throw ProfileStoreError.importSourceMissing
         }
-        let pathExtension = sourceURL.pathExtension.lowercased()
-        guard pathExtension == "yaml" || pathExtension == "yml" else {
-            throw ProfileStoreError.unsupportedFileExtension
-        }
-
         let data = try Data(contentsOf: sourceURL, options: .mappedIfSafe)
         let fallbackName = sourceURL.deletingPathExtension().lastPathComponent
         return try createProfile(
@@ -555,7 +550,6 @@ public enum ProfileStoreError: Error, Equatable, Sendable {
     case profileIsNotRemote(ProfileID)
     case cannotRemoveActiveProfile(ProfileID)
     case importSourceMissing
-    case unsupportedFileExtension
     case invalidSubscriptionURL
     case unexpectedHTTPStatus(Int)
     case emptyConfiguration
@@ -583,10 +577,6 @@ extension ProfileStoreError: LocalizedError {
             )
         case .importSourceMissing:
             AppLocalization.string("The selected profile file does not exist.")
-        case .unsupportedFileExtension:
-            AppLocalization.string(
-                "MClash can import .yaml and .yml profile files."
-            )
         case .invalidSubscriptionURL:
             AppLocalization.string(
                 "The subscription URL must use HTTP or HTTPS."
