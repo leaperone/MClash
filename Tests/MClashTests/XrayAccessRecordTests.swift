@@ -4,6 +4,15 @@ import Testing
 
 @Suite("Xray access records")
 struct XrayAccessRecordTests {
+    @Test("Xray selected, routed and default paths all retain entrance and outbound")
+    func parsesDetourKinds() {
+        for separator in [" ==> ", " -> ", " >> "] {
+            let record = XrayAccessLogParser().parse("2026/09/17 14:00:00.123456 from 127.0.0.1:4321 accepted tcp:example.com:443 [HTTP\(separator)direct]")
+            #expect(record?.inbound == "HTTP")
+            #expect(record?.outbound == "direct")
+        }
+    }
+
     @Test("Access lines retain destination, inbound and outbound")
     func parsesRoute() {
         let line = "2026/09/16 00:08:25.905512 from 127.0.0.1:50865 accepted //chatgpt.com:443 [HTTP 2 -> n-9299]"

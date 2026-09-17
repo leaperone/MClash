@@ -163,6 +163,7 @@ struct ConnectionsView: View {
                 }
                 .width(min: 160, ideal: 280, max: 420)
             }
+            .accessibilityIdentifier("xray.records")
         }
     }
 
@@ -1526,6 +1527,7 @@ struct ConnectionsView: View {
         } label: {
             Label(AppLocalization.string("Connection Inspector"), systemImage: "sidebar.right")
         }
+        .accessibilityIdentifier("xray.record.details")
         .help(AppLocalization.string("Show Connection Inspector"))
         .accessibilityHint(AppLocalization.string("Shows route, process, address, and traffic details for the selected connection"))
         .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
@@ -1548,7 +1550,7 @@ struct ConnectionsView: View {
 
                 LabeledContent(
                     AppLocalization.string("Time"),
-                    value: AppLocalization.date(record.record.timestamp, dateStyle: .omitted, timeStyle: .standard)
+                    value: AppLocalization.date(record.record.timestamp, dateStyle: .abbreviated, timeStyle: .standard)
                 )
                 LabeledContent(AppLocalization.string("Source"), value: record.sourceTitle)
                 LabeledContent(AppLocalization.string("Transport"), value: record.record.transport.uppercased())
@@ -1568,6 +1570,7 @@ struct ConnectionsView: View {
             }
             .padding(18)
         }
+        .accessibilityIdentifier("xray.record.inspector")
     }
 
     private var attachedInspectorBinding: Binding<Bool> {

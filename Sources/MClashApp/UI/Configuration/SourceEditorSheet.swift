@@ -41,6 +41,7 @@ struct SourceEditorSheet: View {
             Form {
                 TextField(AppLocalization.string("Source name"), text: $name)
                     .disabled(isSaving)
+                    .accessibilityIdentifier("source-editor.name")
                 if isRemote {
                     Section(AppLocalization.string("Subscription")) {
                         TextField(AppLocalization.string("Subscription URL"), text: $address)
@@ -74,6 +75,7 @@ struct SourceEditorSheet: View {
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("source-editor.save")
             }
         }
         .padding(24)

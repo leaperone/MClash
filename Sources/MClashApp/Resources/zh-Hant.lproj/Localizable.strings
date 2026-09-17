@@ -303,7 +303,7 @@
 "Observed Traffic" = "已觀測流量";
 "Off" = "關閉";
 "One value per line. An enabled empty list clears this field." = "每行一個值。啟用空白清單會清除此欄位。";
-"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "僅保留本機彙總資料。目標、IP、連接埠、PID、路徑和原始錯誤永遠不會儲存。";
+"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "流量歷史彙總儲存在這台 Mac 上。";
 "Only rules are imported; proxy servers and credentials are ignored." = "僅匯入規則；代理伺服器和認證資訊會被忽略。";
 "Open" = "開啟";
 "Open Attention" = "開啟注意事項";
@@ -616,14 +616,14 @@
 "System Proxy" = "系統代理";
 "App Routing · %d active rule" = "應用程式分流 · %d 條作用中規則";
 "App Routing · %d active rules" = "應用程式分流 · %d 條作用中規則";
-"Local proxy listeners only" = "僅本機代理接聽器";
+"Local proxy listeners only" = "透過本機代理位址接入";
 "Traffic capture off" = "流量擷取已關閉";
 "Routing needs attention" = "路由需要注意";
 "Preparing routing state" = "正在準備路由狀態";
 "MClash is applying a network change and will verify the resulting state." = "MClash 正在套用網路變更，並會驗證最終狀態。";
 "Choose a profile to start routing traffic." = "選擇設定檔以開始路由流量。";
 "The selected profile is ready when you want to connect." = "選取的設定檔已準備就緒，連線即可開始。";
-"Core ready · macOS capture off" = "核心就緒 · macOS 流量擷取已關閉";
+"Core ready · macOS capture off" = "代理已啟動 · 應用分流未啟用";
 "Only apps explicitly configured to use MClash's local proxy listeners are routed." = "只有明確設定使用 MClash 本機代理接聽器的 App 會被路由。";
 "Traffic routing is active" = "流量路由已啟用";
 "Routing is active with warnings" = "路由已啟用，但有警告";
@@ -2470,7 +2470,7 @@
 
 "Preview" = "預覽";
 
-"Usable nodes" = "可用節點";
+"Usable nodes" = "已識別節點";
 
 "Ignored lines" = "忽略的行";
 

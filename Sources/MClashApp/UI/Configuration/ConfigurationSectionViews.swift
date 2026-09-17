@@ -372,6 +372,7 @@ struct ConfigurationSourcesView: View {
             .labelStyle(.iconOnly)
             .disabled(!model.canPerform(.updateProfile(profile.id)))
             .help(AppLocalization.string("Edit source"))
+            .accessibilityIdentifier("sources.edit.\(profile.id.rawValue.uuidString.lowercased())")
             Button(AppLocalization.string("Remove"), systemImage: "trash") {
                 sourceToDelete = profile
             }

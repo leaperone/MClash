@@ -135,6 +135,25 @@ def exercise_remote_rules(call, fetch):
         assert server.responses[-1] == 304, "The rule source did not answer the conditional request with 304"
         fetch("NODE_A", host="v2.example")
 
+        changed_source = call("configuration.snapshot")
+        changed_document = copy.deepcopy(changed_source["document"])
+        changed_rule_set = next(entry for entry in changed_document["ruleSets"] if entry["id"] == rule_set_id)
+        changed_rule_set.update(enabled=False, sourceURLUpdate=server.url + "?source=changed")
+        call("configuration.apply", {"document": changed_document,
+                                       "expectedRevision": changed_source["configurationRevision"]})
+        changed_source = call("configuration.snapshot")
+        assert next(entry for entry in changed_source["document"]["ruleSets"] if entry["id"] == rule_set_id)["ruleCount"] == 0, "Changing a disabled source retained rules from its previous URL"
+        server.body, server.etag = "v3.example", "rules-v3"
+        changed_document = changed_source["document"]
+        next(entry for entry in changed_document["ruleSets"] if entry["id"] == rule_set_id)["enabled"] = True
+        call("configuration.apply", {"document": changed_document,
+                                       "expectedRevision": changed_source["configurationRevision"]})
+        changed_source = call("configuration.snapshot")
+        call("configuration.workspace.activate", {"id": workspace_id,
+                                                   "expectedRevision": changed_source["configurationRevision"]})
+        fetch("NODE_A", host="v3.example")
+        fetch("", host="v2.example", rejected=True)
+
         return {
             "passed": True,
             "initialRefresh": True,
@@ -144,6 +163,7 @@ def exercise_remote_rules(call, fetch):
             "invalidPayloadPreserved": True,
             "httpFailurePreserved": True,
             "conditional304": True,
+            "changedDisabledSourceReloaded": True,
             "conditionalRequestCount": len(conditional_requests),
             "serverStatuses": list(server.responses),
             "configurationApplied": bool(applied),

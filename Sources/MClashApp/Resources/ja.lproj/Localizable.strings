@@ -301,7 +301,7 @@
 "Observed Traffic" = "観測されたトラフィック";
 "Off" = "オフ";
 "One value per line. An enabled empty list clears this field." = "1 行に 1 つ入力します。有効にした空のリストは、このフィールドを消去します。";
-"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "ローカルの集計値のみ保存されます。宛先、IP、ポート、PID、パス、生のエラーは保存されません。";
+"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "通信履歴の集計はこのMacに保存されます。";
 "Only rules are imported; proxy servers and credentials are ignored." = "ルールだけを読み込みます。プロキシサーバと認証情報は無視されます。";
 "Open" = "開く";
 "Open Attention" = "要確認を開く";
@@ -616,14 +616,14 @@
 "System Proxy" = "システムプロキシ";
 "App Routing · %d active rule" = "アプリルーティング · アクティブなルール %d 件";
 "App Routing · %d active rules" = "アプリルーティング · アクティブなルール %d 件";
-"Local proxy listeners only" = "ローカルプロキシリスナーのみ";
+"Local proxy listeners only" = "ローカルプロキシのアドレスで接続";
 "Traffic capture off" = "トラフィックキャプチャはオフ";
 "Routing needs attention" = "ルーティングに注意が必要です";
 "Preparing routing state" = "ルーティング状態を準備中";
 "MClash is applying a network change and will verify the resulting state." = "MClash はネットワークの変更を適用し、結果の状態を検証します。";
 "Choose a profile to start routing traffic." = "プロファイルを選択してトラフィックのルーティングを開始します。";
 "The selected profile is ready when you want to connect." = "選択したプロファイルは接続する準備ができています。";
-"Core ready · macOS capture off" = "コアの準備完了 · macOS キャプチャはオフ";
+"Core ready · macOS capture off" = "プロキシ起動済み · アプリの経路設定は無効";
 "Only apps explicitly configured to use MClash's local proxy listeners are routed." = "MClash のローカルプロキシリスナーを明示的に使用するよう設定した App のみがルーティングされます。";
 "Traffic routing is active" = "トラフィックのルーティングは有効です";
 "Routing is active with warnings" = "ルーティングは警告付きで有効です";
@@ -2470,7 +2470,7 @@
 
 "Preview" = "Preview";
 
-"Usable nodes" = "Usable nodes";
+"Usable nodes" = "認識されたノード";
 
 "Ignored lines" = "Ignored lines";
 

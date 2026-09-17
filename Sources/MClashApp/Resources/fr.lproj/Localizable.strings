@@ -304,7 +304,7 @@
 "Observed Traffic" = "Trafic observé";
 "Off" = "Désactivé";
 "One value per line. An enabled empty list clears this field." = "Une valeur par ligne. Une liste vide activée efface ce champ.";
-"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "Seuls les agrégats locaux sont conservés. Les destinations, adresses IP, ports, PID, chemins et erreurs brutes ne sont jamais conservées.";
+"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "Les totaux de l’historique du trafic sont enregistrés sur ce Mac.";
 "Only rules are imported; proxy servers and credentials are ignored." = "Seules les règles sont importées ; les serveurs proxy et les informations d'identification sont ignorés.";
 "Open" = "Ouvrir";
 "Open Attention" = "Ouvrir les alertes";
@@ -616,14 +616,14 @@
 "System Proxy" = "Proxy système";
 "App Routing · %d active rule" = "Routage des applications · %d règle active";
 "App Routing · %d active rules" = "Routage des applications · %d règles actives";
-"Local proxy listeners only" = "Écouteurs du proxy local uniquement";
+"Local proxy listeners only" = "Utilisez l’adresse du proxy local";
 "Traffic capture off" = "Capture du trafic désactivée";
 "Routing needs attention" = "Le routage nécessite votre attention";
 "Preparing routing state" = "Préparation de l’état du routage";
 "MClash is applying a network change and will verify the resulting state." = "MClash applique une modification réseau et vérifiera l’état obtenu.";
 "Choose a profile to start routing traffic." = "Choisissez un profil pour commencer à router le trafic.";
 "The selected profile is ready when you want to connect." = "Le profil sélectionné est prêt lorsque vous souhaitez vous connecter.";
-"Core ready · macOS capture off" = "Moteur prêt · capture macOS désactivée";
+"Core ready · macOS capture off" = "Proxy actif · routage des apps désactivé";
 "Only apps explicitly configured to use MClash's local proxy listeners are routed." = "Seules les apps configurées explicitement pour utiliser les écouteurs du proxy local de MClash sont routées.";
 "Traffic routing is active" = "Le routage du trafic est actif";
 "Routing is active with warnings" = "Le routage est actif avec des avertissements";
@@ -2470,7 +2470,7 @@
 
 "Preview" = "Preview";
 
-"Usable nodes" = "Usable nodes";
+"Usable nodes" = "Nœuds reconnus";
 
 "Ignored lines" = "Ignored lines";
 

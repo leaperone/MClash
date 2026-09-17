@@ -304,7 +304,7 @@
 "Observed Traffic" = "Tráfico observado";
 "Off" = "Apagado";
 "One value per line. An enabled empty list clears this field." = "Un valor por línea. Una lista vacía habilitada borra este campo.";
-"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "Sólo se conservan agregados locales. Los destinos, IP, puertos, PID, rutas y errores sin procesar nunca persisten.";
+"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "Los totales del historial de tráfico se guardan en este Mac.";
 "Only rules are imported; proxy servers and credentials are ignored." = "Sólo se importan reglas; Los servidores proxy y las credenciales se ignoran.";
 "Open" = "Abrir";
 "Open Attention" = "Abrir avisos";
@@ -616,14 +616,14 @@
 "System Proxy" = "Proxy del sistema";
 "App Routing · %d active rule" = "Enrutamiento de aplicaciones · %d regla activa";
 "App Routing · %d active rules" = "Enrutamiento de aplicaciones · %d reglas activas";
-"Local proxy listeners only" = "Solo escuchas del proxy local";
+"Local proxy listeners only" = "Conecta con la dirección del proxy local";
 "Traffic capture off" = "Captura de tráfico desactivada";
 "Routing needs attention" = "El enrutamiento requiere atención";
 "Preparing routing state" = "Preparando el estado de enrutamiento";
 "MClash is applying a network change and will verify the resulting state." = "MClash está aplicando un cambio de red y verificará el estado resultante.";
 "Choose a profile to start routing traffic." = "Elige un perfil para iniciar el enrutamiento del tráfico.";
 "The selected profile is ready when you want to connect." = "El perfil seleccionado está listo cuando quieras conectarte.";
-"Core ready · macOS capture off" = "Núcleo listo · captura de macOS desactivada";
+"Core ready · macOS capture off" = "Proxy activo · enrutamiento de apps desactivado";
 "Only apps explicitly configured to use MClash's local proxy listeners are routed." = "Solo se enrutan las aplicaciones configuradas explícitamente para usar las escuchas del proxy local de MClash.";
 "Traffic routing is active" = "El enrutamiento del tráfico está activo";
 "Routing is active with warnings" = "El enrutamiento está activo con advertencias";
@@ -2470,7 +2470,7 @@
 
 "Preview" = "Preview";
 
-"Usable nodes" = "Usable nodes";
+"Usable nodes" = "Nodos reconocidos";
 
 "Ignored lines" = "Ignored lines";
 

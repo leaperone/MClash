@@ -2732,10 +2732,12 @@ final class AppModel {
         var result = candidate
         for index in result.ruleSets.indices {
             let ruleSet = result.ruleSets[index]
-            guard ruleSet.enabled, ruleSet.sourceURL != nil else { continue }
+            guard ruleSet.sourceURL != nil else { continue }
             let previous = configurationDocument.ruleSets.first { $0.id == ruleSet.id }
             let sameSource = previous?.sourceURL == ruleSet.sourceURL
                 && previous?.format == ruleSet.format && previous?.behavior == ruleSet.behavior
+            if !sameSource { result.ruleSets[index].rules = [] }
+            guard ruleSet.enabled else { continue }
             guard !sameSource || ruleSet.rules.isEmpty else { continue }
             let source = try ruleSetSourceStore()
             let validator = try ruleSetValidator()
@@ -3930,6 +3932,10 @@ final class AppModel {
     }
 
     func importProfile() async {
+        if usesXrayRuntime {
+            await importConfigurationSource()
+            return
+        }
         guard begin(.importProfile) else { return }
         defer { end(.importProfile) }
 
@@ -4279,6 +4285,7 @@ final class AppModel {
             _ = try await profileStore.renameProfile(id, to: name)
         }
         profiles = try await profileStore.profiles()
+        await synchronizeConfigurationSources()
         errorMessage = nil
     }
 

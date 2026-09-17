@@ -67,7 +67,8 @@ public struct XrayAccessLogParser: Sendable {
         if trailing.hasPrefix("[") {
             guard let closing = trailing.firstIndex(of: "]") else { return nil }
             let routeBody = String(trailing[trailing.index(after: trailing.startIndex)..<closing])
-            let routeParts = routeBody.components(separatedBy: " -> ").map {
+            let separator = [" ==> ", " -> ", " >> "].first { routeBody.contains($0) }
+            let routeParts = (separator.map { routeBody.components(separatedBy: $0) } ?? [routeBody]).map {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             guard routeParts.count == 2, let inbound = routeParts.first, !inbound.isEmpty,

@@ -303,7 +303,7 @@
 "Observed Traffic" = "Observed Traffic";
 "Off" = "Off";
 "One value per line. An enabled empty list clears this field." = "One value per line. An enabled empty list clears this field.";
-"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted.";
+"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "Traffic history totals are stored locally on this Mac.";
 "Only rules are imported; proxy servers and credentials are ignored." = "Only rules are imported; proxy servers and credentials are ignored.";
 "Open" = "Open";
 "Open Attention" = "Open Attention";
@@ -616,14 +616,14 @@
 "System Proxy" = "System Proxy";
 "App Routing · %d active rule" = "App Routing · %d active rule";
 "App Routing · %d active rules" = "App Routing · %d active rules";
-"Local proxy listeners only" = "Local proxy listeners only";
+"Local proxy listeners only" = "Use the local proxy address to connect";
 "Traffic capture off" = "Traffic capture off";
 "Routing needs attention" = "Routing needs attention";
 "Preparing routing state" = "Preparing routing state";
 "MClash is applying a network change and will verify the resulting state." = "MClash is applying a network change and will verify the resulting state.";
 "Choose a profile to start routing traffic." = "Choose a profile to start routing traffic.";
 "The selected profile is ready when you want to connect." = "The selected profile is ready when you want to connect.";
-"Core ready · macOS capture off" = "Core ready · macOS capture off";
+"Core ready · macOS capture off" = "Proxy running · app routing off";
 "Only apps explicitly configured to use MClash's local proxy listeners are routed." = "Only apps explicitly configured to use MClash's local proxy listeners are routed.";
 "Traffic routing is active" = "Traffic routing is active";
 "Routing is active with warnings" = "Routing is active with warnings";
@@ -2469,7 +2469,7 @@
 
 "Preview" = "Preview";
 
-"Usable nodes" = "Usable nodes";
+"Usable nodes" = "Recognized nodes";
 
 "Ignored lines" = "Ignored lines";
 
