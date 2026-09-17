@@ -244,49 +244,167 @@ struct ConfigurationSourcesView: View {
     @Bindable var model: AppModel
     @State private var showingNodeLinkSheet = false
     @State private var showingSubscriptionSheet = false
+    @State private var query = ""
+    @State private var sourceToDelete: ProfileMetadata?
+    @State private var sourceToEdit: ProfileMetadata?
     var body: some View {
-        ConfigurationWorkbench(
-            title: AppLocalization.string("Node Sources"),
-            sections: [.sources],
-            items: model.configurationWorkbenchItems,
-            statusMessage: model.configurationStatusMessage
-        )
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 10) {
-                Label(AppLocalization.string("Add nodes"), systemImage: "plus.circle")
-                    .font(.headline)
-                Spacer()
-                Button(AppLocalization.string("Import file"), systemImage: "doc.badge.plus") {
-                    Task { await model.importConfigurationSource() }
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(AppLocalization.string("Add nodes"))
+                    .font(.title2.weight(.semibold))
+                Text(AppLocalization.string("Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged."))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Button(AppLocalization.string("Import file"), systemImage: "doc.badge.plus") {
+                        Task { await model.importConfigurationSource() }
+                    }
+                    .disabled(!model.canPerform(.importProfile))
+                    .accessibilityIdentifier("sources.import-file")
+                    Button(AppLocalization.string("Add Subscription"), systemImage: "arrow.down.circle") {
+                        showingSubscriptionSheet = true
+                    }
+                    .disabled(!model.canPerform(.addRemoteProfile))
+                    .accessibilityIdentifier("sources.add-subscription")
+                    Button(AppLocalization.string("Paste links"), systemImage: "link.badge.plus") {
+                        showingNodeLinkSheet = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canPerform(.importProfile))
+                    .accessibilityIdentifier("sources.paste-links")
                 }
-                .disabled(!model.canPerform(.importProfile))
-                .accessibilityIdentifier("sources.import-file")
-                Button(AppLocalization.string("Add Subscription"), systemImage: "arrow.down.circle") {
-                    showingSubscriptionSheet = true
-                }
-                .disabled(!model.canPerform(.addRemoteProfile))
-                .accessibilityIdentifier("sources.add-subscription")
-                Button(AppLocalization.string("Paste links"), systemImage: "link.badge.plus") {
-                    showingNodeLinkSheet = true
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!model.canPerform(.importProfile))
-                .accessibilityIdentifier("sources.paste-links")
             }
-            .padding(.horizontal, MClashLayout.pagePadding)
-            .padding(.vertical, 10)
-            .background(.bar)
-            .overlay(alignment: .bottom) { Divider() }
+            .padding(MClashLayout.pagePadding)
+            Divider()
+            if model.profiles.isEmpty {
+                ContentUnavailableView(
+                    AppLocalization.string("No sources yet"),
+                    systemImage: "arrow.down.circle",
+                    description: Text(AppLocalization.string("Add your first source to bring nodes into MClash."))
+                )
+            } else {
+                List {
+                    Section {
+                        if filteredProfiles.isEmpty {
+                            ContentUnavailableView.search(text: query)
+                        } else {
+                            ForEach(filteredProfiles) { profile in
+                                sourceRow(profile)
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text(AppLocalization.string("Your sources"))
+                            Spacer()
+                            Text(AppLocalization.number(filteredProfiles.count))
+                        }
+                    }
+                }
+                .searchable(text: $query, prompt: AppLocalization.string("Search sources"))
+                .listStyle(.inset)
+            }
         }
+        .navigationTitle(AppLocalization.string("Node Sources"))
+        .background(Color(nsColor: .windowBackgroundColor))
         .sheet(isPresented: $showingNodeLinkSheet) {
             NodeLinkImportSheet(model: model, isPresented: $showingNodeLinkSheet, initialText: model.pendingNodeLinkImport ?? "")
         }
         .sheet(isPresented: $showingSubscriptionSheet) {
             AddSubscriptionView(model: model, isPresented: $showingSubscriptionSheet)
         }
-        .onChange(of: model.pendingNodeLinkImport) { _, value in
+        .onChange(of: model.pendingNodeLinkImport, initial: true) { _, value in
             if value != nil { showingNodeLinkSheet = true }
         }
+        .confirmationDialog(
+            AppLocalization.string("Remove source?"),
+            item: $sourceToDelete
+        ) { profile in
+            Button(AppLocalization.string("Remove"), role: .destructive) {
+                Task { await model.removeProfile(profile.id) }
+            }
+            Button(AppLocalization.string("Cancel"), role: .cancel) {}
+        } message: { profile in
+            Text(AppLocalization.format("Remove %@ and its imported nodes?", profile.name))
+        }
+        .sheet(item: $sourceToEdit) { profile in
+            SourceEditorSheet(model: model, profile: profile, isPresented: Binding(
+                get: { sourceToEdit != nil },
+                set: { if !$0 { sourceToEdit = nil } }
+            ))
+        }
+    }
+
+    private var filteredProfiles: [ProfileMetadata] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return model.profiles }
+        return model.profiles.filter { $0.name.localizedCaseInsensitiveContains(needle) }
+    }
+
+    @ViewBuilder
+    private func sourceRow(_ profile: ProfileMetadata) -> some View {
+        let sourceID = SourceID(rawValue: profile.id.rawValue)
+        let nodeCount = model.configurationDocument.nodes.count(where: { $0.sourceLinks.contains(sourceID) })
+        HStack(spacing: 12) {
+            Image(systemName: sourceSymbol(profile))
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(profile.name).font(.body.weight(.medium))
+                Text(AppLocalization.format("%@ nodes · %@ · %@", AppLocalization.number(nodeCount), sourceKind(profile), sourceStatus(profile)))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if case .remote = profile.origin {
+                Button(AppLocalization.string("Refresh"), systemImage: "arrow.clockwise") {
+                    Task { _ = await model.refreshProfile(profile.id) }
+                }
+                .labelStyle(.iconOnly)
+                .disabled(!model.canPerform(.refreshProfile(profile.id)))
+                .help(AppLocalization.string("Refresh source"))
+            }
+            Button(AppLocalization.string("Edit"), systemImage: "pencil") {
+                sourceToEdit = profile
+            }
+            .labelStyle(.iconOnly)
+            .disabled(!model.canPerform(.updateProfile(profile.id)))
+            .help(AppLocalization.string("Edit source"))
+            Button(AppLocalization.string("Remove"), systemImage: "trash") {
+                sourceToDelete = profile
+            }
+            .labelStyle(.iconOnly)
+            .disabled(!model.canPerform(.removeProfile(profile.id)))
+            .help(AppLocalization.string("Remove source"))
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func sourceKind(_ profile: ProfileMetadata) -> String {
+        switch profile.origin {
+        case .remote: return AppLocalization.string("Subscription")
+        case .imported: return AppLocalization.string("Imported file")
+        case .pastedLinks: return AppLocalization.string("Pasted links")
+        case .local: return AppLocalization.string("Local source")
+        }
+    }
+
+    private func sourceSymbol(_ profile: ProfileMetadata) -> String {
+        if case .remote = profile.origin { return "link" }
+        return "doc.text"
+    }
+
+    private func sourceStatus(_ profile: ProfileMetadata) -> String {
+        guard case let .remote(remote) = profile.origin else {
+            return AppLocalization.string("Imported")
+        }
+        if remote.consecutiveFailureCount > 0 {
+            return AppLocalization.string("Update needs attention")
+        }
+        return remote.automaticUpdatesEnabled
+            ? AppLocalization.string("Automatic updates on")
+            : AppLocalization.string("Manual updates")
     }
 }
 
