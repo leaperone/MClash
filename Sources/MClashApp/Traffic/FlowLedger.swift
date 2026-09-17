@@ -684,7 +684,7 @@ struct FlowLedger: Sendable {
         _ rawName: String?,
         names: [String: String]
     ) -> FlowLedgerMihomoRoute {
-        let chain = nonEmpty(rawName).map { raw in
+        let chain: [String] = nonEmpty(rawName).map { raw in
             let separator = [" ==> ", " -> ", " >> "].first { raw.contains($0) }
             return (separator.map { raw.components(separatedBy: $0) } ?? [raw]).map {
                 names[$0.trimmingCharacters(in: .whitespacesAndNewlines)]
