@@ -60,12 +60,12 @@ The user authorized implementation through one final 1.6.0 Release. Build and ve
 - [x] Transactional rule and capture-listener updates checked against the actual core.
 - [x] Group health editing and persisted configuration checked through the app.
 - [x] Protocol interoperability and DNS behavior recorded with explicit limits.
-- [x] Full typecheck, unit tests, integration tests, and release gate pass at the frozen source commit.
+- [ ] Full typecheck, unit tests, integration tests, and release gate pass at the frozen source commit.
 - [ ] Signed, notarized 1.6.0 is published, downloaded, and checked.
 
 The checked lifecycle and routing gates are backed by `scripts/smoke-test-xray-supervisor.sh` and `scripts/smoke-test-xray-routing.py`. The workbench acceptance tool is `scripts/smoke-test-xray-app.py`. `ReleaseEvidence/<version>.json` records the final tested source and commands. A passing compile does not establish runtime or Network Extension acceptance.
 
-The 1.6.0 release supports inline text rule-set entries. Automatic remote rule-set refresh, MRS, DNS-over-TLS, process-name-only rules, and live Fake-IP acceptance remain outside its verified compatibility set. Application identifiers, complete process paths, and user IDs use App Routing. Xray is signed with the stable `mclash-xray` identifier so the signed Network Extension can bypass its own proxy traffic.
+The 1.6 implementation supports inline and remote text rule sets with validated caching and last-good fallback. Fake-IP allocation and restored destinations are verified through isolated HTTP and SOCKS listeners. MRS, DNS-over-TLS, process-name-only rules, and activation of the final signed Network Extension remain outside the verified set. Application identifiers, complete process paths, and user IDs use App Routing. Xray is signed with the stable `mclash-xray` identifier so the signed Network Extension can bypass its own proxy traffic.
 
 ## Measurements
 

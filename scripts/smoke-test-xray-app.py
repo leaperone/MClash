@@ -421,6 +421,7 @@ def main():
         ), "Xray route evidence did not reach the route ledger"
 
         call("traffic.history.setPersistent", {"enabled": True})
+        assert call("routing.proxy.select", {"group": "Auto", "proxy": "Source fixture"})["selected"]
         fetch("NODE_A")
         fetch("NODE_A", socks=True)
         history_summary = {"available": False}
@@ -474,7 +475,10 @@ def main():
         fetch("NODE_B")
         fetch("NODE_B", socks=True)
         assert call("routing.proxy.clearOverride", {"group": "Auto"})["cleared"]
-        fetch("NODE_A")
+        automatic_group = next(item for item in call("routing.groups.list")["items"] if item["name"] == "Auto")
+        assert automatic_group["fixed"] is None, "Clearing a manual choice left the override installed"
+        assert fetch("NODE_A", observe=True) in {"NODE_A", "NODE_B"}, "Clearing a manual choice broke the automatic route"
+        assert call("routing.proxy.select", {"group": "Auto", "proxy": "Source fixture"})["selected"]
         call("routing.mode.set", {"mode": "direct"})
         fetch("DIRECT")
         fetch("DIRECT", socks=True)
@@ -534,6 +538,9 @@ def main():
             raise AssertionError("Automatic selection did not reach " + expected)
 
         call("routing.proxy.select", {"group": "GLOBAL", "proxy": "Auto"})
+        assert call("routing.proxy.select", {"group": "Auto", "proxy": "Source fixture"})["selected"]
+        fetch("NODE_A")
+        assert call("routing.proxy.clearOverride", {"group": "Auto"})["cleared"]
         proxy_a.delay, proxy_b.delay = 0.2, 0.005
         url_selection_seconds = await_payload("NODE_B")
         call("routing.proxy.select", {"group": "GLOBAL", "proxy": "Failover"})

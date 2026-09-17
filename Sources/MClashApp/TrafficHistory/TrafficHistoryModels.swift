@@ -222,39 +222,11 @@ struct TrafficHistoryTotals: Equatable, Sendable {
     let exactDownloadBytes: UInt64
     let coverage: TrafficHistoryCoverage
 
-    init(
-        recordedFlowCount: UInt64,
-        exactUploadBytes: UInt64,
-        exactDownloadBytes: UInt64,
-        coverage: TrafficHistoryCoverage
-    ) {
-        self.recordedFlowCount = recordedFlowCount
-        self.exactUploadBytes = exactUploadBytes
-        self.exactDownloadBytes = exactDownloadBytes
-        self.coverage = coverage
-    }
-
-    init(
-        completedFlowCount: UInt64,
-        exactUploadBytes: UInt64,
-        exactDownloadBytes: UInt64,
-        coverage: TrafficHistoryCoverage
-    ) {
-        self.init(
-            recordedFlowCount: completedFlowCount,
-            exactUploadBytes: exactUploadBytes,
-            exactDownloadBytes: exactDownloadBytes,
-            coverage: coverage
-        )
-    }
-
     var exactTotalBytes: UInt64 {
         trafficHistorySaturatingAdd(exactUploadBytes, exactDownloadBytes)
     }
 
-    /// Compatibility name for automation clients written before records and
-    /// completed connections were separated in the UI.
-    var completedFlowCount: UInt64 { recordedFlowCount }
+
 }
 
 struct TrafficHistoryApplicationSnapshot: Equatable, Sendable, Identifiable {
