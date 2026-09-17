@@ -1,9 +1,6 @@
 import CryptoKit
 import Foundation
 
-/// Seeds mihomo's private homes with the release-bundled GEO databases.
-/// Existing non-empty files are preserved so mihomo or the user can update
-/// them independently after installation.
 struct BundledGeoDataInstaller: Sendable {
     static let requiredFileNames = [
         "geoip.metadb",
@@ -19,11 +16,15 @@ struct BundledGeoDataInstaller: Sendable {
         self.sourceDirectory = sourceDirectory?.standardizedFileURL
     }
 
-    static func applicationBundle() -> BundledGeoDataInstaller {
+    static func applicationBundle(_ bundle: Bundle = .main) -> BundledGeoDataInstaller {
         var candidates: [URL] = []
 
-        if let resourceURL = Bundle.main.resourceURL {
-            candidates.append(resourceURL.appending(path: "GeoData", directoryHint: .isDirectory))
+        if let resourceURL = bundle.resourceURL {
+            let directory = resourceURL.appending(path: "GeoData", directoryHint: .isDirectory)
+            if bundle.object(forInfoDictionaryKey: "MClashRuntimeBackend") as? String == "xray" {
+                return BundledGeoDataInstaller(sourceDirectory: directory)
+            }
+            candidates.append(directory)
         }
 
         #if SWIFT_PACKAGE
@@ -34,9 +35,8 @@ struct BundledGeoDataInstaller: Sendable {
         #endif
 
         let source = candidates.first {
-            FileManager.default.fileExists(
-                atPath: $0.appending(path: "SHA256SUMS").path
-            )
+            FileManager.default.fileExists(atPath: $0.appending(path: "XRAY-SHA256SUMS").path)
+                || FileManager.default.fileExists(atPath: $0.appending(path: "SHA256SUMS").path)
         }
         return BundledGeoDataInstaller(sourceDirectory: source)
     }
@@ -106,34 +106,13 @@ struct BundledGeoDataInstaller: Sendable {
         )
 
         for fileName in Self.requiredFileNames {
-            let destination = homeDirectory.appending(path: fileName)
-            if fileManager.fileExists(atPath: destination.path) {
-                let attributes = try fileManager.attributesOfItem(atPath: destination.path)
-                if (attributes[.size] as? NSNumber)?.int64Value ?? 0 > 0 {
-                    continue
-                }
-                try fileManager.removeItem(at: destination)
-            }
-
-            let staged = homeDirectory.appending(
-                path: ".mclash-\(fileName)-\(UUID().uuidString).tmp"
+            try installFile(
+                source: sourceDirectory.appending(path: fileName),
+                destination: homeDirectory.appending(path: fileName),
+                fileName: fileName,
+                fileManager: fileManager
             )
-            do {
-                try fileManager.copyItem(
-                    at: sourceDirectory.appending(path: fileName),
-                    to: staged
-                )
-                try fileManager.setAttributes(
-                    [.posixPermissions: 0o644],
-                    ofItemAtPath: staged.path
-                )
-                try fileManager.moveItem(at: staged, to: destination)
-            } catch {
-                try? fileManager.removeItem(at: staged)
-                throw error
-            }
         }
-
     }
 
     private func installFile(
@@ -150,7 +129,6 @@ struct BundledGeoDataInstaller: Sendable {
                     return
                 }
             }
-            try fileManager.removeItem(at: destination)
         }
 
         let staged = destination.deletingLastPathComponent()
@@ -158,7 +136,11 @@ struct BundledGeoDataInstaller: Sendable {
         do {
             try fileManager.copyItem(at: source, to: staged)
             try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: staged.path)
-            try fileManager.moveItem(at: staged, to: destination)
+            if fileManager.fileExists(atPath: destination.path) {
+                _ = try fileManager.replaceItemAt(destination, withItemAt: staged)
+            } else {
+                try fileManager.moveItem(at: staged, to: destination)
+            }
         } catch {
             try? fileManager.removeItem(at: staged)
             throw error

@@ -4,6 +4,57 @@ import Testing
 
 @Suite("Bundled GEO data installer")
 struct BundledGeoDataInstallerTests {
+    @Test("Application bundle discovery installs the Xray-only resource manifest")
+    func discoversXrayApplicationResources() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appending(path: "Fixture.app")
+        let source = app.appending(path: "Contents/Resources/GeoData")
+        let runtime = root.appending(path: "runtime")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let info = ["CFBundleIdentifier": "one.leaper.mclash.geodata-fixture", "CFBundlePackageType": "APPL"]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: app.appending(path: "Contents/Info.plist"))
+        var manifest: [String] = []
+        for name in BundledGeoDataInstaller.xrayFileNames {
+            let file = source.appending(path: name)
+            try Data(name.utf8).write(to: file)
+            manifest.append("\(try BundledGeoDataInstaller.sha256(at: file))  \(name)")
+        }
+        try Data(manifest.joined(separator: "\n").utf8).write(to: source.appending(path: "XRAY-SHA256SUMS"))
+        let bundle = try #require(Bundle(url: app))
+
+        try BundledGeoDataInstaller.applicationBundle(bundle).installIfNeeded(into: runtime)
+
+        for name in BundledGeoDataInstaller.xrayFileNames {
+            #expect(FileManager.default.fileExists(atPath: runtime.appending(path: name).path))
+        }
+    }
+
+    @Test("Packaged Xray builds report missing GEO resources instead of skipping installation")
+    func missingPackagedResourcesFail() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appending(path: "MissingResources.app")
+        try FileManager.default.createDirectory(
+            at: app.appending(path: "Contents/Resources"),
+            withIntermediateDirectories: true
+        )
+        let info = [
+            "CFBundleIdentifier": "one.leaper.mclash.geodata-missing-fixture",
+            "CFBundlePackageType": "APPL",
+            "MClashRuntimeBackend": "xray",
+        ]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: app.appending(path: "Contents/Info.plist"))
+        let bundle = try #require(Bundle(url: app))
+
+        #expect(throws: BundledGeoDataError.manifestMissing) {
+            try BundledGeoDataInstaller.applicationBundle(bundle)
+                .installIfNeeded(into: root.appending(path: "runtime"))
+        }
+    }
+
     @Test("Missing GEO files are seeded while existing updates are preserved")
     func installsOnlyMissingFiles() throws {
         let fixture = try Fixture()
