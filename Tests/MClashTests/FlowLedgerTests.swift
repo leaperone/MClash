@@ -394,11 +394,66 @@ struct FlowLedgerTests {
         let ledger = FlowLedger(
             mihomoConnections: [],
             xrayAccessRecords: [record],
-            appRoutingActivities: [activity]
+            xrayRouteNames: ["n-node": "Node A"],
+            appRoutingActivities: [activity],
+            runtimeBackend: .xray
         )
 
         #expect(ledger.entries.count == 1)
         #expect(ledger.entries.first?.id == .appRouting(activity.id))
+        #expect(ledger.entries.first?.outcome == .viaXray)
+        #expect(ledger.entries.first?.application.displayName == "ExampleApp")
+        #expect(ledger.entries.first?.upload == .exact(0))
+        #expect(ledger.entries.first?.mihomoRoute?.chain == ["Node A"])
+    }
+
+    @Test("Xray capture correlation requires the exact default relay identity")
+    func xrayCaptureCorrelationBoundsCandidates() throws {
+        let activity = appActivity()
+        let wrongSource = XrayAccessRecord(
+            timestamp: activity.startedAt,
+            source: "127.0.0.1:55002",
+            destination: "example.com:443", transport: "tcp",
+            inbound: "mclash-capture-55002", outbound: "n-node"
+        )
+        let wrongProtocol = XrayAccessRecord(
+            timestamp: activity.startedAt,
+            source: "127.0.0.1:55001",
+            destination: "example.com:443", transport: "udp",
+            inbound: "mclash-capture-55001", outbound: "n-node"
+        )
+        let tooLate = XrayAccessRecord(
+            timestamp: activity.startedAt.addingTimeInterval(16),
+            source: "127.0.0.1:55001",
+            destination: "example.com:443", transport: "tcp",
+            inbound: "mclash-capture-55001", outbound: "n-node"
+        )
+        let ledger = FlowLedger(
+            mihomoConnections: [],
+            xrayAccessRecords: [wrongSource, wrongProtocol, tooLate],
+            appRoutingActivities: [activity],
+            runtimeBackend: .xray
+        )
+        let entry = try #require(ledger.entries.first)
+        #expect(entry.outcome == .viaMihomo)
+        #expect(entry.association == .none)
+    }
+
+    @Test("Legacy backend preserves the App Routing Mihomo outcome")
+    func legacyBackendDoesNotCorrelateCapture() throws {
+        let activity = appActivity()
+        let record = XrayAccessRecord(
+            timestamp: activity.startedAt,
+            source: "127.0.0.1:55001",
+            destination: "example.com:443", transport: "tcp",
+            inbound: "mclash-capture-55001", outbound: "n-node"
+        )
+        let ledger = FlowLedger(
+            mihomoConnections: [],
+            xrayAccessRecords: [record],
+            appRoutingActivities: [activity]
+        )
+        #expect(ledger.entries.first?.outcome == .viaMihomo)
     }
 
     @Test("Closed state, end time, and recent limiting are deterministic")

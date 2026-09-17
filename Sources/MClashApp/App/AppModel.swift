@@ -11819,6 +11819,7 @@ final class AppModel {
             let xrayRouteNames = Self.xrayRouteNames(for: self.configurationDocument)
             let activities = appRoutingActivities
             let defaultProfileID = activeProfileID
+            let runtimeBackend = self.runtimeBackend
             let worker = Task.detached(priority: .utility) {
                 FlowLedger(
                     activeConnections: activeConnections,
@@ -11826,7 +11827,8 @@ final class AppModel {
                     xrayAccessRecords: xrayAccessRecords,
                     xrayRouteNames: xrayRouteNames,
                     appRoutingActivities: activities,
-                    defaultProfileID: defaultProfileID
+                    defaultProfileID: defaultProfileID,
+                    runtimeBackend: runtimeBackend
                 )
             }
             let ledger = await withTaskCancellationHandler {

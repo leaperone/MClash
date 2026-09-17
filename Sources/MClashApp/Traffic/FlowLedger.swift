@@ -35,7 +35,8 @@ struct FlowLedger: Sendable {
         appRoutingActivities: [AppRoutingActivity] = [],
         mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
         defaultProfileID: ProfileID? = nil,
-        associationWindow: TimeInterval = defaultAssociationWindow
+        associationWindow: TimeInterval = defaultAssociationWindow,
+        runtimeBackend: ProxyRuntimeBackend = .mihomoCompatibility
     ) {
         let activeRecords = activeConnections.map {
             FlowLedgerMihomoConnectionRecord(connection: $0, state: .active)
@@ -53,7 +54,8 @@ struct FlowLedger: Sendable {
             appRoutingActivities: appRoutingActivities,
             mihomoCaptureOrigins: mihomoCaptureOrigins,
             defaultProfileID: defaultProfileID,
-            associationWindow: associationWindow
+            associationWindow: associationWindow,
+            runtimeBackend: runtimeBackend
         )
     }
 
@@ -64,7 +66,8 @@ struct FlowLedger: Sendable {
         appRoutingActivities: [AppRoutingActivity] = [],
         mihomoCaptureOrigins: [String: FlowLedgerCaptureOrigin] = [:],
         defaultProfileID: ProfileID? = nil,
-        associationWindow: TimeInterval = defaultAssociationWindow
+        associationWindow: TimeInterval = defaultAssociationWindow,
+        runtimeBackend: ProxyRuntimeBackend = .mihomoCompatibility
     ) {
         entries = []
         latestNonDirectRouteAt = nil
@@ -154,8 +157,31 @@ struct FlowLedger: Sendable {
         // connection objects. Keep them in this ledger so the application's
         // route and history views share the same source of truth.
         var seenXrayIDs = Set<UUID>()
+        var claimedXrayIDs = Set<UUID>()
+        if runtimeBackend == .xray {
+            for activityIndex in builtEntries.indices {
+                guard case let .appRouting(activityID) = builtEntries[activityIndex].id,
+                      let activity = appRoutingActivities.first(where: { $0.id == activityID }),
+                      activity.mclashTrafficTarget == .defaultProfile,
+                      case .mihomo = activity.effectiveAction,
+                      let match = Self.xrayMatch(
+                        for: activity,
+                        in: xrayAccessRecords,
+                        excluding: claimedXrayIDs,
+                        associationWindow: max(0, associationWindow)
+                      ) else { continue }
+                claimedXrayIDs.insert(match.record.id)
+                builtEntries[activityIndex] = Self.entry(
+                    activity: activity,
+                    xrayRecord: match.record,
+                    routeName: xrayRouteNames,
+                    defaultProfileID: defaultProfileID
+                )
+            }
+        }
         for record in xrayAccessRecords
-        where !(record.inbound?.hasPrefix("mclash-capture-") ?? false) && seenXrayIDs.insert(record.id).inserted {
+        where !(record.inbound?.hasPrefix("mclash-capture-") ?? false)
+            && seenXrayIDs.insert(record.id).inserted {
             guard !Task<Never, Never>.isCancelled else { return }
             builtEntries.append(Self.entry(
                 record: record,
@@ -475,6 +501,66 @@ struct FlowLedger: Sendable {
             )
     }
 
+    private struct XrayMatch {
+        let record: XrayAccessRecord
+        let difference: TimeInterval
+    }
+
+    private static func xrayMatch(
+        for activity: AppRoutingActivity,
+        in records: [XrayAccessRecord],
+        excluding claimedIDs: Set<UUID>,
+        associationWindow: TimeInterval
+    ) -> XrayMatch? {
+        guard let relayPort = activity.relayLocalPort else { return nil }
+        let candidates = records.compactMap { record -> XrayMatch? in
+            guard !claimedIDs.contains(record.id),
+                  record.inbound?.hasPrefix("mclash-capture-") == true,
+                  Self.xraySourcePort(record.source) == relayPort,
+                  Self.xrayTransport(record.transport) == activity.transportProtocol.rawValue,
+                  Self.xrayDestinationMatches(record.destination, activity: activity)
+            else { return nil }
+            let difference = abs(record.timestamp.timeIntervalSince(activity.startedAt))
+            guard difference <= associationWindow else { return nil }
+            return XrayMatch(record: record, difference: difference)
+        }
+        return candidates.min {
+            if $0.difference != $1.difference { return $0.difference < $1.difference }
+            return $0.record.id.uuidString < $1.record.id.uuidString
+        }
+    }
+
+    private static func xraySourcePort(_ source: String?) -> UInt16? {
+        guard let source = nonEmpty(source) else { return nil }
+        if source.hasPrefix("["), let closing = source.firstIndex(of: "]") {
+            return UInt16(String(source[source.index(after: closing)...].drop(while: { $0 == ":" })))
+        }
+        guard let separator = source.lastIndex(of: ":") else { return nil }
+        return UInt16(source[source.index(after: separator)...])
+    }
+
+    private static func xrayTransport(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "https" ? "http" : normalized
+    }
+
+    private static func xrayDestinationMatches(
+        _ rawDestination: String,
+        activity: AppRoutingActivity
+    ) -> Bool {
+        let destination = parseXrayDestination(rawDestination)
+        guard destination.port == activity.destination.port else { return false }
+        let expected = Set([
+            activity.destination.hostname,
+            activity.destination.ipAddress,
+        ].compactMap(normalizedHost))
+        let actual = Set([
+            destination.hostname,
+            destination.ipAddress,
+        ].compactMap(normalizedHost))
+        return !expected.isEmpty && !actual.isEmpty && !expected.isDisjoint(with: actual)
+    }
+
     private static func candidateIsPreferred(
         _ lhs: (record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval),
         _ rhs: (record: FlowLedgerMihomoConnectionRecord, delta: TimeInterval)
@@ -562,6 +648,58 @@ struct FlowLedger: Sendable {
     }
 
     private static func entry(
+        activity: AppRoutingActivity,
+        xrayRecord: XrayAccessRecord,
+        routeName: [String: String],
+        defaultProfileID: ProfileID?
+    ) -> FlowLedgerEntry {
+        let base = entry(activity: activity, match: nil, defaultProfileID: defaultProfileID)
+        let route = xrayRoute(xrayRecord.outbound, names: routeName)
+        let outbound = xrayRecord.outbound?.lowercased()
+        let outcome: FlowLedgerOutcome = activity.relayState == .failed
+            ? .relayFailed
+            : outbound == "direct" ? .direct
+            : outbound == "reject" ? .rejected
+            : .viaXray
+        return FlowLedgerEntry(
+            id: base.id,
+            application: base.application,
+            captureOrigin: base.captureOrigin,
+            destination: base.destination,
+            appRoutingRule: base.appRoutingRule,
+            mihomoRoute: route,
+            trafficTarget: base.trafficTarget,
+            profileID: base.profileID,
+            association: .exactRelayPort(connectionID: xrayRecord.id.uuidString),
+            state: base.state,
+            outcome: outcome,
+            startedAt: base.startedAt,
+            endedAt: base.endedAt,
+            upload: base.upload,
+            download: base.download
+        )
+    }
+
+    private static func xrayRoute(
+        _ rawName: String?,
+        names: [String: String]
+    ) -> FlowLedgerMihomoRoute {
+        let chain = nonEmpty(rawName).map { raw in
+            let separator = [" ==> ", " -> ", " >> "].first { raw.contains($0) }
+            return (separator.map { raw.components(separatedBy: $0) } ?? [raw]).map {
+                names[$0.trimmingCharacters(in: .whitespacesAndNewlines)]
+                    ?? $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        } ?? []
+        return FlowLedgerMihomoRoute(
+            rule: nil,
+            rulePayload: nil,
+            chain: chain,
+            providerChain: chain.map { _ in nil }
+        )
+    }
+
+    private static func entry(
         record: FlowLedgerMihomoConnectionRecord,
         startedAt: Date?,
         captureOrigin explicitOrigin: FlowLedgerCaptureOrigin?,
@@ -593,19 +731,13 @@ struct FlowLedger: Sendable {
         defaultProfileID: ProfileID?
     ) -> FlowLedgerEntry {
         let destination = parseXrayDestination(record.destination)
-        let chain = nonEmpty(routeName).map { [$0] } ?? []
         return FlowLedgerEntry(
             id: .xray(record.id),
             application: .unattributed,
             captureOrigin: record.inbound.map { .localListener(name: $0) } ?? .unknown,
             destination: destination,
             appRoutingRule: nil,
-            mihomoRoute: FlowLedgerMihomoRoute(
-                rule: nil,
-                rulePayload: nil,
-                chain: chain,
-                providerChain: chain.map { _ in nil }
-            ),
+            mihomoRoute: xrayRoute(routeName, names: [:]),
             trafficTarget: .defaultProfile,
             profileID: defaultProfileID,
             association: .none,
