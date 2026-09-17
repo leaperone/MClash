@@ -5,6 +5,7 @@ import base64
 import copy
 import json
 import hashlib
+import ipaddress
 import os
 from pathlib import Path
 import shutil
@@ -103,7 +104,7 @@ class DNSHandler(socketserver.BaseRequestHandler):
         transport.sendto(header + packet[12:end] + answer, self.client_address)
 
 
-def dns_through_socks(port):
+def query_dns_through_socks(port, name):
     with socket.create_connection(("127.0.0.1", port), timeout=3) as control:
         control.sendall(b"\x05\x01\x00")
         assert control.recv(2) == b"\x05\x00"
@@ -115,15 +116,42 @@ def dns_through_socks(port):
             response.extend(chunk)
         assert response[:4] == b"\x05\x00\x00\x01", response[:4]
         endpoint = (socket.inet_ntoa(response[4:8]), struct.unpack("!H", response[8:10])[0])
-        name = "capture-dns.mclash.invalid"
         question = b"".join(bytes([len(part)]) + part.encode() for part in name.split(".")) + b"\x00\x00\x01\x00\x01"
         packet = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + question
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
             udp.settimeout(5)
             udp.sendto(b"\x00\x00\x00\x01\x08\x08\x08\x08\x00\x35" + packet, endpoint)
             answer, _ = udp.recvfrom(4096)
-            assert answer[10:12] == b"\x12\x34" and answer.endswith(b"\x7f\x00\x00\x01"), "DNS capture did not use the configured resolver"
-        return name
+            message = answer[10:]
+            assert message[:2] == b"\x12\x34" and message[3] & 0x0F == 0, "DNS capture returned an invalid response"
+            questions, answers = struct.unpack("!HH", message[4:8])
+
+            def skip_name(cursor):
+                while message[cursor]:
+                    if message[cursor] & 0xC0 == 0xC0:
+                        return cursor + 2
+                    cursor += message[cursor] + 1
+                return cursor + 1
+
+            cursor = 12
+            for _ in range(questions):
+                cursor = skip_name(cursor) + 4
+            addresses = []
+            for _ in range(answers):
+                cursor = skip_name(cursor)
+                kind, category, _, length = struct.unpack("!HHIH", message[cursor:cursor + 10])
+                cursor += 10
+                if kind == 1 and category == 1 and length == 4:
+                    addresses.append(socket.inet_ntoa(message[cursor:cursor + 4]))
+                cursor += length
+            assert addresses, "DNS capture returned no IPv4 answer"
+            return addresses[0]
+
+
+def dns_through_socks(port):
+    name = "capture-dns.mclash.invalid"
+    assert query_dns_through_socks(port, name) == "127.0.0.1", "DNS capture did not use the configured resolver"
+    return name
 
 
 def free_port():
@@ -164,6 +192,7 @@ def main():
     parser.add_argument("--profile", type=Path, help="Optional private node source for public HTTPS acceptance; only aggregate results are recorded")
     parser.add_argument("--preserve-signature", action="store_true", help="Exercise the downloaded signed app without changing its bundle or signature")
     parser.add_argument("--ui-output", type=Path, help="Show and capture only the isolated app's connection-record window")
+    parser.add_argument("--exercise-recovery", action="store_true", help="Restart only this test app's Xray child and verify recovery")
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     app = args.app.resolve()
@@ -322,6 +351,10 @@ def main():
         assert connection_records["total"] >= access_records["total"]
         close_error = call("traffic.connections.closeAll", expect_error=True)
         assert "historical events" in close_error["message"]
+        recovery_receipt = None
+        if args.exercise_recovery:
+            from xray_recovery_probe import exercise_recovery
+            recovery_receipt = exercise_recovery(call, fetch, process.pid)
         assert call("routing.proxy.select", {"group": "Auto", "proxy": "B"})["selected"]
         fetch("NODE_B")
         fetch("NODE_B", socks=True)
@@ -333,6 +366,29 @@ def main():
         fetch("DIRECT", host="direct-dns.mclash.invalid")
         assert "direct-dns.mclash.invalid" in resolver.names, "Direct traffic bypassed configured DNS"
         assert dns_through_socks(socks_port) in resolver.names
+        call("routing.mode.set", {"mode": "global"})
+        before_fake_ip = call("configuration.snapshot")
+        fake_ip_document = copy.deepcopy(before_fake_ip["document"])
+        fake_ip_document["dnsPolicies"][0]["mode"] = "fakeIP"
+        call("configuration.apply", {"document": fake_ip_document,
+                                       "expectedRevision": before_fake_ip["configurationRevision"]})
+        fake_ip_snapshot = call("configuration.snapshot")
+        call("configuration.workspace.activate", {"id": fake_ip_document["workspaces"][0]["id"],
+                                                   "expectedRevision": fake_ip_snapshot["configurationRevision"]})
+        fake_host = "fake-ip-destination.mclash.invalid"
+        fake_address = query_dns_through_socks(socks_port, fake_host)
+        assert ipaddress.ip_address(fake_address) in ipaddress.ip_network("198.18.0.0/15"), "Fake-IP mode returned a real address"
+        prior_targets = len(proxy_a.connect_targets)
+        fetch("NODE_A", socks=True, host=fake_address)
+        assert f"{fake_host}:{origin.server_address[1]}" in proxy_a.connect_targets[prior_targets:], "Fake-IP was not restored to the original hostname before reaching the node"
+        assert query_dns_through_socks(socks_port, "encoded-source.invalid") == "127.0.0.1", "A node's own hostname was assigned a Fake-IP"
+        assert "encoded-source.invalid" in resolver.names, "The node hostname did not use the configured real resolver"
+        fake_ip_snapshot = call("configuration.snapshot")
+        call("configuration.apply", {"document": before_fake_ip["document"],
+                                       "expectedRevision": fake_ip_snapshot["configurationRevision"]})
+        fake_ip_snapshot = call("configuration.snapshot")
+        call("configuration.workspace.activate", {"id": before_fake_ip["document"]["workspaces"][0]["id"],
+                                                   "expectedRevision": fake_ip_snapshot["configurationRevision"]})
         call("routing.mode.set", {"mode": "rule"})
         fetch("", rejected=True)
         fetch("", socks=True, rejected=True)
@@ -459,6 +515,7 @@ def main():
                           "automaticRecovery": recovery_seconds, "expectedStatusEnforced": True,
                           "loadBalance": sorted(balanced), "relayChain": True, "publicHTTPS": public_network}
         receipt["dnsPolicy"] = {"directResolution": True, "socksUDPCapture": True}
+        receipt["fakeIP"] = {"allocated": True, "destinationRestored": True, "nodeEndpointUsesRealDNS": True}
         receipt["geoRouting"] = {"geoSitePayload": True, "geoIPPayload": True, "unmatchedRejected": True}
         receipt["failedActivationRollback"] = True
         receipt["healthSettingsRoundTrip"] = True
@@ -471,10 +528,22 @@ def main():
         receipt["xrayConnectionRecordCount"] = traffic_snapshot["connectionCount"]
         receipt["xrayConnectionRecordEvidence"] = connection_records["evidence"]
         receipt["xrayCloseRejected"] = True
+        if recovery_receipt:
+            receipt["coreRecovery"] = recovery_receipt
         args.output.write_text(json.dumps(receipt, indent=2) + "\n")
         print(json.dumps(receipt))
     except BaseException:
         if not args.profile:
+            if (proof / "app.log").is_file():
+                shutil.copyfile(proof / "app.log", args.output.with_suffix(".app.log"))
+            if "cli" in locals() and "endpoint" in locals():
+                for method in ["status", "logs.list", "diagnostics.snapshot"]:
+                    try:
+                        diagnostic = subprocess.run([cli, method, "--socket", endpoint, "--timeout", "5"],
+                                                    capture_output=True, text=True, timeout=6)
+                        args.output.with_suffix("." + method.replace(".", "-") + ".json").write_text(diagnostic.stdout)
+                    except subprocess.TimeoutExpired:
+                        pass
             for state in support.glob("Runtime/Xray/*/group-state.json"):
                 shutil.copyfile(state, args.output.with_suffix(".group-state.json"))
             manifest = support / "Configuration/manifest.json"

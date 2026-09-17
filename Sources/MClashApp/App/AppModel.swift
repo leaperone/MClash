@@ -3892,7 +3892,11 @@ final class AppModel {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             if usesXrayRuntime { try await makeProfileValidator().validate(configurationAt: url) }
-            _ = try await profileStore.importProfile(from: url)
+            let profile = try await profileStore.importProfile(from: url)
+            if usesXrayRuntime, activeProfileID == nil {
+                try await profileStore.setActiveProfile(profile.id)
+                activeProfileID = profile.id
+            }
             profiles = try await profileStore.profiles()
             await synchronizeConfigurationSources()
             errorMessage = nil
@@ -5695,7 +5699,6 @@ final class AppModel {
         guard controllerIsReady else {
             throw AppModelError.profileActivationFailed(errorMessage ?? XrayControlError.rejectedUpdate.localizedDescription)
         }
-        startXrayAccessLogMonitor()
         if networkCapturePreferences.enabled { await performNetworkCaptureActivation() }
         setNetworkEnvironmentRecoveryArmed(true)
     }
@@ -9298,6 +9301,7 @@ final class AppModel {
             controllerState = .ready
             errorMessage = nil
             if usesXrayRuntime {
+                startXrayAccessLogMonitor()
                 appendSupervisorLog("Connected to the local Xray controller.")
                 await xrayRuntimeController?.startHealthChecks()
             } else {

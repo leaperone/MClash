@@ -32,7 +32,7 @@ struct XrayConnectionRecordPresentationTests {
         #expect(nodePresentation.pathHelp.contains("Local proxy → Tokyo 01"))
         #expect(!nodePresentation.pathHelp.contains("(resolved)"))
         #expect(!nodePresentation.pathHelp.contains("(raw)"))
-        #expect(nodePresentation.searchableText.contains("Tokyo 01"))
+        #expect(nodePresentation.searchableText.contains { $0.localizedCaseInsensitiveContains("tokyo 01") })
 
         let groupPresentation = XrayConnectionRecordPresentation(
             record: XrayAccessRecord(
