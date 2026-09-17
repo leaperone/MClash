@@ -255,7 +255,11 @@ if (( xray_enabled )); then
   cp "${XRAY_RESOURCE_PATH}" "${contents}/Resources/Core/mclash-xray"
 fi
 ditto "${geodata_source}" "${contents}/Resources/GeoData"
-cp "${license_source}" "${contents}/Resources/GeoData/LICENSE.txt"
+if (( legacy_core_enabled )); then
+  cp "${license_source}" "${contents}/Resources/GeoData/LICENSE.txt"
+else
+  cp "${repo_root}/Sources/MClashApp/Resources/ThirdParty/xray-LICENSE.txt" "${contents}/Resources/GeoData/LICENSE.txt"
+fi
 cp "${repo_root}/Sources/MClashApp/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"
 for localization_source in "${repo_root}"/Sources/MClashApp/Resources/*.lproj(N/); do
   ditto "${localization_source}" "${contents}/Resources/${localization_source:t}"

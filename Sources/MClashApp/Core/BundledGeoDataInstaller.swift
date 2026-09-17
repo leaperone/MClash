@@ -75,7 +75,8 @@ struct BundledGeoDataInstaller: Sendable {
                     source: sourceDirectory.appending(path: fileName),
                     destination: homeDirectory.appending(path: fileName),
                     fileName: fileName,
-                    fileManager: fileManager
+                    fileManager: fileManager,
+                    expectedHash: expectedHashes[fileName]
                 )
             }
             return
@@ -139,12 +140,15 @@ struct BundledGeoDataInstaller: Sendable {
         source: URL,
         destination: URL,
         fileName: String,
-        fileManager: FileManager
+        fileManager: FileManager,
+        expectedHash: String? = nil
     ) throws {
         if fileManager.fileExists(atPath: destination.path) {
             let attributes = try fileManager.attributesOfItem(atPath: destination.path)
             if (attributes[.size] as? NSNumber)?.int64Value ?? 0 > 0 {
-                return
+                if expectedHash == nil || (try? Self.sha256(at: destination)) == expectedHash {
+                    return
+                }
             }
             try fileManager.removeItem(at: destination)
         }
