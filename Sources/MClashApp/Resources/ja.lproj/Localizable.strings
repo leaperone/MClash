@@ -2527,6 +2527,31 @@
 
 "WireGuard configuration" = "WireGuard 設定";
 "Encoded node list" = "エンコードされたノード一覧";
+"Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged." = "サブスクリプションを追加するか、ファイルまたはノードリンクを読み込みます。グループとルーティング規則は変わりません。";
+"Add your first source to bring nodes into MClash." = "最初のソースを追加してノードを MClash に取り込みます。";
+"Your sources" = "ソース";
+"Search sources" = "ソースを検索";
+"No sources yet" = "ソースはまだありません";
+"%@ nodes · %@ · %@" = "%@ ノード · %@ · %@";
+"Automatic updates on" = "自動更新オン";
+"Manual updates" = "手動更新";
+"Update needs attention" = "更新の確認が必要です";
+"Imported" = "読み込み済み";
+"Imported file" = "読み込んだファイル";
+"Local source" = "ローカルソース";
+"Edit source" = "ソースを編集";
+"Source name" = "ソース名";
+"Advanced update settings" = "詳細な更新設定";
+"Enter a valid subscription URL." = "有効なサブスクリプション URL を入力してください。";
+"Remove source?" = "ソースを削除しますか？";
+"Remove %@ and its imported nodes?" = "%@ と読み込んだノードを削除しますか？";
+"Remove source" = "ソースを削除";
+"Refresh source" = "ソースを更新";
+"The imported filename is invalid." = "読み込んだファイル名が無効です。";
+"Online rule sets update automatically every six hours." = "オンラインルールセットは6時間ごとに自動更新されます。";
+"Update rule sets" = "ルールセットを更新";
+"Rule sets are up to date." = "ルールセットは最新です。";
+"Could not update %@. Previously saved rules are still in use." = "%@ を更新できませんでした。以前に保存したルールを引き続き使用します。";
 "Proxy Sources" = "プロキシソース";
 "Import file" = "ファイルを読み込む";
 "Refresh a source to update connection details. Your group choices stay the same." = "ソースを更新すると接続情報が更新され、グループの選択は維持されます。";
@@ -2539,3 +2564,4 @@
 "Connection records are collected by MClash while routing is enabled." = "ルーティングが有効な間、MClash は接続記録を収集します。";
 "Waiting for connection records" = "接続記録を待機中";
 "MClash will show a record here after it observes a routed connection." = "ルーティングされた接続を確認すると、MClash がここに記録を表示します。";
+"Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails." = "ルールを1行ずつ入力するか、オンラインリストを指定します。更新を検証し、失敗した場合は以前のルールを使い続けます。";

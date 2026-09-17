@@ -2525,6 +2525,31 @@
 
 "WireGuard configuration" = "WireGuard 配置";
 "Encoded node list" = "编码节点列表";
+"Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged." = "添加订阅、导入文件或粘贴节点链接。你的分组和路由规则不会改变。";
+"Add your first source to bring nodes into MClash." = "添加第一个来源，将节点导入 MClash。";
+"Your sources" = "你的来源";
+"Search sources" = "搜索来源";
+"No sources yet" = "还没有来源";
+"%@ nodes · %@ · %@" = "%@ 个节点 · %@ · %@";
+"Automatic updates on" = "已开启自动更新";
+"Manual updates" = "手动更新";
+"Update needs attention" = "更新需要处理";
+"Imported" = "已导入";
+"Imported file" = "导入的文件";
+"Local source" = "本地来源";
+"Edit source" = "编辑来源";
+"Source name" = "来源名称";
+"Advanced update settings" = "高级更新设置";
+"Enter a valid subscription URL." = "请输入有效的订阅 URL。";
+"Remove source?" = "移除来源？";
+"Remove %@ and its imported nodes?" = "移除 %@ 及其导入的节点？";
+"Remove source" = "移除来源";
+"Refresh source" = "刷新来源";
+"The imported filename is invalid." = "导入的文件名无效。";
+"Online rule sets update automatically every six hours." = "在线规则集每六小时自动更新。";
+"Update rule sets" = "更新规则集";
+"Rule sets are up to date." = "规则集已是最新。";
+"Could not update %@. Previously saved rules are still in use." = "无法更新 %@。仍在使用之前保存的规则。";
 "Proxy Sources" = "代理来源";
 "Import file" = "导入文件";
 "Refresh a source to update connection details. Your group choices stay the same." = "刷新来源会更新连接详情，同时保留你的分组选择。";
@@ -2537,3 +2562,4 @@
 "Connection records are collected by MClash while routing is enabled." = "启用路由后，MClash 会收集连接记录。";
 "Waiting for connection records" = "等待连接记录";
 "MClash will show a record here after it observes a routed connection." = "观察到经过路由的连接后，MClash 会在这里显示记录。";
+"Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails." = "每行输入一条规则，或使用在线规则列表。MClash 会先检查更新，更新失败时继续使用之前的规则。";

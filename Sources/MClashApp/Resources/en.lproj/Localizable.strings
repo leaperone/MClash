@@ -2526,6 +2526,31 @@
 
 "WireGuard configuration" = "WireGuard configuration";
 "Encoded node list" = "Encoded node list";
+"Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged." = "Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged.";
+"Add your first source to bring nodes into MClash." = "Add your first source to bring nodes into MClash.";
+"Your sources" = "Your sources";
+"Search sources" = "Search sources";
+"No sources yet" = "No sources yet";
+"%@ nodes · %@ · %@" = "%@ nodes · %@ · %@";
+"Automatic updates on" = "Automatic updates on";
+"Manual updates" = "Manual updates";
+"Update needs attention" = "Update needs attention";
+"Imported" = "Imported";
+"Imported file" = "Imported file";
+"Local source" = "Local source";
+"Edit source" = "Edit source";
+"Source name" = "Source name";
+"Advanced update settings" = "Advanced update settings";
+"Enter a valid subscription URL." = "Enter a valid subscription URL.";
+"Remove source?" = "Remove source?";
+"Remove %@ and its imported nodes?" = "Remove %@ and its imported nodes?";
+"Remove source" = "Remove source";
+"Refresh source" = "Refresh source";
+"The imported filename is invalid." = "The imported filename is invalid.";
+"Online rule sets update automatically every six hours." = "Online rule sets update automatically every six hours.";
+"Update rule sets" = "Update rule sets";
+"Rule sets are up to date." = "Rule sets are up to date.";
+"Could not update %@. Previously saved rules are still in use." = "Could not update %@. Previously saved rules are still in use.";
 "Proxy Sources" = "Proxy Sources";
 "Import file" = "Import file";
 "Refresh a source to update connection details. Your group choices stay the same." = "Refresh a source to update connection details. Your group choices stay the same.";
@@ -2538,3 +2563,4 @@
 "Connection records are collected by MClash while routing is enabled." = "Connection records are collected by MClash while routing is enabled.";
 "Waiting for connection records" = "Waiting for connection records";
 "MClash will show a record here after it observes a routed connection." = "MClash will show a record here after it observes a routed connection.";
+"Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails." = "Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails.";

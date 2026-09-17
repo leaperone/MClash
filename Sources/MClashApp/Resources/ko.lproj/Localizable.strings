@@ -2526,6 +2526,31 @@
 
 "WireGuard configuration" = "WireGuard 구성";
 "Encoded node list" = "인코딩된 노드 목록";
+"Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged." = "구독을 추가하거나 파일 또는 노드 링크를 붙여 넣으세요. 그룹과 라우팅 규칙은 변경되지 않습니다.";
+"Add your first source to bring nodes into MClash." = "첫 번째 소스를 추가해 MClash로 노드를 가져오세요.";
+"Your sources" = "내 소스";
+"Search sources" = "소스 검색";
+"No sources yet" = "아직 소스가 없습니다";
+"%@ nodes · %@ · %@" = "%@개 노드 · %@ · %@";
+"Automatic updates on" = "자동 업데이트 켜짐";
+"Manual updates" = "수동 업데이트";
+"Update needs attention" = "업데이트 확인 필요";
+"Imported" = "가져옴";
+"Imported file" = "가져온 파일";
+"Local source" = "로컬 소스";
+"Edit source" = "소스 편집";
+"Source name" = "소스 이름";
+"Advanced update settings" = "고급 업데이트 설정";
+"Enter a valid subscription URL." = "유효한 구독 URL을 입력하세요.";
+"Remove source?" = "소스를 제거할까요?";
+"Remove %@ and its imported nodes?" = "%@ 및 가져온 노드를 제거할까요?";
+"Remove source" = "소스 제거";
+"Refresh source" = "소스 새로 고침";
+"The imported filename is invalid." = "가져온 파일 이름이 유효하지 않습니다.";
+"Online rule sets update automatically every six hours." = "온라인 규칙 세트는 6시간마다 자동으로 업데이트됩니다.";
+"Update rule sets" = "규칙 세트 업데이트";
+"Rule sets are up to date." = "규칙 세트가 최신 상태입니다.";
+"Could not update %@. Previously saved rules are still in use." = "%@을(를) 업데이트할 수 없습니다. 이전에 저장된 규칙을 계속 사용합니다.";
 "Proxy Sources" = "프록시 소스";
 "Import file" = "파일 가져오기";
 "Refresh a source to update connection details. Your group choices stay the same." = "소스를 새로 고치면 연결 정보가 업데이트되고 그룹 선택은 유지됩니다.";
@@ -2538,3 +2563,4 @@
 "Connection records are collected by MClash while routing is enabled." = "라우팅이 활성화되면 MClash가 연결 기록을 수집합니다.";
 "Waiting for connection records" = "연결 기록을 기다리는 중";
 "MClash will show a record here after it observes a routed connection." = "라우팅된 연결이 관찰되면 MClash가 여기에 기록을 표시합니다.";
+"Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails." = "한 줄에 규칙 하나를 입력하거나 온라인 목록을 사용하세요. 업데이트를 확인하고 실패하면 이전 규칙을 계속 사용합니다.";

@@ -2527,6 +2527,31 @@
 
 "WireGuard configuration" = "Configuration WireGuard";
 "Encoded node list" = "Liste de nœuds encodée";
+"Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged." = "Ajoutez un abonnement, importez un fichier ou collez des liens de nœuds. Vos groupes et règles de routage restent inchangés.";
+"Add your first source to bring nodes into MClash." = "Ajoutez votre première source pour importer des nœuds dans MClash.";
+"Your sources" = "Vos sources";
+"Search sources" = "Rechercher des sources";
+"No sources yet" = "Aucune source pour le moment";
+"%@ nodes · %@ · %@" = "%@ nœuds · %@ · %@";
+"Automatic updates on" = "Mises à jour automatiques activées";
+"Manual updates" = "Mises à jour manuelles";
+"Update needs attention" = "Intervention nécessaire pour la mise à jour";
+"Imported" = "Importé";
+"Imported file" = "Fichier importé";
+"Local source" = "Source locale";
+"Edit source" = "Modifier la source";
+"Source name" = "Nom de la source";
+"Advanced update settings" = "Réglages de mise à jour avancés";
+"Enter a valid subscription URL." = "Saisissez une URL d’abonnement valide.";
+"Remove source?" = "Supprimer la source ?";
+"Remove %@ and its imported nodes?" = "Supprimer %@ et ses nœuds importés ?";
+"Remove source" = "Supprimer la source";
+"Refresh source" = "Actualiser la source";
+"The imported filename is invalid." = "Le nom du fichier importé est invalide.";
+"Online rule sets update automatically every six hours." = "Les ensembles de règles en ligne se mettent à jour automatiquement toutes les six heures.";
+"Update rule sets" = "Mettre à jour les ensembles de règles";
+"Rule sets are up to date." = "Les ensembles de règles sont à jour.";
+"Could not update %@. Previously saved rules are still in use." = "Impossible de mettre à jour %@. Les règles enregistrées précédemment restent utilisées.";
 "Proxy Sources" = "Sources proxy";
 "Import file" = "Importer un fichier";
 "Refresh a source to update connection details. Your group choices stay the same." = "Actualisez une source pour mettre à jour les détails de connexion. Vos choix de groupes restent inchangés.";
@@ -2539,3 +2564,4 @@
 "Connection records are collected by MClash while routing is enabled." = "MClash collecte l’historique des connexions lorsque le routage est activé.";
 "Waiting for connection records" = "En attente de l’historique des connexions";
 "MClash will show a record here after it observes a routed connection." = "MClash affichera un enregistrement après avoir observé une connexion routée.";
+"Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails." = "Saisissez une règle par ligne ou utilisez une liste en ligne. MClash vérifie les mises à jour et conserve les règles précédentes en cas d’échec.";

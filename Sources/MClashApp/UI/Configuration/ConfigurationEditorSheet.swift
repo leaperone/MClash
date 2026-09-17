@@ -218,14 +218,17 @@ struct ConfigurationEditorSheet: View {
                     }
                 }
                 Picker(AppLocalization.string("Format"), selection: $ruleSetFormat) {
-                    ForEach(RuleSetFormat.allCases, id: \.self) { format in
+                    ForEach(RuleSetFormat.allCases.filter { model.runtimeBackend != .xray || $0 != .mrs || ruleSetFormat == .mrs }, id: \.self) { format in
                         Text(format.localizedTitle).tag(format)
                     }
                 }
                 TextField(AppLocalization.string("Source URL (optional)"), text: $ruleSetSourceURLText)
                     .textFieldStyle(.roundedBorder)
-                TextField(AppLocalization.string("Local cache path (optional)"), text: $ruleSetPathText)
-                    .textFieldStyle(.roundedBorder)
+                    .privacySensitive()
+                if model.runtimeBackend != .xray {
+                    TextField(AppLocalization.string("Local cache path (optional)"), text: $ruleSetPathText)
+                        .textFieldStyle(.roundedBorder)
+                }
                 Picker(AppLocalization.string("Default action"), selection: $entranceAction) {
                     Text(AppLocalization.string("Direct")).tag(RuleActionChoice.direct)
                     Text(AppLocalization.string("Reject")).tag(RuleActionChoice.reject)
@@ -234,11 +237,13 @@ struct ConfigurationEditorSheet: View {
                             .tag(RuleActionChoice.group(group.id))
                     }
                 }
-                TextEditor(text: $ruleSetRulesText)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 150)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
-                Text(AppLocalization.string("Optional local entries, one rule per line. A remote list is loaded into the selected cache path."))
+                if ruleSetSourceURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    TextEditor(text: $ruleSetRulesText)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 150)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
+                }
+                Text(AppLocalization.string("Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

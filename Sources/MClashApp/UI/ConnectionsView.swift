@@ -142,43 +142,26 @@ struct ConnectionsView: View {
         }
     }
 
+    @ViewBuilder
     private var xrayAccessTable: some View {
         let records = filteredXrayAccessRecords
-        return Group {
-            if records.isEmpty {
-                ContentUnavailableView.search(text: searchText)
-            } else {
-                Table(records) {
-            TableColumn(AppLocalization.string("Time")) { record in
-                Text(AppLocalization.date(record.record.timestamp, dateStyle: .omitted, timeStyle: .shortened))
-                    .monospacedDigit()
-            }
-            .width(min: 90, ideal: 120)
-            TableColumn(AppLocalization.string("Source")) { record in
-                Text(record.sourceTitle)
-                    .lineLimit(1)
-                    .help(record.sourceTitle)
-            }
-            .width(min: 120, ideal: 180)
-            TableColumn(AppLocalization.string("Destination")) { record in
-                Text(record.record.destination).lineLimit(1).help(record.record.destination)
-            }
-            .width(min: 180, ideal: 300)
-            TableColumn(AppLocalization.string("Path")) { record in
-                Text(record.pathTitle).lineLimit(1).help(record.pathHelp)
-            }
-            .width(min: 140, ideal: 240)
-            TableColumn(AppLocalization.string("Transport")) { record in
-                Text(record.record.transport.uppercased()).font(.caption.monospaced())
-            }
-            .width(min: 70, ideal: 90)
-            TableColumn(AppLocalization.string("Evidence")) { _ in
-                Label(AppLocalization.string("Connection event"), systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.secondary)
-                    .help(AppLocalization.string("Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total."))
-            }
-            .width(min: 110, ideal: 140)
+        if records.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            Table(records, selection: $selectedXrayRecordID) {
+                TableColumn(AppLocalization.string("Time")) { record in
+                    Text(AppLocalization.date(record.record.timestamp, dateStyle: .omitted, timeStyle: .standard))
+                        .monospacedDigit()
                 }
+                .width(min: 82, ideal: 96, max: 110)
+                TableColumn(AppLocalization.string("Destination")) { record in
+                    Text(record.record.destination).lineLimit(1).help(record.record.destination)
+                }
+                .width(min: 180, ideal: 320, max: 480)
+                TableColumn(AppLocalization.string("Path")) { record in
+                    Text(record.pathTitle).lineLimit(1).help(record.pathHelp)
+                }
+                .width(min: 160, ideal: 280, max: 420)
             }
         }
     }
@@ -578,6 +561,7 @@ struct ConnectionsView: View {
     @SceneStorage("mclash.connections.searchText") private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var selectedConnectionID: String?
+    @State private var selectedXrayRecordID: UUID?
     @State private var selectedApplicationID: FlowLedgerApplicationKey?
     @State private var selectedHistoryID: FlowLedgerEntryID?
     @State private var sortOrder: [KeyPathComparator<ConnectionTableRow>] = []
@@ -599,6 +583,36 @@ struct ConnectionsView: View {
     @SceneStorage("mclash.connections.liveUpdatesPaused") private var liveUpdatesPaused = false
     @State private var ruleDraftRequest: TrafficRuleDraftRequest?
     @State private var applicationCandidates: [ApplicationCaptureCandidate] = []
+
+    private var selectedXrayRecord: XrayConnectionRecordPresentation? {
+        guard let selectedXrayRecordID else { return nil }
+        return xrayAccessRecords.first { $0.id == selectedXrayRecordID }
+    }
+
+    private func handleWorkspaceChange(_ workspace: TrafficWorkspace) {
+        selectedConnectionID = nil
+        selectedXrayRecordID = nil
+        selectedApplicationID = nil
+        inspectorPresented = false
+        if workspace == .live {
+            schedulePresentationRefresh()
+        } else {
+            liveUpdatesPaused = false
+            presentationSourceSnapshot = nil
+            presentationTask?.cancel()
+            presentationTask = nil
+            presentationGeneration &+= 1
+        }
+    }
+
+    @ViewBuilder
+    private func inspectorContent(selectedConnection: MihomoConnection?) -> some View {
+        if model.runtimeBackend == .xray, let selectedXrayRecord {
+            xrayRecordInspector(selectedXrayRecord)
+        } else {
+            connectionInspector(selectedConnection)
+        }
+    }
 
     var body: some View {
         let presentation = presentation
@@ -643,7 +657,7 @@ struct ConnectionsView: View {
         .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
         .inspector(isPresented: attachedInspectorBinding) {
-            connectionInspector(selectedConnection)
+            inspectorContent(selectedConnection: selectedConnection)
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 440)
         }
         .task(id: searchText) {
@@ -683,24 +697,14 @@ struct ConnectionsView: View {
         .onChange(of: model.isConnected) { _, isConnected in
             if !isConnected {
                 selectedConnectionID = nil
+                selectedXrayRecordID = nil
                 inspectorPresented = false
             } else if workspace == .live {
                 schedulePresentationRefresh(force: liveUpdatesPaused)
             }
         }
         .onChange(of: workspace) { _, workspace in
-            selectedConnectionID = nil
-            selectedApplicationID = nil
-            inspectorPresented = false
-            if workspace == .live {
-                schedulePresentationRefresh()
-            } else {
-                liveUpdatesPaused = false
-                presentationSourceSnapshot = nil
-                presentationTask?.cancel()
-                presentationTask = nil
-                presentationGeneration &+= 1
-            }
+            handleWorkspaceChange(workspace)
         }
         .confirmationDialog(
             AppLocalization.format(
@@ -826,6 +830,10 @@ struct ConnectionsView: View {
                 inspectorButton(selectedConnection: selectedConnection)
             }
 
+            if workspace == .live, model.runtimeBackend == .xray, selectedXrayRecord != nil {
+                xrayRecordInspectorButton
+            }
+
             trafficMoreMenu(presentation: presentation)
         }
         .buttonStyle(.bordered)
@@ -852,6 +860,9 @@ struct ConnectionsView: View {
                     presentation: presentation,
                     selectedConnection: selectedConnection
                 )
+                if workspace == .live, model.runtimeBackend == .xray, selectedXrayRecord != nil {
+                    xrayRecordInspectorButton.labelStyle(.iconOnly)
+                }
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1506,6 +1517,56 @@ struct ConnectionsView: View {
         .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
             connectionInspector(selectedConnection)
                 .frame(width: 360, height: 520)
+        }
+    }
+
+    private var xrayRecordInspectorButton: some View {
+        Button {
+            inspectorPresented.toggle()
+        } label: {
+            Label(AppLocalization.string("Connection Inspector"), systemImage: "sidebar.right")
+        }
+        .help(AppLocalization.string("Show Connection Inspector"))
+        .accessibilityHint(AppLocalization.string("Shows route, process, address, and traffic details for the selected connection"))
+        .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
+            if let selectedXrayRecord {
+                xrayRecordInspector(selectedXrayRecord)
+                    .frame(width: 360, height: 420)
+            }
+        }
+    }
+
+    private func xrayRecordInspector(_ record: XrayConnectionRecordPresentation) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Label(
+                    AppLocalization.format("Connection details for %@", record.record.destination),
+                    systemImage: "waveform.path.ecg"
+                )
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+
+                LabeledContent(
+                    AppLocalization.string("Time"),
+                    value: AppLocalization.date(record.record.timestamp, dateStyle: .omitted, timeStyle: .standard)
+                )
+                LabeledContent(AppLocalization.string("Source"), value: record.sourceTitle)
+                LabeledContent(AppLocalization.string("Transport"), value: record.record.transport.uppercased())
+                LabeledContent(AppLocalization.string("Path"), value: record.pathTitle)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(AppLocalization.string("Evidence"))
+                        .font(.subheadline.weight(.medium))
+                    Text(AppLocalization.string("Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(record.pathHelp)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(18)
         }
     }
 

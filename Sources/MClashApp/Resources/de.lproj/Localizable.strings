@@ -2527,6 +2527,31 @@
 
 "WireGuard configuration" = "WireGuard-Konfiguration";
 "Encoded node list" = "Codierte Knotenliste";
+"Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged." = "Fügen Sie ein Abonnement hinzu, importieren Sie eine Datei oder fügen Sie Knotenlinks ein. Ihre Gruppen und Routing-Regeln bleiben unverändert.";
+"Add your first source to bring nodes into MClash." = "Fügen Sie Ihre erste Quelle hinzu, um Knoten in MClash zu übernehmen.";
+"Your sources" = "Ihre Quellen";
+"Search sources" = "Quellen durchsuchen";
+"No sources yet" = "Noch keine Quellen";
+"%@ nodes · %@ · %@" = "%@ Knoten · %@ · %@";
+"Automatic updates on" = "Automatische Aktualisierung aktiviert";
+"Manual updates" = "Manuelle Aktualisierung";
+"Update needs attention" = "Aktualisierung erfordert Aufmerksamkeit";
+"Imported" = "Importiert";
+"Imported file" = "Importierte Datei";
+"Local source" = "Lokale Quelle";
+"Edit source" = "Quelle bearbeiten";
+"Source name" = "Quellenname";
+"Advanced update settings" = "Erweiterte Aktualisierungseinstellungen";
+"Enter a valid subscription URL." = "Geben Sie eine gültige Abonnement-URL ein.";
+"Remove source?" = "Quelle entfernen?";
+"Remove %@ and its imported nodes?" = "%@ und importierte Knoten entfernen?";
+"Remove source" = "Quelle entfernen";
+"Refresh source" = "Quelle aktualisieren";
+"The imported filename is invalid." = "Der importierte Dateiname ist ungültig.";
+"Online rule sets update automatically every six hours." = "Online-Regelsätze werden alle sechs Stunden automatisch aktualisiert.";
+"Update rule sets" = "Regelsätze aktualisieren";
+"Rule sets are up to date." = "Die Regelsätze sind aktuell.";
+"Could not update %@. Previously saved rules are still in use." = "%@ konnte nicht aktualisiert werden. Die zuvor gespeicherten Regeln werden weiterhin verwendet.";
 "Proxy Sources" = "Proxy-Quellen";
 "Import file" = "Datei importieren";
 "Refresh a source to update connection details. Your group choices stay the same." = "Aktualisieren Sie eine Quelle, um Verbindungsdetails zu ändern. Ihre Gruppenauswahl bleibt erhalten.";
@@ -2539,3 +2564,4 @@
 "Connection records are collected by MClash while routing is enabled." = "MClash erfasst Verbindungen, wenn das Routing aktiviert ist.";
 "Waiting for connection records" = "Warten auf Verbindungsprotokoll";
 "MClash will show a record here after it observes a routed connection." = "Nach einer beobachteten gerouteten Verbindung zeigt MClash hier einen Eintrag an.";
+"Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails." = "Geben Sie eine Regel pro Zeile ein oder verwenden Sie eine Online-Liste. MClash prüft Updates und behält bei Fehlern die bisherigen Regeln.";
