@@ -138,12 +138,32 @@ def write_json(path, value):
     path.chmod(0o600)
 
 
+def capture_app_window(pid, output):
+    program = """
+import CoreGraphics
+import Foundation
+let pid = Int(CommandLine.arguments[1])!
+let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+guard let window = windows.first(where: {
+    ($0[kCGWindowOwnerPID as String] as? Int) == pid
+        && ($0[kCGWindowLayer as String] as? Int) == 0
+        && (($0[kCGWindowBounds as String] as? [String: Double])?["Width"] ?? 0) > 500
+}), let id = window[kCGWindowNumber as String] as? Int else { exit(2) }
+print(id)
+"""
+    window_id = subprocess.check_output(["/usr/bin/swift", "-e", program, str(pid)], text=True).strip()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["/usr/sbin/screencapture", "-x", "-o", "-l", window_id, str(output)], check=True)
+    assert output.is_file() and output.stat().st_size > 0, "MClash window capture is empty"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", type=Path, help="Optional private node source for public HTTPS acceptance; only aggregate results are recorded")
     parser.add_argument("--preserve-signature", action="store_true", help="Exercise the downloaded signed app without changing its bundle or signature")
+    parser.add_argument("--ui-output", type=Path, help="Show and capture only the isolated app's connection-record window")
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     app = args.app.resolve()
@@ -193,13 +213,17 @@ def main():
         rule = dict(id=identifier(), priority=1, enabled=True,
                     matchers=[{"port": {"_0": origin.server_address[1]}}],
                     action={"reject": {}}, unavailableFallback="reject")
+        geo_rules = [dict(id=identifier(), priority=0, enabled=True,
+                          matchers=[{kind: {"_0": value}}],
+                          action=action(group), unavailableFallback="reject")
+                     for kind, value in [("geoSite", "google"), ("geoIP", "cn")]]
         workspace = dict(id=identifier(), name="Fixture", proxyGroupIDs=[g["id"] for g in [group, other, fallback, balance, chain, strict]],
-                         ruleIDs=[rule["id"]], ruleSetIDs=[], nodeIDs=[], dnsPolicyID=dns["id"],
+                         ruleIDs=[rule["id"]] + [entry["id"] for entry in geo_rules], ruleSetIDs=[], nodeIDs=[], dnsPolicyID=dns["id"],
                          entranceIDs=[entry["id"] for entry in entrances], revision=1,
                          routingMode="global", globalProxyGroupID=group["id"])
         write_json(support / "Configuration/manifest.json",
                    dict(schemaVersion=1, nodes=nodes, proxyGroups=[group, other, fallback, balance, chain, strict], sources=[],
-                        rules=[rule], ruleSets=[], dnsPolicies=[dns], entrances=entrances,
+                        rules=[rule] + geo_rules, ruleSets=[], dnsPolicies=[dns], entrances=entrances,
                         workspaces=[workspace], currentWorkspaceID=workspace["id"]))
         isolated = proof / "MClash.app"
         subprocess.run(["/usr/bin/ditto", str(app), str(isolated)], check=True)
@@ -260,8 +284,8 @@ def main():
         encoded_profile = call(
             "profiles.import",
             {
-                "dataBase64": base64.b64encode(encoded_nodes.encode()).decode(),
-                "fileName": "encoded-source.yaml",
+                "dataBase64": base64.b64encode(base64.b64encode(encoded_nodes.encode())).decode(),
+                "fileName": "encoded-source.txt",
                 "activate": False,
             },
         )
@@ -280,10 +304,16 @@ def main():
         assert state["core"]["activeProfileID"] == imported["id"]
         fetch("NODE_A")
         fetch("NODE_A", socks=True)
+        fetch("NODE_A", host="[2001:db8::1]")
+        fetch("NODE_A", socks=True, host="[2001:db8::1]")
         time.sleep(1)
         access_records = call("traffic.flows.list", {"limit": 200})
         assert access_records["evidence"] == "mclash-xray-access-log"
         assert access_records["total"] > 0, "MClash did not ingest Xray access records"
+        ipv6_records = [record for record in access_records["items"] if "2001:db8::1" in record["destination"]]
+        assert {record["inbound"] for record in ipv6_records} == {"HTTP", "SOCKS"}, "IPv6 events lost their destination or entrance"
+        assert all(record["outbound"] == "n-" + nodes[0]["id"]["rawValue"].lower() for record in ipv6_records), "IPv6 events lost their node"
+        assert not any((record.get("inbound") or "").startswith("probe-") for record in access_records["items"]), "Node health checks appeared as user traffic"
         traffic_snapshot = call("traffic.snapshot")
         assert traffic_snapshot["connectionCountMeaning"] == "recordedEvents"
         assert traffic_snapshot["connectionCount"] >= access_records["total"]
@@ -306,6 +336,9 @@ def main():
         call("routing.mode.set", {"mode": "rule"})
         fetch("", rejected=True)
         fetch("", socks=True, rejected=True)
+        fetch("NODE_A", host="www.google.com")
+        fetch("NODE_A", socks=True, host="223.5.5.5")
+        fetch("", host="www.google.com.invalid", rejected=True)
         call("routing.mode.set", {"mode": "global"})
         assert call("routing.proxy.select", {"group": "GLOBAL", "proxy": "Other"})["selected"]
         fetch("NODE_B")
@@ -409,6 +442,13 @@ def main():
                 if sum(item.get("passed", False) for item in public_network) >= 2:
                     break
             assert any(item.get("passed") for item in public_network), "No private-source VLESS sample completed public HTTPS"
+        if args.ui_output:
+            call("app.ui.show", {"destination": "connections"})
+            time.sleep(1)
+            capture_app_window(process.pid, args.ui_output)
+            call("app.ui.show", {"destination": "sources"})
+            time.sleep(1)
+            capture_app_window(process.pid, args.ui_output.with_name(args.ui_output.stem + ".sources.png"))
         call("core.disconnect")
         assert call("status")["core"]["state"] == "stopped"
         receipt = {"passed": True, "backend": "xray", "http": True, "socks5": True,
@@ -419,12 +459,15 @@ def main():
                           "automaticRecovery": recovery_seconds, "expectedStatusEnforced": True,
                           "loadBalance": sorted(balanced), "relayChain": True, "publicHTTPS": public_network}
         receipt["dnsPolicy"] = {"directResolution": True, "socksUDPCapture": True}
+        receipt["geoRouting"] = {"geoSitePayload": True, "geoIPPayload": True, "unmatchedRejected": True}
         receipt["failedActivationRollback"] = True
         receipt["healthSettingsRoundTrip"] = True
         receipt["encodedSourceImport"] = True
         receipt["signaturePreserved"] = args.preserve_signature
         receipt["resources"] = dict(coreProcesses=1, coreRSSBytes=core_rss, appRSSBytes=app_rss, connectSeconds=ready_seconds)
         receipt["xrayAccessRecords"] = access_records["total"]
+        receipt["ipv6AccessRecords"] = len(ipv6_records)
+        receipt["healthProbesExcluded"] = True
         receipt["xrayConnectionRecordCount"] = traffic_snapshot["connectionCount"]
         receipt["xrayConnectionRecordEvidence"] = connection_records["evidence"]
         receipt["xrayCloseRejected"] = True
