@@ -2529,6 +2529,11 @@
 "Encoded node list" = "Liste de nœuds encodée";
 "Proxy Sources" = "Sources proxy";
 "Import file" = "Importer un fichier";
+"Refresh a source to update connection details. Your group choices stay the same." = "Actualisez une source pour mettre à jour les détails de connexion. Vos choix de groupes restent inchangés.";
+"Refreshing a source updates this node's connection details without changing your group choices." = "Actualiser une source met à jour les détails de connexion de ce nœud sans modifier vos choix de groupes.";
+"Line %d uses a format MClash cannot import. Paste a supported link." = "La ligne %d utilise un format que MClash ne peut pas importer. Collez un lien pris en charge.";
+"Line %d is incomplete. Check the link and try again." = "La ligne %d est incomplète. Vérifiez le lien et réessayez.";
+"Line %d repeats a node already in this list." = "La ligne %d répète un nœud déjà présent dans cette liste.";
 "Connection records" = "Historique des connexions";
 "Connection records unavailable" = "Historique des connexions indisponible";
 "Connection records are collected by MClash while routing is enabled." = "MClash collecte l’historique des connexions lorsque le routage est activé.";

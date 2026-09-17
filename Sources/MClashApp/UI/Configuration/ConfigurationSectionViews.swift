@@ -296,8 +296,8 @@ struct ConfigurationNodesView: View {
     var body: some View {
         VStack(spacing: 0) {
             Label(
-                AppLocalization.string("A node keeps the same identity when its name, tags or credentials change. Protocol, normalized host, port and transport settings define the stable fingerprint; an endpoint change creates a new node."),
-                systemImage: "fingerprint"
+                AppLocalization.string("Refresh a source to update connection details. Your group choices stay the same."),
+                systemImage: "arrow.clockwise"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -1403,7 +1403,7 @@ private extension ConfigurationWorkbenchItem {
                 subtitle: "\(node.proto.rawValue) · \(node.host):\(node.port)",
                 symbol: "point.3.filled.connected.trianglepath.dotted",
                 detail: AppLocalization.string(
-                    "A strategy-owned node. Refreshing a source updates its connection data without changing group membership."
+                    "Refreshing a source updates this node's connection details without changing your group choices."
                 ),
                 metadata: [
                     (
@@ -1413,10 +1413,6 @@ private extension ConfigurationWorkbenchItem {
                     (
                         AppLocalization.string("Availability"),
                         node.health.availability.localizedTitle
-                    ),
-                    (
-                        AppLocalization.string("Fingerprint"),
-                        String(node.fingerprint.prefix(12))
                     ),
                 ] + (node.region.map { [(AppLocalization.string("Region"), $0)] } ?? [])
                     + (!node.tags.isEmpty

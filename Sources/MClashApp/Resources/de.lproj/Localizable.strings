@@ -2529,6 +2529,11 @@
 "Encoded node list" = "Codierte Knotenliste";
 "Proxy Sources" = "Proxy-Quellen";
 "Import file" = "Datei importieren";
+"Refresh a source to update connection details. Your group choices stay the same." = "Aktualisieren Sie eine Quelle, um Verbindungsdetails zu ändern. Ihre Gruppenauswahl bleibt erhalten.";
+"Refreshing a source updates this node's connection details without changing your group choices." = "Beim Aktualisieren einer Quelle werden die Verbindungsdetails dieses Knotens geändert, Ihre Gruppenauswahl bleibt erhalten.";
+"Line %d uses a format MClash cannot import. Paste a supported link." = "Zeile %d verwendet ein Format, das MClash nicht importieren kann. Fügen Sie einen unterstützten Link ein.";
+"Line %d is incomplete. Check the link and try again." = "Zeile %d ist unvollständig. Prüfen Sie den Link und versuchen Sie es erneut.";
+"Line %d repeats a node already in this list." = "Zeile %d wiederholt einen Knoten in dieser Liste.";
 "Connection records" = "Verbindungsprotokoll";
 "Connection records unavailable" = "Verbindungsprotokoll nicht verfügbar";
 "Connection records are collected by MClash while routing is enabled." = "MClash erfasst Verbindungen, wenn das Routing aktiviert ist.";

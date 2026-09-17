@@ -2529,6 +2529,11 @@
 "Encoded node list" = "Lista de nodos codificada";
 "Proxy Sources" = "Fuentes de proxy";
 "Import file" = "Importar archivo";
+"Refresh a source to update connection details. Your group choices stay the same." = "Actualiza una fuente para cambiar los detalles de conexión. Tus elecciones de grupos se mantienen.";
+"Refreshing a source updates this node's connection details without changing your group choices." = "Al actualizar una fuente cambian los detalles de conexión de este nodo y se mantienen tus elecciones de grupos.";
+"Line %d uses a format MClash cannot import. Paste a supported link." = "La línea %d usa un formato que MClash no puede importar. Pega un enlace compatible.";
+"Line %d is incomplete. Check the link and try again." = "La línea %d está incompleta. Comprueba el enlace y vuelve a intentarlo.";
+"Line %d repeats a node already in this list." = "La línea %d repite un nodo que ya está en esta lista.";
 "Connection records" = "Registros de conexiones";
 "Connection records unavailable" = "Registros de conexiones no disponibles";
 "Connection records are collected by MClash while routing is enabled." = "MClash recopila registros de conexiones cuando el enrutamiento está activo.";

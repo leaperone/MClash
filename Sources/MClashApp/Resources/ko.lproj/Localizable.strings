@@ -2528,6 +2528,11 @@
 "Encoded node list" = "인코딩된 노드 목록";
 "Proxy Sources" = "프록시 소스";
 "Import file" = "파일 가져오기";
+"Refresh a source to update connection details. Your group choices stay the same." = "소스를 새로 고치면 연결 정보가 업데이트되고 그룹 선택은 유지됩니다.";
+"Refreshing a source updates this node's connection details without changing your group choices." = "소스를 새로 고치면 이 노드의 연결 정보가 업데이트되고 그룹 선택은 유지됩니다.";
+"Line %d uses a format MClash cannot import. Paste a supported link." = "%d번째 줄 형식은 MClash에서 가져올 수 없습니다. 지원되는 링크를 붙여 넣으세요.";
+"Line %d is incomplete. Check the link and try again." = "%d번째 줄이 완전하지 않습니다. 링크를 확인하고 다시 시도하세요.";
+"Line %d repeats a node already in this list." = "%d번째 줄은 이 목록의 노드를 반복합니다.";
 "Connection records" = "연결 기록";
 "Connection records unavailable" = "연결 기록을 사용할 수 없음";
 "Connection records are collected by MClash while routing is enabled." = "라우팅이 활성화되면 MClash가 연결 기록을 수집합니다.";

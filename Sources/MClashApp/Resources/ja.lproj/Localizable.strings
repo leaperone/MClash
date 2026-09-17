@@ -2529,6 +2529,11 @@
 "Encoded node list" = "エンコードされたノード一覧";
 "Proxy Sources" = "プロキシソース";
 "Import file" = "ファイルを読み込む";
+"Refresh a source to update connection details. Your group choices stay the same." = "ソースを更新すると接続情報が更新され、グループの選択は維持されます。";
+"Refreshing a source updates this node's connection details without changing your group choices." = "ソースを更新するとこのノードの接続情報が更新され、グループの選択は維持されます。";
+"Line %d uses a format MClash cannot import. Paste a supported link." = "%d 行目の形式は MClash で読み込めません。対応するリンクを貼り付けてください。";
+"Line %d is incomplete. Check the link and try again." = "%d 行目が不完全です。リンクを確認してもう一度お試しください。";
+"Line %d repeats a node already in this list." = "%d 行目はこの一覧のノードと重複しています。";
 "Connection records" = "接続記録";
 "Connection records unavailable" = "接続記録を利用できません";
 "Connection records are collected by MClash while routing is enabled." = "ルーティングが有効な間、MClash は接続記録を収集します。";

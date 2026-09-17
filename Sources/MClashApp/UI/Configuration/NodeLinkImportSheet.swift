@@ -77,7 +77,7 @@ struct NodeLinkImportSheet: View {
                             }
                         }
                         ForEach(Array(preview.diagnostics.enumerated()), id: \.offset) { _, diagnostic in
-                            Label(diagnostic.message, systemImage: diagnostic.severity == .error ? "xmark.circle" : "info.circle")
+                            Label(displayedDiagnostic(diagnostic), systemImage: diagnostic.severity == .error ? "xmark.circle" : "info.circle")
                                 .font(.caption)
                                 .foregroundStyle(diagnostic.severity == .error ? .red : .orange)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -144,5 +144,35 @@ struct NodeLinkImportSheet: View {
         case "socks5": return AppLocalization.string("SOCKS5")
         default: return format.uppercased()
         }
+    }
+
+    private func displayedDiagnostic(_ diagnostic: ConfigurationDiagnostic) -> String {
+        let lineNumber = diagnostic.subject.split(separator: "-").last.flatMap { Int($0) }
+        switch diagnostic.code {
+        case "unsupported_scheme":
+            if let lineNumber {
+                return AppLocalization.format(
+                    "Line %d uses a format MClash cannot import. Paste a supported link.",
+                    lineNumber
+                )
+            }
+        case "invalid_link":
+            if let lineNumber {
+                return AppLocalization.format(
+                    "Line %d is incomplete. Check the link and try again.",
+                    lineNumber
+                )
+            }
+        case "duplicate_link":
+            if let lineNumber {
+                return AppLocalization.format(
+                    "Line %d repeats a node already in this list.",
+                    lineNumber
+                )
+            }
+        default:
+            break
+        }
+        return diagnostic.message
     }
 }

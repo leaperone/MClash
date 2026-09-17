@@ -2460,27 +2460,27 @@
 
 "Paste links" = "貼上連結";
 
-"Add node links" = "Add node links";
+"Add node links" = "新增節點連結";
 
-"Read clipboard" = "Read clipboard";
+"Read clipboard" = "讀取剪貼簿";
 
 "Paste node links, an encoded node list, or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "貼上節點連結、編碼後的節點清單或 WireGuard 設定。MClash 會先檢查內容，再將節點加入設定。";
 
-"Name (optional)" = "Name (optional)";
+"Name (optional)" = "名稱（選填）";
 
-"Preview" = "Preview";
+"Preview" = "預覽";
 
-"Usable nodes" = "Usable nodes";
+"Usable nodes" = "可用節點";
 
-"Ignored lines" = "Ignored lines";
+"Ignored lines" = "忽略的行";
 
-"Adding nodes…" = "Adding nodes…";
+"Adding nodes…" = "正在新增節點…";
 
-"No usable proxy links were found." = "No usable proxy links were found.";
+"No usable proxy links were found." = "找不到可用的代理連結。";
 
-"Pasted Nodes" = "Pasted Nodes";
+"Pasted Nodes" = "貼上的節點";
 
-"Pasted node links" = "Pasted node links";
+"Pasted node links" = "貼上的節點連結";
 
 "MClash flow records" = "MClash flow records";
 
@@ -2529,6 +2529,11 @@
 "Encoded node list" = "編碼節點清單";
 "Proxy Sources" = "代理來源";
 "Import file" = "匯入檔案";
+"Refresh a source to update connection details. Your group choices stay the same." = "重新整理來源會更新連線詳細資料，同時保留你的分組選擇。";
+"Refreshing a source updates this node's connection details without changing your group choices." = "重新整理來源會更新此節點的連線詳細資料，同時保留你的分組選擇。";
+"Line %d uses a format MClash cannot import. Paste a supported link." = "第 %d 行的格式無法匯入。請貼上支援的連結。";
+"Line %d is incomplete. Check the link and try again." = "第 %d 行不完整。請檢查連結後重試。";
+"Line %d repeats a node already in this list." = "第 %d 行重複了清單中的節點。";
 "Connection records" = "連線記錄";
 "Connection records unavailable" = "連線記錄無法使用";
 "Connection records are collected by MClash while routing is enabled." = "啟用路由後，MClash 會收集連線記錄。";
