@@ -4,6 +4,23 @@ import Testing
 
 @Suite("Xray access log reader")
 struct XrayAccessLogReaderTests {
+    @Test("Opening a large existing log reads recent records without replaying old traffic")
+    func readsOnlyRecentTail() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("access.log")
+        try Data(line(1).utf8).write(to: url)
+        let writer = try FileHandle(forWritingTo: url)
+        defer { try? writer.close() }
+        try writer.truncate(atOffset: 64 * 1024 * 1024)
+        try writer.seekToEnd()
+        try writer.write(contentsOf: Data(("\n" + line(99)).utf8))
+
+        let reader = XrayAccessLogReader(url: url)
+        #expect((try await reader.poll()).map(\.destination) == ["example99.com:443"])
+        #expect(try await reader.poll().isEmpty)
+    }
+
     @Test("Reads a large log in bounded polls")
     func boundedPolls() async throws {
         let directory = try temporaryDirectory()

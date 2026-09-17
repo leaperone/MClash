@@ -336,6 +336,12 @@ final class AutomationCommandGateway {
             } catch {
                 throw configurationGatewayError(error)
             }
+        case "configuration.ruleSets.refresh":
+            let succeeded = await model.refreshConfigurationRuleSets()
+            return .object([
+                "updated": .bool(succeeded),
+                "message": model.ruleSetRefreshMessage.map(AutomationJSONValue.string) ?? .null,
+            ])
         case "configuration.delete":
             do {
                 guard let kind = ConfigurationAutomationObjectKind(
@@ -2421,6 +2427,7 @@ final class AutomationCommandGateway {
             "id": "object UUID",
             "expectedRevision": configurationRevisionHint,
         ]),
+        capability("configuration.ruleSets.refresh", "Update MClash rule sets while preserving the last working rules on failure", .write),
         capability("configuration.workspace.activate", "Compile and activate one Configuration workspace", .destructive, [
             "id": "workspace UUID",
             "expectedRevision": configurationRevisionHint,
@@ -2607,6 +2614,7 @@ final class AutomationCommandGateway {
             "id": .required(.string, maximumStringBytes: 36),
             "expectedRevision": .required(.string, maximumStringBytes: 36),
         ],
+        "configuration.ruleSets.refresh": [:],
         "configuration.workspace.activate": [
             "id": .required(.string, maximumStringBytes: 36),
             "expectedRevision": .required(.string, maximumStringBytes: 36),

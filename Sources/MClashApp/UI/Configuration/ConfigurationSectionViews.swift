@@ -318,7 +318,8 @@ struct ConfigurationSourcesView: View {
         }
         .confirmationDialog(
             AppLocalization.string("Remove source?"),
-            item: $sourceToDelete
+            isPresented: Binding(get: { sourceToDelete != nil }, set: { if !$0 { sourceToDelete = nil } }),
+            presenting: sourceToDelete
         ) { profile in
             Button(AppLocalization.string("Remove"), role: .destructive) {
                 Task { await model.removeProfile(profile.id) }
@@ -773,6 +774,21 @@ struct ConfigurationRulesView: View {
                     }
                 )
             } else {
+                HStack(spacing: 10) {
+                    if model.ruleSetRefreshInProgress {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(model.ruleSetRefreshMessage ?? AppLocalization.string("Online rule sets update automatically every six hours."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(AppLocalization.string("Update rule sets"), systemImage: "arrow.clockwise") {
+                        Task { _ = await model.refreshConfigurationRuleSets() }
+                    }
+                    .disabled(model.ruleSetRefreshInProgress || !model.canPerform(.changeRuntimeSettings))
+                }
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, MClashLayout.compactSpacing)
                 ConfigurationWorkbench(
                     title: AppLocalization.string("Rule Sets"),
                     sections: [.ruleSets],

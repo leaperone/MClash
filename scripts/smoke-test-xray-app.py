@@ -193,6 +193,7 @@ def main():
     parser.add_argument("--preserve-signature", action="store_true", help="Exercise the downloaded signed app without changing its bundle or signature")
     parser.add_argument("--ui-output", type=Path, help="Show and capture only the isolated app's connection-record window")
     parser.add_argument("--exercise-recovery", action="store_true", help="Restart only this test app's Xray child and verify recovery")
+    parser.add_argument("--first-use-only", action="store_true", help="Check fresh storage, first import and default routing")
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     app = args.app.resolve()
@@ -254,6 +255,8 @@ def main():
                    dict(schemaVersion=1, nodes=nodes, proxyGroups=[group, other, fallback, balance, chain, strict], sources=[],
                         rules=[rule] + geo_rules, ruleSets=[], dnsPolicies=[dns], entrances=entrances,
                         workspaces=[workspace], currentWorkspaceID=workspace["id"]))
+        if args.first_use_only:
+            (support / "Configuration/manifest.json").unlink()
         isolated = proof / "MClash.app"
         subprocess.run(["/usr/bin/ditto", str(app), str(isolated)], check=True)
         plist = str(isolated / "Contents/Info.plist")
@@ -306,6 +309,40 @@ def main():
                 assert result.returncode != 0, "REJECT route forwarded a payload"
             else:
                 assert result.returncode == 0 and result.stdout == expected, (result.stdout, result.stderr)
+
+        if args.first_use_only:
+            initial = call("configuration.snapshot")
+            document = initial["document"]
+            assert initial["sources"]["total"] == 0, "Fresh storage already has sources"
+            assert document["proxyGroups"], "First use did not create a default node group"
+            for entry in document["entrances"]:
+                if entry["kind"] == "http":
+                    entry["port"] = http_port
+                elif entry["kind"] == "socks5":
+                    entry["port"] = socks_port
+            call("configuration.apply", {"document": document, "expectedRevision": initial["configurationRevision"]})
+            payload = f"http://127.0.0.1:{proxy_a.server_address[1]}#First%20node"
+            imported = call("profiles.import", {"dataBase64": base64.b64encode(payload.encode()).decode(),
+                                                   "fileName": "first-node.txt", "activate": True})
+            call("core.connect")
+            fetch("NODE_A", host="198.51.100.1")
+            fetch("NODE_A", socks=True, host="198.51.100.1")
+            populated = call("configuration.snapshot")
+            assert call("status")["configuration"]["sourcePolicy"] == "nodes-only"
+            assert populated["sources"]["total"] == 1 and populated["nodes"]["total"] == 1
+            call("core.disconnect")
+            call("core.connect")
+            fetch("NODE_A", host="198.51.100.1")
+            if args.ui_output:
+                call("app.ui.show", {"destination": "sources"})
+                time.sleep(1)
+                capture_app_window(process.pid, args.ui_output)
+            call("core.disconnect")
+            receipt = {"passed": True, "freshStorage": True, "firstTextFileImport": True,
+                       "defaultGroupSelectsImportedNode": True, "http": True, "socks5": True, "reconnect": True}
+            args.output.write_text(json.dumps(receipt, indent=2) + "\n")
+            print(json.dumps(receipt))
+            return
 
         fixture_source = base64.b64encode(f"proxies:\n  - name: Source fixture\n    type: http\n    server: 127.0.0.1\n    port: {proxy_a.server_address[1]}\n".encode()).decode()
         imported = call("profiles.import", {"dataBase64": fixture_source, "fileName": "fixture.yaml", "activate": True})
@@ -395,6 +432,8 @@ def main():
         fetch("NODE_A", host="www.google.com")
         fetch("NODE_A", socks=True, host="223.5.5.5")
         fetch("", host="www.google.com.invalid", rejected=True)
+        from xray_rules_probe import exercise_remote_rules
+        remote_rule_receipt = exercise_remote_rules(call, fetch)
         call("routing.mode.set", {"mode": "global"})
         assert call("routing.proxy.select", {"group": "GLOBAL", "proxy": "Other"})["selected"]
         fetch("NODE_B")
@@ -517,6 +556,7 @@ def main():
         receipt["dnsPolicy"] = {"directResolution": True, "socksUDPCapture": True}
         receipt["fakeIP"] = {"allocated": True, "destinationRestored": True, "nodeEndpointUsesRealDNS": True}
         receipt["geoRouting"] = {"geoSitePayload": True, "geoIPPayload": True, "unmatchedRejected": True}
+        receipt["remoteRuleSets"] = remote_rule_receipt
         receipt["failedActivationRollback"] = True
         receipt["healthSettingsRoundTrip"] = True
         receipt["encodedSourceImport"] = True

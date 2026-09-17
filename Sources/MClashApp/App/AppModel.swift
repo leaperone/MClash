@@ -581,6 +581,8 @@ final class AppModel {
     private(set) var recentlyClosedConnections: [ClosedConnectionRecord] = []
     private(set) var flowLedger = FlowLedger(activeConnections: [])
     private(set) var xrayAccessRecords: [XrayAccessRecord] = []
+    private(set) var ruleSetRefreshInProgress = false
+    private(set) var ruleSetRefreshMessage: String?
     private(set) var appRoutingFlowEntries: [UUID: FlowLedgerEntry] = [:] {
         didSet {
             appRoutingActivityPresentationRevision &+= 1
@@ -713,6 +715,7 @@ final class AppModel {
     private let profileLayout: ProfileDirectoryLayout?
     private let profileRuntimePlanStore: ProfileRuntimePlanStore?
     private let configurationStore: ConfigurationStore?
+    private var remoteRuleSetSource: RemoteRuleSetSource?
     private let runtimeOverrideCoordinator: RuntimeOverrideActivationCoordinator?
     private let systemProxyPreferencesStore: SystemProxyPreferencesStore?
     private let networkCaptureConfigurationStore: NetworkCaptureConfigurationStore?
@@ -2703,10 +2706,98 @@ final class AppModel {
 
     private func persistConfigurationDocument(_ document: ConfigurationDocument) async throws {
         guard let configurationStore else { throw ConfigurationStoreError.unavailable }
+        let document = try await preparingRemoteRuleSets(in: document)
         let diagnostics = allConfigurationDiagnostics(for: document)
         try await configurationStore.save(document)
         configurationDocument = document
         configurationDiagnostics = diagnostics
+    }
+
+    private func ruleSetSourceStore() throws -> RemoteRuleSetSource {
+        if let remoteRuleSetSource { return remoteRuleSetSource }
+        guard let profileLayout else { throw ConfigurationStoreError.unavailable }
+        let source = RemoteRuleSetSource(cacheDirectory: profileLayout.rootDirectory.appending(path: "RuleSetCache"))
+        remoteRuleSetSource = source
+        return source
+    }
+
+    private func ruleSetValidator() throws -> XrayRuleSetValidator {
+        let directory = try validationHomeDirectory()
+        try geoDataInstaller.installIfNeeded(into: directory)
+        return XrayRuleSetValidator(binary: try XrayBinaryLocator().locate(), directory: directory, commands: supervisor)
+    }
+
+    private func preparingRemoteRuleSets(in candidate: ConfigurationDocument) async throws -> ConfigurationDocument {
+        guard usesXrayRuntime else { return candidate }
+        var result = candidate
+        for index in result.ruleSets.indices {
+            let ruleSet = result.ruleSets[index]
+            guard ruleSet.enabled, ruleSet.sourceURL != nil else { continue }
+            let previous = configurationDocument.ruleSets.first { $0.id == ruleSet.id }
+            let sameSource = previous?.sourceURL == ruleSet.sourceURL
+                && previous?.format == ruleSet.format && previous?.behavior == ruleSet.behavior
+            guard !sameSource || ruleSet.rules.isEmpty else { continue }
+            let source = try ruleSetSourceStore()
+            let validator = try ruleSetValidator()
+            let refreshed = try await source.refresh(ruleSet) { rules in
+                try await validator.validate(ruleSet, rules: rules)
+            }
+            result.ruleSets[index] = refreshed.ruleSet
+        }
+        return result
+    }
+
+    @discardableResult
+    func refreshConfigurationRuleSets(dueOnly: Bool = false) async -> Bool {
+        guard usesXrayRuntime, !shutdownInProgress, begin(.changeRuntimeSettings) else { return false }
+        defer { end(.changeRuntimeSettings); ruleSetRefreshInProgress = false }
+        let candidates = configurationDocument.ruleSets.filter { $0.enabled && $0.sourceURL != nil }
+        guard !candidates.isEmpty else { return true }
+        ruleSetRefreshInProgress = true
+        var failures: [String] = []
+        do {
+            let source = try ruleSetSourceStore()
+            let validator = try ruleSetValidator()
+            for ruleSet in candidates {
+                try Task.checkCancellation()
+                if dueOnly, let metadata = try? await source.cachedMetadata(for: ruleSet),
+                   Date().timeIntervalSince(metadata.checkedAt) < 6 * 60 * 60 { continue }
+                do {
+                    let refreshed = try await source.refresh(ruleSet) { rules in
+                        try await validator.validate(ruleSet, rules: rules)
+                    }
+                    guard let index = configurationDocument.ruleSets.firstIndex(where: { $0.id == ruleSet.id }),
+                          configurationDocument.ruleSets[index] == ruleSet else { continue }
+                    if refreshed.ruleSet.rules == ruleSet.rules { continue }
+                    let previous = configurationDocument
+                    var candidate = previous
+                    candidate.ruleSets[index] = refreshed.ruleSet
+                    try await persistConfigurationDocument(candidate)
+                    if isConnected, controllerIsReady,
+                       candidate.currentWorkspace?.ruleSetIDs.contains(ruleSet.id) == true,
+                       let profileID = activeProfileID {
+                        do {
+                            try await hotReloadActiveProfileRoutingConfigurationIfNeeded(profileID: profileID)
+                        } catch {
+                            try await persistConfigurationDocument(previous)
+                            throw error
+                        }
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    failures.append(ruleSet.name)
+                }
+            }
+        } catch is CancellationError {
+            return false
+        } catch {
+            failures = candidates.map(\.name)
+        }
+        ruleSetRefreshMessage = failures.isEmpty
+            ? AppLocalization.string("Rule sets are up to date.")
+            : AppLocalization.format("Could not update %@. Previously saved rules are still in use.", failures.joined(separator: ", "))
+        return failures.isEmpty
     }
 
     private func recoverInterruptedConfigurationActivationIfNeeded() async throws {
@@ -5441,6 +5532,7 @@ final class AppModel {
         subscriptionUpdateTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.refreshDueProfiles()
+            _ = await self.refreshConfigurationRuleSets(dueOnly: true)
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(15 * 60))
@@ -5448,6 +5540,7 @@ final class AppModel {
                     return
                 }
                 await self.refreshDueProfiles()
+                _ = await self.refreshConfigurationRuleSets(dueOnly: true)
             }
         }
     }
@@ -5667,6 +5760,9 @@ final class AppModel {
             return false
         }
         do {
+            if configurationDocument.ruleSets.contains(where: { $0.enabled && $0.sourceURL != nil && $0.rules.isEmpty }) {
+                try await persistConfigurationDocument(configurationDocument)
+            }
             errorMessage = nil
             if !unifiedConfigurationEnabled {
                 try await prepareDocumentForUnifiedMigration()
