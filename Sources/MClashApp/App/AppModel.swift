@@ -754,8 +754,6 @@ final class AppModel {
     private var coreLogFlushTask: Task<Void, Never>?
     private var proxyRefreshTask: Task<Void, Never>?
     private var liveFreshnessWatchdogTask: Task<Void, Never>?
-    private var xrayAccessLogFileID: UInt64?
-    private var xrayAccessLogPendingLine = ""
     private var subscriptionUpdateTask: Task<Void, Never>?
     private var controllerGeneration = 0
     private var proxyRefreshRevision = 0
@@ -793,7 +791,7 @@ final class AppModel {
     private var flowLedgerAccountingRefreshPending = false
     private var flowLedgerActiveBuildNeedsAccounting = false
     private var xrayAccessLogTask: Task<Void, Never>?
-    private var xrayAccessLogOffset: UInt64 = 0
+    private var xrayAccessLogMonitorGeneration: UInt64 = 0
     private var prepared = false
     private var preparationOperation: (id: UUID, task: Task<Void, Never>)?
     private var networkCaptureActivationOperation: (id: UUID, task: Task<Void, Never>)?
@@ -11961,55 +11959,43 @@ final class AppModel {
     private func startXrayAccessLogMonitor() {
         guard runtimeBackend == .xray, let launch = xrayLaunchConfiguration else { return }
         xrayAccessLogTask?.cancel()
-        xrayAccessLogOffset = 0
-        xrayAccessLogFileID = nil
-        xrayAccessLogPendingLine = ""
+        xrayAccessLogMonitorGeneration &+= 1
+        let generation = xrayAccessLogMonitorGeneration
         xrayAccessRecords = []
         liveStreamHealth[.xrayAccess] = .connecting(
             previousSampleAt: liveStreamHealth[.xrayAccess]?.lastReceivedAt
         )
         let logURL = launch.homeDirectory.appending(path: "access.log")
-        xrayAccessLogTask = Task { @MainActor [weak self] in
-            let parser = XrayAccessLogParser()
+        let reader = XrayAccessLogReader(url: logURL)
+        xrayAccessLogTask = Task { @MainActor [weak self, reader] in
             var consecutiveFailures = 0
             while !Task.isCancelled {
                 guard let self else { return }
+                guard self.xrayAccessLogMonitorGeneration == generation else { return }
                 do {
-                    guard FileManager.default.fileExists(atPath: logURL.path) else {
-                        try await Task.sleep(for: .milliseconds(500))
-                        continue
-                    }
-                    let attributes = try FileManager.default.attributesOfItem(atPath: logURL.path)
-                    let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-                    let fileID = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
-                    if fileID != self.xrayAccessLogFileID {
-                        self.xrayAccessLogFileID = fileID
-                        self.xrayAccessLogOffset = 0
-                        self.xrayAccessLogPendingLine = ""
-                    } else if size < self.xrayAccessLogOffset {
-                        self.xrayAccessLogOffset = 0
-                        self.xrayAccessLogPendingLine = ""
-                    }
-                    if size > self.xrayAccessLogOffset {
-                        let handle = try FileHandle(forReadingFrom: logURL)
-                        try handle.seek(toOffset: self.xrayAccessLogOffset)
-                        let data = try handle.readToEnd() ?? Data()
-                        try handle.close()
-                        self.xrayAccessLogOffset = size
-                        let records = parser.parse(
-                            data,
-                            pendingLine: &self.xrayAccessLogPendingLine
-                        )
-                        if !records.isEmpty {
-                            self.xrayAccessRecords = Array((self.xrayAccessRecords + records).suffix(2_000))
-                        }
+                    let records = try await reader.poll()
+                    guard self.xrayAccessLogMonitorGeneration == generation else { return }
+                    if !records.isEmpty {
+                        self.xrayAccessRecords = Array((self.xrayAccessRecords + records).suffix(2_000))
                     }
                     self.markStreamHealthy(.xrayAccess)
                     consecutiveFailures = 0
                     try await Task.sleep(for: .milliseconds(500))
                 } catch is CancellationError {
                     return
+                } catch XrayAccessLogReaderError.missing {
+                    guard self.xrayAccessLogMonitorGeneration == generation else { return }
+                    consecutiveFailures += 1
+                    if consecutiveFailures <= 3, self.xrayAccessRecords.isEmpty {
+                        self.liveStreamHealth[.xrayAccess] = .connecting(
+                            previousSampleAt: self.liveStreamHealth[.xrayAccess]?.lastReceivedAt
+                        )
+                    } else {
+                        self.markStreamDegraded(.xrayAccess, error: XrayAccessLogReaderError.missing, attempt: consecutiveFailures)
+                    }
+                    try? await Task.sleep(for: .milliseconds(500))
                 } catch {
+                    guard self.xrayAccessLogMonitorGeneration == generation else { return }
                     consecutiveFailures += 1
                     self.markStreamDegraded(.xrayAccess, error: error, attempt: consecutiveFailures)
                     if consecutiveFailures == 1 {
@@ -12024,9 +12010,7 @@ final class AppModel {
     private func stopXrayAccessLogMonitor() {
         xrayAccessLogTask?.cancel()
         xrayAccessLogTask = nil
-        xrayAccessLogOffset = 0
-        xrayAccessLogFileID = nil
-        xrayAccessLogPendingLine = ""
+        xrayAccessLogMonitorGeneration &+= 1
         xrayAccessRecords = []
         liveStreamHealth[.xrayAccess] = .inactive
     }
