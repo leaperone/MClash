@@ -118,6 +118,7 @@ jobs:
         if: startsWith(needs.prepare.outputs.version, '1.6.')
         shell: zsh {0}
         run: |
+          set -euo pipefail
           ./scripts/fetch-xray.sh
           ./scripts/verify-xray.sh
           python3 scripts/test-xray-release-preflight.py
@@ -145,6 +146,7 @@ jobs:
           MCLASH_RUNTIME_BACKEND: xray
         shell: zsh {0}
         run: |
+          set -euo pipefail
           ./scripts/build-app.sh
           python3 scripts/test-xray-package-layout.py .build/xray-smoke/MClash.app
           python3 scripts/smoke-test-xray-app.py .build/xray-smoke/MClash.app --output .build/xray-app-ci.json
