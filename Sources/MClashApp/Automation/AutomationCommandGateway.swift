@@ -406,7 +406,7 @@ final class AutomationCommandGateway {
             if shouldConnect {
                 try require(model.isConnected, "The proxy core did not connect")
             } else {
-                try require(!model.isConnected && !model.isBusy, "The Mihomo core did not stop")
+                try require(!model.isConnected && !model.isBusy, "The proxy engine did not stop")
             }
             return coreStatus()
         case "core.connect":
@@ -415,11 +415,11 @@ final class AutomationCommandGateway {
             return coreStatus()
         case "core.disconnect":
             await model.disconnect()
-            try require(!model.isConnected && !model.isBusy, "The Mihomo core did not stop")
+            try require(!model.isConnected && !model.isBusy, "The proxy engine did not stop")
             return coreStatus()
         case "core.restart":
             await model.restartConnection()
-            try require(model.isConnected, "The Mihomo core did not restart")
+            try require(model.isConnected, "The proxy engine did not restart")
             return coreStatus()
         case "profiles.list":
             return try profiles(request: request)
@@ -631,7 +631,7 @@ final class AutomationCommandGateway {
         case "mihomo.rules.list":
             return try paged(model.rules, request: request, maximumLimit: 500)
         case "mihomo.rules.refresh":
-            try require(await model.refreshRules(), "Mihomo rules could not be refreshed")
+            try require(await model.refreshRules(), "Routing rules could not be refreshed")
             return .object([
                 "accepted": .bool(true),
                 "ruleCount": .integer(Int64(model.rules.count)),
@@ -2433,10 +2433,10 @@ final class AutomationCommandGateway {
             "expectedRevision": configurationRevisionHint,
         ]),
         capability("core.status", "Read core status", .read),
-        capability("core.toggle", "Toggle the Mihomo core", .write),
-        capability("core.connect", "Start the Mihomo core", .write),
-        capability("core.disconnect", "Stop the Mihomo core safely", .write),
-        capability("core.restart", "Restart the Mihomo core", .write),
+        capability("core.toggle", "Toggle the proxy engine", .write),
+        capability("core.connect", "Start the proxy engine", .write),
+        capability("core.disconnect", "Stop the proxy engine safely", .write),
+        capability("core.restart", "Restart the proxy engine", .write),
         capability("profiles.list", "List profiles without subscription secrets (maximum page 100)", .read),
         capability("profiles.importInteractive", "Open the profile import panel", .write),
         capability("profiles.import", "Import profile YAML supplied as base64", .write),
@@ -2462,8 +2462,8 @@ final class AutomationCommandGateway {
         capability("routing.proxy.clearOverride", "Restore automatic group selection", .write),
         capability("routing.proxy.test", "Measure one proxy latency", .write),
         capability("routing.group.test", "Measure proxy group latency", .write),
-        capability("mihomo.rules.list", "List loaded Mihomo rules", .read),
-        capability("mihomo.rules.refresh", "Refresh Mihomo rules", .write),
+        capability("mihomo.rules.list", "List loaded routing rules", .read),
+        capability("mihomo.rules.refresh", "Refresh routing rules", .write),
         capability("providers.list", "List proxy and rule provider summaries", .read),
         capability("providers.refresh", "Refresh providers", .write),
         capability("providers.proxy.update", "Update a proxy provider", .write),

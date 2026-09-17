@@ -23,7 +23,9 @@ def _child_xray_pids(app_pid):
     for row in rows:
         fields = row.strip().split(maxsplit=2)
         if len(fields) == 3 and fields[1] == str(app_pid) and fields[2].endswith("/mclash-xray"):
-            result.append(int(fields[0]))
+            command = subprocess.run(["/bin/ps", "-p", fields[0], "-o", "args="], capture_output=True, text=True)
+            if command.returncode == 0 and "/mclash-xray run " in command.stdout:
+                result.append(int(fields[0]))
     return result
 
 

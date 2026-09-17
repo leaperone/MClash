@@ -12066,7 +12066,8 @@ final class AppModel {
     }
 
     private func startXrayAccessLogMonitor() {
-        guard runtimeBackend == .xray, let launch = xrayLaunchConfiguration else { return }
+        guard runtimeBackend == .xray, let launch = xrayLaunchConfiguration,
+              case let .xray(socketPath, _) = launch.backend else { return }
         xrayAccessLogTask?.cancel()
         xrayAccessLogMonitorGeneration &+= 1
         let generation = xrayAccessLogMonitorGeneration
@@ -12076,8 +12077,15 @@ final class AppModel {
         )
         let logURL = launch.homeDirectory.appending(path: "access.log")
         let reader = XrayAccessLogReader(url: logURL)
+        let retention = XrayLogRetention(directory: launch.homeDirectory) { [supervisor] in
+            try Task.checkCancellation()
+            _ = try await supervisor.runCommand(executableURL: launch.binaryURL,
+                                                arguments: ["api", "restartlogger", "--server=unix:" + socketPath, "--timeout=3"],
+                                                directory: launch.homeDirectory)
+        }
         xrayAccessLogTask = Task { @MainActor [weak self, reader] in
             var consecutiveFailures = 0
+            var nextRetentionCheck = Date.distantPast
             while !Task.isCancelled {
                 guard let self else { return }
                 guard self.xrayAccessLogMonitorGeneration == generation else { return }
@@ -12086,6 +12094,11 @@ final class AppModel {
                     guard self.xrayAccessLogMonitorGeneration == generation else { return }
                     if !records.isEmpty {
                         self.xrayAccessRecords = Array((self.xrayAccessRecords + records).suffix(2_000))
+                    }
+                    if Date() >= nextRetentionCheck {
+                        nextRetentionCheck = Date().addingTimeInterval(30)
+                        _ = try await retention.rotateIfNeeded()
+                        guard self.xrayAccessLogMonitorGeneration == generation else { return }
                     }
                     self.markStreamHealthy(.xrayAccess)
                     consecutiveFailures = 0

@@ -193,8 +193,15 @@ def main():
     parser.add_argument("--preserve-signature", action="store_true", help="Exercise the downloaded signed app without changing its bundle or signature")
     parser.add_argument("--ui-output", type=Path, help="Show and capture only the isolated app's connection-record window")
     parser.add_argument("--exercise-recovery", action="store_true", help="Restart only this test app's Xray child and verify recovery")
+    parser.add_argument("--ui-only", action="store_true", help="Exercise UI interactions using the local proxy fixture")
     parser.add_argument("--first-use-only", action="store_true", help="Check fresh storage, first import and default routing")
+    parser.add_argument("--exercise-log-retention", action="store_true", help="Grow only the isolated logs and verify live rotation")
     args = parser.parse_args()
+    if args.ui_only and not args.ui_output:
+        parser.error("--ui-only requires --ui-output")
+    if args.ui_output:
+        subprocess.run(["/usr/bin/swift", str(Path(__file__).with_name("verify-app-control.swift")),
+                        "--check-session"], check=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     app = args.app.resolve()
     assert (app / "Contents/Helpers/mclashctl").is_file(), "Pass a built MClash.app"
@@ -388,10 +395,22 @@ def main():
         assert connection_records["total"] >= access_records["total"]
         close_error = call("traffic.connections.closeAll", expect_error=True)
         assert "historical events" in close_error["message"]
+        if args.ui_only:
+            from xray_ui_probe import exercise_ui
+            ui_receipt = exercise_ui(call, capture_app_window, process, proxy_a, args.ui_output)
+            call("core.disconnect")
+            receipt = {"passed": True, "ui": ui_receipt}
+            args.output.write_text(json.dumps(receipt, indent=2) + "\n")
+            print(json.dumps(receipt))
+            return
         recovery_receipt = None
         if args.exercise_recovery:
             from xray_recovery_probe import exercise_recovery
             recovery_receipt = exercise_recovery(call, fetch, process.pid)
+        retention_receipt = None
+        if args.exercise_log_retention:
+            from xray_log_probe import exercise_log_retention
+            retention_receipt = exercise_log_retention(call, fetch, process.pid, support)
         assert call("routing.proxy.select", {"group": "Auto", "proxy": "B"})["selected"]
         fetch("NODE_B")
         fetch("NODE_B", socks=True)
@@ -538,45 +557,8 @@ def main():
                     break
             assert any(item.get("passed") for item in public_network), "No private-source VLESS sample completed public HTTPS"
         if args.ui_output:
-            control_script = Path(__file__).with_name("verify-app-control.swift")
-
-            def ui_control(action, identifier, *values):
-                return subprocess.check_output(["/usr/bin/swift", str(control_script), str(process.pid),
-                                                action, identifier, *values], text=True).strip()
-
-            call("app.ui.show", {"destination": "connections"})
-            time.sleep(1)
-            capture_app_window(process.pid, args.ui_output)
-            ui_control("select-first", "xray.records")
-            ui_control("press", "xray.record.details")
-            assert ui_control("exists", "xray.record.inspector") == "true"
-            capture_app_window(process.pid, args.ui_output.with_name(args.ui_output.stem + ".details.png"))
-            call("app.ui.show", {"destination": "sources"})
-            time.sleep(1)
-            capture_app_window(process.pid, args.ui_output.with_name(args.ui_output.stem + ".sources.png"))
-            sources_before = call("configuration.snapshot")["sources"]["total"]
-            ui_control("press", "sources.paste-links")
-            time.sleep(0.5)
-            ui_control("set", "node-links.input", "not-a-proxy-link")
-            assert ui_control("enabled", "node-links.submit") == "false", "Invalid pasted text enabled Add nodes"
-            ui_control("set", "node-links.input", f"http://127.0.0.1:{proxy_a.server_address[1]}#UI%20node")
-            ui_control("type", "node-links.name", "Added through the UI")
-            assert ui_control("enabled", "node-links.submit") == "true", "A valid proxy link cannot be added through the UI"
-            capture_app_window(process.pid, args.ui_output.with_name(args.ui_output.stem + ".paste.png"))
-            ui_control("press", "node-links.submit")
-            deadline = time.monotonic() + 10
-            while call("configuration.snapshot")["sources"]["total"] != sources_before + 1:
-                assert time.monotonic() < deadline, "The UI did not persist its pasted source"
-                time.sleep(0.2)
-            added = next(source for source in call("configuration.snapshot")["sources"]["items"]
-                         if source["displayName"] == "Added through the UI")
-            ui_control("press", "sources.edit." + added["id"].lower())
-            ui_control("type", "source-editor.name", "Renamed through the UI")
-            ui_control("press", "source-editor.save")
-            deadline = time.monotonic() + 10
-            while not any(source["displayName"] == "Renamed through the UI" for source in call("configuration.snapshot")["sources"]["items"]):
-                assert time.monotonic() < deadline, "Source editor did not persist its rename"
-                time.sleep(0.2)
+            from xray_ui_probe import exercise_ui
+            ui_receipt = exercise_ui(call, capture_app_window, process, proxy_a, args.ui_output)
         call("core.disconnect")
         assert call("status")["core"]["state"] == "stopped"
         receipt = {"passed": True, "backend": "xray", "http": True, "socks5": True,
@@ -603,6 +585,8 @@ def main():
         receipt["xrayCloseRejected"] = True
         if recovery_receipt:
             receipt["coreRecovery"] = recovery_receipt
+        if retention_receipt:
+            receipt["logRetention"] = retention_receipt
         if args.ui_output:
             receipt["pasteUI"] = {"invalidTextRejected": True, "validLinkPreview": True, "sourcePersisted": True, "sourceRenamed": True}
             receipt["connectionUI"] = {"rowSelected": True, "detailsVisible": True}

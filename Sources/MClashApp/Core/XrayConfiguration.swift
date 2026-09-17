@@ -178,7 +178,7 @@ public enum XrayConfigurationCompiler {
         var configuration: [String: AutomationJSONValue] = [
             "log": .object(logs),
             "api": .object(["tag": .string("mclash-api"), "listen": .string(apiSocketPath),
-                "services": .array(["HandlerService", "RoutingService", "StatsService"].map(AutomationJSONValue.string))]),
+                "services": .array(["HandlerService", "RoutingService", "StatsService", "LoggerService"].map(AutomationJSONValue.string))]),
             "stats": .object([:]),
             "policy": .object(["system": .object(["statsInboundUplink": .bool(true), "statsInboundDownlink": .bool(true),
                 "statsOutboundUplink": .bool(true), "statsOutboundDownlink": .bool(true)])]),

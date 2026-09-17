@@ -1,7 +1,7 @@
 import ApplicationServices
 import Foundation
 
-enum ControlError: Error { case arguments, permission, elementMissing, actionFailed }
+enum ControlError: Error { case arguments, permission, screenLocked, elementMissing, actionFailed }
 
 func attribute(_ element: AXUIElement, _ name: String) -> AnyObject? {
     var result: CFTypeRef?
@@ -10,22 +10,35 @@ func attribute(_ element: AXUIElement, _ name: String) -> AnyObject? {
 }
 
 func find(_ root: AXUIElement, identifier: String) -> AXUIElement? {
-    var pending = [root]
-    var inspected = 0
-    while let current = pending.popLast(), inspected < 5_000 {
-        inspected += 1
-        if attribute(current, kAXIdentifierAttribute) as? String == identifier { return current }
+    var pending = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? [root]
+    var index = 0
+    var visited: Set<AXUIElement> = []
+    var identifiers: [String] = []
+    while index < pending.count, index < 5_000 {
+        let current = pending[index]
+        index += 1
+        guard visited.insert(current).inserted else { continue }
+        let role = attribute(current, kAXRoleAttribute) as? String
+        if role == kAXMenuBarRole || role == kAXMenuRole || role == kAXMenuItemRole { continue }
+        if let value = attribute(current, kAXIdentifierAttribute) as? String {
+            identifiers.append(value)
+            if value == identifier { return current }
+        }
         if let children = attribute(current, kAXChildrenAttribute) as? [AXUIElement] {
             pending.append(contentsOf: children)
         }
     }
+    fputs("AX search inspected \(visited.count) unique elements; window count \((attribute(root, kAXWindowsAttribute) as? [AXUIElement])?.count ?? -1); identifiers \(Array(identifiers.prefix(30)))\n", stderr)
     return nil
 }
 
 func run() throws {
     let arguments = CommandLine.arguments
-    guard arguments.count >= 4, let pid = Int32(arguments[1]), pid > 0 else { throw ControlError.arguments }
     guard AXIsProcessTrusted() else { throw ControlError.permission }
+    let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+    guard session?["CGSSessionScreenIsLocked"] as? Bool != true else { throw ControlError.screenLocked }
+    if arguments.count == 2, arguments[1] == "--check-session" { return }
+    guard arguments.count >= 4, let pid = Int32(arguments[1]), pid > 0 else { throw ControlError.arguments }
     let application = AXUIElementCreateApplication(pid)
     AXUIElementSetMessagingTimeout(application, 3)
     guard let element = find(application, identifier: arguments[3]) else { throw ControlError.elementMissing }
@@ -55,7 +68,9 @@ func run() throws {
         for pressed in [true, false] {
             let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: pressed)
             characters.withUnsafeBufferPointer { buffer in
-                event?.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress!)
+                if let baseAddress = buffer.baseAddress {
+                    event?.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
+                }
             }
             event?.postToPid(pid)
         }

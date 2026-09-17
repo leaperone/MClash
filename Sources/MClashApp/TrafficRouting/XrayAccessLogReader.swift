@@ -8,9 +8,9 @@ public enum XrayAccessLogReaderError: Error, Equatable, LocalizedError, Sendable
 
     public var errorDescription: String? {
         switch self {
-        case .missing: "Xray access log is not available"
-        case let .unreadable(message): "Could not read Xray access log: \(message)"
-        case .pendingLineTooLong: "Xray access log contains an overlong partial line"
+        case .missing: AppLocalization.string("Xray access log is not available")
+        case let .unreadable(message): AppLocalization.format("Could not read Xray access log: %@", message)
+        case .pendingLineTooLong: AppLocalization.string("Xray access log contains an overlong partial line")
         }
     }
 }

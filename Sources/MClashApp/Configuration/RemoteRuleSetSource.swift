@@ -55,23 +55,23 @@ public enum RemoteRuleSetError: Error, Equatable, Sendable {
 extension RemoteRuleSetError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .missingSourceURL: "The rule set does not have a source URL."
-        case .unsupportedSourceScheme: "Rule set sources must use HTTP or HTTPS."
-        case .sourceCredentialsNotAllowed: "Rule set source URLs cannot contain credentials."
-        case .unsupportedFormat: "MRS rule sets are not supported by the Xray renderer."
-        case .invalidRulePayload: "The rule set contains an unsupported or invalid rule."
-        case let .responseTooLarge(limit): "The rule set response exceeded the \(limit)-byte limit."
-        case let .unexpectedHTTPStatus(status): "The rule set server returned HTTP \(status)."
-        case .downloadFailed: "The rule set could not be downloaded."
-        case .validationFailed: "The refreshed rule set failed runtime validation."
-        case .emptyPayload: "The rule set did not contain any rules."
-        case .invalidEncoding: "The rule set is not valid UTF-8."
-        case .invalidYAML: "The rule set YAML payload is invalid."
-        case let .tooManyLines(limit): "The rule set exceeded the \(limit)-line limit."
-        case let .tooManyRules(limit): "The rule set exceeded the \(limit)-rule limit."
-        case .noCachedRuleSet: "No last-known-good rule set is available."
-        case .cacheSourceMismatch: "The cached rule set belongs to a different source URL."
-        case .alreadyRefreshing: "This rule set is already being updated."
+        case .missingSourceURL: AppLocalization.string("The rule set does not have a source URL.")
+        case .unsupportedSourceScheme: AppLocalization.string("Rule set sources must use HTTP or HTTPS.")
+        case .sourceCredentialsNotAllowed: AppLocalization.string("Rule set source URLs cannot contain credentials.")
+        case .unsupportedFormat: AppLocalization.string("MRS rule sets are not supported by the Xray renderer.")
+        case .invalidRulePayload: AppLocalization.string("The rule set contains an unsupported or invalid rule.")
+        case let .responseTooLarge(limit): AppLocalization.format("The rule set response exceeded the %@-byte limit.", AppLocalization.number(limit))
+        case let .unexpectedHTTPStatus(status): AppLocalization.format("The rule set server returned HTTP %@.", AppLocalization.number(status))
+        case .downloadFailed: AppLocalization.string("The rule set could not be downloaded.")
+        case .validationFailed: AppLocalization.string("The refreshed rule set failed runtime validation.")
+        case .emptyPayload: AppLocalization.string("The rule set did not contain any rules.")
+        case .invalidEncoding: AppLocalization.string("The rule set is not valid UTF-8.")
+        case .invalidYAML: AppLocalization.string("The rule set YAML payload is invalid.")
+        case let .tooManyLines(limit): AppLocalization.format("The rule set exceeded the %@-line limit.", AppLocalization.number(limit))
+        case let .tooManyRules(limit): AppLocalization.format("The rule set exceeded the %@-rule limit.", AppLocalization.number(limit))
+        case .noCachedRuleSet: AppLocalization.string("No last-known-good rule set is available.")
+        case .cacheSourceMismatch: AppLocalization.string("The cached rule set belongs to a different source URL.")
+        case .alreadyRefreshing: AppLocalization.string("This rule set is already being updated.")
         }
     }
 }
