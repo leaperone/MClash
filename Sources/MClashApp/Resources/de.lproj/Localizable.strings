@@ -2611,3 +2611,8 @@
 "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "Die Änderung gilt sofort für neue regelbasierte Verbindungen. Die Regeln behalten ihre Gruppe.";
 "Current choice: %@" = "Aktuelle Auswahl: %@";
 "Rule traffic uses %@. Connect MClash to change its active strategy." = "Regelverkehr verwendet %@. Verbinden Sie MClash, um die Strategie zu ändern.";
+
+"Proxy selection" = "Proxy auswählen";
+"Connect to choose nodes in %@. Your last choice will be restored." = "Verbinden Sie sich, um Knoten in %@ zu wählen. Die letzte Auswahl wird wiederhergestellt.";
+"Applies to new connections routed through %@. Existing connections keep their route." = "Gilt für neue Verbindungen über %@. Bestehende Verbindungen behalten ihre Route.";
+"Resume automatic selection" = "Automatische Auswahl fortsetzen";

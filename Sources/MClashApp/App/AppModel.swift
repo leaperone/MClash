@@ -163,7 +163,10 @@ final class AppModel {
                 policy.traffic = true
                 policy.connections = true
                 policy.appRoutingActivity = true
-            case .workspaces, .nodes, .sources, .entrances, .proxyGroups, .dns:
+                policy.proxies = true
+            case .proxyGroups, .rules:
+                policy.proxies = true
+            case .workspaces, .nodes, .sources, .entrances, .dns:
                 break
             case .proxies:
                 policy.connections = true
@@ -177,7 +180,7 @@ final class AppModel {
                 policy.appRoutingActivity = true
             case .logs:
                 policy.logs = true
-            case .appRouting, .profiles, .rules, .providers, .attention, .settings:
+            case .appRouting, .profiles, .providers, .attention, .settings:
                 break
             }
             return policy

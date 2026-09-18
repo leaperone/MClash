@@ -4,6 +4,22 @@ import Testing
 
 @Suite("Xray access log reader")
 struct XrayAccessLogReaderTests {
+    @Test("Session events written before the first poll are not lost")
+    func sessionEventsBeforeFirstPoll() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("access.log")
+        try Data(line(1, timestamp: "2026/09/15 15:18:30.187050").utf8).write(to: url)
+        let reader = XrayAccessLogReader(url: url, readExistingEvents: false,
+            earliestTimestamp: date("2026/09/15 15:18:31.187050"))
+        let writer = try FileHandle(forWritingTo: url)
+        try writer.seekToEnd()
+        try writer.write(contentsOf: Data(line(2, timestamp: "2026/09/15 15:18:32.187050").utf8))
+        try writer.close()
+        #expect((try await reader.poll()).map(\.destination) == ["example2.com:443"])
+        #expect(try await reader.poll().isEmpty)
+    }
+
     @Test("Session boundary filters the existing tail while preserving appends and rotation")
     func sessionBoundaryFiltersExistingAndRotatedLines() async throws {
         let directory = try temporaryDirectory()

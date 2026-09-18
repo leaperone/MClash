@@ -4,6 +4,18 @@ import Testing
 
 @Suite("Presentation telemetry policy")
 struct PresentationTelemetryPolicyTests {
+    @Test("Visible strategy controls follow automatic routing changes", arguments: [AppModel.Destination.overview, .proxyGroups, .rules])
+    func strategyControlsRemainLive(_ destination: AppModel.Destination) {
+        let visible = AppModel.PresentationTelemetryPolicy.resolve(
+            mainWindowVisible: true, menuBarContentVisible: false,
+            destination: destination, appRoutingActivityVisible: false)
+        #expect(visible.proxies)
+        let hidden = AppModel.PresentationTelemetryPolicy.resolve(
+            mainWindowVisible: false, menuBarContentVisible: false,
+            destination: destination, appRoutingActivityVisible: false)
+        #expect(!hidden.proxies)
+    }
+
     @Test("Activity polling restarts at most once for an uncovered dropped gap")
     func activityPollCursorBoundsResynchronization() {
         var cursor = AppModel.AppRoutingActivityPollCursor(cursor: 0)

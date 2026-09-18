@@ -2610,3 +2610,8 @@
 "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group.";
 "Current choice: %@" = "Current choice: %@";
 "Rule traffic uses %@. Connect MClash to change its active strategy." = "Rule traffic uses %@. Connect MClash to change its active strategy.";
+
+"Proxy selection" = "Proxy selection";
+"Connect to choose nodes in %@. Your last choice will be restored." = "Connect to choose nodes in %@. Your last choice will be restored.";
+"Applies to new connections routed through %@. Existing connections keep their route." = "Applies to new connections routed through %@. Existing connections keep their route.";
+"Resume automatic selection" = "Resume automatic selection";

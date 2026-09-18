@@ -2610,4 +2610,9 @@
 "Active strategy" = "Estrategia activa";
 "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "El cambio se aplica a las nuevas conexiones regidas por reglas. Las reglas mantienen el mismo grupo.";
 "Current choice: %@" = "Elección actual: %@";
-"Rule traffic uses %@. Connecta MClash para cambiar la estrategia." = "El tráfico de reglas usa %@. Conecta MClash para cambiar la estrategia.";
+"Rule traffic uses %@. Connect MClash to change its active strategy." = "El tráfico de reglas usa %@. Conecta MClash para cambiar la estrategia.";
+
+"Proxy selection" = "Elegir proxy";
+"Connect to choose nodes in %@. Your last choice will be restored." = "Conéctate para elegir nodos de %@. Se restaurará tu última selección.";
+"Applies to new connections routed through %@. Existing connections keep their route." = "Se aplica a las nuevas conexiones a través de %@. Las existentes conservan su ruta.";
+"Resume automatic selection" = "Reanudar la selección automática";

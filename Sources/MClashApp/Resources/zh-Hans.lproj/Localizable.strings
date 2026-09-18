@@ -2609,3 +2609,8 @@
 "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "这会立即影响新的规则流量连接。规则仍然指向同一个策略组。";
 "Current choice: %@" = "当前选择：%@";
 "Rule traffic uses %@. Connect MClash to change its active strategy." = "规则流量使用 %@。连接 MClash 后可以切换当前策略。";
+
+"Proxy selection" = "选择代理出口";
+"Connect to choose nodes in %@. Your last choice will be restored." = "连接后可切换 %@ 中的节点，之前的选择会自动恢复。";
+"Applies to new connections routed through %@. Existing connections keep their route." = "切换后，经过 %@ 的新连接使用所选出口，已有连接保持原路径。";
+"Resume automatic selection" = "恢复自动选择";

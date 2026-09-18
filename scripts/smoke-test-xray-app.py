@@ -179,7 +179,21 @@ guard let window = windows.first(where: {
 }), let id = window[kCGWindowNumber as String] as? Int else { exit(2) }
 print(id)
 """
-    window_id = subprocess.check_output(["/usr/bin/swift", "-e", program, str(pid)], text=True).strip()
+    last_error = None
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            ["/usr/bin/swift", "-e", program, str(pid)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            window_id = result.stdout.strip()
+            break
+        last_error = result.stderr.strip() or "window not visible yet"
+        time.sleep(0.25)
+    else:
+        raise AssertionError(f"MClash window did not appear for UI capture: {last_error}")
     output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["/usr/sbin/screencapture", "-x", "-o", "-l", window_id, str(output)], check=True)
     assert output.is_file() and output.stat().st_size > 0, "MClash window capture is empty"

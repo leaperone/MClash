@@ -98,12 +98,14 @@ actor XrayRuntimeController: ProxyRuntimeClient {
             let members = group.members.compactMap { memberName($0, nodes: names, groups: groups) }
             let resolution = resolutions[group.id]
             let selection: String?
-            switch resolution?.destination {
-            case .direct: selection = "DIRECT"
-            case .reject, .unsupported: selection = "REJECT"
-            case .balance, .chain: selection = nil
-            case .node: selection = resolution?.selectedMember.flatMap { memberName($0, nodes: names, groups: groups) }
-            case nil: selection = nil
+            if let member = resolution?.selectedMember {
+                selection = memberName(member, nodes: names, groups: groups)
+            } else {
+                switch resolution?.destination {
+                case .direct: selection = "DIRECT"
+                case .reject, .unsupported: selection = "REJECT"
+                case .node, .balance, .chain, nil: selection = nil
+                }
             }
             var fields: [String: AutomationJSONValue] = ["name": .string(group.name), "type": .string(type),
                 "all": .array(members.map(AutomationJSONValue.string)),

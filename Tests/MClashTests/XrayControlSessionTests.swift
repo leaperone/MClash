@@ -68,6 +68,11 @@ struct XrayControlSessionTests {
         do {
             try await commands.start(launch)
             try await control.prepare()
+            let controller = XrayRuntimeController(control: control, version: "fixture")
+            #expect(try await controller.fetchProxy(named: "Choice").now == "Direct exit")
+            try await controller.selectProxy(group: "Choice", proxy: "Reject exit")
+            #expect(try await controller.fetchProxy(named: "Choice").now == "Reject exit")
+            try await controller.selectProxy(group: "Choice", proxy: "Direct exit")
             #expect(try await request(input) == Data("control-payload".utf8))
             let originalPID = try await servingPID()
             let capture = XrayInbound(tag: "capture", kind: .socks, port: try LocalPortProbe().availableTCPPort(),
