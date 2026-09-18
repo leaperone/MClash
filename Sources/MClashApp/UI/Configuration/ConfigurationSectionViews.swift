@@ -777,98 +777,99 @@ struct ConfigurationRuleTrafficStrategyPicker: View {
         return model.isPerforming(.selectProxy(routeGroup.name))
     }
 
-    @ViewBuilder
     var body: some View {
-        if let routeGroup, let runtimeGroup,
-           runtimeGroup.groupBehavior?.supportsSelectionUpdate == true,
-           !runtimeGroup.all.isEmpty {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Label(AppLocalization.string("Rule traffic currently uses"),
-                              systemImage: "point.3.connected.trianglepath.dotted")
-                            .font(.headline)
-                        Spacer()
-                        if runtimeGroup.fixedOverride != nil {
-                            Text(AppLocalization.string("Pinned"))
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    if let current = runtimeGroup.now {
-                        Text(
-                            AppLocalization.format(
-                                "%@ → %@",
-                                configurationDisplayName(routeGroup.name),
-                                configurationDisplayName(current)
-                            )
-                        )
-                        .font(.callout.weight(.medium).monospaced())
-                        .foregroundStyle(.tint)
-                        .accessibilityIdentifier("configuration.rule-route-current")
-                    }
-                    if !regionalChoices.isEmpty {
-                        HStack(spacing: MClashLayout.compactSpacing) {
-                            ForEach(regionalChoices, id: \.self) { choice in
-                                Button {
-                                    select(choice, in: routeGroup)
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: runtimeGroup.now == choice
-                                            ? "checkmark.circle.fill"
-                                            : "circle")
-                                        Text(configurationDisplayName(choice))
-                                            .lineLimit(1)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(runtimeGroup.now == choice ? .accentColor : .secondary)
-                                .disabled(selectionInProgress || runtimeGroup.now == choice)
-                                .accessibilityIdentifier(
-                                    regionalChoiceIdentifier(for: choice)
-                                )
-                                .accessibilityLabel(
-                                    AppLocalization.format(
-                                        runtimeGroup.now == choice
-                                            ? "%@, current choice"
-                                            : "Use %@",
-                                        configurationDisplayName(choice)
-                                    )
-                                )
+        Group {
+            if let routeGroup, let runtimeGroup,
+               runtimeGroup.groupBehavior?.supportsSelectionUpdate == true,
+               !runtimeGroup.all.isEmpty {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Label(AppLocalization.string("Rule traffic currently uses"),
+                                  systemImage: "point.3.connected.trianglepath.dotted")
+                                .font(.headline)
+                            Spacer()
+                            if runtimeGroup.fixedOverride != nil {
+                                Text(AppLocalization.string("Pinned"))
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.orange)
                             }
                         }
-                    }
-                    Picker(AppLocalization.string("Active strategy"), selection: selectionBinding(
-                        group: routeGroup, runtime: runtimeGroup
-                    )) {
-                        ForEach(runtimeGroup.all, id: \.self) { name in
-                            Text(name).tag(name)
+                        if let current = runtimeGroup.now {
+                            Text(
+                                AppLocalization.format(
+                                    "%@ → %@",
+                                    configurationDisplayName(routeGroup.name),
+                                    configurationDisplayName(current)
+                                )
+                            )
+                            .font(.callout.weight(.medium).monospaced())
+                            .foregroundStyle(.tint)
+                            .accessibilityIdentifier("configuration.rule-route-current")
+                        }
+                        if !regionalChoices.isEmpty {
+                            HStack(spacing: MClashLayout.compactSpacing) {
+                                ForEach(regionalChoices, id: \.self) { choice in
+                                    Button {
+                                        select(choice, in: routeGroup)
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: runtimeGroup.now == choice
+                                                ? "checkmark.circle.fill"
+                                                : "circle")
+                                            Text(configurationDisplayName(choice))
+                                                .lineLimit(1)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(runtimeGroup.now == choice ? .accentColor : .secondary)
+                                    .disabled(selectionInProgress || runtimeGroup.now == choice)
+                                    .accessibilityIdentifier(
+                                        regionalChoiceIdentifier(for: choice)
+                                    )
+                                    .accessibilityLabel(
+                                        AppLocalization.format(
+                                            runtimeGroup.now == choice
+                                                ? "%@, current choice"
+                                                : "Use %@",
+                                            configurationDisplayName(choice)
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        Picker(AppLocalization.string("Active strategy"), selection: selectionBinding(
+                            group: routeGroup, runtime: runtimeGroup
+                        )) {
+                            ForEach(runtimeGroup.all, id: \.self) { name in
+                                Text(name).tag(name)
+                            }
+                        }
+                        .labelsHidden()
+                        .accessibilityIdentifier("configuration.rule-route-strategy")
+                        Text(AppLocalization.string(
+                            "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group."
+                        ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        if let current = runtimeGroup.now {
+                            Text(AppLocalization.format("Current choice: %@", current))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .labelsHidden()
-                    .accessibilityIdentifier("configuration.rule-route-strategy")
-                    Text(AppLocalization.string(
-                        "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group."
-                    ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    if let current = runtimeGroup.now {
-                        Text(AppLocalization.format("Current choice: %@", current))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
                 }
-            }
-        } else if let routeGroup {
-            GroupBox {
-                Label(AppLocalization.format(
-                    "Rule traffic uses %@. Connect MClash to change its active strategy.",
-                    routeGroup.name
-                ), systemImage: "point.3.connected.trianglepath.dotted")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            } else if let routeGroup {
+                GroupBox {
+                    Label(AppLocalization.format(
+                        "Rule traffic uses %@. Connect MClash to change its active strategy.",
+                        routeGroup.name
+                    ), systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
             }
         }
         .task {
