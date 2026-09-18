@@ -2604,3 +2604,8 @@
 "%@ measured · %@ records · updated %@" = "已测量 %@ · %@ 条记录 · %@ 更新";
 "%@ records · byte totals unavailable" = "%@ 条记录 · 未提供字节总量";
 "Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "此处显示本次会话观察到的连接事件和已结束的连接。保存的汇总不包含访问目标。";
+"Rule traffic currently uses" = "规则流量当前使用";
+"Active strategy" = "当前策略";
+"This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "这会立即影响新的规则流量连接。规则仍然指向同一个策略组。";
+"Current choice: %@" = "当前选择：%@";
+"Rule traffic uses %@. Connect MClash to change its active strategy." = "规则流量使用 %@。连接 MClash 后可以切换当前策略。";

@@ -12155,7 +12155,7 @@ final class AppModel {
             previousSampleAt: liveStreamHealth[.xrayAccess]?.lastReceivedAt
         )
         let logURL = launch.homeDirectory.appending(path: "access.log")
-        let reader = XrayAccessLogReader(url: logURL)
+        let reader = XrayAccessLogReader(url: logURL, readExistingEvents: false)
         let retention = XrayLogRetention(directory: launch.homeDirectory) { [supervisor] in
             try Task.checkCancellation()
             _ = try await supervisor.runCommand(executableURL: launch.binaryURL,

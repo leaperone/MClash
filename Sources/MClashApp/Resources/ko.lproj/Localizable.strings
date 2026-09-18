@@ -2605,3 +2605,8 @@
 "%@ measured · %@ records · updated %@" = "측정 %@ · 기록 %@개 · 업데이트 %@";
 "%@ records · byte totals unavailable" = "기록 %@개 · 바이트 합계 없음";
 "Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "이번 세션의 연결 이벤트와 종료된 연결을 표시합니다. 저장된 합계에는 대상이 포함되지 않습니다。";
+"Rule traffic currently uses" = "규칙 트래픽의 현재 경로";
+"Active strategy" = "현재 전략";
+"This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "새 규칙 트래픽 연결에 즉시 적용됩니다. 규칙이 가리키는 전략 그룹은 바뀌지 않습니다.";
+"Current choice: %@" = "현재 선택: %@";
+"Rule traffic uses %@. Connect MClash to change its active strategy." = "규칙 트래픽은 %@을(를) 사용합니다. MClash에 연결하면 전략을 바꿀 수 있습니다.";

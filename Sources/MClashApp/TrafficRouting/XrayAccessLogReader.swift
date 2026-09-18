@@ -28,6 +28,7 @@ public actor XrayAccessLogReader {
     private let url: URL
     private let maximumBytesPerPoll: Int
     private let maximumPendingLineBytes: Int
+    private let readExistingEvents: Bool
     private var fileID: UInt64?
     private var modificationTime: ModificationTime?
     private var offset: UInt64 = 0
@@ -36,10 +37,12 @@ public actor XrayAccessLogReader {
     private let parser = XrayAccessLogParser()
 
     public init(url: URL, maximumBytesPerPoll: Int = XrayAccessLogReader.defaultMaximumBytesPerPoll,
-                maximumPendingLineBytes: Int = XrayAccessLogReader.defaultMaximumPendingLineBytes) {
+                maximumPendingLineBytes: Int = XrayAccessLogReader.defaultMaximumPendingLineBytes,
+                readExistingEvents: Bool = true) {
         self.url = url
         self.maximumBytesPerPoll = max(1, maximumBytesPerPoll)
         self.maximumPendingLineBytes = max(1, maximumPendingLineBytes)
+        self.readExistingEvents = readExistingEvents
     }
 
     public func poll() throws -> [XrayAccessRecord] {
@@ -71,7 +74,13 @@ public actor XrayAccessLogReader {
         let wasRewritten = size <= offset && currentModificationTime != modificationTime
         if isNewFile || size < offset || wasRewritten {
             fileID = currentFileID
-            if isFirstRead, size > UInt64(maximumBytesPerPoll) {
+            if isFirstRead, !readExistingEvents {
+                // A live monitor must not present stale access-log lines as
+                // connections created by this app session. Persistent history
+                // owns older records; this reader starts at the current EOF.
+                offset = size
+                discardUntilNewline = false
+            } else if isFirstRead, size > UInt64(maximumBytesPerPoll) {
                 offset = size - UInt64(maximumBytesPerPoll)
                 discardUntilNewline = true
             } else {

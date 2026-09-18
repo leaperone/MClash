@@ -2606,3 +2606,8 @@
 "%@ measured · %@ records · updated %@" = "計測 %@ · %@ 件 · 更新 %@";
 "%@ records · byte totals unavailable" = "%@ 件 · バイト合計なし";
 "Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "このセッションの接続イベントと終了した通信を表示します。保存した集計には接続先を含めません。";
+"Rule traffic currently uses" = "ルール通信の現在の経路";
+"Active strategy" = "現在の策略";
+"This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "新しいルール通信にすぐ反映されます。ルールが指す策略グループは変わりません。";
+"Current choice: %@" = "現在の選択：%@";
+"Rule traffic uses %@. Connect MClash to change its active strategy." = "ルール通信は %@ を使用しています。MClash に接続すると策略を変更できます。";

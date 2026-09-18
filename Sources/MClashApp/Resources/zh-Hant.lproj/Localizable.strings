@@ -2606,3 +2606,8 @@
 "%@ measured · %@ records · updated %@" = "已測量 %@ · %@ 筆記錄 · %@ 更新";
 "%@ records · byte totals unavailable" = "%@ 筆記錄 · 未提供位元組總量";
 "Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "此處顯示本次工作階段觀察到的連線事件和已結束的連線。儲存的彙總不包含存取目標。";
+"Rule traffic currently uses" = "規則流量目前使用";
+"Active strategy" = "目前策略";
+"This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "這會立即影響新的規則流量連線。規則仍然指向同一個策略群組。";
+"Current choice: %@" = "目前選擇：%@";
+"Rule traffic uses %@. Connect MClash to change its active strategy." = "規則流量使用 %@。連線 MClash 後可以切換目前策略。";

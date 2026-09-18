@@ -472,6 +472,9 @@ struct ConfigurationProxyGroupsView: View {
             commonStrategyGroups
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, MClashLayout.compactPagePadding)
+            runtimeRouteSelector
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.bottom, MClashLayout.compactPagePadding)
             Divider()
             HStack(spacing: 0) {
                 groupList
@@ -498,6 +501,9 @@ struct ConfigurationProxyGroupsView: View {
             }
         } message: {
             Text(AppLocalization.string("Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged."))
+        }
+        .task {
+            await model.refreshRoutingForAutomation()
         }
     }
 
@@ -708,6 +714,103 @@ struct ConfigurationProxyGroupsView: View {
 
     private var commonPresetInstalled: Bool {
         ConfigurationStarterGroups.isInstalled(in: model.configurationDocument)
+    }
+
+    private var currentWorkspace: Workspace? {
+        model.configurationDocument.currentWorkspace
+    }
+
+    private var ruleRouteGroup: ProxyGroup? {
+        guard let workspace = currentWorkspace,
+              let groupID = workspace.globalProxyGroupID else { return nil }
+        return model.configurationDocument.proxyGroups.first {
+            $0.id == groupID && $0.enabled
+        }
+    }
+
+    private var runtimeRuleRouteGroup: MihomoProxy? {
+        guard let ruleRouteGroup else { return nil }
+        return model.proxiesByName[ruleRouteGroup.name]
+    }
+
+    @ViewBuilder
+    private var runtimeRouteSelector: some View {
+        if let ruleRouteGroup,
+           let runtimeRuleRouteGroup,
+           runtimeRuleRouteGroup.groupBehavior?.supportsSelectionUpdate == true,
+           !runtimeRuleRouteGroup.all.isEmpty {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Label(
+                            AppLocalization.string("Rule traffic currently uses"),
+                            systemImage: "point.3.connected.trianglepath.dotted"
+                        )
+                        .font(.headline)
+                        Spacer()
+                        if runtimeRuleRouteGroup.fixedOverride != nil {
+                            Text(AppLocalization.string("Pinned"))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Picker(
+                        AppLocalization.string("Active strategy"),
+                        selection: runtimeStrategyBinding(
+                            group: ruleRouteGroup,
+                            runtime: runtimeRuleRouteGroup
+                        )
+                    ) {
+                        ForEach(runtimeRuleRouteGroup.all, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityIdentifier("configuration.rule-route-strategy")
+                    Text(
+                        AppLocalization.string(
+                            "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group."
+                        )
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    if let current = runtimeRuleRouteGroup.now {
+                        Text(AppLocalization.format("Current choice: %@", current))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } else if let ruleRouteGroup {
+            GroupBox {
+                Label(
+                    AppLocalization.format(
+                        "Rule traffic uses %@. Connect MClash to change its active strategy.",
+                        ruleRouteGroup.name
+                    ),
+                    systemImage: "point.3.connected.trianglepath.dotted"
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func runtimeStrategyBinding(
+        group: ProxyGroup,
+        runtime: MihomoProxy
+    ) -> Binding<String> {
+        Binding(
+            get: { runtime.now ?? runtime.all.first ?? "" },
+            set: { next in
+                guard !next.isEmpty, next != runtime.now else { return }
+                Task {
+                    _ = await model.selectProxy(group: group.name, proxy: next)
+                    await model.refreshRoutingForAutomation()
+                }
+            }
+        )
     }
 
     private var commonStrategyGroups: some View {

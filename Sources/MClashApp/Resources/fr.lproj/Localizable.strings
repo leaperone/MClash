@@ -2606,3 +2606,8 @@
 "%@ measured · %@ records · updated %@" = "%@ mesurés · %@ enregistrements · mis à jour %@";
 "%@ records · byte totals unavailable" = "%@ enregistrements · totaux d’octets indisponibles";
 "Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "Les événements et les connexions terminées de cette session apparaissent ici. Les totaux enregistrés ne contiennent pas les destinations.";
+"Rule traffic currently uses" = "Le trafic des règles utilise";
+"Active strategy" = "Stratégie active";
+"This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "Le changement s’applique aux nouvelles connexions régies par des règles. Les règles gardent le même groupe.";
+"Current choice: %@" = "Choix actuel : %@";
+"Rule traffic uses %@. Connect MClash to change its active strategy." = "Le trafic des règles utilise %@. Connectez MClash pour changer de stratégie.";

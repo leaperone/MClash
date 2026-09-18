@@ -44,4 +44,26 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output):
     while not any(source["displayName"] == "Renamed through the UI" for source in call("configuration.snapshot")["sources"]["items"]):
         assert time.monotonic() < deadline, "Source editor did not persist its rename"
         time.sleep(0.2)
-    return {"invalidTextRejected": True, "validLinkPreview": True, "sourcePersisted": True, "sourceRenamed": True, "detailsVisible": True}
+    call("app.ui.show", {"destination": "proxyGroups"})
+    time.sleep(1)
+    assert ui_control("exists", "configuration.rule-route-strategy") == "true", \
+        "The Node Groups page did not expose the rule traffic strategy selector"
+    choices = call("routing.group.choices.list", {"group": "Auto", "limit": 200})["items"]
+    strategy = next((item for item in choices if item == "Network sample 1"), choices[0])
+    ui_control("set", "configuration.rule-route-strategy", strategy)
+    time.sleep(0.8)
+    selected = next(
+        item for item in call("routing.groups.list", {"limit": 200})["items"]
+        if item["name"] == "Auto"
+    )["selected"]
+    assert selected == strategy, "The rule traffic strategy selector did not apply its choice"
+    capture_app_window(process.pid, output.with_name(output.stem + ".groups.png"))
+    return {
+        "invalidTextRejected": True,
+        "validLinkPreview": True,
+        "sourcePersisted": True,
+        "sourceRenamed": True,
+        "detailsVisible": True,
+        "ruleStrategySelectorVisible": True,
+        "ruleStrategySelectionApplied": True,
+    }

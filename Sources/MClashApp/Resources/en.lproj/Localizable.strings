@@ -2605,3 +2605,8 @@
 "%@ measured · %@ records · updated %@" = "%@ measured · %@ records · updated %@";
 "%@ records · byte totals unavailable" = "%@ records · byte totals unavailable";
 "Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "Connection events and completed flows appear here for this session. Saved totals do not include destinations.";
+"Rule traffic currently uses" = "Rule traffic currently uses";
+"Active strategy" = "Active strategy";
+"This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group.";
+"Current choice: %@" = "Current choice: %@";
+"Rule traffic uses %@. Connect MClash to change its active strategy." = "Rule traffic uses %@. Connect MClash to change its active strategy.";

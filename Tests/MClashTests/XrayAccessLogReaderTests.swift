@@ -4,6 +4,21 @@ import Testing
 
 @Suite("Xray access log reader")
 struct XrayAccessLogReaderTests {
+    @Test("A live monitor starts at EOF instead of replaying stale access events")
+    func liveMonitorSkipsExistingLines() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("access.log")
+        try Data(line(1).utf8).write(to: url)
+        let reader = XrayAccessLogReader(url: url, readExistingEvents: false)
+        #expect(try await reader.poll().isEmpty)
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(line(2).utf8))
+        try handle.close()
+        #expect((try await reader.poll()).map(\.destination) == ["example2.com:443"])
+    }
+
     @Test("Reopening a log preserves event identities without merging equal lines")
     func stableEventIdentities() async throws {
         let directory = try temporaryDirectory()
