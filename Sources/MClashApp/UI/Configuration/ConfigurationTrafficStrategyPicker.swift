@@ -70,26 +70,7 @@ struct ConfigurationRuleTrafficStrategyPicker: View {
             }
         }
         if runtime.groupBehavior?.supportsSelectionUpdate == true, !runtime.all.isEmpty {
-            let children = model.configurationDocument.proxyGroups.filter {
-                $0.enabled && runtime.all.contains($0.name)
-            }
-            if !children.isEmpty {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150))], alignment: .leading, spacing: 8) {
-                    ForEach(children) { child in
-                        Button {
-                            select(child.name, group: group)
-                        } label: {
-                            Label(configurationDisplayName(child.name), systemImage: choice == child.name ? "checkmark.circle.fill" : "circle")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(choice == child.name ? Color.accentColor : Color.secondary)
-                        .disabled(!canSelect || choice == child.name)
-                        .accessibilityIdentifier(choiceIdentifier(child))
-                        .accessibilityValue(AppLocalization.string(choice == child.name ? "Selected" : "Not selected"))
-                    }
-                }
-            }
+            RuntimeGroupMemberList(model: model, group: group, runtime: runtime)
             Picker(AppLocalization.string("Active strategy"), selection: Binding(
                 get: { pending ?? choice ?? "" },
                 set: { next in
@@ -124,12 +105,4 @@ struct ConfigurationRuleTrafficStrategyPicker: View {
         Task { _ = await model.selectProxy(group: group.name, proxy: choice) }
     }
 
-    private func choiceIdentifier(_ group: ProxyGroup) -> String {
-        switch group.name {
-        case ConfigurationProxyGroupPreset.japanGroupName: "configuration.rule-route-japan"
-        case ConfigurationProxyGroupPreset.unitedStatesGroupName: "configuration.rule-route-united-states"
-        case ConfigurationProxyGroupPreset.hongKongGroupName: "configuration.rule-route-hong-kong"
-        default: "configuration.rule-route-" + group.id.rawValue.uuidString.lowercased()
-        }
-    }
 }

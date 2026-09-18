@@ -614,16 +614,30 @@ struct ConfigurationProxyGroupsView: View {
     private var groupEditor: some View {
         Group {
             if let selectedID {
-                ConfigurationEditorSheet(
-                    model: model,
-                    section: .proxyGroups,
-                    id: selectedID,
-                    isNew: isCreating,
-                    isEmbedded: true,
-                    onSaved: {
-                        isCreating = false
+                VStack(spacing: 0) {
+                    if !isCreating,
+                       let group = model.configurationDocument.proxyGroups.first(where: {
+                           $0.id.rawValue == selectedID
+                       }),
+                       model.isConnected,
+                       model.controllerIsReady,
+                       let runtime = model.proxiesByName[group.name] {
+                        RuntimeGroupMemberList(model: model, group: group, runtime: runtime)
+                            .padding(.horizontal, MClashLayout.pagePadding)
+                            .padding(.vertical, MClashLayout.compactPagePadding)
+                        Divider()
                     }
-                )
+                    ConfigurationEditorSheet(
+                        model: model,
+                        section: .proxyGroups,
+                        id: selectedID,
+                        isNew: isCreating,
+                        isEmbedded: true,
+                        onSaved: {
+                            isCreating = false
+                        }
+                    )
+                }
                 .id(editorInstanceID)
             } else {
                 ContentUnavailableView(
