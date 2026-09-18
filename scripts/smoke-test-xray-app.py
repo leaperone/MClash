@@ -309,6 +309,11 @@ def main():
         while not (proof / "endpoint.json").is_file():
             assert process.poll() is None and time.monotonic() < deadline, "App did not publish its automation endpoint"
             time.sleep(0.1)
+        if args.ui_output:
+            # A test instance may finish preparation as an accessory app before
+            # SwiftUI has created its Window scene. Reopen the isolated bundle
+            # to deliver the normal macOS activation event to that same PID.
+            subprocess.run(["/usr/bin/open", "-a", str(isolated)], check=True)
         endpoint = json.loads((proof / "endpoint.json").read_text())["socketPath"]
         cli = str(isolated / "Contents/Helpers/mclashctl")
 

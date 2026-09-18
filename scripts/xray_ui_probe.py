@@ -44,6 +44,11 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None
     while not any(source["displayName"] == "Renamed through the UI" for source in call("configuration.snapshot")["sources"]["items"]):
         assert time.monotonic() < deadline, "Source editor did not persist its rename"
         time.sleep(0.2)
+    current = call("configuration.snapshot")
+    call("configuration.workspace.activate", {
+        "id": current["currentWorkspaceID"],
+        "expectedRevision": current["configurationRevision"],
+    })
     call("app.ui.show", {"destination": "proxyGroups"})
     time.sleep(1)
     assert ui_control("exists", "configuration.rule-route-strategy") == "true", \
@@ -62,6 +67,7 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None
         "🇺🇸 美国优先": "configuration.rule-route-united-states",
         "🇭🇰 香港优先": "configuration.rule-route-hong-kong",
     }
+    regional_payloads = {}
     available_regions = [name for name in regional_buttons if name in choices]
     if len(available_regions) >= 2:
         payload_before = fetch("NODE_A", observe=True) if fetch else None
@@ -73,6 +79,7 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None
             if fetch:
                 expected_payload = "NODE_A" if region == "🇯🇵 日本优先" else "NODE_B"
                 observed = fetch(expected_payload, observe=True)
+                regional_payloads[region] = observed
                 assert observed == expected_payload, (
                     f"Regional UI selection {region} did not route to its local fixture: {observed}"
                 )
@@ -113,4 +120,5 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None
         "detailsVisible": True,
         "ruleStrategySelectorVisible": True,
         "ruleStrategySelectionApplied": True,
+        "regionalPayloads": regional_payloads,
     }
