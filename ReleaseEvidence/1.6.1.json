@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "release_version": "1.6.1",
+  "commit": "01949fef1f27e913861bbf77d9ce207cd12e5792",
+  "status": "passed",
+  "backend": "xray",
+  "verification_scope": "Local validation of the 1.6.1 routing controls and session-bounded connection records; the release workflow reruns the complete signed acceptance.",
+  "xray_version": "26.9.9",
+  "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
+  "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+  "capabilities": [
+    "nodeSources",
+    "groupSelect",
+    "groupFallback",
+    "groupURLTest",
+    "routingRules",
+    "httpIngress",
+    "socksIngress",
+    "dnsPolicy",
+    "regionalStrategySelection",
+    "truthfulRoutingModePresentation",
+    "sessionBoundAccessRecords"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh",
+    "python3 scripts/test-xray-package-layout.py .build/ui-validation-final2/MClash.app",
+    "python3 scripts/smoke-test-xray-app.py .build/ui-validation-final2/MClash.app --output /tmp/mclash-ui-validation-final5-20260918/receipt.json --ui-only --ui-output /tmp/mclash-ui-validation-final5-20260918/window.png",
+    "python3 -m py_compile scripts/xray_ui_probe.py scripts/smoke-test-xray-app.py",
+    "plutil -lint Sources/MClashApp/Resources/*lproj/Localizable.strings"
+  ],
+  "test_counts": {
+    "app": 573,
+    "network_shared": 114,
+    "network_extension": 29,
+    "automation": 6,
+    "release_scripts": 3
+  },
+  "application_acceptance": {
+    "passed": true,
+    "regionalStrategySelectorVisible": true,
+    "regionalStrategySelectionApplied": true,
+    "regionalPayloads": {
+      "🇯🇵 日本优先": "NODE_A",
+      "🇺🇸 美国优先": "NODE_B"
+    },
+    "sourcePersisted": true,
+    "sourceRenamed": true,
+    "connectionDetailsVisible": true
+  },
+  "package_evidence": {
+    "runtimeBackend": "xray",
+    "coreDirectoryEntries": ["mclash-xray"],
+    "legacyCoreBundled": false,
+    "xraySha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+    "localAdHocSignature": true
+  },
+  "limits": [
+    "Developer ID signing, notarization, Gatekeeper and downloaded artifact checks remain GitHub Actions gates.",
+    "The local validation did not replace the installed application or change production Network Extension settings.",
+    "Public endpoint availability varies by imported node."
+  ]
+}
