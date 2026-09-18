@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 actor TrafficHistoryStore {
-    static let schemaVersion: Int32 = 1
+    static let schemaVersion: Int32 = 2
 
     private static let maximumRecentCompletions = 1_000
     fileprivate static let busyTimeoutMilliseconds: Int32 = 5_000
@@ -79,11 +79,13 @@ actor TrafficHistoryStore {
 
             try trafficHistoryConfigureConnection(database)
             if existingVersion == 0 {
-                try trafficHistoryCreateV1Schema(
+                try trafficHistoryCreateV2Schema(
                     database,
                     retention: initialRetention,
                     now: now
                 )
+            } else if existingVersion == 1 {
+                try trafficHistoryMigrateV1ToV2(database)
             }
             try trafficHistoryVerifyQuickCheck(database)
             try trafficHistorySecureFiles(databaseURL, fileManager: fileManager)
@@ -920,8 +922,11 @@ private struct TrafficHistoryStoredMeasurement {
         case let .exact(bytes):
             kind = "exact"
             self.bytes = bytes > UInt64(Int64.max) ? Int64.max : Int64(bytes)
-        case .notMeasuredAfterHandoff, .notAvailable:
+        case .notMeasuredAfterHandoff:
             kind = "not_measured"
+            bytes = nil
+        case .notAvailable:
+            kind = "not_available"
             bytes = nil
         case .notApplicable:
             kind = "not_applicable"
@@ -939,11 +944,13 @@ private struct TrafficHistoryStoredDelta {
         "exact_download_count",
         "not_measured_upload_count",
         "not_measured_download_count",
+        "not_available_upload_count",
+        "not_available_download_count",
         "not_applicable_upload_count",
         "not_applicable_download_count",
     ]
 
-    static let zero = TrafficHistoryStoredDelta(values: Array(repeating: 0, count: 9))
+    static let zero = TrafficHistoryStoredDelta(values: Array(repeating: 0, count: 11))
 
     private(set) var values: [Int64]
 
@@ -958,6 +965,8 @@ private struct TrafficHistoryStoredDelta {
             download.kind == "exact" ? 1 : 0,
             upload.kind == "not_measured" ? 1 : 0,
             download.kind == "not_measured" ? 1 : 0,
+            upload.kind == "not_available" ? 1 : 0,
+            download.kind == "not_available" ? 1 : 0,
             upload.kind == "not_applicable" ? 1 : 0,
             download.kind == "not_applicable" ? 1 : 0,
         ]
@@ -986,8 +995,11 @@ private struct TrafficHistoryStoredDelta {
                 notMeasuredDirectionCount: UInt64(
                     trafficHistorySaturatingInt64Add(values[5], values[6])
                 ),
-                notApplicableDirectionCount: UInt64(
+                notAvailableDirectionCount: UInt64(
                     trafficHistorySaturatingInt64Add(values[7], values[8])
+                ),
+                notApplicableDirectionCount: UInt64(
+                    trafficHistorySaturatingInt64Add(values[9], values[10])
                 )
             )
         )
@@ -1013,7 +1025,7 @@ private func trafficHistoryConfigureConnection(_ database: OpaquePointer) throws
     }
 }
 
-private func trafficHistoryCreateV1Schema(
+private func trafficHistoryCreateV2Schema(
     _ database: OpaquePointer,
     retention: TrafficHistoryRetention,
     now: Date
@@ -1102,9 +1114,9 @@ private func trafficHistoryCreateV1Schema(
                     application_id INTEGER NOT NULL REFERENCES application_dimension(id),
                     route_id INTEGER NOT NULL REFERENCES route_dimension(id),
                     outcome TEXT NOT NULL,
-                    upload_kind TEXT NOT NULL CHECK(upload_kind IN ('exact', 'not_measured', 'not_applicable')),
+                    upload_kind TEXT NOT NULL CHECK(upload_kind IN ('exact', 'not_measured', 'not_available', 'not_applicable')),
                     upload_bytes INTEGER CHECK(upload_bytes IS NULL OR upload_bytes >= 0),
-                    download_kind TEXT NOT NULL CHECK(download_kind IN ('exact', 'not_measured', 'not_applicable')),
+                    download_kind TEXT NOT NULL CHECK(download_kind IN ('exact', 'not_measured', 'not_available', 'not_applicable')),
                     download_bytes INTEGER CHECK(download_bytes IS NULL OR download_bytes >= 0),
                     UNIQUE(source, flow_identifier),
                     CHECK(length(flow_identifier) BETWEEN 1 AND 255),
@@ -1133,6 +1145,79 @@ private func trafficHistoryCreateV1Schema(
     }
 }
 
+/// Schema v1 stored both Xray's unavailable byte counters and handoff
+/// counters as `not_measured`.  The migration deliberately preserves those
+/// rows as `not_measured`; only new records can make the distinction because
+/// v1 did not retain enough information to reconstruct it.
+private func trafficHistoryMigrateV1ToV2(_ database: OpaquePointer) throws {
+    do {
+        try trafficHistoryExecute(database, sql: "BEGIN EXCLUSIVE")
+        try trafficHistoryExecute(
+            database,
+            sql: """
+                ALTER TABLE total_bucket ADD COLUMN not_available_upload_count
+                    INTEGER NOT NULL DEFAULT 0 CHECK(not_available_upload_count >= 0);
+                ALTER TABLE total_bucket ADD COLUMN not_available_download_count
+                    INTEGER NOT NULL DEFAULT 0 CHECK(not_available_download_count >= 0);
+                ALTER TABLE application_bucket ADD COLUMN not_available_upload_count
+                    INTEGER NOT NULL DEFAULT 0 CHECK(not_available_upload_count >= 0);
+                ALTER TABLE application_bucket ADD COLUMN not_available_download_count
+                    INTEGER NOT NULL DEFAULT 0 CHECK(not_available_download_count >= 0);
+                ALTER TABLE route_bucket ADD COLUMN not_available_upload_count
+                    INTEGER NOT NULL DEFAULT 0 CHECK(not_available_upload_count >= 0);
+                ALTER TABLE route_bucket ADD COLUMN not_available_download_count
+                    INTEGER NOT NULL DEFAULT 0 CHECK(not_available_download_count >= 0);
+                """
+        )
+        // SQLite cannot alter a table's CHECK constraint. Rebuild only the
+        // recent-flow table while retaining every row and its stable id.
+        try trafficHistoryExecute(
+            database,
+            sql: """
+                CREATE TABLE recent_completion_v2(
+                    id INTEGER PRIMARY KEY,
+                    generation INTEGER NOT NULL,
+                    source TEXT NOT NULL,
+                    flow_identifier TEXT NOT NULL,
+                    completed_at_ms INTEGER NOT NULL,
+                    application_id INTEGER NOT NULL REFERENCES application_dimension(id),
+                    route_id INTEGER NOT NULL REFERENCES route_dimension(id),
+                    outcome TEXT NOT NULL,
+                    upload_kind TEXT NOT NULL CHECK(upload_kind IN ('exact', 'not_measured', 'not_available', 'not_applicable')),
+                    upload_bytes INTEGER CHECK(upload_bytes IS NULL OR upload_bytes >= 0),
+                    download_kind TEXT NOT NULL CHECK(download_kind IN ('exact', 'not_measured', 'not_available', 'not_applicable')),
+                    download_bytes INTEGER CHECK(download_bytes IS NULL OR download_bytes >= 0),
+                    UNIQUE(source, flow_identifier),
+                    CHECK(length(flow_identifier) BETWEEN 1 AND 255),
+                    CHECK((upload_kind = 'exact') = (upload_bytes IS NOT NULL)),
+                    CHECK((download_kind = 'exact') = (download_bytes IS NOT NULL))
+                ) STRICT;
+                INSERT INTO recent_completion_v2(
+                    id, generation, source, flow_identifier, completed_at_ms,
+                    application_id, route_id, outcome,
+                    upload_kind, upload_bytes, download_kind, download_bytes
+                )
+                SELECT id, generation, source, flow_identifier, completed_at_ms,
+                       application_id, route_id, outcome,
+                       upload_kind, upload_bytes, download_kind, download_bytes
+                FROM recent_completion;
+                DROP TABLE recent_completion;
+                ALTER TABLE recent_completion_v2 RENAME TO recent_completion;
+                CREATE INDEX recent_completion_completed_at
+                    ON recent_completion(completed_at_ms DESC);
+                """
+        )
+        try trafficHistoryExecute(
+            database,
+            sql: "PRAGMA user_version = \(TrafficHistoryStore.schemaVersion)"
+        )
+        try trafficHistoryExecute(database, sql: "COMMIT")
+    } catch {
+        try? trafficHistoryExecute(database, sql: "ROLLBACK")
+        throw trafficHistorySetupFailure(database, fallback: .migration)
+    }
+}
+
 private let trafficHistoryMetricColumnDefinitions = """
     flow_count INTEGER NOT NULL CHECK(flow_count >= 0),
     exact_upload_bytes INTEGER NOT NULL CHECK(exact_upload_bytes >= 0),
@@ -1141,6 +1226,8 @@ private let trafficHistoryMetricColumnDefinitions = """
     exact_download_count INTEGER NOT NULL CHECK(exact_download_count >= 0),
     not_measured_upload_count INTEGER NOT NULL CHECK(not_measured_upload_count >= 0),
     not_measured_download_count INTEGER NOT NULL CHECK(not_measured_download_count >= 0),
+    not_available_upload_count INTEGER NOT NULL CHECK(not_available_upload_count >= 0),
+    not_available_download_count INTEGER NOT NULL CHECK(not_available_download_count >= 0),
     not_applicable_upload_count INTEGER NOT NULL CHECK(not_applicable_upload_count >= 0),
     not_applicable_download_count INTEGER NOT NULL CHECK(not_applicable_download_count >= 0)
     """

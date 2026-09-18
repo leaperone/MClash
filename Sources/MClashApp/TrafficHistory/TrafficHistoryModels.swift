@@ -201,6 +201,7 @@ enum TrafficHistoryPeriod: Equatable, Sendable {
 struct TrafficHistoryCoverage: Equatable, Sendable {
     let exactDirectionCount: UInt64
     let notMeasuredDirectionCount: UInt64
+    let notAvailableDirectionCount: UInt64
     let notApplicableDirectionCount: UInt64
 
     var measurableDirectionCount: UInt64 {

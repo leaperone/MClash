@@ -2024,7 +2024,10 @@ final class AutomationCommandGateway {
             "byteTotalsUnavailable": .bool(
                 snapshot.routes.contains {
                     $0.route.kind == .xray
-                        && $0.totals.coverage.notMeasuredDirectionCount > 0
+                        && (
+                            $0.totals.coverage.notMeasuredDirectionCount > 0
+                                || $0.totals.coverage.notAvailableDirectionCount > 0
+                        )
                 }
             ),
         ])
@@ -2045,6 +2048,9 @@ final class AutomationCommandGateway {
                 ),
                 "notMeasuredDirectionCount": .unsignedInteger(
                     totals.coverage.notMeasuredDirectionCount
+                ),
+                "notAvailableDirectionCount": .unsignedInteger(
+                    totals.coverage.notAvailableDirectionCount
                 ),
                 "notApplicableDirectionCount": .unsignedInteger(
                     totals.coverage.notApplicableDirectionCount

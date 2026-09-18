@@ -26,8 +26,9 @@ struct XrayTrafficHistoryTests {
         let totals = try #require(model.trafficHistoryTodaySnapshot?.totals)
         #expect(totals.recordedFlowCount == 2_205)
         #expect(totals.exactTotalBytes == 0)
-        #expect(totals.coverage.notMeasuredDirectionCount == 4_410)
-        #expect(totals.coverage.measuredFraction == 0)
+        #expect(totals.coverage.notAvailableDirectionCount == 4_410)
+        #expect(totals.coverage.notMeasuredDirectionCount == 0)
+        #expect(totals.coverage.measuredFraction == nil)
         #expect(model.xrayAccessRecords.count == 2_000)
 
         await model.ingestXrayAccessRecords(records)
