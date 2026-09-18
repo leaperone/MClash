@@ -18,7 +18,7 @@ Xray-core handles protocol connections and outbound transport. It does not own t
 
 MClash records App Routing activities with the source application, destination, rule decision, relay state, timing, and measured bytes when the system extension owns the flow.
 
-Xray exposes aggregate byte totals. Xray 1.6 does not expose a compatible per-connection list through the old controller API. MClash therefore shows its own flow records for Xray mode and labels aggregate Xray counters separately. It never renders an empty core connection list as proof that no traffic exists.
+Xray exposes aggregate byte totals. Xray 1.6 does not expose a per-connection list through its control API. MClash therefore shows its own flow records for Xray mode and labels aggregate Xray counters separately. It never renders an empty core connection list as proof that no traffic exists.
 
 A route view can show the configured path and the observed path. Unknown values stay unknown. A direct handoff does not become zero bytes, and an Xray aggregate does not become a fabricated per-flow node.
 

@@ -276,8 +276,11 @@ def main():
         env = dict(os.environ, MCLASH_TEST_MODE="1", MCLASH_RUNTIME_BACKEND="xray", MCLASH_INSTANCE_NAMESPACE=namespace,
                    MCLASH_APPLICATION_SUPPORT_IDENTIFIER=namespace, MCLASH_AUTOMATION_DIRECTORY_PATH=str(proof))
         with (proof / "app.log").open("w") as log:
-            process = subprocess.Popen([str(isolated / "Contents/MacOS/MClash"),
-                                        "--mclash-background", "--mclash-test-instance"],
+            launch_arguments = ["--mclash-test-instance"] if args.ui_output else [
+                "--mclash-background", "--mclash-test-instance"
+            ]
+            process = subprocess.Popen(
+                                       [str(isolated / "Contents/MacOS/MClash"), *launch_arguments],
                                        env=env, stdout=log, stderr=log)
         deadline = time.monotonic() + 30
         while not (proof / "endpoint.json").is_file():
