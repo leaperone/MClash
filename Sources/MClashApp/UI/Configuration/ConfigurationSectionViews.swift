@@ -472,9 +472,6 @@ struct ConfigurationProxyGroupsView: View {
             commonStrategyGroups
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, MClashLayout.compactPagePadding)
-            ConfigurationRuleTrafficStrategyPicker(model: model)
-                .padding(.horizontal, MClashLayout.pagePadding)
-                .padding(.bottom, MClashLayout.compactPagePadding)
             Divider()
             HStack(spacing: 0) {
                 groupList
@@ -484,7 +481,7 @@ struct ConfigurationProxyGroupsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle(AppLocalization.string("Nodes"))
+        .navigationTitle(AppLocalization.string("Node Groups"))
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { normalizeSelection() }
         .onChange(of: groupIDs) { _, _ in normalizeSelection() }

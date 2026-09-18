@@ -27,7 +27,7 @@ struct RuntimeGroupMemberList: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 9) {
                 HStack {
-                    Label(AppLocalization.string("Runtime members"), systemImage: "point.3.connected.trianglepath.dotted")
+                    Label(AppLocalization.string("Members"), systemImage: "point.3.connected.trianglepath.dotted")
                         .font(.headline)
                     Spacer(minLength: 8)
                     if isBusy {
@@ -44,7 +44,7 @@ struct RuntimeGroupMemberList: View {
                 }
 
                 if runtime.all.isEmpty {
-                    Text(AppLocalization.string("The running group has no members."))
+                    Text(AppLocalization.string("Proxy group has no members."))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {

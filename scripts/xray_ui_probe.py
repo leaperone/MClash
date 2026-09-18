@@ -62,17 +62,15 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None
         route_group = next(item for item in groups if item["name"] == "Auto")
     route_name = route_group["name"]
     choices = call("routing.group.choices.list", {"group": route_name, "limit": 200})["items"]
-    regional_buttons = {
-        "🇯🇵 日本优先": "configuration.rule-route-japan",
-        "🇺🇸 美国优先": "configuration.rule-route-united-states",
-        "🇭🇰 香港优先": "configuration.rule-route-hong-kong",
-    }
     regional_payloads = {}
-    available_regions = [name for name in regional_buttons if name in choices]
+    available_regions = [
+        name for name in ["🇯🇵 日本优先", "🇺🇸 美国优先", "🇭🇰 香港优先"]
+        if name in choices
+    ]
     if len(available_regions) >= 2:
         payload_before = fetch("NODE_A", observe=True) if fetch else None
         for region in available_regions[:2]:
-            identifier = regional_buttons[region]
+            identifier = "configuration.runtime-group-member-" + region
             assert ui_control("exists", identifier) == "true", \
                 f"The rule strategy picker did not expose {region}"
             ui_control("press", identifier)
