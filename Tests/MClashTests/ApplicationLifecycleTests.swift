@@ -4,6 +4,26 @@ import Testing
 
 @Suite("Application lifecycle")
 struct ApplicationLifecycleTests {
+    @Test("Test instances use their isolated launch preferences for window presentation")
+    @MainActor
+    func testInstanceLaunchDefaultsDoNotInheritProductionLightweightMode() {
+        let suite = UserDefaults(suiteName: "one.leaper.mclash.ui-test")!
+        suite.set(true, forKey: AppModel.lightweightModeKey)
+        defer { suite.removePersistentDomain(forName: "one.leaper.mclash.ui-test") }
+        #expect(
+            ApplicationDelegate.initialWindowShouldPresent(
+                arguments: ["MClash", "--mclash-test-instance"],
+                defaults: UserDefaults(suiteName: "one.leaper.mclash.ui-test")!
+            ) == false
+        )
+        suite.removeObject(forKey: AppModel.lightweightModeKey)
+        #expect(
+            ApplicationDelegate.initialWindowShouldPresent(
+                arguments: ["MClash", "--mclash-test-instance"],
+                defaults: UserDefaults(suiteName: "one.leaper.mclash.ui-test")!
+            ) == true
+        )
+    }
     @Test("Automation launch keeps the initial main window dormant")
     @MainActor
     func backgroundLaunchDoesNotPresentMainWindow() {
