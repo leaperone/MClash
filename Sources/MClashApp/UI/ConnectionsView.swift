@@ -1234,6 +1234,7 @@ struct ConnectionsView: View {
                 .frame(width: 190)
 
                 Text(persistentHistoryCompactSummary(lastUpdatedAt: lastUpdatedAt))
+                    .accessibilityIdentifier("traffic.history.summary")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -1367,6 +1368,7 @@ struct ConnectionsView: View {
                     .fixedSize()
                 }
                 Text(persistentHistoryCompactSummary(lastUpdatedAt: lastUpdatedAt))
+                    .accessibilityIdentifier("traffic.history.summary")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1382,21 +1384,7 @@ struct ConnectionsView: View {
         guard let snapshot = persistentTrafficHistorySnapshot else {
             return AppLocalization.string("Preparing aggregate totals…")
         }
-        let bytes = persistentByteCount(snapshot.totals.exactTotalBytes)
-        let completed = formattedCount(Int(clamping: snapshot.totals.recordedFlowCount))
-        if snapshot.totals.coverage.exactDirectionCount == 0,
-           snapshot.totals.coverage.notMeasuredDirectionCount > 0 {
-            return AppLocalization.format("%@ records · byte totals unavailable", completed)
-        }
-        if let lastUpdatedAt {
-            return AppLocalization.format(
-                "%@ measured · %@ records · updated %@",
-                bytes,
-                completed,
-                AppLocalization.relativeDate(lastUpdatedAt)
-            )
-        }
-        return AppLocalization.format("%@ measured · %@ records", bytes, completed)
+        return FlowLedgerTrafficPresentation.historySummary(snapshot.totals, lastUpdatedAt: lastUpdatedAt)
     }
 
     private var persistentTrafficHistorySnapshot: TrafficHistorySnapshot? {
@@ -1410,10 +1398,6 @@ struct ConnectionsView: View {
         !historicalEntries.isEmpty
             || (model.trafficHistoryTodaySnapshot?.totals.recordedFlowCount ?? 0) > 0
             || (model.trafficHistoryWeekSnapshot?.totals.recordedFlowCount ?? 0) > 0
-    }
-
-    private func persistentByteCount(_ bytes: UInt64) -> String {
-        formattedByteCount(Int64(clamping: bytes))
     }
 
     private func retentionTitle(_ retention: TrafficHistoryRetention) -> String {

@@ -28,7 +28,7 @@ struct XrayTrafficHistoryTests {
         #expect(totals.exactTotalBytes == 0)
         #expect(totals.coverage.notAvailableDirectionCount == 4_410)
         #expect(totals.coverage.notMeasuredDirectionCount == 0)
-        #expect(totals.coverage.measuredFraction == nil)
+        #expect(totals.coverage.measuredFraction == 0)
         #expect(model.xrayAccessRecords.count == 2_000)
 
         await model.ingestXrayAccessRecords(records)

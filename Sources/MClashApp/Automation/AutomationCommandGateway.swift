@@ -2022,13 +2022,7 @@ final class AutomationCommandGateway {
             "applicationCount": .integer(Int64(snapshot.applications.count)),
             "routeCount": .integer(Int64(snapshot.routes.count)),
             "byteTotalsUnavailable": .bool(
-                snapshot.routes.contains {
-                    $0.route.kind == .xray
-                        && (
-                            $0.totals.coverage.notMeasuredDirectionCount > 0
-                                || $0.totals.coverage.notAvailableDirectionCount > 0
-                        )
-                }
+                snapshot.totals.coverage.unmeasuredDirectionCount > 0
             ),
         ])
     }

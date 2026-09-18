@@ -36,6 +36,19 @@ enum FlowLedgerAssociationPresentation {
 }
 
 enum FlowLedgerTrafficPresentation {
+    static func historySummary(_ totals: TrafficHistoryTotals, lastUpdatedAt: Date?) -> String {
+        let records = formattedCount(Int(clamping: totals.recordedFlowCount))
+        if totals.coverage.exactDirectionCount == 0, totals.coverage.unmeasuredDirectionCount > 0 {
+            return AppLocalization.format("%@ records · byte totals unavailable", records)
+        }
+        let bytes = formattedLedgerTraffic(totals.exactTotalBytes)
+        if let lastUpdatedAt {
+            return AppLocalization.format("%@ measured · %@ records · updated %@", bytes, records,
+                                          AppLocalization.relativeDate(lastUpdatedAt))
+        }
+        return AppLocalization.format("%@ measured · %@ records", bytes, records)
+    }
+
     static func totalTitle(_ traffic: FlowLedgerTrafficAggregate) -> String {
         if traffic.exactTotalBytes == 0,
            traffic.notAvailableCount > 0 || traffic.notMeasuredAfterHandoffCount > 0 {

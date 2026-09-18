@@ -205,11 +205,16 @@ struct TrafficHistoryCoverage: Equatable, Sendable {
     let notApplicableDirectionCount: UInt64
 
     var measurableDirectionCount: UInt64 {
-        trafficHistorySaturatingAdd(exactDirectionCount, notMeasuredDirectionCount)
+        trafficHistorySaturatingAdd(exactDirectionCount, unmeasuredDirectionCount)
+    }
+
+    var unmeasuredDirectionCount: UInt64 {
+        trafficHistorySaturatingAdd(notMeasuredDirectionCount, notAvailableDirectionCount)
     }
 
     /// Coverage excludes directions where payload bytes do not apply, such as
-    /// rejected flows. `nil` means there was no measurable traffic.
+    /// rejected flows. Missing counters remain in the denominator; `nil`
+    /// means no recorded direction could carry payload.
     var measuredFraction: Double? {
         let denominator = measurableDirectionCount
         guard denominator > 0 else { return nil }
@@ -226,8 +231,6 @@ struct TrafficHistoryTotals: Equatable, Sendable {
     var exactTotalBytes: UInt64 {
         trafficHistorySaturatingAdd(exactUploadBytes, exactDownloadBytes)
     }
-
-
 }
 
 struct TrafficHistoryApplicationSnapshot: Equatable, Sendable, Identifiable {
