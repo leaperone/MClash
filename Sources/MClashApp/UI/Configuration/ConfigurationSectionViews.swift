@@ -472,7 +472,7 @@ struct ConfigurationProxyGroupsView: View {
             commonStrategyGroups
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.vertical, MClashLayout.compactPagePadding)
-            runtimeRouteSelector
+            ConfigurationRuleTrafficStrategyPicker(model: model)
                 .padding(.horizontal, MClashLayout.pagePadding)
                 .padding(.bottom, MClashLayout.compactPagePadding)
             Divider()
@@ -716,103 +716,6 @@ struct ConfigurationProxyGroupsView: View {
         ConfigurationStarterGroups.isInstalled(in: model.configurationDocument)
     }
 
-    private var currentWorkspace: Workspace? {
-        model.configurationDocument.currentWorkspace
-    }
-
-    private var ruleRouteGroup: ProxyGroup? {
-        guard let workspace = currentWorkspace,
-              let groupID = workspace.globalProxyGroupID else { return nil }
-        return model.configurationDocument.proxyGroups.first {
-            $0.id == groupID && $0.enabled
-        }
-    }
-
-    private var runtimeRuleRouteGroup: MihomoProxy? {
-        guard let ruleRouteGroup else { return nil }
-        return model.proxiesByName[ruleRouteGroup.name]
-    }
-
-    @ViewBuilder
-    private var runtimeRouteSelector: some View {
-        if let ruleRouteGroup,
-           let runtimeRuleRouteGroup,
-           runtimeRuleRouteGroup.groupBehavior?.supportsSelectionUpdate == true,
-           !runtimeRuleRouteGroup.all.isEmpty {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Label(
-                            AppLocalization.string("Rule traffic currently uses"),
-                            systemImage: "point.3.connected.trianglepath.dotted"
-                        )
-                        .font(.headline)
-                        Spacer()
-                        if runtimeRuleRouteGroup.fixedOverride != nil {
-                            Text(AppLocalization.string("Pinned"))
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    Picker(
-                        AppLocalization.string("Active strategy"),
-                        selection: runtimeStrategyBinding(
-                            group: ruleRouteGroup,
-                            runtime: runtimeRuleRouteGroup
-                        )
-                    ) {
-                        ForEach(runtimeRuleRouteGroup.all, id: \.self) { name in
-                            Text(name).tag(name)
-                        }
-                    }
-                    .labelsHidden()
-                    .accessibilityIdentifier("configuration.rule-route-strategy")
-                    Text(
-                        AppLocalization.string(
-                            "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group."
-                        )
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    if let current = runtimeRuleRouteGroup.now {
-                        Text(AppLocalization.format("Current choice: %@", current))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        } else if let ruleRouteGroup {
-            GroupBox {
-                Label(
-                    AppLocalization.format(
-                        "Rule traffic uses %@. Connect MClash to change its active strategy.",
-                        ruleRouteGroup.name
-                    ),
-                    systemImage: "point.3.connected.trianglepath.dotted"
-                )
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func runtimeStrategyBinding(
-        group: ProxyGroup,
-        runtime: MihomoProxy
-    ) -> Binding<String> {
-        Binding(
-            get: { runtime.now ?? runtime.all.first ?? "" },
-            set: { next in
-                guard !next.isEmpty, next != runtime.now else { return }
-                Task {
-                    _ = await model.selectProxy(group: group.name, proxy: next)
-                    await model.refreshRoutingForAutomation()
-                }
-            }
-        )
-    }
-
     private var commonStrategyGroups: some View {
         HStack(spacing: MClashLayout.controlSpacing) {
             Image(systemName: commonPresetInstalled ? "checkmark.circle.fill" : "point.3.filled.connected.trianglepath.dotted")
@@ -842,6 +745,174 @@ struct ConfigurationProxyGroupsView: View {
     }
 }
 
+/// A single common control for the route group used by rules and public proxy
+/// entrances. The rule itself stays stable while this control changes the
+/// effective child strategy for new connections.
+struct ConfigurationRuleTrafficStrategyPicker: View {
+    @Bindable var model: AppModel
+
+    private var routeGroup: ProxyGroup? {
+        guard let workspace = model.configurationDocument.currentWorkspace,
+              let id = workspace.globalProxyGroupID else { return nil }
+        return model.configurationDocument.proxyGroups.first {
+            $0.id == id && $0.enabled
+        }
+    }
+
+    private var runtimeGroup: MihomoProxy? {
+        routeGroup.flatMap { model.proxiesByName[$0.name] }
+    }
+
+    private var regionalChoices: [String] {
+        guard let runtimeGroup else { return [] }
+        return [
+            ConfigurationProxyGroupPreset.japanGroupName,
+            ConfigurationProxyGroupPreset.unitedStatesGroupName,
+            ConfigurationProxyGroupPreset.hongKongGroupName,
+        ].filter(runtimeGroup.all.contains)
+    }
+
+    private var selectionInProgress: Bool {
+        guard let routeGroup else { return false }
+        return model.isPerforming(.selectProxy(routeGroup.name))
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if let routeGroup, let runtimeGroup,
+           runtimeGroup.groupBehavior?.supportsSelectionUpdate == true,
+           !runtimeGroup.all.isEmpty {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Label(AppLocalization.string("Rule traffic currently uses"),
+                              systemImage: "point.3.connected.trianglepath.dotted")
+                            .font(.headline)
+                        Spacer()
+                        if runtimeGroup.fixedOverride != nil {
+                            Text(AppLocalization.string("Pinned"))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    if let current = runtimeGroup.now {
+                        Text(
+                            AppLocalization.format(
+                                "%@ → %@",
+                                configurationDisplayName(routeGroup.name),
+                                configurationDisplayName(current)
+                            )
+                        )
+                        .font(.callout.weight(.medium).monospaced())
+                        .foregroundStyle(.tint)
+                        .accessibilityIdentifier("configuration.rule-route-current")
+                    }
+                    if !regionalChoices.isEmpty {
+                        HStack(spacing: MClashLayout.compactSpacing) {
+                            ForEach(regionalChoices, id: \.self) { choice in
+                                Button {
+                                    select(choice, in: routeGroup)
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: runtimeGroup.now == choice
+                                            ? "checkmark.circle.fill"
+                                            : "circle")
+                                        Text(configurationDisplayName(choice))
+                                            .lineLimit(1)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(runtimeGroup.now == choice ? .accentColor : .secondary)
+                                .disabled(selectionInProgress || runtimeGroup.now == choice)
+                                .accessibilityIdentifier(
+                                    regionalChoiceIdentifier(for: choice)
+                                )
+                                .accessibilityLabel(
+                                    AppLocalization.format(
+                                        runtimeGroup.now == choice
+                                            ? "%@, current choice"
+                                            : "Use %@",
+                                        configurationDisplayName(choice)
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    Picker(AppLocalization.string("Active strategy"), selection: selectionBinding(
+                        group: routeGroup, runtime: runtimeGroup
+                    )) {
+                        ForEach(runtimeGroup.all, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityIdentifier("configuration.rule-route-strategy")
+                    Text(AppLocalization.string(
+                        "This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    if let current = runtimeGroup.now {
+                        Text(AppLocalization.format("Current choice: %@", current))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } else if let routeGroup {
+            GroupBox {
+                Label(AppLocalization.format(
+                    "Rule traffic uses %@. Connect MClash to change its active strategy.",
+                    routeGroup.name
+                ), systemImage: "point.3.connected.trianglepath.dotted")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .task {
+            await model.refreshRoutingForAutomation()
+        }
+    }
+
+    private func selectionBinding(group: ProxyGroup, runtime: MihomoProxy) -> Binding<String> {
+        Binding(
+            get: { runtime.now ?? runtime.all.first ?? "" },
+            set: { next in
+                select(next, in: group, current: runtime.now)
+            }
+        )
+    }
+
+    private func select(
+        _ choice: String,
+        in group: ProxyGroup,
+        current: String? = nil
+    ) {
+        guard !choice.isEmpty,
+              choice != current,
+              !model.isPerforming(.selectProxy(group.name)) else { return }
+        Task {
+            _ = await model.selectProxy(group: group.name, proxy: choice)
+            await model.refreshRoutingForAutomation()
+        }
+    }
+
+    private func regionalChoiceIdentifier(for choice: String) -> String {
+        switch choice {
+        case ConfigurationProxyGroupPreset.japanGroupName:
+            "configuration.rule-route-japan"
+        case ConfigurationProxyGroupPreset.unitedStatesGroupName:
+            "configuration.rule-route-united-states"
+        case ConfigurationProxyGroupPreset.hongKongGroupName:
+            "configuration.rule-route-hong-kong"
+        default:
+            "configuration.rule-route-choice"
+        }
+    }
+}
+
 struct ConfigurationRulesView: View {
     @Bindable var model: AppModel
     @State private var editRequest: ConfigurationRuleEditRequest?
@@ -859,6 +930,9 @@ struct ConfigurationRulesView: View {
             .padding(.horizontal, MClashLayout.pagePadding)
             .padding(.vertical, MClashLayout.compactSpacing)
             .accessibilityLabel(AppLocalization.string("Rules surface"))
+            ConfigurationRuleTrafficStrategyPicker(model: model)
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.bottom, MClashLayout.compactPagePadding)
             Divider()
             if tab == .rules {
                 ConfigurationWorkbench(

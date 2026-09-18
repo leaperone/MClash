@@ -48,15 +48,52 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output):
     time.sleep(1)
     assert ui_control("exists", "configuration.rule-route-strategy") == "true", \
         "The Node Groups page did not expose the rule traffic strategy selector"
-    choices = call("routing.group.choices.list", {"group": "Auto", "limit": 200})["items"]
-    strategy = next((item for item in choices if item == "Network sample 1"), choices[0])
-    ui_control("set", "configuration.rule-route-strategy", strategy)
-    time.sleep(0.8)
-    selected = next(
-        item for item in call("routing.groups.list", {"limit": 200})["items"]
-        if item["name"] == "Auto"
-    )["selected"]
-    assert selected == strategy, "The rule traffic strategy selector did not apply its choice"
+    groups = call("routing.groups.list", {"limit": 200})["items"]
+    route_group = next(
+        (item for item in groups if item["name"] == "🚀 节点选择"),
+        None
+    )
+    if route_group is None:
+        route_group = next(item for item in groups if item["name"] == "Auto")
+    route_name = route_group["name"]
+    choices = call("routing.group.choices.list", {"group": route_name, "limit": 200})["items"]
+    regional_buttons = {
+        "🇯🇵 日本优先": "configuration.rule-route-japan",
+        "🇺🇸 美国优先": "configuration.rule-route-united-states",
+        "🇭🇰 香港优先": "configuration.rule-route-hong-kong",
+    }
+    available_regions = [name for name in regional_buttons if name in choices]
+    if len(available_regions) >= 2:
+        for region in available_regions[:2]:
+            identifier = regional_buttons[region]
+            assert ui_control("exists", identifier) == "true", \
+                f"The rule strategy picker did not expose {region}"
+            ui_control("press", identifier)
+            deadline = time.monotonic() + 10
+            while True:
+                selected = next(
+                    item for item in call("routing.groups.list", {"limit": 200})["items"]
+                    if item["name"] == route_name
+                )["selected"]
+                if selected == region:
+                    break
+                assert time.monotonic() < deadline, \
+                    f"The rule strategy picker did not select {region}"
+                time.sleep(0.2)
+        selected = next(
+            item for item in call("routing.groups.list", {"limit": 200})["items"]
+            if item["name"] == route_name
+        )["selected"]
+        assert selected == available_regions[1], "The regional strategy picker lost its selection"
+    else:
+        strategy = next((item for item in choices if item == "Network sample 1"), choices[0])
+        ui_control("set", "configuration.rule-route-strategy", strategy)
+        time.sleep(0.8)
+        selected = next(
+            item for item in call("routing.groups.list", {"limit": 200})["items"]
+            if item["name"] == route_name
+        )["selected"]
+        assert selected == strategy, "The rule traffic strategy selector did not apply its choice"
     capture_app_window(process.pid, output.with_name(output.stem + ".groups.png"))
     return {
         "invalidTextRejected": True,

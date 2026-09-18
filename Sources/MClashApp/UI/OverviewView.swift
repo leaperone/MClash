@@ -90,6 +90,10 @@ private struct OverviewRoutingModeCard: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                if currentMode == .rule {
+                    ConfigurationRuleTrafficStrategyPicker(model: model)
+                }
+
                 if currentMode == .global, !availableGroups.isEmpty {
                     Picker(
                         AppLocalization.string("Global exit"),
