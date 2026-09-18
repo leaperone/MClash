@@ -29,6 +29,7 @@ public actor XrayAccessLogReader {
     private let maximumBytesPerPoll: Int
     private let maximumPendingLineBytes: Int
     private let readExistingEvents: Bool
+    private let earliestTimestamp: Date?
     private var fileID: UInt64?
     private var modificationTime: ModificationTime?
     private var offset: UInt64 = 0
@@ -38,11 +39,12 @@ public actor XrayAccessLogReader {
 
     public init(url: URL, maximumBytesPerPoll: Int = XrayAccessLogReader.defaultMaximumBytesPerPoll,
                 maximumPendingLineBytes: Int = XrayAccessLogReader.defaultMaximumPendingLineBytes,
-                readExistingEvents: Bool = true) {
+                readExistingEvents: Bool = true, earliestTimestamp: Date? = nil) {
         self.url = url
         self.maximumBytesPerPoll = max(1, maximumBytesPerPoll)
         self.maximumPendingLineBytes = max(1, maximumPendingLineBytes)
         self.readExistingEvents = readExistingEvents
+        self.earliestTimestamp = earliestTimestamp
     }
 
     public func poll() throws -> [XrayAccessRecord] {
@@ -74,7 +76,7 @@ public actor XrayAccessLogReader {
         let wasRewritten = size <= offset && currentModificationTime != modificationTime
         if isNewFile || size < offset || wasRewritten {
             fileID = currentFileID
-            if isFirstRead, !readExistingEvents {
+            if isFirstRead, !readExistingEvents, earliestTimestamp == nil {
                 // A live monitor must not present stale access-log lines as
                 // connections created by this app session. Persistent history
                 // owns older records; this reader starts at the current EOF.
@@ -120,7 +122,8 @@ public actor XrayAccessLogReader {
                 let bytes = Array(digest.finalize().prefix(16))
                 let id = UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
                                      bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
-                if let text = String(data: line, encoding: .utf8), let record = parser.parse(text, id: id) {
+                if let text = String(data: line, encoding: .utf8), let record = parser.parse(text, id: id),
+                   earliestTimestamp.map({ record.timestamp >= $0 }) ?? true {
                     records.append(record)
                 }
                 processedEnd = pendingBytes.index(after: newline)

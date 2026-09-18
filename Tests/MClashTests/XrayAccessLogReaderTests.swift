@@ -4,6 +4,50 @@ import Testing
 
 @Suite("Xray access log reader")
 struct XrayAccessLogReaderTests {
+    @Test("Session boundary filters the existing tail while preserving appends and rotation")
+    func sessionBoundaryFiltersExistingAndRotatedLines() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("access.log")
+        let startedAt = date("2026/09/15 15:18:31.187050")
+        try Data((line(1, timestamp: "2026/09/15 15:18:30.187050") +
+                  line(2, timestamp: "2026/09/15 15:18:31.187050")).utf8).write(to: url)
+        let reader = XrayAccessLogReader(url: url, readExistingEvents: false,
+                                         earliestTimestamp: startedAt)
+        #expect((try await reader.poll()).map(\.destination) == ["example2.com:443"])
+
+        let append = try FileHandle(forWritingTo: url)
+        try append.seekToEnd()
+        try append.write(contentsOf: Data(line(3, timestamp: "2026/09/15 15:18:32.187050").utf8))
+        try append.close()
+        #expect((try await reader.poll()).map(\.destination) == ["example3.com:443"])
+
+        let rotated = directory.appendingPathComponent("access.log.1")
+        try FileManager.default.moveItem(at: url, to: rotated)
+        try Data((line(4, timestamp: "2026/09/15 15:18:30.187050") +
+                  line(5, timestamp: "2026/09/15 15:18:33.187050")).utf8).write(to: url)
+        #expect((try await reader.poll()).map(\.destination) == ["example5.com:443"])
+    }
+
+    @Test("Session boundary keeps partial lines until completion")
+    func sessionBoundaryRetainsPartialLine() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("access.log")
+        let startedAt = date("2026/09/15 15:18:31.187050")
+        let text = line(6, timestamp: "2026/09/15 15:18:32.187050")
+        let split = text.index(text.startIndex, offsetBy: text.count / 2)
+        try Data(text[..<split].utf8).write(to: url)
+        let reader = XrayAccessLogReader(url: url, readExistingEvents: false,
+                                         earliestTimestamp: startedAt)
+        #expect(try await reader.poll().isEmpty)
+        let append = try FileHandle(forWritingTo: url)
+        try append.seekToEnd()
+        try append.write(contentsOf: Data(text[split...].utf8))
+        try append.close()
+        #expect((try await reader.poll()).map(\.destination) == ["example6.com:443"])
+    }
+
     @Test("A live monitor starts at EOF instead of replaying stale access events")
     func liveMonitorSkipsExistingLines() async throws {
         let directory = try temporaryDirectory()
@@ -157,8 +201,17 @@ struct XrayAccessLogReaderTests {
         #expect(try await reader.poll().isEmpty)
     }
 
-    private func line(_ index: Int, destination: String? = nil) -> String {
-        "2026/09/15 15:18:31.187050 from 127.0.0.1 accepted tcp:\(destination ?? "example\(index).com"):443 [inbound -> node]\n"
+    private func line(_ index: Int, destination: String? = nil,
+                      timestamp: String = "2026/09/15 15:18:31.187050") -> String {
+        "\(timestamp) from 127.0.0.1 accepted tcp:\(destination ?? "example\(index).com"):443 [inbound -> node]\n"
+    }
+
+    private func date(_ value: String) -> Date {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy/MM/dd HH:mm:ss.SSSSSS"
+        return formatter.date(from: value)!
     }
 
     private func temporaryDirectory() throws -> URL {
