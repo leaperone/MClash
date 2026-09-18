@@ -4,7 +4,7 @@ import subprocess
 import time
 
 
-def exercise_ui(call, capture_app_window, process, proxy_a, output):
+def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None, fetch=None):
     control_script = Path(__file__).with_name("verify-app-control.swift")
 
     def ui_control(action, identifier, *values):
@@ -64,11 +64,18 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output):
     }
     available_regions = [name for name in regional_buttons if name in choices]
     if len(available_regions) >= 2:
+        payload_before = fetch("NODE_A", observe=True) if fetch else None
         for region in available_regions[:2]:
             identifier = regional_buttons[region]
             assert ui_control("exists", identifier) == "true", \
                 f"The rule strategy picker did not expose {region}"
             ui_control("press", identifier)
+            if fetch:
+                expected_payload = "NODE_A" if region == "🇯🇵 日本优先" else "NODE_B"
+                observed = fetch(expected_payload, observe=True)
+                assert observed == expected_payload, (
+                    f"Regional UI selection {region} did not route to its local fixture: {observed}"
+                )
             deadline = time.monotonic() + 10
             while True:
                 selected = next(
@@ -85,6 +92,9 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output):
             if item["name"] == route_name
         )["selected"]
         assert selected == available_regions[1], "The regional strategy picker lost its selection"
+        if fetch and payload_before is not None:
+            assert fetch("NODE_B", observe=True) == "NODE_B", \
+                "The second regional UI selection did not produce a different payload"
     else:
         strategy = next((item for item in choices if item == "Network sample 1"), choices[0])
         ui_control("set", "configuration.rule-route-strategy", strategy)

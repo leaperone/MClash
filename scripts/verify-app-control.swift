@@ -1,7 +1,7 @@
 import ApplicationServices
 import Foundation
 
-enum ControlError: Error { case arguments, permission, screenLocked, elementMissing, actionFailed }
+enum ControlError: Error { case arguments, permission, screenLocked, windowMissing, elementMissing, actionFailed }
 
 func attribute(_ element: AXUIElement, _ name: String) -> AnyObject? {
     var result: CFTypeRef?
@@ -41,6 +41,8 @@ func run() throws {
     guard arguments.count >= 4, let pid = Int32(arguments[1]), pid > 0 else { throw ControlError.arguments }
     let application = AXUIElementCreateApplication(pid)
     AXUIElementSetMessagingTimeout(application, 3)
+    let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
+    guard !windows.isEmpty else { throw ControlError.windowMissing }
     guard let element = find(application, identifier: arguments[3]) else { throw ControlError.elementMissing }
     switch arguments[2] {
     case "press":

@@ -230,8 +230,14 @@ def main():
                  for name, server, latency in [("A", proxy_a, 10), ("B", proxy_b, 100)]]
         health = dict(testURL=f"http://127.0.0.1:{origin.server_address[1]}/health", expectedStatus="200",
                       probeInterval=5, probeTimeout=1, selectionCooldown=0)
+        japan = dict(id=identifier(), name="🇯🇵 日本优先", type="select", enabled=True,
+                     members=[member(nodes[0])], memberSelectors=[])
+        united_states = dict(id=identifier(), name="🇺🇸 美国优先", type="select", enabled=True,
+                             members=[member(nodes[1])], memberSelectors=[])
         group = dict(id=identifier(), name="Auto", type="urlTest", enabled=True,
-                     members=[member(node) for node in nodes], memberSelectors=[], healthCheck=health)
+                     members=[member(node) for node in nodes]
+                     + [{"group": {"_0": japan["id"]}}, {"group": {"_0": united_states["id"]}}],
+                     memberSelectors=[], healthCheck=health)
         fallback = dict(id=identifier(), name="Failover", type="fallback", enabled=True,
                         members=[member(node) for node in nodes], memberSelectors=[], healthCheck=health)
         balance = dict(id=identifier(), name="Balanced", type="loadBalance", enabled=True,
@@ -254,12 +260,14 @@ def main():
                           matchers=[{kind: {"_0": value}}],
                           action=action(group), unavailableFallback="reject")
                      for kind, value in [("geoSite", "google"), ("geoIP", "cn")]]
-        workspace = dict(id=identifier(), name="Fixture", proxyGroupIDs=[g["id"] for g in [group, other, fallback, balance, chain, strict]],
+        regional_groups = [japan, united_states]
+        all_groups = [group, other, fallback, balance, chain, strict] + regional_groups
+        workspace = dict(id=identifier(), name="Fixture", proxyGroupIDs=[g["id"] for g in all_groups],
                          ruleIDs=[rule["id"]] + [entry["id"] for entry in geo_rules], ruleSetIDs=[], nodeIDs=[], dnsPolicyID=dns["id"],
                          entranceIDs=[entry["id"] for entry in entrances], revision=1,
                          routingMode="global", globalProxyGroupID=group["id"])
         write_json(support / "Configuration/manifest.json",
-                   dict(schemaVersion=1, nodes=nodes, proxyGroups=[group, other, fallback, balance, chain, strict], sources=[],
+                   dict(schemaVersion=1, nodes=nodes, proxyGroups=all_groups, sources=[],
                         rules=[rule] + geo_rules, ruleSets=[], dnsPolicies=[dns], entrances=entrances,
                         workspaces=[workspace], currentWorkspaceID=workspace["id"]))
         if args.first_use_only:
@@ -461,7 +469,8 @@ def main():
         pending_apply_receipt = {"savedShownPending": True, "applyClearedPending": True}
         if args.ui_only:
             from xray_ui_probe import exercise_ui
-            ui_receipt = exercise_ui(call, capture_app_window, process, proxy_a, args.ui_output)
+            ui_receipt = exercise_ui(call, capture_app_window, process, proxy_a, args.ui_output,
+                                      proxy_b=proxy_b, fetch=fetch)
             call("core.disconnect")
             receipt = {"passed": True, "ui": ui_receipt}
             args.output.write_text(json.dumps(receipt, indent=2) + "\n")
@@ -628,7 +637,8 @@ def main():
             assert any(item.get("passed") for item in public_network), "No private-source VLESS sample completed public HTTPS"
         if args.ui_output:
             from xray_ui_probe import exercise_ui
-            ui_receipt = exercise_ui(call, capture_app_window, process, proxy_a, args.ui_output)
+            ui_receipt = exercise_ui(call, capture_app_window, process, proxy_a, args.ui_output,
+                                      proxy_b=proxy_b, fetch=fetch)
         call("core.disconnect")
         assert call("status")["core"]["state"] == "stopped"
         receipt = {"passed": True, "backend": "xray", "http": True, "socks5": True,
