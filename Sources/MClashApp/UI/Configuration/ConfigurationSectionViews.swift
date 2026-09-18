@@ -789,6 +789,11 @@ struct ConfigurationRuleTrafficStrategyPicker: View {
                                   systemImage: "point.3.connected.trianglepath.dotted")
                                 .font(.headline)
                             Spacer()
+                            if selectionInProgress {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .accessibilityLabel(AppLocalization.string("Updating…"))
+                            }
                             if runtimeGroup.fixedOverride != nil {
                                 Text(AppLocalization.string("Pinned"))
                                     .font(.caption.weight(.medium))
