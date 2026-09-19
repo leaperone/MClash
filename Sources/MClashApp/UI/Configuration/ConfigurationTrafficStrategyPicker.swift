@@ -52,10 +52,7 @@ struct ConfigurationRuleTrafficStrategyPicker: View {
 
     @ViewBuilder
     private func liveSelection(group: ProxyGroup, runtime: MihomoProxy) -> some View {
-        let pending = model.pendingProxySelections[group.name]
         let busy = model.isPerforming(.selectProxy(group.name)) || model.isPerforming(.clearProxyOverride(group.name))
-        let canSelect = model.canPerform(.selectProxy(group.name)) && !busy && !model.configurationHasUnappliedChanges
-        let choice = runtime.fixedOverride ?? runtime.now
         let path = model.proxySelectionPaths[group.name]?.route ?? [group.name]
 
         HStack {
@@ -71,38 +68,11 @@ struct ConfigurationRuleTrafficStrategyPicker: View {
         }
         if runtime.groupBehavior?.supportsSelectionUpdate == true, !runtime.all.isEmpty {
             RuntimeGroupMemberList(model: model, group: group, runtime: runtime)
-            Picker(AppLocalization.string("Active strategy"), selection: Binding(
-                get: { pending ?? choice ?? "" },
-                set: { next in
-                    guard next != choice, !next.isEmpty else { return }
-                    select(next, group: group)
-                }
-            )) {
-                if choice == nil || !runtime.all.contains(choice ?? "") {
-                    Text(AppLocalization.string("Route unavailable")).tag(choice ?? "")
-                }
-                ForEach(runtime.all, id: \.self) { name in
-                    Text(configurationDisplayName(name)).tag(name)
-                }
-            }
-            .disabled(!canSelect)
-            .accessibilityIdentifier("configuration.rule-route-strategy")
-            if runtime.fixedOverride != nil, runtime.groupBehavior?.supportsClearingOverride == true {
-                Button(AppLocalization.string("Resume automatic selection")) {
-                    Task { _ = await model.clearProxyOverride(group: group.name) }
-                }
-                .disabled(!canSelect)
-                .accessibilityIdentifier("configuration.rule-route-automatic")
-            }
         }
         Text(AppLocalization.format("Applies to new connections routed through %@. Existing connections keep their route.", group.name))
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func select(_ choice: String, group: ProxyGroup) {
-        Task { _ = await model.selectProxy(group: group.name, proxy: choice) }
     }
 
 }

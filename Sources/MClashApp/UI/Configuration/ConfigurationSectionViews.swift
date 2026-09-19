@@ -466,6 +466,7 @@ struct ConfigurationProxyGroupsView: View {
     @State private var isCreating = false
     @State private var query = ""
     @State private var showsPresetConfirmation = false
+    @State private var editRequest: ConfigurationEditRequest?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -485,6 +486,9 @@ struct ConfigurationProxyGroupsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { normalizeSelection() }
         .onChange(of: groupIDs) { _, _ in normalizeSelection() }
+        .sheet(item: $editRequest) { request in
+            ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID)
+        }
         .alert(
             AppLocalization.string("Install Node Selection setup?"),
             isPresented: $showsPresetConfirmation
@@ -611,31 +615,21 @@ struct ConfigurationProxyGroupsView: View {
     private var groupEditor: some View {
         Group {
             if let selectedID {
-                VStack(spacing: 0) {
-                    if !isCreating,
-                       let group = model.configurationDocument.proxyGroups.first(where: {
-                           $0.id.rawValue == selectedID
-                       }),
-                       model.isConnected,
-                       model.controllerIsReady,
-                       let runtime = model.proxiesByName[group.name] {
-                        RuntimeGroupMemberList(model: model, group: group, runtime: runtime)
-                            .padding(.horizontal, MClashLayout.pagePadding)
-                            .padding(.vertical, MClashLayout.compactPagePadding)
-                        Divider()
-                    }
+                if isCreating {
                     ConfigurationEditorSheet(
                         model: model,
                         section: .proxyGroups,
                         id: selectedID,
-                        isNew: isCreating,
+                        isNew: true,
                         isEmbedded: true,
-                        onSaved: {
-                            isCreating = false
-                        }
+                        onSaved: { isCreating = false }
                     )
+                    .id(editorInstanceID)
+                } else if let group = model.configurationDocument.proxyGroups.first(where: {
+                    $0.id.rawValue == selectedID
+                }) {
+                    runtimeGroupDetail(group)
                 }
-                .id(editorInstanceID)
             } else {
                 ContentUnavailableView(
                     AppLocalization.string("Select an item"),
@@ -645,6 +639,59 @@ struct ConfigurationProxyGroupsView: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
+    }
+
+    @ViewBuilder
+    private func runtimeGroupDetail(_ group: ProxyGroup) -> some View {
+        if model.isConnected,
+           model.controllerIsReady,
+           let runtime = model.proxiesByName[group.name] {
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(configurationDisplayName(group.name))
+                            .font(.title3.weight(.semibold))
+                        Text(runtimeGroupSubtitle(runtime))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Button(AppLocalization.string("Edit…")) {
+                        editRequest = ConfigurationEditRequest(section: .proxyGroups, itemID: group.id.rawValue)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, MClashLayout.compactPagePadding)
+                RuntimeGroupMemberList(model: model, group: group, runtime: runtime)
+                    .padding(.horizontal, MClashLayout.pagePadding)
+                    .padding(.bottom, MClashLayout.pagePadding)
+            }
+        } else {
+            VStack(spacing: MClashLayout.controlSpacing) {
+                ContentUnavailableView(
+                    AppLocalization.string("Configuration unavailable"),
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    description: Text(AppLocalization.string("Connect to inspect traffic"))
+                )
+                Button(AppLocalization.string("Edit…")) {
+                    editRequest = ConfigurationEditRequest(section: .proxyGroups, itemID: group.id.rawValue)
+                }
+                .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func runtimeGroupSubtitle(_ runtime: MihomoProxy) -> String {
+        let behavior = runtime.groupBehavior?.rawValue ?? runtime.type
+        if runtime.fixedOverride != nil {
+            return AppLocalization.format("%@ · %@", behavior, AppLocalization.string("Pinned"))
+        }
+        if runtime.now != nil {
+            return AppLocalization.format("%@ · %@", behavior, AppLocalization.string("Active"))
+        }
+        return AppLocalization.format("%@ · %@", behavior, AppLocalization.string("Route unavailable"))
     }
 
     private var editorInstanceID: String {

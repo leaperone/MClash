@@ -51,8 +51,6 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None
     })
     call("app.ui.show", {"destination": "proxyGroups"})
     time.sleep(1)
-    assert ui_control("exists", "configuration.rule-route-strategy") == "true", \
-        "The Node Groups page did not expose the rule traffic strategy selector"
     groups = call("routing.groups.list", {"limit": 200})["items"]
     route_group = next(
         (item for item in groups if item["name"] == "🚀 节点选择"),
@@ -67,6 +65,11 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None
         name for name in ["🇯🇵 日本优先", "🇺🇸 美国优先", "🇭🇰 香港优先"]
         if name in choices
     ]
+    assert available_regions, "The Node Groups page did not expose selectable regional members"
+    assert ui_control(
+        "exists",
+        "configuration.runtime-group-member-" + available_regions[0]
+    ) == "true", "The Node Groups page did not expose the generic member list"
     if len(available_regions) >= 2:
         payload_before = fetch("NODE_A", observe=True) if fetch else None
         for region in available_regions[:2]:
@@ -116,7 +119,7 @@ def exercise_ui(call, capture_app_window, process, proxy_a, output, proxy_b=None
         "sourcePersisted": True,
         "sourceRenamed": True,
         "detailsVisible": True,
-        "ruleStrategySelectorVisible": True,
+        "runtimeGroupMemberListVisible": True,
         "ruleStrategySelectionApplied": True,
         "regionalPayloads": regional_payloads,
     }
