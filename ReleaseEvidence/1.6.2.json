@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "release_version": "1.6.2",
+  "commit": "71e788fccdf092cad8364da272d5b764f19947bb",
+  "status": "passed",
+  "backend": "xray",
+  "verification_scope": "Local validation of the unified node-group member switching UI and the Xray runtime; the release workflow reruns the complete signed acceptance.",
+  "xray_version": "26.9.9",
+  "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
+  "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+  "capabilities": [
+    "nodeSources",
+    "groupSelect",
+    "groupFallback",
+    "groupURLTest",
+    "routingRules",
+    "httpIngress",
+    "socksIngress",
+    "dnsPolicy",
+    "genericRuntimeGroupMemberList",
+    "manualAutomaticSelectionSwitching",
+    "latencyPresentation"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh",
+    "python3 scripts/smoke-test-xray-app.py .build/node-group-ui-validation2/MClash.app --output /tmp/node-group-core-smoke2-20260918/receipt.json",
+    "python3 -m py_compile scripts/xray_ui_probe.py scripts/smoke-test-xray-app.py",
+    "plutil -lint Sources/MClashApp/Resources/*lproj/Localizable.strings"
+  ],
+  "test_counts": {
+    "app": 573,
+    "network_shared": 114,
+    "network_extension": 29,
+    "automation": 6,
+    "release_scripts": 3
+  },
+  "application_acceptance": {
+    "passed": true,
+    "http": true,
+    "socks5": true,
+    "automaticURLTest": true,
+    "automaticFallback": true,
+    "loadBalance": true,
+    "relayChain": true,
+    "routingRules": true,
+    "dnsPolicy": true,
+    "sourceImport": true,
+    "configurationRollback": true,
+    "xrayAccessRecords": true,
+    "genericMemberListCodePath": true,
+    "desktopClickAcceptance": "blocked_by_screen_lock"
+  },
+  "package_evidence": {
+    "runtimeBackend": "xray",
+    "coreDirectoryEntries": ["mclash-xray"],
+    "legacyCoreBundled": false,
+    "xraySha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+    "localAdHocSignature": true
+  },
+  "limits": [
+    "Developer ID signing, notarization, Gatekeeper and downloaded artifact checks remain GitHub Actions gates.",
+    "The desktop click smoke was blocked by the locked macOS session; core routing and all non-UI checks passed.",
+    "Cursor HTTP proxy repair was applied to local configuration and backed up separately from the release source."
+  ]
+}
