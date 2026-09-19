@@ -1,9 +1,6 @@
 import CryptoKit
 import Foundation
 
-/// Seeds mihomo's private homes with the release-bundled GEO databases.
-/// Existing non-empty files are preserved so mihomo or the user can update
-/// them independently after installation.
 struct BundledGeoDataInstaller: Sendable {
     static let requiredFileNames = [
         "geoip.metadb",
@@ -11,6 +8,7 @@ struct BundledGeoDataInstaller: Sendable {
         "GeoSite.dat",
         "ASN.mmdb",
     ]
+    static let xrayFileNames = ["geoip.dat", "geosite.dat"]
 
     private let sourceDirectory: URL?
 
@@ -18,11 +16,15 @@ struct BundledGeoDataInstaller: Sendable {
         self.sourceDirectory = sourceDirectory?.standardizedFileURL
     }
 
-    static func applicationBundle() -> BundledGeoDataInstaller {
+    static func applicationBundle(_ bundle: Bundle = .main) -> BundledGeoDataInstaller {
         var candidates: [URL] = []
 
-        if let resourceURL = Bundle.main.resourceURL {
-            candidates.append(resourceURL.appending(path: "GeoData", directoryHint: .isDirectory))
+        if let resourceURL = bundle.resourceURL {
+            let directory = resourceURL.appending(path: "GeoData", directoryHint: .isDirectory)
+            if bundle.object(forInfoDictionaryKey: "MClashRuntimeBackend") as? String == "xray" {
+                return BundledGeoDataInstaller(sourceDirectory: directory)
+            }
+            candidates.append(directory)
         }
 
         #if SWIFT_PACKAGE
@@ -33,9 +35,8 @@ struct BundledGeoDataInstaller: Sendable {
         #endif
 
         let source = candidates.first {
-            FileManager.default.fileExists(
-                atPath: $0.appending(path: "SHA256SUMS").path
-            )
+            FileManager.default.fileExists(atPath: $0.appending(path: "XRAY-SHA256SUMS").path)
+                || FileManager.default.fileExists(atPath: $0.appending(path: "SHA256SUMS").path)
         }
         return BundledGeoDataInstaller(sourceDirectory: source)
     }
@@ -49,12 +50,42 @@ struct BundledGeoDataInstaller: Sendable {
         // build script to contain this directory.
         guard let sourceDirectory else { return }
 
-        let expectedHashes = try readManifest(
-            at: sourceDirectory.appending(path: "SHA256SUMS")
-        )
-        guard Set(expectedHashes.keys) == Set(Self.requiredFileNames) else {
-            throw BundledGeoDataError.incompleteManifest
+        let xrayManifest = sourceDirectory.appending(path: "XRAY-SHA256SUMS")
+        if fileManager.fileExists(atPath: xrayManifest.path) {
+            let expectedHashes = try readManifest(
+                at: xrayManifest,
+                allowedFileNames: Set(Self.xrayFileNames)
+            )
+            for fileName in Self.xrayFileNames {
+                let source = sourceDirectory.appending(path: fileName)
+                guard fileManager.fileExists(atPath: source.path) else {
+                    throw BundledGeoDataError.missingBundledFile(fileName)
+                }
+                guard try Self.sha256(at: source) == expectedHashes[fileName] else {
+                    throw BundledGeoDataError.integrityMismatch(fileName)
+                }
+            }
+            try fileManager.createDirectory(
+                at: homeDirectory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            for fileName in Self.xrayFileNames {
+                try installFile(
+                    source: sourceDirectory.appending(path: fileName),
+                    destination: homeDirectory.appending(path: fileName),
+                    fileName: fileName,
+                    fileManager: fileManager,
+                    expectedHash: expectedHashes[fileName]
+                )
+            }
+            return
         }
+
+        let expectedHashes = try readManifest(
+            at: sourceDirectory.appending(path: "SHA256SUMS"),
+            allowedFileNames: Set(Self.requiredFileNames)
+        )
 
         // Validate the complete bundled snapshot before changing either home.
         for fileName in Self.requiredFileNames {
@@ -75,32 +106,44 @@ struct BundledGeoDataInstaller: Sendable {
         )
 
         for fileName in Self.requiredFileNames {
-            let destination = homeDirectory.appending(path: fileName)
-            if fileManager.fileExists(atPath: destination.path) {
-                let attributes = try fileManager.attributesOfItem(atPath: destination.path)
-                if (attributes[.size] as? NSNumber)?.int64Value ?? 0 > 0 {
-                    continue
-                }
-                try fileManager.removeItem(at: destination)
-            }
-
-            let staged = homeDirectory.appending(
-                path: ".mclash-\(fileName)-\(UUID().uuidString).tmp"
+            try installFile(
+                source: sourceDirectory.appending(path: fileName),
+                destination: homeDirectory.appending(path: fileName),
+                fileName: fileName,
+                fileManager: fileManager
             )
-            do {
-                try fileManager.copyItem(
-                    at: sourceDirectory.appending(path: fileName),
-                    to: staged
-                )
-                try fileManager.setAttributes(
-                    [.posixPermissions: 0o644],
-                    ofItemAtPath: staged.path
-                )
-                try fileManager.moveItem(at: staged, to: destination)
-            } catch {
-                try? fileManager.removeItem(at: staged)
-                throw error
+        }
+    }
+
+    private func installFile(
+        source: URL,
+        destination: URL,
+        fileName: String,
+        fileManager: FileManager,
+        expectedHash: String? = nil
+    ) throws {
+        if fileManager.fileExists(atPath: destination.path) {
+            let attributes = try fileManager.attributesOfItem(atPath: destination.path)
+            if (attributes[.size] as? NSNumber)?.int64Value ?? 0 > 0 {
+                if expectedHash == nil || (try? Self.sha256(at: destination)) == expectedHash {
+                    return
+                }
             }
+        }
+
+        let staged = destination.deletingLastPathComponent()
+            .appending(path: ".mclash-\(fileName)-\(UUID().uuidString).tmp")
+        do {
+            try fileManager.copyItem(at: source, to: staged)
+            try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: staged.path)
+            if fileManager.fileExists(atPath: destination.path) {
+                _ = try fileManager.replaceItemAt(destination, withItemAt: staged)
+            } else {
+                try fileManager.moveItem(at: staged, to: destination)
+            }
+        } catch {
+            try? fileManager.removeItem(at: staged)
+            throw error
         }
     }
 
@@ -109,7 +152,7 @@ struct BundledGeoDataInstaller: Sendable {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func readManifest(at url: URL) throws -> [String: String] {
+    private func readManifest(at url: URL, allowedFileNames: Set<String>) throws -> [String: String] {
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
             throw BundledGeoDataError.manifestMissing
         }
@@ -124,11 +167,14 @@ struct BundledGeoDataInstaller: Sendable {
             let fileName = String(fields[1]).trimmingCharacters(in: CharacterSet(charactersIn: "*"))
             guard hash.count == 64,
                   hash.allSatisfy(\.isHexDigit),
-                  Self.requiredFileNames.contains(fileName),
+                  allowedFileNames.contains(fileName),
                   result[fileName] == nil else {
                 throw BundledGeoDataError.invalidManifest
             }
             result[fileName] = hash
+        }
+        guard Set(result.keys) == allowedFileNames else {
+            throw BundledGeoDataError.incompleteManifest
         }
         return result
     }

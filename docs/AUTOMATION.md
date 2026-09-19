@@ -2,7 +2,7 @@
 
 MClash exposes user-level application operations to local AI agents and other
 same-user tools. The API is intentionally a stable domain command surface, not
-reflection over `AppModel` and not a passthrough to Mihomo's controller.
+reflection over `AppModel` and not a passthrough to a proxy core controller.
 
 ## Quick start
 
@@ -116,7 +116,7 @@ Clients may rely on schema versions, IDs, enums, error codes, and error types as
 machine-readable contracts. Human-readable fields such as `message`, `title`,
 `consequence`, `technicalDetail`, `lastError`, and supervisor log text are
 opaque, may follow MClash's selected interface language, and may change wording.
-Mihomo stdout and stderr remain verbatim. Diagnostic text queries match the
+Legacy core stdout and stderr remain verbatim. Diagnostic text queries match the
 rendered text in its current language.
 
 `system.capabilities` and `auth.pair` are the only unauthenticated methods.
@@ -210,7 +210,7 @@ The current v1 surface includes:
   activation/refresh/removal, pending imports, and interactive backup panels.
 - `runtime.*`: read, replace, and reset transactionally applied overrides.
 - `routing.*`, `mihomo.rules.*`, `providers.*`: modes, groups, node selection,
-  latency, rule refresh, and provider operations.
+  latency, compatibility rule statistics, and provider operations.
 - `systemProxy.*`: status, enablement, preferences, and guard control.
 - `appRouting.*`: status, enablement, DNS, transactional rule replacement,
   on-demand paged candidates, Proxifier preview/import, retry, and activity clearing.
@@ -226,7 +226,7 @@ parameter hints from the running version.
 
 The Configuration API edits MClash's desired Configuration manifest. It does
 not expose source locations, node host values, node parameter values,
-subscription secrets, or generated Mihomo YAML. `configuration.snapshot`,
+subscription secrets, or generated runtime configuration. `configuration.snapshot`,
 `configuration.proxyGroup.selectors.export`, and `configuration.plan` require
 `read.sensitive`; `configuration.apply`, `configuration.delete`, and
 `configuration.workspace.activate` are destructive operations. A standard
@@ -292,9 +292,9 @@ mclashctl configuration.apply \
   --pretty
 ```
 
-A valid plan means the bounded MClash model and deterministic YAML compilation
-passed. It does not start Mihomo; workspace activation performs the final
-runtime acceptance check.
+A valid plan means the bounded MClash model and deterministic runtime
+compilation passed. It does not start the proxy runtime; workspace activation
+performs the final runtime acceptance check.
 
 Plan and apply are separate executions, so they use different request IDs, but
 apply must reuse the original `document` and `expectedRevision`. If a CAS
@@ -457,7 +457,7 @@ removal flags. Each write-only array is a whole replacement, not an
 append/remove delta. `sourceURLUpdate` and
 `removeSourceURL`, or `proxyServerUpdate` and `removeProxyServer`, are mutually
 exclusive. `proxyServerUpdate` sets one `proxy-server-nameserver` resolver in
-the generated Mihomo DNS section. A rule-set source URL must be HTTP or HTTPS
+the generated DNS section. A rule-set source URL must be HTTP or HTTPS
 and have a host.
 Workspace `nodeScope` is `allEnabled` when the stored ID list is empty and
 `listed` otherwise. `allEnabled` accepts only an omitted or empty
@@ -530,10 +530,10 @@ headroom. Unchanged oversized legacy selector arrays remain readable through
 export, but any replacement must satisfy the current limits.
 
 Enabled relay groups and enabled TUN entrances are rejected by v1, as is any
-entrance `workspaceOverride`. Source-less Mihomo rules combine destination,
+entrance `workspaceOverride`. Source-less runtime rules combine destination,
 port, and transport categories with AND; multiple values inside one category
 remain OR alternatives. Rules with application, process-path, or user-ID
-matchers keep the same semantics in App Routing and are not widened into Mihomo
+matchers keep the same semantics in App Routing and are not widened into legacy
 rules. Inline rule-set entries must be a safe domain
 suffix or a two-field `DOMAIN`, `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR`, or
 `IP-CIDR6` entry; MClash appends the rule set's `defaultAction` when compiling.
@@ -607,7 +607,7 @@ cannot use MClash as an arbitrary file reader or writer.
 - Controller secrets, Network Extension credentials, full subscription URLs,
   and raw internal service methods are never returned.
 - The API cannot invoke a shell command, evaluate code, or proxy arbitrary
-  Mihomo endpoints.
+  core endpoints.
 - Queries use already-cached state. They do not acquire a permanent telemetry
   lease, so closing the main window still suspends expensive UI-only streams.
 - v1 has no event subscription. Callers may poll bounded snapshots at a

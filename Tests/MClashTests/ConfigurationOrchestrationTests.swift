@@ -5,6 +5,30 @@ import Testing
 
 struct ConfigurationOrchestrationTests {
     @MainActor
+    @Test("Renaming a source updates the node catalog without changing its node identity")
+    func sourceRenameUpdatesCatalog() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "MClashSourceRename-\(UUID().uuidString)")
+        let defaultsName = "MClash.SourceRename.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: defaultsName))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            defaults.removePersistentDomain(forName: defaultsName)
+        }
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        let model = makeTestAppModel(profileDirectoryLayout: layout, preferenceDefaults: defaults)
+        let profile = try await model.importNodeLinks(name: "Original source", text: "http://127.0.0.1:12345#Node")
+        let originalNodes = model.configurationDocument.nodes.map(\.id)
+
+        try await model.updateProfile(profile.id, name: "Renamed source")
+
+        #expect(model.profiles.first(where: { $0.id == profile.id })?.name == "Renamed source")
+        #expect(model.configurationDocument.sources.first(where: { $0.id.rawValue == profile.id.rawValue })?.displayName == "Renamed source")
+        #expect(model.configurationDocument.nodes.map(\.id) == originalNodes)
+        let persisted = try ConfigurationStore(layout: layout)
+        #expect(try await persisted.load().sources.first?.displayName == "Renamed source")
+    }
+
+    @MainActor
     @Test("Legacy materialized all-node scopes become dynamic after refresh")
     func legacyAllNodeScopeIncludesSourceRemovedCatalogEntries() throws {
         let first = try Node(
@@ -222,6 +246,18 @@ struct ConfigurationOrchestrationTests {
         #expect(report.ignoredSections == ["proxy-groups", "rules", "dns", "tun"])
         #expect(report.diagnostics.contains { $0.code == "duplicate_node" })
         #expect(report.diagnostics.contains { $0.code == "strategy_sections_ignored" })
+    }
+
+    @Test func nodeOnlyImporterAcceptsBase64NodeLists() throws {
+        let sourceID = SourceID()
+        let uuid = "00000000-0000-0000-0000-000000000021"
+        let links = "vless://\(uuid)@vless.example:443#V\ntrojan://secret@trojan.example:443#T\n"
+        let encoded = Data(links.utf8).base64EncodedString()
+        let report = NodeOnlyImporter().importNodes(sourceID: sourceID, yaml: Data(encoded.utf8))
+        #expect(report.nodes.count == 2)
+        #expect(Set(report.nodes.map(\.proto)) == [.vless, .trojan])
+        #expect(report.diagnostics.isEmpty)
+        #expect(report.ignoredSections.isEmpty)
     }
 
     @Test func nodeOnlyImporterOnlyTreatsZeroIndentStrategyKeysAsTopLevel() throws {

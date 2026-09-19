@@ -5,6 +5,20 @@ import Testing
 
 @Suite("Flow Ledger Evidence Presentation")
 struct FlowLedgerEvidencePresentationTests {
+    @Test("History with unavailable counters never claims measured zero bytes")
+    func unavailableHistorySummary() {
+        let coverage = TrafficHistoryCoverage(exactDirectionCount: 0, notMeasuredDirectionCount: 0,
+                                              notAvailableDirectionCount: 4, notApplicableDirectionCount: 0)
+        let totals = TrafficHistoryTotals(recordedFlowCount: 2, exactUploadBytes: 0,
+                                         exactDownloadBytes: 0, coverage: coverage)
+        let summary = FlowLedgerTrafficPresentation.historySummary(totals, lastUpdatedAt: nil)
+        #expect(summary == AppLocalization.format("%@ records · byte totals unavailable", "2"))
+        #expect(coverage.measuredFraction == 0)
+        let mixed = TrafficHistoryCoverage(exactDirectionCount: 2, notMeasuredDirectionCount: 2,
+                                           notAvailableDirectionCount: 4, notApplicableDirectionCount: 10)
+        #expect(mixed.measuredFraction == 0.25)
+    }
+
     @Test("Only exact relay-port association is confirmed")
     func exactAssociationIsTheOnlyConfirmedEvidence() {
         let exact = FlowLedgerAssociation.exactRelayPort(connectionID: "exact-id")

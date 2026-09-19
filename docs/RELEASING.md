@@ -27,8 +27,15 @@ The Sparkle public key matching `SPARKLE_PRIVATE_KEY` must be committed as `SUPu
 
 - Release versions use semantic tags such as `v1.0.0`.
 - `CFBundleVersion` is an increasing positive integer. Tag-triggered builds default to the GitHub Actions run number; manual runs may supply a higher value.
-- Releases are Apple Silicon-only until the Intel mihomo artifact has an independently reviewed checksum in the repository.
+- Releases currently support Apple Silicon. Another architecture requires independently reviewed Xray artifacts and acceptance tests.
 - A release must originate from a clean commit and have matching notes in `ReleaseNotes/<version>.md`.
+- Published assets and tags are immutable. Fix failures in a new version instead of replacing an existing release.
+
+## Validate a signed candidate
+
+Complete the agreed product changes and integrated local acceptance first. In **Actions → Release → Run workflow**, choose the source branch and final version, and leave **candidate_only** enabled. This mode pins the source commit, runs verification, signs and notarizes the package, and uploads an Actions artifact. It does not create a release or tag.
+
+Download that artifact to verify its signature, checksum and real application behavior. Complete any required macOS Network Extension and system proxy acceptance before the public release. The current machine's installed app and routing settings need their own backup and recovery plan for an upgrade test.
 
 ## Publishing
 
@@ -39,20 +46,20 @@ git tag -s v1.0.0 -m "MClash 1.0.0"
 git push origin v1.0.0
 ```
 
-Alternatively, after pushing the version tag, open **Actions → Release → Run workflow** to rerun that existing tag with an optional build number, then approve the protected `release` environment. Manual dispatch intentionally refuses an unpushed tag.
+Manual publication requires **candidate_only** to be disabled and the matching tag to exist. The publish step refuses to replace an existing release. The protected `release` environment controls access to signing credentials.
 
 The workflow performs these operations:
 
 1. Strict Swift 6 compiler checks and the complete unit test suite on an Apple Silicon runner.
-2. Pinned mihomo and Sparkle artifact checksum verification.
+2. Pinned Xray, routing database and Sparkle artifact checksum verification.
 3. Temporary Keychain import of the Developer ID Application certificate.
 4. Hardened-runtime signing of Sparkle helpers, the bundled core, and MClash from the inside out.
 5. Apple notarization and stapling of both the app and disk image, followed by Gatekeeper assessment.
 6. Creation of a compressed APFS DMG with an Applications shortcut and a Sparkle update ZIP.
-7. Packaging of the complete source tree for the exact bundled mihomo revision and Sparkle's MIT notice.
+7. Packaging of Xray and Sparkle license and source notices.
 8. Generation, reverse-application, code-signing verification, and Ed25519 signing of delta updates from up to two recent stable builds.
 9. Ed25519 signing of the full update through standard input, generation of `appcast.xml`, and SHA-256 checksums.
-10. Publication of all runtime, update, corresponding-source, notice, and checksum assets to the same GitHub Release.
+10. Artifact upload for a candidate, or publication of update, notice and checksum assets for a public release.
 11. Destruction of the temporary Keychain and certificate file even if the job fails.
 
 The Release workflow has read-only repository access during tests. Only the protected publishing job receives `contents: write` and release secrets.
@@ -65,7 +72,6 @@ Each release contains:
 - `MClash-<version>-macos-arm64.zip` — Sparkle update archive.
 - `MClash-<version>-from-<old-version>-macos-arm64.delta` — optional verified incremental update for a recent build.
 - `appcast.xml` — signed Sparkle update feed.
-- `mihomo-<revision>-source.tar.gz` — complete corresponding source for the bundled GPL-3.0 core.
 - `Sparkle-2.9.4-LICENSE.txt` — Sparkle's MIT license notice.
 - `SHA256SUMS` — hashes for the public artifacts.
 

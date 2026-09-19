@@ -102,7 +102,7 @@ struct ProxiesView: View {
                             description: Text(
                                 routingMode == "global"
                                     ? AppLocalization.string(
-                                        "The active core did not expose the GLOBAL group."
+                                        "The active core did not expose the all traffic group."
                                     )
                                     : AppLocalization.string(
                                         "The active configuration did not expose a selectable proxy group."
@@ -714,7 +714,7 @@ struct ProxiesView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Automatic selection is pinned")
                     .font(.callout.weight(.medium))
-                Text("Preferred node: \(fixed). The active node still follows mihomo health checks.")
+                Text("Preferred node: \(fixed). The active node still follows proxy core health checks.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

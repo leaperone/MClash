@@ -282,7 +282,7 @@ struct LogsView: View {
             "# Capture: \(model.operationalSnapshot.captureSummary)",
             "# Core connected: \(model.isConnected ? "Yes" : "No")",
             "# Controller ready: \(model.controllerIsReady ? "Yes" : "No")",
-            "# Active connections: \(model.connections?.connections.count ?? 0)",
+            "# \(model.connectionCountPresentationTitle): \(model.connectionRecordCount)",
             "# Observed ledger entries: \(model.flowLedger.entries.count)",
             "# Attention items: \(model.operationalIssues.count)",
             "# Recognized credentials: redacted",
@@ -356,6 +356,7 @@ struct LogsView: View {
         switch stream {
         case .traffic: "Traffic rate"
         case .connections: "Connections"
+        case .xrayAccess: "Connection records"
         case .logs: "Logs"
         case .proxies: "Proxy state"
         case .appRouting: "App Routing"

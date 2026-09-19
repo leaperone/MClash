@@ -2,7 +2,7 @@
 
 MClash is a local macOS network utility. It does not include product analytics,
 advertising SDKs, or an MClash crash-reporting service. Network traffic is
-handled on your Mac by the bundled mihomo core and the App Routing Network
+handled on your Mac by the bundled Xray core and the App Routing Network
 Extension.
 
 ## Data stored on this Mac
@@ -17,6 +17,12 @@ payloads, process IDs, user IDs, or executable paths. The default retention is
 30 days; Settings can disable local history or select 7, 30, or 90 days. Traffic
 history is excluded from MClash profile backups.
 
+Proxy access and error logs are also stored locally. They can include timestamps,
+source addresses, destinations, route tags and operational errors. MClash checks
+these logs for rotation every 30 seconds. Each log rotates at a target size of
+8 MiB and retains one previous file. The in-app event list holds up to 2,000 recent
+records. Clearing aggregate traffic history does not remove runtime log files.
+
 Automation tokens are stored by clients in the current user's Keychain. MClash
 stores only token hashes and the paired code identity. Pairings expire after 180
 days and can be revoked.
@@ -26,9 +32,9 @@ days and can be revoked.
 MClash makes network requests only to provide requested product functions:
 
 - downloading or refreshing subscription URLs and providers you configure;
-- carrying traffic through the proxy routes in your active profile;
+- carrying traffic through the proxy routes you configure;
 - checking the signed GitHub-hosted Sparkle update feed; and
-- performing latency tests or core operations you initiate.
+- checking node health according to your configured group strategy.
 
 Those services and any proxy provider you configure receive data under their own
 privacy terms. MClash does not send your profiles, traffic history, or automation

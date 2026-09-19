@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "release_version": "1.6.0-rc.11",
+  "commit": "ac09ba28d68ec2556868bb2b4561d92ebc044e01",
+  "status": "passed",
+  "backend": "xray",
+  "verification_scope": "Source, Xray GEO database loading, Xray-only package layout, and isolated runtime acceptance before release signing",
+  "generated_at": "2026-09-17T02:00:00Z",
+  "xray_version": "26.9.9",
+  "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
+  "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+  "xray_geoip_sha256": "4149e607530f91da697bad4696f8c59f0a475af38e69405e4124438c9886c721",
+  "xray_geosite_sha256": "2064a1a4074e145d5022ac49f2c30341e7b7cb6c7948da4fdca973b3fa8411b2",
+  "capabilities": [
+    "nodeSources",
+    "pastedNodeLinks",
+    "pastedSourcePersistence",
+    "groupSelect",
+    "groupFallback",
+    "groupURLTest",
+    "groupLoadBalance",
+    "groupRelay",
+    "routingRules",
+    "geoIPRules",
+    "geoSiteRules",
+    "httpIngress",
+    "socksIngress",
+    "dnsPolicy",
+    "mclashFlowRecords",
+    "xrayAccessRecords",
+    "xrayOwnedConnectionRecordFreshness",
+    "xrayOnlyPackageLayout",
+    "localizedProxyCopy"
+  ],
+  "validation_commands": [
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh",
+    "MCLASH_XRAY_BINARY=... SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 .build/direct-tests/MClashPackageTests",
+    "python3 scripts/test-xray-package-layout.py .build/xray-smoke/MClash.app",
+    "python3 scripts/verify-xray-geodata.sh .build/xray-smoke/MClash.app/Contents/Resources/GeoData",
+    "Xray 26.9.9 run -test with geoip:cn and geosite:cn using XRAY_LOCATION_ASSET",
+    "python3 scripts/smoke-test-xray-app.py .build/xray-smoke/MClash.app --output .planning/m16/rc11-local-smoke.json",
+    "LocalizationTests and localized resource scan for legacy core wording",
+    "traffic.flows.list and traffic.connections.list through mclashctl",
+    "traffic.snapshot connectionCountMeaning=recordedEvents through mclashctl",
+    "traffic.connections.closeAll rejected for Xray historical records",
+    "scripts/create-dmg.sh transient hdiutil verification retry"
+  ],
+  "test_counts": {
+    "app": 516,
+    "network_shared": 114,
+    "network_extension": 29,
+    "automation": 6,
+    "appcast_script": 3
+  },
+  "application_acceptance": {
+    "passed": true,
+    "backend": "xray",
+    "http": true,
+    "socks5": true,
+    "modeChanges": [
+      "global",
+      "direct",
+      "rule"
+    ],
+    "selectionAndClear": true,
+    "globalExitChange": true,
+    "disconnect": true,
+    "sourceActivation": true,
+    "invalidSourceRejected": true,
+    "automaticURLTest": 2.607,
+    "automaticFallback": 11.733,
+    "automaticRecovery": 11.929,
+    "expectedStatusEnforced": true,
+    "loadBalance": [
+      "NODE_A",
+      "NODE_B"
+    ],
+    "relayChain": true,
+    "dnsPolicy": {
+      "directResolution": true,
+      "socksUDPCapture": true
+    },
+    "failedActivationRollback": true,
+    "healthSettingsRoundTrip": true,
+    "encodedSourceImport": true,
+    "signaturePreserved": false,
+    "resources": {
+      "coreProcesses": 1,
+      "coreRSSBytes": 38273024,
+      "appRSSBytes": 95535104,
+      "connectSeconds": 1.499
+    },
+    "xrayAccessRecords": 5,
+    "xrayConnectionRecordCount": 5,
+    "xrayConnectionRecordEvidence": "mclash-xray-access-log",
+    "xrayCloseRejected": true,
+    "xrayOnlyPackageLayout": true,
+    "xrayGeoRulesValidated": true
+  },
+  "traffic_evidence": {
+    "owner": "MClash",
+    "xrayRole": "protocol connection and forwarding",
+    "accessLogRecords": 5,
+    "fields": [
+      "timestamp",
+      "entrance",
+      "destination",
+      "transport",
+      "outbound"
+    ],
+    "applicationIdentity": "provided separately by App Routing when available",
+    "perConnectionByteCounters": "not claimed from Xray access logs",
+    "closeSemantics": "historical records cannot be closed"
+  },
+  "package_evidence": {
+    "runtimeBackend": "xray",
+    "coreDirectoryEntries": [
+      "mclash-xray"
+    ],
+    "geoDataDirectoryEntries": [
+      "LICENSE.txt",
+      "XRAY-SHA256SUMS",
+      "geoip.dat",
+      "geosite.dat"
+    ],
+    "legacyCoreBundled": false,
+    "legacyCoreSourceAsset": false,
+    "xraySha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+    "geoipSha256": "4149e607530f91da697bad4696f8c59f0a475af38e69405e4124438c9886c721",
+    "geositeSha256": "2064a1a4074e145d5022ac49f2c30341e7b7cb6c7948da4fdca973b3fa8411b2"
+  },
+  "limits": [
+    "Evidence uses an isolated ad-hoc application bundle. Developer ID signing and notarization are release workflow gates.",
+    "Production Network Extension and system proxy were not changed. Actual signed-provider activation and live Fake-IP remain unverified.",
+    "Public endpoint availability varies by node; no claim is made that every imported source node is reachable.",
+    "Hysteria2 was checked against the pinned core schema, without a live Hysteria2 endpoint.",
+    "Rule sets require inline text entries; remote rule-set refresh, MRS, DNS-over-TLS and process-name-only rules remain unsupported."
+  ],
+  "post_publish_checks": [
+    "Download published ZIP and verify SHA256SUMS",
+    "Verify Developer ID signatures and core identifier",
+    "Validate notarization ticket and Gatekeeper assessment",
+    "Verify the downloaded app contains only mclash-xray and lowercase Xray GEO databases",
+    "Exercise downloaded application in isolated storage without changing its signature"
+  ]
+}

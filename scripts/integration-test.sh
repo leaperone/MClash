@@ -139,6 +139,7 @@ compiler_sources=(
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationCompiler.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationDefaults.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationModels.swift"
+  "${repo_root}/Sources/MClashApp/Configuration/ProxyGroupPolicy.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationStore.swift"
   "${repo_root}/Sources/MClashApp/Configuration/ConfigurationValidation.swift"
   "${repo_root}/Sources/MClashApp/Configuration/NodeSelectors.swift"

@@ -120,8 +120,8 @@ struct ConfigurationProxyGroupPresetTests {
         })
     }
 
-    @Test("Regional selectors are source-scoped and remain empty without CUNOE")
-    func regionalSelectorsDoNotImportOtherSources() throws {
+    @Test("Generic sources populate common groups without provider-specific names")
+    func genericSourcesPopulateGroups() throws {
         var document = ConfigurationDocument.mclashDefault()
         let source = Source(kind: .subscription, displayName: "Other")
         document.sources = [source]
@@ -138,13 +138,15 @@ struct ConfigurationProxyGroupPresetTests {
              ConfigurationProxyGroupPreset.unitedStatesGroupName,
              ConfigurationProxyGroupPreset.japanGroupName].contains($0.name)
         }
-        #expect(groups.allSatisfy { group in
-            group.memberSelectors.isEmpty
-                && group.members.allSatisfy {
-                    if case .node = $0 { return false }
-                    return true
-                }
+        let us = try #require(groups.first(where: { $0.name == ConfigurationProxyGroupPreset.unitedStatesGroupName }))
+        #expect(us.members.contains { member in
+            if case .node(document.nodes[0].id) = member { return true }
+            return false
         })
+        #expect(result.document.proxyGroups.first(where: { $0.name == ConfigurationProxyGroupPreset.manualGroupName })?.members.contains {
+            if case .node(document.nodes[0].id) = $0 { return true }
+            return false
+        } == true)
     }
 
     @Test("A shared proxy rule is cloned before redirecting one configuration")

@@ -56,7 +56,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
         case .direct: AppLocalization.string("direct pass-through")
         case .reject: AppLocalization.string("rejected")
         case .failOpen: AppLocalization.string("fail-open")
-        case .mihomo: AppLocalization.string("mihomo proxy")
+        case .mihomo: AppLocalization.string("proxy core proxy")
         }
         let route = entry?.mihomoRoute
         return [
@@ -135,7 +135,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
                 AppLocalization.string("Response observed")
             } else {
                 AppLocalization.format(
-                    "Sent to Mihomo %@",
+                    "Sent to proxy core %@",
                     AppLocalization.string(activity.relayState.rawValue)
                 )
             }
@@ -156,7 +156,7 @@ private struct AppRoutingActivityPresentationSnapshot: Sendable {
             }
             if (activity.uploadDatagrams ?? 0) > 0 || activity.uploadBytes > 0 {
                 return AppLocalization.string(
-                    "Sent to Mihomo awaiting connections confirmation"
+                    "Sent to proxy core awaiting connections confirmation"
                 )
             }
             return AppLocalization.string("Waiting for Mihomo metadata")
@@ -1075,7 +1075,7 @@ struct AppRoutingView: View {
         switch model.networkCaptureState {
         case .on:
             AppLocalization.string(
-                "Start using an application routed through Mihomo. Provider-owned TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed."
+                "Start using an application routed through proxy core. Provider-owned TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed."
             )
         default:
             AppLocalization.string(
@@ -1248,7 +1248,7 @@ struct AppRoutingView: View {
             case let .group(group): group
             }
             guard let profileID = route.routingProfileID else {
-                return AppLocalization.format("Mihomo %@", target)
+                return AppLocalization.format("proxy core %@", target)
             }
             let name = model.profiles.first {
                 $0.id.rawValue == profileID.uuid
@@ -1409,7 +1409,7 @@ struct AppRoutingView: View {
     private var appRoutingEnableConfirmationMessage: String {
         var effects = [
             AppLocalization.string(
-                "MClash will restart the Mihomo core, which can close current connections."
+                "MClash will restart the proxy core, which can close current connections."
             ),
             AppLocalization.string("macOS may ask you to approve the MClash Network Filter.")
         ]
@@ -1774,7 +1774,7 @@ struct AppRoutingView: View {
         case .direct: AppLocalization.string("Direct")
         case .reject: AppLocalization.string("Reject")
         case .mihomo(.profileRules): AppLocalization.string("Mihomo Rules")
-        case .mihomo(.global): AppLocalization.string("Mihomo Global")
+        case .mihomo(.global): AppLocalization.string("Mihomo GLOBAL")
         case let .mihomo(.group(group)): group
         case let .mihomo(.profile(profileID, target)):
             AppLocalization.format(
@@ -1852,14 +1852,14 @@ private struct AppRoutingFlowInspector: View {
                         )
                         if let route = ledgerEntry?.mihomoRoute {
                             pipelineStage(
-                                "Mihomo Match",
+                                "proxy core Match",
                                 value: mihomoAssociationTitle,
                                 symbol: routeIsConfirmed
                                     ? "checkmark.seal.fill"
                                     : "questionmark.diamond.fill"
                             )
                             pipelineStage(
-                                "Mihomo Rule",
+                                "proxy core Rule",
                                 value: [route.rule, route.rulePayload]
                                     .compactMap { $0 }
                                     .joined(separator: " · "),
@@ -1874,7 +1874,7 @@ private struct AppRoutingFlowInspector: View {
                             )
                         } else if case .mihomo = activity.effectiveAction {
                             pipelineStage(
-                                "Mihomo Metadata",
+                                "proxy core Metadata",
                                 value: mihomoEvidenceTitle,
                                 symbol: mihomoEvidenceSymbol
                             )
@@ -2089,6 +2089,8 @@ private struct AppRoutingFlowInspector: View {
             routeIsConfirmed
                 ? AppLocalization.string("Mihomo route confirmed")
                 : mihomoEvidenceTitle
+        case .viaXray:
+            AppLocalization.string("Xray route observed")
         case .direct:
             activity.payloadBytesAreMeasured == true
                 ? AppLocalization.string("Direct · relayed and measured")
@@ -2109,6 +2111,7 @@ private struct AppRoutingFlowInspector: View {
     private var outcomeSymbol: String {
         switch ledgerEntry?.outcome {
         case .viaMihomo: "point.3.connected.trianglepath.dotted"
+        case .viaXray: "point.3.connected.trianglepath.dotted"
         case .direct: "arrow.right"
         case .rejected: "xmark.octagon.fill"
         case .failOpen: "arrow.uturn.right"
@@ -2178,6 +2181,8 @@ private struct AppRoutingFlowInspector: View {
             formattedByteCount(Int64(clamping: bytes))
         case .notMeasuredAfterHandoff:
             AppLocalization.string("Not measured after handoff")
+        case .notAvailable:
+            AppLocalization.string("Byte totals unavailable")
         case .notApplicable:
             AppLocalization.string("No payload relayed")
         }

@@ -354,12 +354,8 @@ actor CoreSupervisor {
 
         process.executableURL = configuration.binaryURL
         process.currentDirectoryURL = configuration.homeDirectory
-        process.arguments = [
-            "-d", configuration.homeDirectory.path,
-            "-f", configuration.configURL.path,
-            "-ext-ctl", "127.0.0.1:\(configuration.controllerPort)",
-            "-secret", configuration.secret
-        ]
+        process.arguments = configuration.launchArguments
+        process.environment = commandEnvironment(directory: configuration.homeDirectory)
         process.standardOutput = standardOutput
         process.standardError = standardError
 
@@ -421,7 +417,8 @@ actor CoreSupervisor {
                         endpoint: configuration.controllerEndpoint,
                         secret: configuration.secret,
                         version: version,
-                        startedAt: Date()
+                        startedAt: Date(),
+                        backend: configuration.backend
                     )
                 )
             )
@@ -429,7 +426,7 @@ actor CoreSupervisor {
             let launchWasCancelled = error is CancellationError
                 || runGeneration != desiredRunGeneration
             expectedStopIDs.insert(managed.id)
-            process.terminate()
+            if process.isRunning { process.terminate() }
             if managedProcess?.id == managed.id {
                 managedProcess = nil
                 cleanup(managed)
@@ -468,11 +465,7 @@ actor CoreSupervisor {
 
         let result = try await runProcess(
             executableURL: configuration.binaryURL,
-            arguments: [
-                "-t",
-                "-d", configuration.homeDirectory.path,
-                "-f", configuration.configURL.path
-            ],
+            arguments: configuration.validationArguments,
             currentDirectoryURL: configuration.homeDirectory
         )
 
@@ -506,6 +499,16 @@ actor CoreSupervisor {
             }
 
             do {
+                if case let .xray(apiSocketPath, version) = configuration.backend {
+                    let result = try await runProcess(
+                        executableURL: configuration.binaryURL,
+                        arguments: ["api", "statsquery", "--server=unix:" + apiSocketPath, "--timeout=1"],
+                        currentDirectoryURL: configuration.homeDirectory
+                    )
+                    if result.status == 0 { return version }
+                    try await Task.sleep(for: .milliseconds(200))
+                    continue
+                }
                 var request = URLRequest(
                     url: configuration.controllerEndpoint.appending(path: "version")
                 )
@@ -534,6 +537,8 @@ actor CoreSupervisor {
         guard let managedProcess, managedProcess.id == id else { return }
         let expected = expectedStopIDs.remove(id) != nil
         let configuration = lastLaunchConfiguration
+        let wasRunning: Bool
+        if case .running = currentState { wasRunning = true } else { wasRunning = false }
 
         cleanup(managedProcess)
         self.managedProcess = nil
@@ -553,6 +558,10 @@ actor CoreSupervisor {
         )
         emitLog(message, stream: .supervisor)
         transition(to: .failed(message))
+
+        // The pending start owns startup failure. A second restart here races
+        // its readiness check and can replace the original error with cancellation.
+        guard wasRunning else { return }
 
         guard crashTimestamps.count <= maximumCrashRestarts, let configuration else {
             emitLog("Automatic restart paused after repeated failures.", stream: .supervisor)
@@ -638,6 +647,32 @@ actor CoreSupervisor {
         }
     }
 
+    func runCommand(
+        executableURL: URL,
+        arguments: [String],
+        directory: URL
+    ) async throws -> Data {
+        try await acquireValidationSlot()
+        defer { validationInProgress = false }
+        let result = try await runProcess(
+            executableURL: executableURL,
+            arguments: arguments,
+            currentDirectoryURL: directory
+        )
+        guard result.status == 0 else {
+            throw CoreSupervisorError.configurationInvalid(
+                "Xray command failed with exit status \(result.status)."
+            )
+        }
+        return Data(result.standardOutput.utf8)
+    }
+
+    private func commandEnvironment(directory: URL) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["XRAY_LOCATION_ASSET"] = directory.path
+        return environment
+    }
+
     private func runProcess(
         executableURL: URL,
         arguments: [String],
@@ -665,6 +700,7 @@ actor CoreSupervisor {
                 process.executableURL = executableURL
                 process.arguments = arguments
                 process.currentDirectoryURL = currentDirectoryURL
+                process.environment = commandEnvironment(directory: currentDirectoryURL)
                 process.standardOutput = standardOutput
                 process.standardError = standardError
 

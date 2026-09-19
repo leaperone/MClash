@@ -46,6 +46,36 @@ struct ProfileStoreTests {
         #expect(profiles.count == 2)
     }
 
+    @Test("Pasted node links persist as a node source and survive reopening")
+    func pastedNodeLinksPersist() async throws {
+        let fixture = try Fixture()
+        let links = "trojan://secret@example.com:443#Test\n"
+        let profile = try await fixture.store.createPastedLinksProfile(name: "Clipboard", links: links)
+        #expect(profile.origin == .pastedLinks)
+        #expect(try await fixture.store.configurationData(for: profile.id) == Data(links.trimmingCharacters(in: .whitespacesAndNewlines).utf8))
+        let reopened = try ProfileStore(layout: fixture.layout)
+        #expect(try await reopened.metadata(for: profile.id).origin == .pastedLinks)
+    }
+
+    @Test("A text file of encoded node links survives file import and reopening")
+    func importsTextNodeSource() async throws {
+        let fixture = try Fixture()
+        let file = fixture.root.appendingPathComponent("My nodes.txt")
+        let content = Data(Data("trojan://secret@example.com:443#Test\n".utf8).base64EncodedString().utf8)
+        try content.write(to: file)
+
+        let imported = try await fixture.store.importProfile(from: file)
+        let reopened = try ProfileStore(layout: fixture.layout)
+        let stored = try await reopened.configurationData(for: imported.id)
+        let report = NodeOnlyImporter().importNodes(sourceID: SourceID(), yaml: stored)
+
+        #expect(stored == content)
+        #expect(imported.origin == .imported(originalFileName: "My nodes.txt"))
+        #expect(imported.name == "My nodes")
+        #expect(report.nodes.count == 1)
+        #expect(report.nodes.first?.host == "example.com")
+    }
+
     @Test("Activation persists state and validation failure keeps the previous runtime")
     func activationPersistsStateAndValidationFailureKeepsPreviousRuntime() async throws {
         let fixture = try Fixture()

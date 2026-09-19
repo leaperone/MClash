@@ -84,7 +84,7 @@
 "Application / Process" = "应用 / 进程";
 "Application to add" = "要添加的应用";
 "Applications Direct" = "应用直连";
-"Applications appear after Mihomo or App Routing observes a flow." = "Mihomo 或应用分流观测到流量后，应用会显示在这里。";
+"Applications appear after Mihomo or App Routing observes a flow." = "代理服务或应用分流观测到流量后，应用会显示在这里。";
 "Applied · Core restarted" = "已应用 · 内核已重启";
 "Applying…" = "正在应用…";
 "Approve MClash in System Settings → General → Login Items & Extensions → Network Extensions." = "请在“系统设置”→“通用”→“登录项与扩展”→“网络扩展”中批准 MClash。";
@@ -116,7 +116,7 @@
 "Choose a row to inspect its route, process, addresses, and metadata." = "选择一行以检查其路由、进程、地址和元数据。";
 "Choose a running application" = "选择运行中的应用";
 "Choose a running process" = "选择运行中的进程";
-"Choose which applications, processes, destinations, and ports are handled by Mihomo." = "选择由 Mihomo 处理的应用、进程、目标和端口。";
+"Choose which applications, processes, destinations, and ports are handled by Mihomo." = "选择由代理服务处理的应用、进程、目标和端口。";
 "Choose which ports MClash should use without changing your subscription." = "选择 MClash 应使用的端口，无需修改订阅。";
 "Clear" = "清除";
 "Clear History" = "清除历史记录";
@@ -137,7 +137,7 @@
 "Connect directly" = "直接连接";
 "Connect the active profile when MClash opens" = "MClash 打开时连接当前配置";
 "Connecting…" = "正在连接…";
-"Connection Inspector" = "连接检查器";
+"Connection Inspector" = "连接详情";
 "Connection data is stale while the live stream reconnects." = "实时数据流重连期间，连接数据可能已过时。";
 "Connections bypass proxy groups until Rule or Global mode is selected." = "选择规则或全局模式前，连接会绕过代理分组。";
 "Connections unavailable" = "连接不可用";
@@ -195,7 +195,7 @@
 "Entry Groups" = "入口分组";
 "Everything Looks Good" = "一切正常";
 "Executable path (optional)" = "可执行文件路径（可选）";
-"Existing connections stay online unless this rule needs a new Mihomo route listener." = "现有连接会保持在线，除非此规则需要新的 Mihomo 路由监听器。";
+"Existing connections stay online unless this rule needs a new Mihomo route listener." = "现有连接会保持在线，除非此规则需要新的代理服务路由监听器。";
 "Export Backup…" = "导出备份…";
 "Export Diagnostics…" = "导出诊断…";
 "Export current operating status and the filtered logs with recognized credentials redacted" = "导出当前运行状态和筛选后的日志，并隐去已识别的凭据";
@@ -214,7 +214,7 @@
 "History Range" = "历史范围";
 "Hits" = "命中次数";
 "IP Addresses & Networks" = "IP 地址与网段";
-"If Mihomo is unavailable" = "Mihomo 不可用时";
+"If Mihomo is unavailable" = "代理服务不可用时";
 "Import" = "导入";
 "Import & Activate" = "导入并启用";
 "Import & Activate…" = "导入并启用…";
@@ -303,7 +303,7 @@
 "Observed Traffic" = "已观测流量";
 "Off" = "关闭";
 "One value per line. An enabled empty list clears this field." = "每行一个值。启用的空列表会清除此字段。";
-"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "仅保留本地汇总数据。目标、IP、端口、PID、路径和原始错误永远不会持久化。";
+"Only local aggregates are kept. Destinations, IPs, ports, PIDs, paths, and raw errors are never persisted." = "流量历史汇总保存在这台 Mac 上。";
 "Only rules are imported; proxy servers and credentials are ignored." = "仅导入规则；代理服务器和凭据会被忽略。";
 "Open" = "打开";
 "Open Attention" = "打开注意事项";
@@ -390,7 +390,7 @@
 "Review Recovery" = "检查恢复情况";
 "Route" = "路由";
 "Route traffic" = "路由流量";
-"Routes appear as traffic decisions and Mihomo connections are observed." = "观测到流量决策和 Mihomo 连接后，路由会显示在这里。";
+"Routes appear as traffic decisions and Mihomo connections are observed." = "观测到流量决策和代理连接后，路由会显示在这里。";
 "Routing" = "路由";
 "Routing & macOS Proxy" = "路由与 macOS 代理";
 "Routing mode" = "路由模式";
@@ -439,17 +439,17 @@
 "The controller credential is generated in memory for each app launch. MClash does not request Keychain access when connecting." = "控制器凭据在每次应用启动时于内存中生成。MClash 连接时不会请求访问钥匙串。";
 "The flow was rejected before application payload was relayed." = "此流量在转发应用有效载荷之前已被拒绝。";
 "The newest 500 connections closed during this app session." = "本次应用会话中最近关闭的 500 个连接。";
-"This Mihomo runtime did not provide hit statistics for this rule." = "此 Mihomo 运行时未提供该规则的命中统计。";
+"This Mihomo runtime did not provide hit statistics for this rule." = "此代理服务未提供该规则的命中统计。";
 "This Week" = "本周";
 "This flow had already been intercepted before switching to Direct fallback, so App Routing counted bytes after upstream acceptance and application delivery." = "此流量在切换到直连回退前已被拦截，因此应用分流会统计上游接受及交付给应用后的字节数。";
 "This group did not expose any route dependencies." = "此分组未提供任何路由依赖项。";
 "This removes the stored profile from MClash. The subscription itself is not changed." = "这会从 MClash 中移除已存储的配置，但不会更改订阅本身。";
-"This replaces the complete DNS section; fields left on Use Default use mihomo defaults, not values from the profile." = "这会替换完整的 DNS 部分；保留为“使用默认值”的字段将采用 Mihomo 默认值，而非配置中的值。";
+"This replaces the complete DNS section; fields left on Use Default use mihomo defaults, not values from the profile." = "这会替换完整的 DNS 部分；保留为“使用默认值”的字段将采用代理服务默认值，而非配置中的值。";
 "Today" = "今天";
 "Topology" = "拓扑";
 "Topology zoom" = "拓扑缩放";
 "Traffic" = "连接记录";
-"Traffic Workspace" = "流量工作区";
+"Traffic Workspace" = "查看";
 "Transferred" = "已传输";
 "Transparent Proxy Ports" = "透明代理端口";
 "Transport" = "传输";
@@ -511,7 +511,7 @@
 "Keep Running" = "继续运行";
 "Keep Running hides MClash windows while the menu bar item remains available." = "继续运行会隐藏 MClash 窗口，菜单栏项目仍可使用。";
 "MClash Couldn’t Restore Network Settings" = "MClash 无法恢复网络设置";
-"Mihomo stays connected and continues providing local proxy service." = "Mihomo 会保持连接，并继续提供本地代理服务。";
+"Mihomo stays connected and continues providing local proxy service." = "代理服务会保持连接，并继续提供本地代理服务。";
 "Quit Anyway" = "仍要退出";
 "Quit Completely" = "完全退出";
 "Quit Completely stops MClash and its active networking services." = "完全退出会停止 MClash 及其活跃的网络服务。";
@@ -527,8 +527,8 @@
 "Local Proxy Port" = "本地代理端口";
 "Choose one Mixed port for HTTP, HTTPS proxy, and SOCKS5 clients." = "为 HTTP、HTTPS 代理和 SOCKS5 客户端选择同一个 Mixed 端口。";
 "Current default profile" = "当前默认配置文件";
-"Each selected profile runs in its own Mihomo session with an independent Mixed port and private App Routing listener." = "每个选中的配置文件都运行在独立的 Mihomo 会话中，并拥有独立的 Mixed 端口和私有应用分流监听器。";
-"Policy-group routing is currently available only for the default profile. Other profiles support Profile Rules and GLOBAL." = "策略组路由目前仅适用于默认配置文件；其他配置文件支持“配置规则”和 GLOBAL。";
+"Each selected profile runs in its own Mihomo session with an independent Mixed port and private App Routing listener." = "每个选中的配置文件都运行在独立的代理服务会话中，并拥有独立的 Mixed 端口和私有应用分流监听器。";
+"Policy-group routing is currently available only for the default profile. Other profiles support Profile Rules and GLOBAL." = "策略组路由目前仅适用于默认配置文件；其他配置文件支持“配置规则”和 all traffic。";
 "Profile Session" = "配置文件会话";
 "Run for App Routing" = "用于应用分流";
 "Mixed port" = "Mixed 端口";
@@ -539,7 +539,7 @@
 "Unavailable profile" = "不可用的配置文件";
 "Unavailable profile · %@" = "不可用的配置文件 · %@";
 "The default profile always runs when MClash is connected. HTTP, HTTPS proxy, and SOCKS5 all share this Mixed port." = "MClash 连接时默认配置文件始终运行。HTTP、HTTPS 代理和 SOCKS5 共用此 Mixed 端口。";
-"Enable this session to keep the profile available as an App Routing target. It runs in its own Mihomo process and uses this Mixed port for HTTP and SOCKS5." = "启用后，此配置文件可作为应用分流目标。它会运行在独立的 Mihomo 进程中，并通过此 Mixed 端口提供 HTTP 和 SOCKS5。";
+"Enable this session to keep the profile available as an App Routing target. It runs in its own Mihomo process and uses this Mixed port for HTTP and SOCKS5." = "启用后，此配置文件可作为应用分流目标。它会运行在独立的代理服务进程中，并通过此 Mixed 端口提供 HTTP 和 SOCKS5。";
 "Use a Mixed port from 1 to 65535." = "请输入 1 到 65535 之间的 Mixed 端口。";
 "One default profile handles normal traffic. Open a Mixed port only for additional profiles you want available to apps or developer tools." = "默认配置负责普通流量；只有需要提供给应用或开发工具使用的其他配置，才需要打开 Mixed 端口。";
 "Import a local YAML profile" = "导入本地 YAML 配置";
@@ -592,7 +592,7 @@
 "Protocol" = "协议";
 "Follow Profile Rules" = "遵循配置规则";
 "Named Sub-rule" = "命名子规则";
-"Mihomo GLOBAL" = "Mihomo GLOBAL";
+"Mihomo GLOBAL" = "全部流量";
 "Policy Group" = "策略组";
 "Proxy Node" = "代理节点";
 "Loading routing targets…" = "正在加载路由目标…";
@@ -616,19 +616,19 @@
 "System Proxy" = "系统代理";
 "App Routing · %d active rule" = "应用分流 · %d 条活跃规则";
 "App Routing · %d active rules" = "应用分流 · %d 条活跃规则";
-"Local proxy listeners only" = "仅本地代理监听器";
+"Local proxy listeners only" = "通过本地代理地址接入";
 "Traffic capture off" = "流量捕获已关闭";
 "Routing needs attention" = "路由需要注意";
 "Preparing routing state" = "正在准备路由状态";
 "MClash is applying a network change and will verify the resulting state." = "MClash 正在应用网络更改，并会验证最终状态。";
 "Choose a profile to start routing traffic." = "选择配置以开始路由流量。";
 "The selected profile is ready when you want to connect." = "已选配置已准备好，连接即可开始。";
-"Core ready · macOS capture off" = "内核就绪 · macOS 流量捕获已关闭";
+"Core ready · macOS capture off" = "代理已启动 · 应用分流未启用";
 "Only apps explicitly configured to use MClash's local proxy listeners are routed." = "只有明确配置使用 MClash 本地代理监听器的应用会被路由。";
 "Traffic routing is active" = "流量路由已启用";
 "Routing is active with warnings" = "路由已启用，但存在警告";
-"Mihomo last reported a non-direct route %@." = "Mihomo 最近一次报告非直连路由：%@。";
-"Capture configuration is verified; Mihomo has not yet reported a non-direct route." = "捕获配置已验证；Mihomo 尚未报告非直连路由。";
+"Mihomo last reported a non-direct route %@." = "代理服务最近一次报告非直连路由：%@。";
+"Capture configuration is verified; Mihomo has not yet reported a non-direct route." = "捕获配置已验证；代理服务尚未报告非直连路由。";
 "Provider verification failed: %@" = "提供方验证失败：%@";
 "MClash lost contact with the App Routing provider after %@ consecutive activity checks. Traffic capture can no longer be verified. Last error: %@" = "MClash 在连续 %@ 次活动检查后失去与应用分流提供方的联系。无法再验证流量捕获。最后错误：%@";
 "App Routing is no longer verified after %@ consecutive provider checks. Expected active revision %@. Last error: %@" = "连续 %@ 次提供方检查后，应用分流不再通过验证。预期活动修订版本 %@。最后错误：%@";
@@ -641,14 +641,14 @@
 "Fake IP filter" = "Fake IP 过滤器";
 "Prepend rules" = "前置规则";
 "Append rules" = "追加规则";
-"mihomo Core" = "mihomo 内核";
+"mihomo Core" = "代理服务";
 "Live Data" = "实时数据";
-"Mihomo Rules" = "Mihomo 规则";
+"Mihomo Rules" = "规则";
 "Traffic History" = "流量历史记录";
 "View Recovery Log" = "查看恢复日志";
 "The proxy core is not running" = "代理内核未运行";
-"No new traffic can be routed through Mihomo until the core reconnects." = "在内核重新连接前，新的流量无法经由 Mihomo 路由。";
-"Mihomo controls are unavailable" = "Mihomo 控制功能不可用";
+"No new traffic can be routed through Mihomo until the core reconnects." = "在内核重新连接前，新的流量无法经由代理服务路由。";
+"Mihomo controls are unavailable" = "代理服务控制功能不可用";
 "Routing may continue, but MClash cannot verify routes, connections, or live statistics." = "路由可能仍在继续，但 MClash 无法验证路由、连接或实时统计数据。";
 "The macOS system proxy is unverified" = "无法验证 macOS 系统代理";
 "System proxy verification is retrying" = "正在重试验证系统代理";
@@ -665,11 +665,11 @@
 "App Routing is not intercepting traffic" = "应用分流未拦截流量";
 "Per-application rules are currently not being applied." = "当前未应用按应用规则。";
 "A previous network state could not be fully restored" = "无法完全恢复之前的网络状态";
-"App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change." = "应用分流、mihomo 内核或 macOS 系统代理可能与更改失败前的状态不一致。";
+"App Routing, the mihomo core, or the macOS System Proxy may not match the state from before the failed change." = "应用分流、代理服务或 macOS 系统代理可能与更改失败前的状态不一致。";
 "App Routing stopped after DNS verification failed" = "DNS 验证失败后，应用分流已停止";
 "DNS routing is unverified" = "无法验证 DNS 路由";
 "MClash stopped application capture and DNS together; macOS system DNS was restored." = "MClash 已同时停止应用捕获和 DNS，并恢复了 macOS 系统 DNS。";
-"MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener." = "MClash 无法确认普通 DNS 请求是否到达其专用 Mihomo 监听器。";
+"MClash cannot confirm that ordinary DNS is reaching its private Mihomo listener." = "MClash 无法确认普通 DNS 请求是否到达其专用代理服务监听器。";
 "Retry App Routing" = "重试应用分流";
 "%@ data is reconnecting" = "%@数据正在重新连接";
 "Traffic rate" = "流量速率";
@@ -679,11 +679,11 @@
 "App Routing activity" = "应用分流活动";
 "The displayed upload and download rates may be stale until the stream reconnects." = "在数据流重新连接前，显示的上传和下载速率可能不是最新数据。";
 "The displayed active connection count and routes may be stale until the stream reconnects." = "在数据流重新连接前，显示的活跃连接数和路由可能不是最新数据。";
-"New Mihomo log entries may be missing until the stream reconnects." = "在数据流重新连接前，可能会缺少新的 Mihomo 日志条目。";
+"New Mihomo log entries may be missing until the stream reconnects." = "在数据流重新连接前，可能会缺少新的代理服务日志条目。";
 "Node selections, health, and delay information may be stale." = "节点选择、健康状态和延迟信息可能不是最新数据。";
 "Flow decisions and App Routing byte counts may be stale until the provider responds." = "在提供方响应前，流量决策和应用分流字节数可能不是最新数据。";
 "Open Activity" = "打开活动";
-"Mihomo rules could not be loaded" = "无法加载 Mihomo 规则";
+"Mihomo rules could not be loaded" = "无法加载规则";
 "The core may still route traffic, but MClash cannot explain or inspect the active rule set." = "内核可能仍在路由流量，但 MClash 无法说明或检查当前生效的规则集。";
 "Open Rules" = "打开规则";
 "Some providers could not be loaded" = "无法加载部分提供方";
@@ -729,7 +729,7 @@
 "Available %@ of %@" = "%@/%@ 可用";
 "Back to Overview" = "返回概览";
 "Backups may contain subscription URLs and proxy credentials. Store them securely." = "备份可能包含订阅 URL 和代理凭据，请妥善保管。";
-"Bundled mihomo Alpha" = "内置 mihomo Alpha";
+"Bundled mihomo Alpha" = "内置代理服务";
 "Checking" = "正在检查";
 "Choose the Profile whose proxy groups you want to configure" = "选择要配置代理组的配置";
 "Close Connection" = "关闭连接";
@@ -888,7 +888,7 @@
 "%@ unmeasured; no measured payload yet" = "%@ 未计量；尚无计量数据";
 "%@ uses %@ as a dialer dependency" = "%@ 将 %@ 用作拨号器依赖项";
 "%@ uses %@ as its dialer dependency" = "%@ 将 %@ 用作其拨号器依赖项";
-"%@ was measured by Mihomo or the App Routing relay. %@" = "%@ 由 Mihomo 或应用分流中继测量。%@";
+"%@ was measured by Mihomo or the App Routing relay. %@" = "%@ 由代理服务或应用分流中继测量。%@";
 "%@ · %@" = "%@ · %@";
 "%@ · %@ pass-through unmeasured" = "%@ · %@ 直接放行未计量";
 "%@ · %d running" = "%@ · %d 个正在运行";
@@ -943,7 +943,7 @@
 "Advanced Matching" = "高级匹配";
 "All" = "全部";
 "All TCP traffic" = "所有 TCP 流量";
-"All displayed bytes were measured by Mihomo or the App Routing relay." = "显示的所有字节均由 Mihomo 或应用分流中继测量。";
+"All displayed bytes were measured by Mihomo or the App Routing relay." = "显示的所有字节均由代理服务或应用分流中继测量。";
 "Allow LAN" = "允许局域网访问";
 "Another MClash automation server is already running (PID %d)" = "另一个 MClash 自动化服务器已在运行（PID %d）";
 "Another backup restore transaction is still pending." = "另一个备份恢复操作仍在等待完成。";
@@ -960,14 +960,14 @@
 "App Routing On · revision %@" = "应用分流已开启 · 修订版本 %@";
 "App Routing Waiting for Connection" = "应用分流正在等待连接";
 "App Routing activation failed verification: %@" = "应用分流启用验证失败：%@";
-"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@" = "由于无法验证 DNS 提供方心跳或 Mihomo 后端，应用分流和 DNS 路由已一并停止。macOS 系统 DNS 已恢复。上次错误：%@";
+"App Routing and DNS Routing were stopped together because the DNS Provider heartbeat or Mihomo backend could not be verified. macOS system DNS was restored. Last error: %@" = "由于无法验证 DNS 提供方心跳或代理服务后端，应用分流和 DNS 路由已一并停止。macOS 系统 DNS 已恢复。上次错误：%@";
 "App Routing could not start. Review Attention or retry." = "应用分流无法启动。请查看“注意事项”或重试。";
 "App Routing couldn’t start: %@" = "应用分流无法启动：%@";
 "App Routing did not reach a verified running state." = "应用分流未进入已验证的运行状态。";
 "App Routing flow from %@ to %@" = "从 %@ 到 %@ 的应用分流流量";
 "App Routing is off. Saved rules are not intercepting traffic." = "应用分流已关闭。已保存的规则不会拦截流量。";
 "App Routing relay" = "应用分流中继";
-"App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@." = "应用分流请求 %@ 个不同的 Mihomo 路由目标；安全上限为 %@ 个。";
+"App Routing requests %@ distinct Mihomo route targets; the safe maximum is %@." = "应用分流请求 %@ 个不同的代理服务路由目标；安全上限为 %@ 个。";
 "App Routing targets profile %@, but that profile is no longer available." = "应用分流指向配置 %@，但该配置已不可用。";
 "App Routing was disabled when this flow arrived." = "此流量到达时，应用分流已停用。";
 "App Routing · %@ active rule" = "应用分流 · %@ 条活跃规则";
@@ -975,7 +975,7 @@
 "App Routing, %@, %@" = "应用分流，%@，%@";
 "App Rule" = "应用规则";
 "App rule %@" = "应用规则 %@";
-"App rule %@ · awaiting Mihomo correlation" = "应用规则 %@ · 正在等待 Mihomo 关联";
+"App rule %@ · awaiting Mihomo correlation" = "应用规则 %@ · 正在等待代理服务关联";
 "Application identifier pattern" = "应用标识符模式";
 "Application mask %@ is unsupported." = "不支持应用掩码 %@。";
 "Application traffic and DNS are active through MClash." = "应用流量和 DNS 均由 MClash 处理。";
@@ -1002,7 +1002,7 @@
 "Automation refused an insecure path: %@" = "自动化操作拒绝了不安全的路径：%@";
 "Automation socket path is too long: %@" = "自动化套接字路径过长：%@";
 "Available" = "可用";
-"Awaiting Mihomo correlation" = "正在等待 Mihomo 关联";
+"Awaiting Mihomo correlation" = "正在等待代理服务关联";
 "Backs Default Profile · %@" = "默认配置来源 · %@";
 "Backup packages containing symbolic links are not supported." = "不支持包含符号链接的备份包。";
 "Bind address" = "绑定地址";
@@ -1024,7 +1024,7 @@
 "Checked %@ · No update yet" = "已检查 %@ · 暂无更新";
 "Checking Configuration…" = "正在检查配置…";
 "Checking configuration" = "正在检查配置";
-"Choose a Mihomo policy group." = "请选择 Mihomo 策略组。";
+"Choose a Mihomo policy group." = "请选择策略组。";
 "Choose a backup destination outside MClash application data." = "请选择 MClash 应用数据之外的备份位置。";
 "Choose a proxy node" = "选择代理节点";
 "Choose a real Profile to back this stable entry point." = "选择用于此固定入口的配置。";
@@ -1058,9 +1058,9 @@
 "Connection stream interval must be greater than zero." = "连接数据流间隔必须大于零。";
 "Connections entering this port use the Profile's normal rules." = "进入此端口的连接会使用该配置的常规规则。";
 "Connections start at the named sub-rule “%@”." = "连接从名为“%@”的子规则开始。";
-"Connections use Mihomo's GLOBAL policy selection." = "连接使用 Mihomo 的 GLOBAL 策略选择。";
+"Connections use Mihomo's GLOBAL policy selection." = "连接使用代理服务的 all traffic 策略选择。";
 "Contains %@" = "包含 %@";
-"Converted from Proxifier %@ to Mihomo profile rules." = "已从 Proxifier %@ 转换为 Mihomo 配置规则。";
+"Converted from Proxifier %@ to Mihomo profile rules." = "已从 Proxifier %@ 转换为配置规则。";
 "Copied" = "已复制";
 "Copy %@" = "复制 %@";
 "Copy %@: %@" = "复制 %@：%@";
@@ -1191,9 +1191,9 @@
 "Identifier pattern %@ matched the %@; this is a name/pattern match, not an exact signature identity" = "标识符模式 %@ 与 %@ 匹配；这是名称或模式匹配，并非精确的签名身份";
 "Identity unavailable" = "身份不可用";
 "Import a Profile before configuring proxy groups." = "配置代理分组前，请先导入配置。";
-"Import a mihomo profile" = "导入 Mihomo 配置";
+"Import a mihomo profile" = "导入代理服务配置";
 "Import explicitly selected Proxifier rules" = "导入明确选择的 Proxifier 规则";
-"Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly." = "Mihomo 不可用时，导入的代理和链规则会拒绝连接，而不是静默直连。";
+"Imported Proxy and Chain rules reject connections while Mihomo is unavailable instead of silently connecting directly." = "代理服务不可用时，导入的代理和链规则会拒绝连接，而不是静默直连。";
 "Imported Rule %d" = "导入的规则 %d";
 "Imported from %@" = "从 %@ 导入";
 "Inbound" = "入站";
@@ -1209,9 +1209,9 @@
 "Lifecycle" = "生命周期";
 "Listen address" = "监听地址";
 "Live" = "实时";
-"Live connections are streamed from the local Mihomo controller." = "实时连接由本地 Mihomo 控制器传输。";
+"Live connections are streamed from the local Mihomo controller." = "实时连接由本地代理服务传输。";
 "Live data reconnecting · last-known rows shown" = "正在重新连接实时数据 · 显示最后一次已知记录";
-"Live rollback failed without stopping Mihomo: %@" = "实时回滚失败，且未停止 Mihomo：%@";
+"Live rollback failed without stopping Mihomo: %@" = "实时回滚失败，且未停止代理服务：%@";
 "Load balancing chooses a route independently for each connection." = "负载均衡会为每个连接单独选择路由。";
 "LoadBalance · per connection" = "负载均衡 · 每个连接";
 "Loading this Profile’s proxy groups…" = "正在加载此配置的代理分组…";
@@ -1231,7 +1231,7 @@
 "MClash could not read its profile storage. An empty list here does not mean your profiles were deleted.\n\n%@" = "MClash 无法读取配置存储。此处列表为空并不表示配置已被删除。\n\n%@";
 "MClash could not read the persistent traffic history: %@" = "MClash 无法读取持久流量历史：%@";
 "MClash could not restore the previous macOS proxy settings, so the running core was left active." = "MClash 无法恢复先前的 macOS 代理设置，因此内核会继续运行。";
-"MClash could not stop Network Extension capture, so the mihomo core was left active." = "MClash 无法停止网络扩展捕获，因此 Mihomo 内核继续运行。";
+"MClash could not stop Network Extension capture, so the mihomo core was left active." = "MClash 无法停止网络扩展捕获，因此代理服务继续运行。";
 "MClash could not update the traffic history retention period: %@" = "MClash 无法更新流量历史保留期限：%@";
 "MClash could not verify or restore the macOS system proxy after %@ consecutive attempts. Last error: %@" = "连续尝试 %@ 次后，MClash 仍无法验证或恢复 macOS 系统代理。上次错误：%@";
 "MClash could not write the persistent traffic history: %@" = "MClash 无法写入持久流量历史：%@";
@@ -1239,7 +1239,7 @@
 "MClash is still finishing startup activation. Quit was cancelled so macOS network state cannot be abandoned mid-transaction." = "MClash 仍在完成启动时的启用操作。退出已取消，以免操作进行中遗留 macOS 网络状态。";
 "MClash opened traffic history but could not verify it: %@" = "MClash 已打开流量历史，但无法验证：%@";
 "MClash preserved the invalid document at %@ and regenerated a safe plan for the current default profile. Review the per-profile Mixed ports before re-enabling auxiliary sessions." = "MClash 已将无效文档保存在 %@，并为当前默认配置重新生成安全计划。重新启用辅助会话前，请检查各配置的 Mixed 端口。";
-"MClash will restart the Mihomo core, which can close current connections." = "MClash 将重新启动 Mihomo 内核，这可能会关闭当前连接。";
+"MClash will restart the Mihomo core, which can close current connections." = "MClash 将重新启动代理服务，这可能会关闭当前连接。";
 "MClash, %@" = "MClash，%@";
 "MClash, connected, controls unavailable: %@" = "MClash，已连接，控制不可用：%@";
 "MClash, core running, macOS System Proxy off" = "MClash，内核运行中，macOS 系统代理已关闭";
@@ -1253,24 +1253,24 @@
 "Manual selection" = "手动选择";
 "Member of %@" = "%@ 的成员";
 "Members" = "成员";
-"Mihomo" = "Mihomo";
-"Mihomo %@" = "Mihomo %@";
-"Mihomo Global" = "Mihomo 全局";
-"Mihomo Match" = "Mihomo 匹配";
-"Mihomo Metadata" = "Mihomo 元数据";
-"Mihomo Rule" = "Mihomo 规则";
-"Mihomo complete" = "Mihomo 已完成";
-"Mihomo connections" = "Mihomo 连接";
-"Mihomo controller: %@" = "Mihomo 控制器：%@";
-"Mihomo policy group" = "Mihomo 策略组";
-"Mihomo profile rules" = "Mihomo 配置规则";
-"Mihomo ready" = "Mihomo 已就绪";
-"Mihomo route" = "Mihomo 路由";
-"Mihomo route confirmed" = "Mihomo 路由已确认";
-"Mihomo rule statistics have not been loaded." = "尚未加载 Mihomo 规则统计。";
-"Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "Mihomo 规则统计上次加载于 %@。此页面打开时每 15 秒刷新一次。";
-"Mihomo · %@" = "Mihomo · %@";
-"Mihomo · resolving" = "Mihomo · 正在解析";
+"Mihomo" = "代理服务";
+"Mihomo %@" = "代理服务%@";
+"Mihomo Global" = "全部流量";
+"Mihomo Match" = "代理服务匹配";
+"Mihomo Metadata" = "路由详情";
+"Mihomo Rule" = "规则";
+"Mihomo complete" = "代理服务已完成";
+"Mihomo connections" = "代理连接";
+"Mihomo controller: %@" = "代理服务：%@";
+"Mihomo policy group" = "策略组";
+"Mihomo profile rules" = "配置规则";
+"Mihomo ready" = "代理服务已就绪";
+"Mihomo route" = "代理服务路由";
+"Mihomo route confirmed" = "代理服务路由已确认";
+"Mihomo rule statistics have not been loaded." = "尚未加载规则统计。";
+"Mihomo rule statistics last loaded %@. They refresh every 15 seconds while this page is open." = "规则统计上次加载于 %@。此页面打开时每 15 秒刷新一次。";
+"Mihomo · %@" = "代理服务· %@";
+"Mihomo · resolving" = "代理服务· 正在解析";
 "Missing" = "缺失";
 "Missing runtime node" = "缺少运行时节点";
 "Mixed %@" = "Mixed %@";
@@ -1296,7 +1296,7 @@
 "No %@ entries are currently available." = "当前没有可用的 %@ 条目。";
 "No %@ entries contain “%@”." = "没有 %@ 条目包含“%@”。";
 "No %@ sample was received for more than %@ seconds." = "未收到 %@ 样本已超过 %@ 秒。";
-"No Mihomo connection association" = "未关联 Mihomo 连接";
+"No Mihomo connection association" = "未关联代理连接";
 "No additional error was reported." = "未报告其他错误。";
 "No application condition could be converted safely." = "无法安全转换任何应用条件。";
 "No backing Profile selected" = "未选择默认配置来源";
@@ -1326,7 +1326,7 @@
 "One or more auxiliary profile cores could not be confirmed stopped." = "无法确认一个或多个辅助配置内核已停止。";
 "One or more auxiliary profile sessions could not be stopped." = "无法停止一个或多个辅助配置会话。";
 "One or more profile sessions could not start: %@" = "无法启动一个或多个配置会话：%@";
-"Only routing rules are imported. Proxifier proxy servers, chains, addresses, and credentials are never imported." = "仅导入路由规则。绝不会导入 Proxifier 代理服务器、链、地址和凭据。";
+"Only routing rules are imported. Proxifier proxy servers, chains, addresses, and credentials are never imported." = "仅导入路由规则。绝不会导入 Proxifier代理服务器、链、地址和凭据。";
 "Open App Routing for provider status and recovery actions." = "打开“应用分流”以查看提供方状态和恢复操作。";
 "Open Port" = "打开端口";
 "Open the backup restore panel" = "打开备份恢复面板";
@@ -1350,11 +1350,11 @@
 "Port %@ is unsupported." = "不支持端口 %@。";
 "Port must be 1–65535 or a range such as 8000-9000; received %@." = "端口必须是 1–65535，或类似 8000-9000 的范围；收到的值为 %@。";
 "Prefer HTTP/3" = "优先使用 HTTP/3";
-"Preferred node: %@. The active node still follows mihomo health checks." = "首选节点：%@。当前节点仍由 Mihomo 健康检查决定。";
+"Preferred node: %@. The active node still follows mihomo health checks." = "首选节点：%@。当前节点仍由代理服务健康检查决定。";
 "Previous %@" = "上一个 %@";
 "Previously selected application" = "先前选择的应用";
 "Primary profile %@ is not present in the runtime plan." = "运行时计划中没有主配置 %@。";
-"Probable Mihomo match" = "可能的 Mihomo 匹配";
+"Probable Mihomo match" = "可能的代理服务匹配";
 "Probable only · same destination and protocol · start time Δ%@s · %@" = "仅为推测 · 目标和协议相同 · 启动时间差 %@ 秒 · %@";
 "Process %@" = "进程 %@";
 "Profile %@ appears more than once in the runtime plan." = "配置 %@ 在运行时计划中出现多次。";
@@ -1386,7 +1386,7 @@
 "Proxy Groups Could Not Refresh" = "无法刷新代理分组";
 "Proxy Inspector" = "代理检查器";
 "Proxy Path" = "代理路径";
-"Proxy and Chain actions use the current Mihomo profile rules in MClash." = "代理和链操作使用 MClash 中当前 Mihomo 配置的规则。";
+"Proxy and Chain actions use the current Mihomo profile rules in MClash." = "代理和链操作使用 MClash 中当前代理服务配置的规则。";
 "Proxy choices may be stale while MClash reconnects to the Alpha API." = "MClash 重新连接 Alpha API 时，代理选项可能已过时。";
 "Proxy group name must not be empty." = "代理分组名称不能为空。";
 "Proxy host must not be empty." = "代理主机不能为空。";
@@ -1450,7 +1450,7 @@
 "Root group %@ is unavailable." = "根分组 %@ 不可用。";
 "Route Pipeline" = "路由流程";
 "Route confirmed" = "路由已确认";
-"Route confirmed by Mihomo /connections" = "Mihomo /connections 已确认路由";
+"Route confirmed by Mihomo /connections" = "连接记录已确认路由";
 "Route unavailable" = "路由不可用";
 "Routes" = "路由";
 "Routing Note" = "路由说明";
@@ -1464,7 +1464,7 @@
 "Rule Payload" = "规则内容";
 "Rule provider name must not be empty." = "规则提供方名称不能为空。";
 "Rule providers: %@" = "规则提供方：%@";
-"Rules are read from the active mihomo runtime configuration." = "规则从当前 Mihomo 运行时配置中读取。";
+"Rules are read from the active mihomo runtime configuration." = "规则从当前代理服务配置中读取。";
 "Rules are saved. Connect MClash to start routing." = "规则已保存。连接 MClash 后即可开始路由。";
 "Rules are saved. DNS is excluded in App Routing options." = "规则已保存。应用分流选项中已排除 DNS。";
 "Rules are saved. DNS will start together with App Routing." = "规则已保存。DNS 将随应用分流一起启动。";
@@ -1486,12 +1486,12 @@
 "Select this rule for import." = "选择此规则以导入。";
 "Selected by %@ on the current route" = "当前路由上由 %@ 选择";
 "Send matching traffic to %@ and apply that profile's routing rules." = "将匹配流量发送到 %@，并应用该配置的路由规则。";
-"Send matching traffic to %@'s GLOBAL target through a dedicated private listener." = "将匹配流量通过专用监听器发送到 %@ 的 GLOBAL 目标。";
+"Send matching traffic to %@'s GLOBAL target through a dedicated private listener." = "将匹配流量通过专用监听器发送到 %@ 的 all traffic 目标。";
 "Send matching traffic to the selected policy group in %@ through its own private listener." = "将匹配流量通过专用监听器发送到 %@ 中选择的策略组。";
-"Sent to Mihomo" = "已发送到 Mihomo";
-"Sent to Mihomo %@" = "已发送到 Mihomo %@";
-"Sent to Mihomo awaiting connections confirmation" = "已发送到 Mihomo，正在等待连接确认";
-"Sent to Mihomo; awaiting /connections confirmation" = "已发送到 Mihomo；正在等待 /connections 确认";
+"Sent to Mihomo" = "已发送到代理服务";
+"Sent to Mihomo %@" = "已发送到代理服务%@";
+"Sent to Mihomo awaiting connections confirmation" = "已发送到代理服务，正在等待连接确认";
+"Sent to Mihomo; awaiting /connections confirmation" = "已通过代理发送；正在等待路由确认";
 "Settings applied · Core restarted." = "设置已应用 · 内核已重新启动。";
 "Settings are already up to date." = "设置已是最新状态。";
 "Settings saved for the next connection." = "设置已保存，将在下次连接时生效。";
@@ -1512,7 +1512,7 @@
 "Source: %@\nSelected rules: %d\nExpected revision: %@" = "来源：%@\n所选规则：%d\n预期修订版本：%@";
 "Special Proxy" = "特殊代理";
 "Special Rules" = "特殊规则";
-"Start using an application routed through Mihomo. Provider-owned TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed." = "开始使用一个通过 Mihomo 路由的应用。由提供方接管的 TCP 和 UDP 连接会保留在此处直至关闭。普通直连流量会立即交还 macOS，因此无法观测其持续时间和速度。";
+"Start using an application routed through Mihomo. Provider-owned TCP and UDP connections stay here until they close. Ordinary Direct traffic returns to macOS immediately, so its lifetime and speed cannot be observed." = "开始使用一个通过代理服务路由的应用。由提供方接管的 TCP 和 UDP 连接会保留在此处直至关闭。普通直连流量会立即交还 macOS，因此无法观测其持续时间和速度。";
 "Started" = "已启动";
 "Starting App Routing" = "正在启动应用分流";
 "Starting application and DNS routing…" = "正在启动应用和 DNS 路由…";
@@ -1560,7 +1560,7 @@
 "The active configuration was not found at %@." = "在 %@ 未找到当前配置。";
 "The active core could not restart on its new Mixed port." = "当前内核无法在新的 Mixed 端口上重新启动。";
 "The active core could not stop before its Mixed port changed." = "更改 Mixed 端口前，当前内核无法停止。";
-"The active core did not expose the GLOBAL group." = "当前内核未提供 GLOBAL 分组。";
+"The active core did not expose the GLOBAL group." = "当前内核未提供 all traffic 分组。";
 "The active profile does not expose a usable Mixed proxy port." = "当前配置未提供可用的 Mixed 代理端口。";
 "The application code object could not be opened (OSStatus %@)." = "无法打开应用代码对象（OSStatus %@）。";
 "The application code signature is invalid (OSStatus %@)." = "应用代码签名无效（OSStatus %@）。";
@@ -1607,7 +1607,7 @@
 "The flow metadata signing identifier disagreed with the verified running code." = "流量元数据中的签名标识符与已验证的运行代码不一致。";
 "The flow used a destination endpoint type that App Routing cannot match." = "此流量使用了应用分流无法匹配的目标端点类型。";
 "The flow was handed back to macOS without a rule match." = "未匹配到规则，此流量已交还 macOS。";
-"The generated Mihomo configuration is not valid UTF-8." = "生成的 Mihomo 配置不是有效的 UTF-8。";
+"The generated Mihomo configuration is not valid UTF-8." = "生成的代理服务配置不是有效的 UTF-8。";
 "The imported profile filename must end in .yaml or .yml." = "导入的配置文件名必须以 .yaml 或 .yml 结尾。";
 "The imported profile must be between 1 byte and %@ bytes." = "导入的配置大小必须在 1 字节到 %@ 字节之间。";
 "The imported rules cannot be appended without renumbering the current rule set." = "若不重新编号当前规则集，则无法追加导入的规则。";
@@ -1622,17 +1622,17 @@
 "The macOS system proxy could not be restored after restarting the cores." = "重启各内核后无法恢复 macOS 系统代理。";
 "The macOS system proxy could not be restored after the port change." = "更改端口后无法恢复 macOS 系统代理。";
 "The macOS system proxy still did not match MClash after reapplying it." = "重新应用后，macOS 系统代理仍与 MClash 不匹配。";
-"The mihomo controller URL is invalid." = "Mihomo 控制器 URL 无效。";
-"The mihomo controller returned an empty response." = "Mihomo 控制器返回了空响应。";
-"The mihomo controller returned an invalid HTTP response." = "Mihomo 控制器返回了无效的 HTTP 响应。";
-"The mihomo controller sent an unsupported WebSocket message." = "Mihomo 控制器发送了不受支持的 WebSocket 消息。";
+"The mihomo controller URL is invalid." = "代理服务 URL 无效。";
+"The mihomo controller returned an empty response." = "代理服务返回了空响应。";
+"The mihomo controller returned an invalid HTTP response." = "代理服务返回了无效的 HTTP 响应。";
+"The mihomo controller sent an unsupported WebSocket message." = "代理服务发送了不受支持的 WebSocket 消息。";
 "The new macOS system proxy settings could not be verified, and MClash could not restore the previous settings. Update error: %@ Rollback error: %@" = "无法验证新的 macOS 系统代理设置，MClash 也无法恢复先前设置。更新错误：%@ 回滚错误：%@";
 "The new profile could not be started." = "无法启动新配置。";
 "The operating system returned an invalid local proxy port (%@)." = "操作系统返回了无效的本地代理端口（%@）。";
 "The previous App Routing revision did not return to a running state." = "先前版本的应用分流未恢复到运行状态。";
 "The previous configuration backup is missing." = "缺少先前的配置备份。";
 "The previous core session could not be restarted: %@" = "无法重新启动先前的内核会话：%@";
-"The previous durable rules could not be restored without stopping Mihomo: %@" = "若不停止 Mihomo，则无法恢复先前的持久规则：%@";
+"The previous durable rules could not be restored without stopping Mihomo: %@" = "若不停止代理服务，则无法恢复先前的持久规则：%@";
 "The previous override document could not be saved: %@" = "无法保存先前的覆盖设置文档：%@";
 "The previous private App Routing listener could not be restored." = "无法恢复先前的应用分流专用监听器。";
 "The previous profile also could not be restarted." = "先前的配置也无法重新启动。";
@@ -1641,7 +1641,7 @@
 "The previous routing ports were restored." = "已恢复先前的路由端口。";
 "The previous runtime configuration could not be activated: %@" = "无法启用先前的运行时配置：%@";
 "The previous runtime settings were restored." = "已恢复先前的运行时设置。";
-"The private Mihomo listener catalog is missing the profile-rules route required by DNS Routing." = "Mihomo 专用监听器目录缺少 DNS 路由所需的 profile-rules 路由。";
+"The private Mihomo listener catalog is missing the profile-rules route required by DNS Routing." = "代理服务专用监听器目录缺少 DNS 路由所需的 profile-rules 路由。";
 "The profile already uses the reserved Network Extension listener name %@." = "此配置已使用为网络扩展保留的监听器名称 %@。";
 "The profile configuration is empty." = "配置内容为空。";
 "The profile is not valid UTF-8 YAML." = "配置不是有效的 UTF-8 YAML。";
@@ -1754,12 +1754,12 @@
 "Validating and applying…" = "正在验证并应用…";
 "Validating and restarting…" = "正在验证并重新启动…";
 "Validating configuration…" = "正在验证配置…";
-"Via Mihomo" = "通过 Mihomo";
+"Via Mihomo" = "通过代理服务";
 "Wait a moment, then retry loading this Profile." = "请稍候，然后重新加载此配置。";
 "Waiting for Connection" = "正在等待连接";
-"Waiting for Mihomo metadata" = "正在等待 Mihomo 元数据";
+"Waiting for Mihomo metadata" = "正在等待路由详情";
 "Waiting for active connections" = "正在等待活跃连接";
-"Waiting for an associated Mihomo connection" = "正在等待关联的 Mihomo 连接";
+"Waiting for an associated Mihomo connection" = "正在等待连接详情";
 "Why this rule matched" = "此规则为何匹配";
 "[output truncated by MClash]" = "[输出已被 MClash 截断]";
 "active profile: %@" = "当前配置：%@";
@@ -1788,12 +1788,12 @@
 "macOS notification permission was not granted." = "未获得 macOS 通知权限。";
 "macOS rejected the Network Extension package during validation. Install the latest MClash update or reinstall the application" = "macOS 在验证时拒绝了网络扩展包。请安装最新的 MClash 更新或重新安装应用";
 "macOS rejected the proxy preference changes while committing them." = "macOS 在提交代理偏好设置更改时拒绝了这些更改。";
-"mihomo core: %@" = "Mihomo 内核：%@";
-"mihomo did not accept MClash's temporary local proxy port %@." = "Mihomo 未接受 MClash 的临时本地代理端口 %@。";
-"mihomo did not apply the requested %@ listener port %@; it reported %@." = "Mihomo 未应用请求的 %@ 监听器端口 %@；其报告值为 %@。";
-"mihomo proxy" = "Mihomo 代理";
-"mihomo returned HTTP %@." = "Mihomo 返回了 HTTP %@。";
-"mihomo returned HTTP %@: %@" = "Mihomo 返回了 HTTP %@：%@";
+"mihomo core: %@" = "代理服务：%@";
+"mihomo did not accept MClash's temporary local proxy port %@." = "代理服务未接受 MClash 的临时本地代理端口 %@。";
+"mihomo did not apply the requested %@ listener port %@; it reported %@." = "代理服务未应用请求的 %@ 监听器端口 %@；其报告值为 %@。";
+"mihomo proxy" = "代理";
+"mihomo returned HTTP %@." = "代理服务返回了 HTTP %@。";
+"mihomo returned HTTP %@: %@" = "代理服务返回了 HTTP %@：%@";
 "multicast" = "多播地址";
 "multiple matchers of the same source type" = "多个相同来源类型的匹配项";
 "no reason supplied" = "未提供原因";
@@ -1847,7 +1847,7 @@
 "Technical Details" = "技术详情";
 "Close all %@ active connections?" = "要关闭全部 %@ 个活动连接吗？";
 "Keep %@ Days" = "保留 %@ 天";
-"The private mihomo listener is unavailable." = "专用 mihomo 监听器不可用。";
+"The private mihomo listener is unavailable." = "专用代理服务监听器不可用。";
 "Shows route, process, address, and traffic details for the selected connection" = "显示所选连接的路由、进程、地址和流量详情";
 "Active connections" = "活动连接";
 "Connection details for %@" = "%@ 的连接详情";
@@ -1888,10 +1888,10 @@
 "Download a source from %@? Only node connection data is imported. Source proxy groups, rules, DNS and TUN settings are ignored." = "要从 %@ 下载来源吗？只会导入节点连接数据；来源中的代理组、规则、DNS 和 TUN 设置会被忽略。";
 "Edit %@" = "编辑%@";
 "Enable" = "启用";
-"Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "已启用的 HTTP 和 SOCKS 入口必须共用同一个 Mihomo 绑定地址。";
+"Enabled HTTP and SOCKS entrances must share one Mihomo bind address." = "已启用的 HTTP 和 SOCKS 入口必须共用同一个代理服务绑定地址。";
 "Enabled entrances cannot share a listening port." = "已启用的入口不能共用监听端口。";
 "Entrance port must be between 1 and 65535." = "入口端口必须介于 1 和 65535 之间。";
-"Fallback" = "故障转移";
+"Fallback" = "自动切换";
 "Fingerprint" = "指纹";
 "Imported source. MClash uses it for node data only; source strategy sections are ignored." = "已导入的来源。MClash 仅使用其中的节点数据；来源中的策略部分会被忽略。";
 "Kind" = "类型";
@@ -1931,7 +1931,7 @@
 "Rule set contains an invalid rule entry." = "规则集包含无效的规则条目。";
 "Rule set name cannot be empty." = "规则集名称不能为空。";
 "Rule targets a proxy group that is not available." = "规则指向了不可用的代理组。";
-"Select" = "选择";
+"Select" = "手动选择";
 "Source Removed" = "来源已移除";
 "System Capability" = "系统能力";
 "The MClash Workspace could not be started." = "无法启动 MClash 工作区。";
@@ -1949,7 +1949,7 @@
 "The selected MClash workspace no longer exists." = "所选 MClash 工作区已不存在。";
 "The source store could not be initialized." = "无法初始化来源存储。";
 "The unified node, group, rule, DNS and workspace configuration cannot be read or saved. Existing legacy profiles remain available for recovery." = "无法读取或保存统一的节点、代理组、规则、DNS 和工作区配置。现有旧版配置仍可用于恢复。";
-"URL Test" = "URL 测试";
+"URL Test" = "自动测速";
 "Unsupported" = "不支持";
 "Used by" = "使用位置";
 "Workspace" = "工作区";
@@ -1967,7 +1967,7 @@
 "A workspace cannot reference the same rule set more than once." = "工作区不能重复引用同一个规则集。";
 "Node names cannot be empty or contain line breaks." = "节点名称不能为空，也不能包含换行符。";
 "Node ports must be between 1 and 65535." = "节点端口必须介于 1 和 65535 之间。";
-"Nodes and proxy groups cannot use reserved Mihomo runtime names." = "节点和代理组不能使用 Mihomo 运行时保留名称。";
+"Nodes and proxy groups cannot use reserved Mihomo runtime names." = "节点和代理组不能使用代理服务保留名称。";
 "Nodes and proxy groups in a workspace must have unique runtime names." = "工作区中的节点和代理组必须使用唯一的运行时名称。";
 "Proxy group names cannot be empty or contain commas or line breaks." = "代理组名称不能为空，也不能包含逗号或换行符。";
 "Rule ports must be between 1 and 65535." = "规则端口必须介于 1 和 65535 之间。";
@@ -1993,7 +1993,7 @@
 "Node parameters cannot override name, type, server, or port." = "节点参数不能覆盖名称、类型、服务器或端口。";
 "Only one enabled entrance of each kind is supported per workspace." = "每个工作区中，每种入口最多只能启用一个。";
 "Proxy group nesting cannot exceed 64 levels." = "代理组嵌套不能超过 64 层。";
-"Relay proxy groups are not supported by the bundled Mihomo core." = "内置的 Mihomo 核心不支持中继代理组。";
+"Relay proxy groups are not supported by the bundled Mihomo core." = "内置的代理服务不支持中继代理组。";
 "Routing rule transport must be TCP or UDP." = "路由规则的传输类型必须为 TCP 或 UDP。";
 "Routing rules expand beyond the supported limit." = "路由规则展开后超出了支持上限。";
 "TUN entrances are not supported." = "不支持 TUN 入口。";
@@ -2143,7 +2143,7 @@
 "System DNS" = "系统 DNS";
 "Nameservers (comma or newline separated)" = "名称服务器（用逗号或换行分隔）";
 "Fallback resolvers (optional)" = "备用解析器（可选）";
-"DNS proxy server (optional)" = "DNS 代理服务器（可选）";
+"DNS proxy server (optional)" = "DNS代理服务器（可选）";
 "DNS rules (one domain per line, optional)" = "DNS 规则（每行一个域名，可选）";
 "Take over system DNS" = "接管系统 DNS";
 "DNS is managed here independently from the App Routing capture switch." = "DNS 在此独立管理，不受应用流量捕获开关影响。";
@@ -2205,8 +2205,9 @@
 "Region" = "地区";
 "Tags" = "标签";
 "Rules are edited in the unified rule editor." = "规则请使用统一规则编辑器进行编辑。";
-"Only one entrance of each type can be enabled in the current Mihomo runtime." = "当前 Mihomo 运行时每种入口类型只能启用一个。";
+"Only one entrance of each type can be enabled in the current Mihomo runtime." = "当前代理服务每种入口类型只能启用一个。";
 "Apply changes" = "应用更改";
+"Saved changes are not active yet." = "已保存的更改尚未生效。";
 "MClash could not synchronize the refreshed runtime configuration: %@" = "MClash 无法同步刷新后的运行配置：%@";
 "MClash could not compile the refreshed configuration: %@" = "MClash 无法编译刷新后的配置：%@";
 "Node group — create a group first" = "节点组——请先创建节点组";
@@ -2227,7 +2228,7 @@
 "MClash Workspace activation journal cleanup failed: %@" = "MClash 工作区启用日志清理失败：%@";
 "Recovered App Routing settings from an interrupted MClash Workspace activation." = "已从中断的 MClash 工作区启用操作中恢复应用路由设置。";
 "The completed MClash Workspace activation journal could not be cleared: %@" = "无法清除已完成的 MClash 工作区启用日志：%@";
-"Mihomo rule matchers must not contain commas, parentheses, or line breaks." = "Mihomo 规则匹配条件不能包含逗号、括号或换行符。";
+"Mihomo rule matchers must not contain commas, parentheses, or line breaks." = "规则匹配条件不能包含逗号、括号或换行符。";
 "%@ · %@ rules" = "%@ · %@ 条规则";
 "A MClash configuration shared by the configured traffic entrances." = "由已配置流量入口共同使用的 MClash 配置。";
 "Application capture is a capability switch. Its rules are managed on the unified Rules page." = "应用捕获是一个能力开关，其规则由统一的“规则”页面管理。";
@@ -2261,7 +2262,7 @@
 "Remove nested group" = "移除嵌套策略组";
 "Entrance name is required." = "入口名称不能为空。";
 "How traffic is routed" = "流量如何路由";
-"The selected group is used by Mihomo GLOBAL mode." = "Mihomo 全局模式会使用选中的策略组。";
+"The selected group is used by Mihomo GLOBAL mode." = "全部流量模式会使用选中的策略组。";
 "Process name" = "进程名称";
 "GEOIP country" = "GEOIP 国家/地区";
 "GEOIP6 country" = "GEOIP6 国家/地区";
@@ -2337,9 +2338,9 @@
 "No active providers" = "没有活动的提供器";
 "Node Selection setup" = "节点选择方案";
 "One stable parent for rules, with regional and automatic child groups that refresh with your sources." = "使用一个稳定的规则父组，地区和自动子组会随来源刷新。";
-"Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path." = "可选的本地条目，每行一条 Mihomo 规则；远程来源会由 Mihomo 加载到指定缓存路径。";
+"Optional local entries, one Mihomo rule per line. A remote source is loaded by Mihomo into the selected cache path." = "可选的本地条目，每行一条规则；远程来源会由代理服务加载到指定缓存路径。";
 "Process information is unavailable for ordinary HTTP/SOCKS proxy traffic. App Routing can attach verified application identity." = "普通 HTTP/SOCKS 代理流量无法提供进程信息；应用分流可以附带经过验证的应用身份。";
-"Reusable Mihomo rule collections with an explicit source and format." = "可复用的 MClash Mihomo 规则集合，可明确设置来源和格式。";
+"Reusable Mihomo rule collections with an explicit source and format." = "可复用的 MClash规则集合，可明确设置来源和格式。";
 "Route selected applications through this configuration. Rules stay on the Rules page; this switch only controls the entrance." = "让选定应用通过此配置路由；规则仍在“规则”页面管理，此开关只控制入口。";
 "Rule Set" = "规则集";
 "Rule set path must be a relative path without line breaks or parent-directory segments." = "规则集路径必须是相对路径，不能包含换行或父目录片段。";
@@ -2365,7 +2366,7 @@
 "Process path must be an absolute path without line breaks." = "进程路径必须是绝对路径且不能包含换行。";
 "MClash cannot compile %@ because it exceeds a supported resource limit. Narrow the node selector or split the rule set." = "MClash 无法编译 %@，因为它超出资源上限。请缩小节点匹配范围或拆分规则集。";
 "Add this app to a rule…" = "将此应用添加到规则…";
-"A managed listener references the unavailable Mihomo proxy group %@." = "托管监听器引用了不可用的 Mihomo 策略组 %@。";
+"A managed listener references the unavailable Mihomo proxy group %@." = "托管监听器引用了不可用的策略组 %@。";
 "An enabled entrance bind address cannot contain line breaks." = "已启用入口的绑定地址不能包含换行。";
 "Switch" = "开关";
 "application" = "应用";
@@ -2385,7 +2386,7 @@
 "Quick match" = "快速匹配";
 "Rule set path must be a relative safe path without line breaks or parent-directory segments." = "规则集路径必须是安全的相对路径，不能包含换行或父目录片段。";
 "GEOIP6 (unsupported)" = "GEOIP6（不支持）";
-"Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "Mihomo 不支持 GEOIP6 规则，请使用 IP-CIDR6 匹配 IPv6 网络。";
+"Mihomo does not support GEOIP6 rules. Use IP-CIDR6 for IPv6 networks." = "代理服务不支持 GEOIP6 规则，请使用 IP-CIDR6 匹配 IPv6 网络。";
 "Recovery listener" = "恢复监听器";
 "Move selector up" = "上移选择器";
 "Move selector down" = "下移选择器";
@@ -2421,3 +2422,195 @@
 "Create a configuration before setting traffic paths." = "请先创建配置，再设置流量路径。";
 "Browser path uses HTTP or SOCKS5." = "浏览器路径使用 HTTP 或 SOCKS5。";
 "Choose a source that still exists." = "请选择仍然存在的来源。";
+
+"Health checks" = "健康检查";
+
+"Test URL" = "测速 URL";
+
+"Expected HTTP status" = "预期 HTTP 状态码";
+
+"Interval (seconds)" = "间隔（秒）";
+
+"Timeout (seconds)" = "超时（秒）";
+
+"Failures to switch" = "连续失败切换次数";
+
+"Successes to recover" = "连续成功恢复次数";
+
+"Cooldown (seconds)" = "切换冷却时间（秒）";
+
+"Latency tolerance (ms)" = "延迟容差（毫秒）";
+
+"Tolerance ratio" = "相对延迟容差";
+
+"Use an HTTP or HTTPS URL without credentials. Timeout must be greater than zero." = "使用不含登录信息的 HTTP 或 HTTPS URL，超时必须大于零。";
+
+"Enter a valid HTTP or HTTPS test URL and positive health-check values." = "请输入有效的 HTTP 或 HTTPS 测速 URL 和健康检查数值。";
+
+"Health-check URL must use HTTP or HTTPS without credentials." = "健康检查 URL 必须使用 HTTP 或 HTTPS，且不能包含登录信息。";
+
+"Health-check timing or failure thresholds are outside the supported range." = "健康检查时间或失败阈值超出支持范围。";
+
+"Expected HTTP status must be codes or ranges such as 204 or 200-299." = "预期 HTTP 状态应为状态码或范围，例如 204 或 200-299。";
+
+"Node Sources" = "节点来源";
+
+"Add nodes" = "添加节点";
+
+"Paste links" = "粘贴链接";
+
+"Add node links" = "添加节点链接";
+
+"Read clipboard" = "读取剪贴板";
+
+"Paste node links, an encoded node list, or a WireGuard configuration. MClash will check them before adding nodes to your configuration." = "粘贴节点链接、编码后的节点列表或 WireGuard 配置。MClash 会先检查内容，再将节点添加到配置中。";
+
+"Name (optional)" = "名称（可选）";
+
+"Preview" = "预览";
+
+"Usable nodes" = "已识别节点";
+
+"Ignored lines" = "忽略的行";
+
+"Adding nodes…" = "正在添加节点…";
+
+"No usable proxy links were found." = "没有找到可用的代理链接。";
+
+"Pasted Nodes" = "粘贴的节点";
+
+"Pasted node links" = "粘贴的节点链接";
+
+"MClash flow records" = "MClash 流量记录";
+
+"No observed flows yet" = "No observed flows yet";
+
+"MClash records application flows and rule decisions when Application Routing is enabled. Xray provides aggregate byte totals, not per-connection records." = "MClash records application flows and rule decisions when Application Routing is enabled. Xray provides aggregate byte totals, not per-connection records.";
+
+"Routes appear as traffic decisions and MClash flow records are observed." = "Routes appear as traffic decisions and MClash flow records are observed.";
+
+"No runtime flow association" = "No runtime flow association";
+
+"proxy core proxy" = "代理";
+
+"Runtime · resolving" = "Runtime · resolving";
+
+"Runtime route" = "Runtime route";
+
+"Awaiting runtime flow evidence" = "Awaiting runtime flow evidence";
+
+"Via MClash" = "Via MClash";
+
+"IPv6 country rules are not supported here. Use an IPv6 CIDR rule instead." = "IPv6 country rules are not supported here. Use an IPv6 CIDR rule instead.";
+
+"The selected group is the shared exit for all traffic." = "The selected group is the shared exit for all traffic.";
+
+"Needs restoration" = "Needs restoration";
+
+"All traffic" = "All traffic";
+
+"Reusable rule collections with an explicit source and format." = "Reusable rule collections with an explicit source and format.";
+
+"Optional local entries, one rule per line. A remote list is loaded into the selected cache path." = "Optional local entries, one rule per line. A remote list is loaded into the selected cache path.";
+
+"Waiting for traffic" = "等待流量";
+"MClash records application flows and rule decisions when Application Routing is enabled. New Xray access records appear here after a connection is observed." = "启用应用分流后，MClash 会记录应用流量和规则决策。观察到连接后，新的连接记录会显示在这里。";
+"Time" = "时间";
+"Unknown source" = "未知来源";
+"No source was reported" = "未报告来源";
+"Evidence" = "证据";
+"Connection event" = "连接事件";
+"Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total." = "MClash 从连接记录中观察到。这是一条连接事件，不是应用级字节统计。";
+"No entrance or node was reported for this connection event." = "这条连接事件没有报告入口或节点。";
+
+
+"WireGuard configuration" = "WireGuard 配置";
+"Encoded node list" = "编码节点列表";
+"Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged." = "添加订阅、导入文件或粘贴节点链接。你的分组和路由规则不会改变。";
+"Add your first source to bring nodes into MClash." = "添加第一个来源，将节点导入 MClash。";
+"Your sources" = "你的来源";
+"Search sources" = "搜索来源";
+"No sources yet" = "还没有来源";
+"%@ nodes · %@ · %@" = "%@ 个节点 · %@ · %@";
+"Automatic updates on" = "已开启自动更新";
+"Manual updates" = "手动更新";
+"Update needs attention" = "更新需要处理";
+"Imported" = "已导入";
+"Imported file" = "导入的文件";
+"Local source" = "本地来源";
+"Edit source" = "编辑来源";
+"Source name" = "来源名称";
+"Advanced update settings" = "高级更新设置";
+"Enter a valid subscription URL." = "请输入有效的订阅 URL。";
+"Remove source?" = "移除来源？";
+"Remove %@ and its imported nodes?" = "移除 %@ 及其导入的节点？";
+"Remove source" = "移除来源";
+"Refresh source" = "刷新来源";
+"The imported filename is invalid." = "导入的文件名无效。";
+"Online rule sets update automatically every six hours." = "在线规则集每六小时自动更新。";
+"Update rule sets" = "更新规则集";
+"Rule sets are up to date." = "规则集已是最新。";
+"Could not update %@. Previously saved rules are still in use." = "无法更新 %@。仍在使用之前保存的规则。";
+"Proxy Sources" = "代理来源";
+"Import file" = "导入文件";
+"Refresh a source to update connection details. Your group choices stay the same." = "刷新来源会更新连接详情，同时保留你的分组选择。";
+"Refreshing a source updates this node's connection details without changing your group choices." = "刷新来源会更新此节点的连接详情，同时保留你的分组选择。";
+"Line %d uses a format MClash cannot import. Paste a supported link." = "第 %d 行的格式无法导入。请粘贴支持的链接。";
+"Line %d is incomplete. Check the link and try again." = "第 %d 行不完整。请检查链接后重试。";
+"Line %d repeats a node already in this list." = "第 %d 行重复了列表中的节点。";
+"Connection records" = "连接记录";
+"Connection records unavailable" = "连接记录不可用";
+"Connection records are collected by MClash while routing is enabled." = "启用路由后，MClash 会收集连接记录。";
+"Waiting for connection records" = "等待连接记录";
+"MClash will show a record here after it observes a routed connection." = "观察到经过路由的连接后，MClash 会在这里显示记录。";
+"Enter rules one per line, or use an online list. MClash checks online updates before applying them and keeps the previous rules if an update fails." = "每行输入一条规则，或使用在线规则列表。MClash 会先检查更新，更新失败时继续使用之前的规则。";
+"Could not read Xray access log: %@" = "无法读取连接记录：%@";
+"MRS rule sets are not supported by the Xray renderer." = "当前版本不支持 MRS，请选择文本或 YAML 规则列表。";
+"No last-known-good rule set is available." = "还没有可用的规则，请先完成一次更新。";
+"Rule set source URLs cannot contain credentials." = "请使用不包含用户名和密码的规则列表地址。";
+"Rule set sources must use HTTP or HTTPS." = "规则列表地址必须以 HTTP 或 HTTPS 开头。";
+"The Xray log could not be rotated: %@." = "无法整理连接记录文件 %@，稍后会重试。";
+"The Xray log directory is unavailable." = "连接记录目录不可用，请检查存储权限。";
+"The Xray log path is not a regular file: %@." = "无法使用连接记录文件 %@。";
+"The Xray logger restart did not complete; retry log rotation." = "连接记录切换未完成，稍后会重试。";
+"The cached rule set belongs to a different source URL." = "来源已更改，需要重新下载规则。";
+"The previous Xray log could not be restored; retry log rotation." = "无法恢复上一份连接记录，请检查存储权限。";
+"The refreshed rule set failed runtime validation." = "新规则未通过验证，尚未应用。请检查规则内容。";
+"The rule set YAML payload is invalid." = "规则列表格式有误，请使用 payload 或 rules 列表。";
+"The rule set contains an unsupported or invalid rule." = "列表中有无效或暂不支持的规则，请检查内容和格式。";
+"The rule set could not be downloaded." = "无法下载规则列表，请检查网络和来源地址。";
+"The rule set did not contain any rules." = "列表中没有可识别的规则，请检查内容和格式。";
+"The rule set does not have a source URL." = "请填写规则列表的来源地址。";
+"The rule set exceeded the %@-line limit." = "规则列表行数过多，最多允许 %@ 行。";
+"The rule set exceeded the %@-rule limit." = "规则数量过多，最多允许 %@ 条。";
+"The rule set is not valid UTF-8." = "无法读取列表文字，请使用 UTF-8 文本文件。";
+"The rule set response exceeded the %@-byte limit." = "规则列表过大，最多允许 %@ 字节。";
+"The rule set server returned HTTP %@." = "规则来源返回 HTTP %@，请稍后重试或检查地址。";
+"This rule set is already being updated." = "这个规则列表正在更新，请稍候。";
+"Xray access log contains an overlong partial line" = "连接记录包含过长的条目，已跳过该条目";
+"Xray access log is not available" = "连接记录暂时不可用";
+"Xray log rotation is already in progress." = "正在整理连接记录，请稍候。";
+"Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged." = "使用已启用的节点添加手动选择、自动测速和自动切换分组。保留已有分组和路由目标。";
+"Add common selection methods for any node source. Groups include new nodes when your sources refresh." = "为任意节点来源添加常用选择方式。刷新来源后，新节点会自动加入分组。";
+"Via Xray" = "通过 Xray";
+"Byte totals unavailable" = "字节总量不可用";
+"This Xray connection event does not include per-connection byte totals." = "这条 Xray 连接事件不包含单连接字节总量。";
+"%@ connection events have no byte totals" = "%@ 条连接事件没有字节总量";
+"%@ connection events have no byte totals from the backend." = "%@ 条连接事件没有来自内核的字节总量。";
+"%@ was measured separately. %@" = "%@ 的字节由其他路径测量。%@";
+"Xray route observed" = "已观察到 Xray 路由";
+"Records" = "记录数";
+"%@ measured · %@ records" = "已测量 %@ · %@ 条记录";
+"%@ measured · %@ records · updated %@" = "已测量 %@ · %@ 条记录 · %@ 更新";
+"%@ records · byte totals unavailable" = "%@ 条记录 · 未提供字节总量";
+"Connection events and completed flows appear here for this session. Saved totals do not include destinations." = "此处显示本次会话观察到的连接事件和已结束的连接。保存的汇总不包含访问目标。";
+"Rule traffic currently uses" = "规则流量当前使用";
+"Active strategy" = "当前策略";
+"This changes new rule-routed connections immediately. Your rules continue to point to the same strategy group." = "这会立即影响新的规则流量连接。规则仍然指向同一个策略组。";
+"Current choice: %@" = "当前选择：%@";
+"Rule traffic uses %@. Connect MClash to change its active strategy." = "规则流量使用 %@。连接 MClash 后可以切换当前策略。";
+
+"Proxy selection" = "选择代理出口";
+"Connect to choose nodes in %@. Your last choice will be restored." = "连接后可切换 %@ 中的节点，之前的选择会自动恢复。";
+"Applies to new connections routed through %@. Existing connections keep their route." = "切换后，经过 %@ 的新连接使用所选出口，已有连接保持原路径。";
+"Resume automatic selection" = "恢复自动选择";

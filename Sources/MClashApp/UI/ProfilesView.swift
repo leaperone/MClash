@@ -531,6 +531,8 @@ private struct ProfileRow: View {
             AppLocalization.string("Local")
         case let .imported(fileName):
             AppLocalization.format("Imported from %@", fileName)
+        case .pastedLinks:
+            AppLocalization.string("Pasted node links")
         case .remote:
             AppLocalization.string("Subscription")
         }
@@ -540,6 +542,7 @@ private struct ProfileRow: View {
         switch profile.origin {
         case .local: "doc"
         case .imported: "square.and.arrow.down"
+        case .pastedLinks: "link"
         case .remote: "link"
         }
     }
@@ -560,7 +563,7 @@ private struct ProfileRow: View {
                 )
             }
             return AppLocalization.string("Not updated yet")
-        case .local, .imported:
+        case .local, .imported, .pastedLinks:
             return AppLocalization.format(
                 "Updated %@",
                 AppLocalization.relativeDate(profile.updatedAt)
@@ -983,7 +986,7 @@ private struct EditProfileView: View {
     }
 }
 
-private struct AddSubscriptionView: View {
+struct AddSubscriptionView: View {
     private enum Field: Hashable {
         case name
         case address

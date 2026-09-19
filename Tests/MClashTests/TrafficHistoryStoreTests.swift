@@ -12,7 +12,7 @@ struct TrafficHistoryStoreTests {
         let fixture = try Fixture(now: baseDate)
         let diagnostics = try await fixture.store.storageDiagnostics()
 
-        #expect(diagnostics.schemaVersion == 1)
+        #expect(diagnostics.schemaVersion == 2)
         #expect(diagnostics.journalMode == "wal")
         #expect(diagnostics.synchronousIsFull)
         #expect(diagnostics.foreignKeysEnabled)
@@ -131,11 +131,12 @@ struct TrafficHistoryStoreTests {
             now: baseDate.addingTimeInterval(60),
             calendar: utcCalendar
         )
-        #expect(snapshot.totals.completedFlowCount == 3)
+        #expect(snapshot.totals.recordedFlowCount == 3)
         #expect(snapshot.totals.exactUploadBytes == 120)
         #expect(snapshot.totals.exactDownloadBytes == 880)
         #expect(snapshot.totals.coverage.exactDirectionCount == 2)
         #expect(snapshot.totals.coverage.notMeasuredDirectionCount == 2)
+        #expect(snapshot.totals.coverage.notAvailableDirectionCount == 0)
         #expect(snapshot.totals.coverage.notApplicableDirectionCount == 2)
         #expect(snapshot.totals.coverage.measuredFraction == 0.5)
         #expect(snapshot.applications.first?.application.displayName == "Browser")
@@ -152,7 +153,86 @@ struct TrafficHistoryStoreTests {
             now: baseDate.addingTimeInterval(60),
             calendar: utcCalendar
         )
-        #expect(persisted.totals.completedFlowCount == 3)
+        #expect(persisted.totals.recordedFlowCount == 3)
+    }
+
+    @Test("Unavailable measurements remain distinct from handoff measurements")
+    func unavailableCoverageIsPersisted() async throws {
+        let fixture = try Fixture(now: baseDate.addingTimeInterval(-60))
+        _ = try await fixture.store.ingest([
+            completion(
+                id: "xray-unavailable",
+                at: baseDate,
+                route: TrafficHistoryRoute(kind: .xray, displayName: "Xray"),
+                upload: .notAvailable,
+                download: .notAvailable,
+                source: .xray
+            ),
+            completion(
+                id: "handoff",
+                at: baseDate.addingTimeInterval(1),
+                upload: .notMeasuredAfterHandoff,
+                download: .notMeasuredAfterHandoff
+            ),
+        ])
+        let snapshot = try await fixture.store.snapshot(
+            for: .today,
+            now: baseDate.addingTimeInterval(60),
+            calendar: utcCalendar
+        )
+        #expect(snapshot.totals.coverage.notMeasuredDirectionCount == 2)
+        #expect(snapshot.totals.coverage.notAvailableDirectionCount == 2)
+        #expect(snapshot.totals.coverage.notApplicableDirectionCount == 0)
+    }
+
+    @Test("Schema v1 is migrated without losing rows or conflating new values")
+    func migratesSchemaV1() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let layout = ProfileDirectoryLayout(rootDirectory: root)
+        try FileManager.default.createDirectory(
+            at: layout.trafficHistoryDirectory,
+            withIntermediateDirectories: true
+        )
+        try createV1Fixture(at: layout.trafficHistoryDatabaseURL, now: baseDate)
+
+        let store = try readyStore(
+            TrafficHistoryStore.open(layout: layout, now: baseDate)
+        )
+        let diagnostics = try await store.storageDiagnostics()
+        #expect(diagnostics.schemaVersion == 2)
+        #expect(
+            try sqliteIntScalar(
+                at: layout.trafficHistoryDatabaseURL,
+                sql: "SELECT COUNT(*) FROM recent_completion"
+            ) == 1
+        )
+        let legacy = try await store.snapshot(
+            for: .today,
+            now: baseDate.addingTimeInterval(60),
+            calendar: utcCalendar
+        )
+        #expect(legacy.totals.recordedFlowCount == 1)
+        #expect(legacy.totals.coverage.notMeasuredDirectionCount == 2)
+        #expect(legacy.totals.coverage.notAvailableDirectionCount == 0)
+
+        _ = try await store.ingest([
+            completion(
+                id: "new-unavailable",
+                at: baseDate.addingTimeInterval(1),
+                route: TrafficHistoryRoute(kind: .xray, displayName: "Xray"),
+                upload: .notAvailable,
+                download: .notAvailable,
+                source: .xray
+            )
+        ])
+        let migrated = try await store.snapshot(
+            for: .today,
+            now: baseDate.addingTimeInterval(60),
+            calendar: utcCalendar
+        )
+        #expect(migrated.totals.coverage.notMeasuredDirectionCount == 2)
+        #expect(migrated.totals.coverage.notAvailableDirectionCount == 2)
     }
 
     @Test("Integer aggregation saturates instead of overflowing or becoming negative")
@@ -179,7 +259,7 @@ struct TrafficHistoryStoreTests {
         #expect(snapshot.totals.exactUploadBytes == UInt64(Int64.max))
         #expect(snapshot.totals.exactDownloadBytes == UInt64(Int64.max))
         #expect(snapshot.totals.exactTotalBytes == UInt64.max - 1)
-        #expect(snapshot.totals.completedFlowCount == 2)
+        #expect(snapshot.totals.recordedFlowCount == 2)
     }
 
     @Test("Invalid checkpoint input rejects the whole batch before any aggregate changes")
@@ -198,7 +278,7 @@ struct TrafficHistoryStoreTests {
             now: baseDate.addingTimeInterval(60),
             calendar: utcCalendar
         )
-        #expect(snapshot.totals.completedFlowCount == 0)
+        #expect(snapshot.totals.recordedFlowCount == 0)
     }
 
     @Test("Clear advances generation, rejects replay before baseline, and keeps source cursor")
@@ -227,7 +307,7 @@ struct TrafficHistoryStoreTests {
             calendar: utcCalendar
         )
         #expect(snapshot.baseline.generation == 2)
-        #expect(snapshot.totals.completedFlowCount == 1)
+        #expect(snapshot.totals.recordedFlowCount == 1)
     }
 
     @Test("Retention supports 7, 30, and 90 days and pruning removes expired buckets")
@@ -263,7 +343,7 @@ struct TrafficHistoryStoreTests {
             now: baseDate.addingTimeInterval(60),
             calendar: utcCalendar
         )
-        #expect(week.totals.completedFlowCount == 1)
+        #expect(week.totals.recordedFlowCount == 1)
         #expect(week.totals.exactTotalBytes == 70)
         #expect(
             try sqliteIntScalar(
@@ -359,7 +439,7 @@ struct TrafficHistoryStoreTests {
                 sql: "SELECT COUNT(*) FROM flow_checkpoint"
             ) == 0
         )
-        #expect(model.trafficHistoryTodaySnapshot?.totals.completedFlowCount == 0)
+        #expect(model.trafficHistoryTodaySnapshot?.totals.recordedFlowCount == 0)
     }
 
     @Test("Newer and corrupted databases return explicit unavailable states")
@@ -378,7 +458,7 @@ struct TrafficHistoryStoreTests {
 
         switch TrafficHistoryStore.open(layout: layout, now: baseDate) {
         case let .unavailable(reason):
-            #expect(reason == .newerSchema(found: 99, supported: 1))
+            #expect(reason == .newerSchema(found: 99, supported: 2))
         case .ready:
             Issue.record("A newer schema must not be opened as empty history")
         }
@@ -400,11 +480,12 @@ struct TrafficHistoryStoreTests {
         route: TrafficHistoryRoute = .unresolved,
         outcome: TrafficHistoryOutcome = .viaMihomo,
         upload: TrafficHistoryMeasurement = .exact(1),
-        download: TrafficHistoryMeasurement = .exact(2)
+        download: TrafficHistoryMeasurement = .exact(2),
+        source: TrafficHistorySource = .mihomo
     ) -> TrafficHistoryCompletedFlow {
         TrafficHistoryCompletedFlow(
             checkpointIdentifier: id,
-            source: .mihomo,
+            source: source,
             completedAt: date,
             application: application,
             route: route,
@@ -497,4 +578,101 @@ private func sqliteIntScalar(at url: URL, sql: String) throws -> Int64 {
         throw TrafficHistoryStoreError.queryFailed
     }
     return sqlite3_column_int64(statement, 0)
+}
+
+private func createV1Fixture(at url: URL, now: Date) throws {
+    var database: OpaquePointer?
+    guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+        throw TrafficHistoryStoreError.queryFailed
+    }
+    defer { sqlite3_close(database) }
+    let baseline = Int64((now.timeIntervalSince1970 * 1_000).rounded(.down)) - 60_000
+    let sql = """
+        CREATE TABLE metadata(key TEXT PRIMARY KEY NOT NULL, integer_value INTEGER) STRICT;
+        CREATE TABLE total_bucket(
+            generation INTEGER NOT NULL, bucket_start_ms INTEGER NOT NULL,
+            flow_count INTEGER NOT NULL CHECK(flow_count >= 0),
+            exact_upload_bytes INTEGER NOT NULL CHECK(exact_upload_bytes >= 0),
+            exact_download_bytes INTEGER NOT NULL CHECK(exact_download_bytes >= 0),
+            exact_upload_count INTEGER NOT NULL CHECK(exact_upload_count >= 0),
+            exact_download_count INTEGER NOT NULL CHECK(exact_download_count >= 0),
+            not_measured_upload_count INTEGER NOT NULL CHECK(not_measured_upload_count >= 0),
+            not_measured_download_count INTEGER NOT NULL CHECK(not_measured_download_count >= 0),
+            not_applicable_upload_count INTEGER NOT NULL CHECK(not_applicable_upload_count >= 0),
+            not_applicable_download_count INTEGER NOT NULL CHECK(not_applicable_download_count >= 0),
+            PRIMARY KEY(generation, bucket_start_ms)
+        ) WITHOUT ROWID, STRICT;
+        CREATE TABLE application_dimension(
+            id INTEGER PRIMARY KEY, storage_key TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL, bundle_identifier TEXT, signing_identifier TEXT
+        ) STRICT;
+        CREATE TABLE application_bucket(
+            generation INTEGER NOT NULL, bucket_start_ms INTEGER NOT NULL,
+            application_id INTEGER NOT NULL REFERENCES application_dimension(id) ON DELETE CASCADE,
+            flow_count INTEGER NOT NULL, exact_upload_bytes INTEGER NOT NULL,
+            exact_download_bytes INTEGER NOT NULL, exact_upload_count INTEGER NOT NULL,
+            exact_download_count INTEGER NOT NULL, not_measured_upload_count INTEGER NOT NULL,
+            not_measured_download_count INTEGER NOT NULL, not_applicable_upload_count INTEGER NOT NULL,
+            not_applicable_download_count INTEGER NOT NULL,
+            PRIMARY KEY(generation, bucket_start_ms, application_id)
+        ) WITHOUT ROWID, STRICT;
+        CREATE TABLE route_dimension(
+            id INTEGER PRIMARY KEY, storage_key TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
+            display_name TEXT NOT NULL, rule_name TEXT, proxy_chain_json TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE route_bucket(
+            generation INTEGER NOT NULL, bucket_start_ms INTEGER NOT NULL,
+            route_id INTEGER NOT NULL REFERENCES route_dimension(id) ON DELETE CASCADE,
+            flow_count INTEGER NOT NULL, exact_upload_bytes INTEGER NOT NULL,
+            exact_download_bytes INTEGER NOT NULL, exact_upload_count INTEGER NOT NULL,
+            exact_download_count INTEGER NOT NULL, not_measured_upload_count INTEGER NOT NULL,
+            not_measured_download_count INTEGER NOT NULL, not_applicable_upload_count INTEGER NOT NULL,
+            not_applicable_download_count INTEGER NOT NULL,
+            PRIMARY KEY(generation, bucket_start_ms, route_id)
+        ) WITHOUT ROWID, STRICT;
+        CREATE TABLE flow_checkpoint(
+            source TEXT NOT NULL, flow_identifier TEXT NOT NULL,
+            completed_at_ms INTEGER NOT NULL, generation INTEGER NOT NULL,
+            PRIMARY KEY(source, flow_identifier)
+        ) WITHOUT ROWID;
+        CREATE INDEX flow_checkpoint_completed_at ON flow_checkpoint(completed_at_ms);
+        CREATE TABLE source_checkpoint(
+            source TEXT PRIMARY KEY NOT NULL, sequence INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE recent_completion(
+            id INTEGER PRIMARY KEY, generation INTEGER NOT NULL, source TEXT NOT NULL,
+            flow_identifier TEXT NOT NULL, completed_at_ms INTEGER NOT NULL,
+            application_id INTEGER NOT NULL REFERENCES application_dimension(id),
+            route_id INTEGER NOT NULL REFERENCES route_dimension(id), outcome TEXT NOT NULL,
+            upload_kind TEXT NOT NULL CHECK(upload_kind IN ('exact', 'not_measured', 'not_applicable')),
+            upload_bytes INTEGER, download_kind TEXT NOT NULL CHECK(download_kind IN ('exact', 'not_measured', 'not_applicable')),
+            download_bytes INTEGER, UNIQUE(source, flow_identifier)
+        ) STRICT;
+        CREATE INDEX recent_completion_completed_at ON recent_completion(completed_at_ms DESC);
+        INSERT INTO metadata(key, integer_value) VALUES
+            ('generation', 1), ('baseline_at_ms', \(baseline)), ('retention_days', 30);
+        INSERT INTO application_dimension(id, storage_key, display_name)
+            VALUES(1, 'unattributed', 'Unattributed');
+        INSERT INTO route_dimension(id, storage_key, kind, display_name, proxy_chain_json)
+            VALUES(1, 'mihomo', 'mihomo', 'Mihomo', '[]');
+        INSERT INTO total_bucket VALUES(1, \(baseline), 1, 0, 0, 0, 0, 1, 1, 0, 0);
+        INSERT INTO application_bucket VALUES(1, \(baseline), 1, 1, 0, 0, 0, 0, 1, 1, 0, 0);
+        INSERT INTO route_bucket VALUES(1, \(baseline), 1, 1, 0, 0, 0, 0, 1, 1, 0, 0);
+        INSERT INTO flow_checkpoint VALUES('mihomo', 'legacy', \(baseline), 1);
+        INSERT INTO recent_completion(
+            id, generation, source, flow_identifier, completed_at_ms,
+            application_id, route_id, outcome, upload_kind, upload_bytes,
+            download_kind, download_bytes
+        ) VALUES(1, 1, 'mihomo', 'legacy', \(baseline), 1, 1, 'viaMihomo',
+                  'not_measured', NULL, 'not_measured', NULL);
+        PRAGMA user_version = 1;
+        """
+    var errorMessage: UnsafeMutablePointer<CChar>?
+    guard sqlite3_exec(database, sql, nil, nil, &errorMessage) == SQLITE_OK else {
+        if let errorMessage {
+            defer { sqlite3_free(errorMessage) }
+            Issue.record("v1 fixture SQL failed: \(String(cString: errorMessage))")
+        }
+        throw TrafficHistoryStoreError.queryFailed
+    }
 }

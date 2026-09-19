@@ -1,113 +1,64 @@
 # MClash
 
-MClash is a native macOS controller for the
-[MetaCubeX mihomo Alpha](https://github.com/MetaCubeX/mihomo/tree/Alpha) core.
-It bundles and supervises the core, manages Clash-compatible profiles, and
-provides System Proxy and per-application routing without exposing routine core
-maintenance to the user.
+MClash 1.6 is a native macOS proxy app built around [Xray-core](https://github.com/XTLS/Xray-core).
+MClash manages node sources, groups, routing rules, DNS and traffic records.
+Xray handles proxy connections. You supply your own nodes or subscription.
 
-MClash is a controller, not a proxy service. You need your own compatible YAML
-profile or subscription.
+[中文使用指南](docs/GETTING_STARTED_1_6.md)
 
 ## Highlights
 
-- Native SwiftUI and AppKit interface, main window, and menu bar controls
-- Interface languages: English, Simplified and Traditional Chinese, Japanese,
-  Korean, French, German, and Spanish, with a System Default option
-- Bundled, checksum-verified mihomo Alpha core and GEO databases
-- Local YAML profiles and remote subscriptions with validation, transactional
-  activation, rollback, scheduled refresh, and bounded retry backoff
-- Rule, Global, and Direct modes with searchable proxy groups, latency tests,
-  nested-route inspection, topology view, and customizable Quick Routes
-- Safe macOS System Proxy activation with complete snapshot and restoration of
-  the previous HTTP, HTTPS, SOCKS, PAC, auto-discovery, and bypass settings
-- Per-application TCP and UDP routing through a signed macOS Network Extension
-- Live traffic, connection history, rules, providers, logs, routing evidence,
-  and actionable health diagnostics
-- Recovery after sleep, wake, network changes, or a bounded core failure
-- Signed Sparkle updates and a versioned local automation API
+- Paste node links, encoded node lists or WireGuard configuration, import a file, or add a subscription.
+- Start with a default node group, then choose manual selection, automatic latency selection, fallback, load balancing or relay.
+- Keep your groups and routing rules when sources refresh.
+- Use local rules, bundled domain and country databases, or online rule lists checked before each update.
+- Choose local HTTP/SOCKS access, macOS System Proxy or selected applications through a signed Network Extension.
+- Inspect recorded destinations and readable paths, with detailed information available on selection.
+- Recover the proxy and its connection monitor after an unexpected core exit.
+- Use a native SwiftUI interface, menu bar controls and progressively disclosed advanced settings.
 
 ## Requirements
 
-- macOS 14 or later
-- Apple Silicon for published releases
-- A Clash/mihomo-compatible local profile or subscription
-
-The repository contains architecture-selection support for Intel, but an Intel
-release is not produced until its mihomo artifact has an independently reviewed
-hash in the manifest.
+- Apple Silicon Mac running macOS 14 or later.
+- A supported proxy node, node file or subscription.
 
 ## Install
 
-1. Download the current Apple Silicon DMG from
-   [GitHub Releases](https://github.com/leaperone/MClash/releases/latest).
+1. Download the Apple Silicon DMG from [GitHub Releases](https://github.com/leaperone/MClash/releases).
 2. Open the DMG and move **MClash** to **Applications**.
-3. Launch MClash. Keep the app in `/Applications` so its signed helper, Network
-   Extension, and automatic updates retain a stable identity.
+3. Launch MClash. Keep it in `/Applications` for its signed helper, Network Extension and updates.
 
-Published builds are Developer ID signed, notarized by Apple, and updated from
-the signed Sparkle feed. The mihomo executable and GEO data are already included;
-end users do not download or select a core.
+Published builds include the proxy core and routing databases. Developer ID signing,
+Apple notarization and signed Sparkle updates are part of the distribution process.
 
 ## Get started
 
-1. Open **Profiles** and choose **Import & Activate** for a local YAML file, or
-   **Add Subscription** for an HTTP/HTTPS subscription.
-2. Select the default profile, optionally enable additional Profile sessions,
-   and connect. Each enabled Profile has its own Mihomo process and Mixed port.
-3. Choose how macOS traffic should enter MClash:
+1. Open **Node Sources** and paste links, import a file or add a subscription.
+2. Check the imported nodes and connect. The default group includes newly imported nodes.
+3. Open **How to Connect** to choose local proxy access, System Proxy or application routing.
+4. Use **Nodes** to change selection behavior and **Rules** to choose which traffic uses each group.
 
-   - Enable **Use macOS System Proxy** for ordinary proxy-aware applications.
-   - Open **App Routing** to send selected applications or destinations through
-     Mihomo while leaving other applications direct.
-   - Leave both off when you only need the local Mixed listeners shown by
-     MClash. Each Mixed port accepts HTTP, HTTPS proxy, and SOCKS5 clients.
+Imports provide nodes. MClash owns the groups, rules, DNS and listeners used by the
+running app. You do not need to maintain a core configuration file.
 
-4. Select Rule, Global, or Direct mode and, when applicable, choose the desired
-   policy-group route.
+**Connection Log** shows observed events rather than a count of active sockets.
+Select a record to inspect its source, protocol and path. An event does not prove
+that a remote site responded successfully. Application traffic and byte totals
+are reported only where MClash can observe them.
 
-Choose **Settings → Appearance → Language** to override the macOS language, or
-leave **System Default** selected.
+## Application routing
 
-MClash validates the generated runtime configuration with `mihomo -t` before
-activation without rewriting the stored profile. For predictable multi-profile
-isolation, each managed session exposes only its MClash-assigned Mixed port and
-private App Routing listeners. Profile-owned HTTP/SOCKS/Mixed/custom listeners,
-TUN, tunnels, server shortcuts, and external controllers are not launched;
-advanced Redirect, TProxy, and DNS settings remain available on the default
-profile.
+Application routing uses a macOS Network Extension. Rules can match signed
+applications, executable paths, domains, IP networks, protocols and ports.
+Matched traffic can go directly, be rejected or use a node group. macOS may require
+approval when the extension is first enabled or upgraded.
 
-## App Routing
+DNS has its own configuration. Fake-IP mode maps synthetic addresses back to the
+requested domain before the proxy connects. Node endpoints use real DNS resolution.
 
-App Routing uses a macOS app-proxy Network Extension to evaluate traffic before
-it reaches Mihomo. The first enabled matching rule wins. If no rule is enabled,
-application traffic is explicitly Direct. DNS routing has its own on/off state
-and runs through the companion DNS Proxy provider.
-
-A rule can match:
-
-- one or more signed applications, application/bundle identifier patterns,
-  executables, running process instances, or user IDs;
-- exact domains, domain suffixes, wildcard hostname patterns, IP addresses, or
-  CIDR networks; and
-- TCP, UDP, and destination port ranges.
-
-A match can go Direct, be rejected, follow a selected Profile's rules, use that
-Profile's Mihomo GLOBAL route, or enter a specific policy group on the default
-Profile. Each rule also defines what to do if its requested Profile or route is
-unavailable. Rules can be reordered, disabled, duplicated, and updated
-transactionally. Existing Proxifier `.ppx` routing rules can be previewed and
-selectively imported; proxy servers, credentials, and chains are not imported.
-
-For predictable rules, prefer a selected signed application over a broad name
-pattern, keep one application or intent per rule, enable UDP when the application
-uses QUIC or calls, and place narrow exceptions above broad fallbacks. The
-**Activity** and **Traffic** views show the application-to-rule-to-proxy path
-that MClash actually observed.
-
-The first App Routing activation may require approval of the system extension
-and network configuration in macOS. If macOS reports that a restart is required,
-restart the Mac before trying again.
+Online rule lists update every six hours or when requested. MClash validates new
+rules before applying them and keeps the previous rules if download or validation
+fails. Online lists use the target you choose in MClash.
 
 ## Automation API
 
@@ -131,7 +82,7 @@ mclashctl routing.mode.set --params '{"mode":"rule"}'
 `system.capabilities` is the authoritative operation list for the installed
 version. The API covers app and core lifecycle, profiles and backups, settings,
 routing and proxy selection, unified Configuration planning and activation,
-Mihomo rules/providers, System Proxy, App Routing, traffic/history, logs, and
+routing rules and sources, System Proxy, application routing, traffic history, logs, and
 diagnostics. If moving MClash leaves an old command link, follow the verified
 `readlink` and `unlink` recovery in [Automation API v1](docs/AUTOMATION.md);
 do not overwrite it with `ln -sf`.
@@ -164,7 +115,7 @@ stores only their SHA-256 hashes.
 
 The endpoint does not listen on TCP or LAN. It accepts the same macOS user only,
 binds authorization to the client's code identity, and does not return the
-Mihomo controller secret, Network Extension credentials, or full subscription
+runtime credentials, Network Extension credentials, or full subscription
 URLs. See [Automation API v1](docs/AUTOMATION.md) for the protocol, scopes,
 idempotency rules, CLI options, and complete operation families.
 
@@ -176,14 +127,14 @@ root:
 ```sh
 ./scripts/typecheck.sh
 ./scripts/test-direct.sh
-./scripts/integration-test.sh
-./scripts/build-app.sh
-open .build/release/MClash.app
+./scripts/fetch-xray.sh
+CONFIGURATION=development MCLASH_VERSION=1.6.0-dev MCLASH_RUNTIME_BACKEND=xray ./scripts/build-app.sh
+python3 scripts/smoke-test-xray-app.py .build/development/MClash.app --output .build/app-proof.json --exercise-recovery --exercise-log-retention
 ```
 
 `build-app.sh` creates an ad-hoc-signed local application by default. It fetches
 Sparkle tools and immutable build inputs when needed, verifies the selected
-mihomo artifact and GEO databases, and assembles the host app, `mclashctl`, and
+Xray artifact and routing databases, and assembles the host app, `mclashctl`, and
 Network Extension. A production-capable Network Extension build requires the
 Developer ID identity, provisioning profiles, and entitlements used by the
 protected release workflow.
@@ -196,13 +147,15 @@ with a complete Xcode toolchain.
 Useful verification commands:
 
 ```sh
-./scripts/verify-mihomo-alpha.sh
-./scripts/verify-mihomo-geodata.sh .build/release/MClash.app/Contents/Resources/GeoData
+./scripts/verify-xray.sh
+./scripts/verify-xray-geodata.sh .build/development/MClash.app/Contents/Resources/GeoData
+python3 scripts/test-xray-package-layout.py .build/development/MClash.app
 ```
 
-The pinned core version and commit live in `Support/mihomo-alpha.env`; reviewed
-raw executable hashes live in `Support/mihomo-alpha.sha256`. Production builds
-also bundle verified `geoip.metadb`, `GeoIP.dat`, `GeoSite.dat`, and `ASN.mmdb`.
+The core version, revision and reviewed hashes are pinned in `Support/xray.env`.
+Application packages contain Xray and its verified `geoip.dat` and `geosite.dat`.
+The smoke fixture uses private storage and local test servers. UI checks require
+an unlocked macOS session and accessibility access.
 
 ### Repository layout
 
@@ -220,8 +173,7 @@ also bundle verified `geoip.metadb`, `GeoIP.dat`, `GeoSite.dat`, and `ASN.mmdb`.
 
 ## Security and privacy
 
-- The Mihomo controller binds to a dynamic `127.0.0.1` port and uses a random
-  per-launch secret retained only for the current MClash process.
+- Xray control uses a private Unix socket managed by MClash.
 - The automation endpoint is a mode-0600, per-user Unix socket. It checks the
   peer UID, client identity, token, and authorized access before dispatch.
 - Profile changes are validated before activation and use transactional rollback.
@@ -231,10 +183,8 @@ also bundle verified `geoip.metadb`, `GeoIP.dat`, `GeoSite.dat`, and `ASN.mmdb`.
   subscription details before export.
 - Backups are intentionally unencrypted and may contain subscription URLs and
   proxy credentials. Store them as secrets.
-- Core updates arrive as part of a signed MClash release; MClash does not use
-  Mihomo's in-place `/upgrade` endpoint.
-- TUN mode is not currently exposed. Its design requires a separately signed,
-  narrow privileged helper rather than arbitrary root shell execution.
+- Core updates arrive with a signed MClash release.
+- macOS traffic capture uses the signed Network Extension.
 
 Report suspected vulnerabilities privately through GitHub's **Report a
 vulnerability** form. Do not attach real subscriptions, credentials, logs, or
@@ -246,9 +196,9 @@ backup archives to a public issue. See [Privacy](PRIVACY.md) and the
 Production releases are built by the protected GitHub Actions release workflow.
 It runs the test suite, verifies dependencies, signs with the hardened runtime,
 notarizes and staples the app and DMG, signs Sparkle full and delta updates, and
-publishes checksums and corresponding third-party source material.
+publishes checksums and third-party notices.
 
-Maintainers publish a semantic tag such as `v1.2.3`; end users receive signed
+Maintainers validate the complete signed candidate before publishing one semantic tag; end users receive signed
 updates in the app. See [Releasing MClash](docs/RELEASING.md) for required
 secrets, build-number policy, published assets, and the complete procedure.
 
@@ -262,7 +212,7 @@ secrets, build-number policy, published assets, and the complete procedure.
 - [TUN implementation boundary](TUN_IMPLEMENTATION.md)
 - [Security policy](SECURITY.md)
 - [Privacy](PRIVACY.md)
-- [mihomo distribution notice](ThirdParty/mihomo/NOTICE.md)
+- [Xray distribution notice](ThirdParty/xray/NOTICE.md)
 
 ## License
 

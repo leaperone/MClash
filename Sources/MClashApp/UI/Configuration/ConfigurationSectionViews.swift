@@ -51,17 +51,27 @@ struct ConfigurationView: View {
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(.green)
                                 } else {
-                                    Button(AppLocalization.string("Apply changes")) {
-                                        Task {
-                                            do {
-                                                try await model.activateConfigurationWorkspace(workspace.id)
-                                            } catch {
-                                                model.errorMessage = error.localizedDescription
+                                    VStack(alignment: .trailing, spacing: 6) {
+                                        Label(
+                                            AppLocalization.string("Saved changes are not active yet."),
+                                            systemImage: "clock.badge.exclamationmark"
+                                        )
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                        .multilineTextAlignment(.trailing)
+                                        Button(AppLocalization.string("Apply changes")) {
+                                            Task {
+                                                do {
+                                                    try await model.activateConfigurationWorkspace(workspace.id)
+                                                } catch {
+                                                    model.errorMessage = error.localizedDescription
+                                                }
                                             }
                                         }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                        .accessibilityIdentifier("configuration.apply-workspace")
                                     }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
                                 }
                             } else {
                                 Button(AppLocalization.string("Use This Configuration")) {
@@ -154,7 +164,12 @@ struct ConfigurationView: View {
     }
 
     private func configurationIsApplied(_ workspace: Workspace) -> Bool {
-        model.configurationDiagnostics.contains(where: { $0.code == "configuration_compile_failed" }) == false
+        if model.runtimeBackend == .xray {
+            return model.isConnected && model.controllerIsReady
+                && !model.configurationHasUnappliedChanges
+                && model.configurationDocument.currentWorkspace?.id == workspace.id
+        }
+        return model.configurationDiagnostics.contains(where: { $0.code == "configuration_compile_failed" }) == false
             && model.compiledConfiguration?.workspaceID == workspace.id
             && model.compiledConfiguration?.workspaceRevision == workspace.revision
     }
@@ -230,7 +245,7 @@ struct ConfigurationView: View {
                         }
                     }
                     .frame(maxWidth: 360, alignment: .leading)
-                    .help(AppLocalization.string("The selected group is used by Mihomo GLOBAL mode."))
+                    .help(AppLocalization.string("The selected group is the shared exit for all traffic."))
                 }
             }
         }
@@ -242,15 +257,171 @@ struct ConfigurationView: View {
 /// workbench API so navigation can be migrated independently later.
 struct ConfigurationSourcesView: View {
     @Bindable var model: AppModel
-    @State private var editRequest: ConfigurationEditRequest?
+    @State private var showingNodeLinkSheet = false
+    @State private var showingSubscriptionSheet = false
+    @State private var query = ""
+    @State private var sourceToDelete: ProfileMetadata?
+    @State private var sourceToEdit: ProfileMetadata?
     var body: some View {
-        ConfigurationWorkbench(
-            title: AppLocalization.string("Subscriptions"),
-            sections: [.sources],
-            items: model.configurationWorkbenchItems,
-            onAdd: { _ in Task { await model.importConfigurationSource() } },
-            statusMessage: model.configurationStatusMessage
-        )
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(AppLocalization.string("Add nodes"))
+                    .font(.title2.weight(.semibold))
+                Text(AppLocalization.string("Add a subscription, import a file, or paste node links. Your groups and routing rules stay unchanged."))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Button(AppLocalization.string("Import file"), systemImage: "doc.badge.plus") {
+                        Task { await model.importConfigurationSource() }
+                    }
+                    .disabled(!model.canPerform(.importProfile))
+                    .accessibilityIdentifier("sources.import-file")
+                    Button(AppLocalization.string("Add Subscription"), systemImage: "arrow.down.circle") {
+                        showingSubscriptionSheet = true
+                    }
+                    .disabled(!model.canPerform(.addRemoteProfile))
+                    .accessibilityIdentifier("sources.add-subscription")
+                    Button(AppLocalization.string("Paste links"), systemImage: "link.badge.plus") {
+                        showingNodeLinkSheet = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canPerform(.importProfile))
+                    .accessibilityIdentifier("sources.paste-links")
+                }
+            }
+            .padding(MClashLayout.pagePadding)
+            Divider()
+            if model.profiles.isEmpty {
+                ContentUnavailableView(
+                    AppLocalization.string("No sources yet"),
+                    systemImage: "arrow.down.circle",
+                    description: Text(AppLocalization.string("Add your first source to bring nodes into MClash."))
+                )
+            } else {
+                List {
+                    Section {
+                        if filteredProfiles.isEmpty {
+                            ContentUnavailableView.search(text: query)
+                        } else {
+                            ForEach(filteredProfiles) { profile in
+                                sourceRow(profile)
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text(AppLocalization.string("Your sources"))
+                            Spacer()
+                            Text(AppLocalization.number(filteredProfiles.count))
+                        }
+                    }
+                }
+                .searchable(text: $query, prompt: AppLocalization.string("Search sources"))
+                .listStyle(.inset)
+            }
+        }
+        .navigationTitle(AppLocalization.string("Node Sources"))
+        .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(isPresented: $showingNodeLinkSheet) {
+            NodeLinkImportSheet(model: model, isPresented: $showingNodeLinkSheet, initialText: model.pendingNodeLinkImport ?? "")
+        }
+        .sheet(isPresented: $showingSubscriptionSheet) {
+            AddSubscriptionView(model: model, isPresented: $showingSubscriptionSheet)
+        }
+        .onChange(of: model.pendingNodeLinkImport, initial: true) { _, value in
+            if value != nil { showingNodeLinkSheet = true }
+        }
+        .confirmationDialog(
+            AppLocalization.string("Remove source?"),
+            isPresented: Binding(get: { sourceToDelete != nil }, set: { if !$0 { sourceToDelete = nil } }),
+            presenting: sourceToDelete
+        ) { profile in
+            Button(AppLocalization.string("Remove"), role: .destructive) {
+                Task { await model.removeProfile(profile.id) }
+            }
+            Button(AppLocalization.string("Cancel"), role: .cancel) {}
+        } message: { profile in
+            Text(AppLocalization.format("Remove %@ and its imported nodes?", profile.name))
+        }
+        .sheet(item: $sourceToEdit) { profile in
+            SourceEditorSheet(model: model, profile: profile, isPresented: Binding(
+                get: { sourceToEdit != nil },
+                set: { if !$0 { sourceToEdit = nil } }
+            ))
+        }
+    }
+
+    private var filteredProfiles: [ProfileMetadata] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return model.profiles }
+        return model.profiles.filter { $0.name.localizedCaseInsensitiveContains(needle) }
+    }
+
+    @ViewBuilder
+    private func sourceRow(_ profile: ProfileMetadata) -> some View {
+        let sourceID = SourceID(rawValue: profile.id.rawValue)
+        let nodeCount = model.configurationDocument.nodes.count(where: { $0.sourceLinks.contains(sourceID) })
+        HStack(spacing: 12) {
+            Image(systemName: sourceSymbol(profile))
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(profile.name).font(.body.weight(.medium))
+                Text(AppLocalization.format("%@ nodes · %@ · %@", AppLocalization.number(nodeCount), sourceKind(profile), sourceStatus(profile)))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if case .remote = profile.origin {
+                Button(AppLocalization.string("Refresh"), systemImage: "arrow.clockwise") {
+                    Task { _ = await model.refreshProfile(profile.id) }
+                }
+                .labelStyle(.iconOnly)
+                .disabled(!model.canPerform(.refreshProfile(profile.id)))
+                .help(AppLocalization.string("Refresh source"))
+            }
+            Button(AppLocalization.string("Edit"), systemImage: "pencil") {
+                sourceToEdit = profile
+            }
+            .labelStyle(.iconOnly)
+            .disabled(!model.canPerform(.updateProfile(profile.id)))
+            .help(AppLocalization.string("Edit source"))
+            .accessibilityIdentifier("sources.edit.\(profile.id.rawValue.uuidString.lowercased())")
+            Button(AppLocalization.string("Remove"), systemImage: "trash") {
+                sourceToDelete = profile
+            }
+            .labelStyle(.iconOnly)
+            .disabled(!model.canPerform(.removeProfile(profile.id)))
+            .help(AppLocalization.string("Remove source"))
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func sourceKind(_ profile: ProfileMetadata) -> String {
+        switch profile.origin {
+        case .remote: return AppLocalization.string("Subscription")
+        case .imported: return AppLocalization.string("Imported file")
+        case .pastedLinks: return AppLocalization.string("Pasted links")
+        case .local: return AppLocalization.string("Local source")
+        }
+    }
+
+    private func sourceSymbol(_ profile: ProfileMetadata) -> String {
+        if case .remote = profile.origin { return "link" }
+        return "doc.text"
+    }
+
+    private func sourceStatus(_ profile: ProfileMetadata) -> String {
+        guard case let .remote(remote) = profile.origin else {
+            return AppLocalization.string("Imported")
+        }
+        if remote.consecutiveFailureCount > 0 {
+            return AppLocalization.string("Update needs attention")
+        }
+        return remote.automaticUpdatesEnabled
+            ? AppLocalization.string("Automatic updates on")
+            : AppLocalization.string("Manual updates")
     }
 }
 
@@ -260,8 +431,8 @@ struct ConfigurationNodesView: View {
     var body: some View {
         VStack(spacing: 0) {
             Label(
-                AppLocalization.string("A node keeps the same identity when its name, tags or credentials change. Protocol, normalized host, port and transport settings define the stable fingerprint; an endpoint change creates a new node."),
-                systemImage: "fingerprint"
+                AppLocalization.string("Refresh a source to update connection details. Your group choices stay the same."),
+                systemImage: "arrow.clockwise"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -295,6 +466,7 @@ struct ConfigurationProxyGroupsView: View {
     @State private var isCreating = false
     @State private var query = ""
     @State private var showsPresetConfirmation = false
+    @State private var editRequest: ConfigurationEditRequest?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -310,10 +482,13 @@ struct ConfigurationProxyGroupsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle(AppLocalization.string("Nodes"))
+        .navigationTitle(AppLocalization.string("Node Groups"))
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { normalizeSelection() }
         .onChange(of: groupIDs) { _, _ in normalizeSelection() }
+        .sheet(item: $editRequest) { request in
+            ConfigurationEditorSheet(model: model, section: request.section, id: request.itemID)
+        }
         .alert(
             AppLocalization.string("Install Node Selection setup?"),
             isPresented: $showsPresetConfirmation
@@ -326,7 +501,7 @@ struct ConfigurationProxyGroupsView: View {
                 }
             }
         } message: {
-            Text(AppLocalization.string("Adds Node Selection, US/JP/HK priority, Auto, Manual, Failover, Residential and Direct groups. Existing rules are redirected to Node Selection; source rules are not imported."))
+            Text(AppLocalization.string("Adds manual selection, automatic selection and failover groups using your enabled nodes. Existing groups and routing targets stay unchanged."))
         }
     }
 
@@ -440,17 +615,21 @@ struct ConfigurationProxyGroupsView: View {
     private var groupEditor: some View {
         Group {
             if let selectedID {
-                ConfigurationEditorSheet(
-                    model: model,
-                    section: .proxyGroups,
-                    id: selectedID,
-                    isNew: isCreating,
-                    isEmbedded: true,
-                    onSaved: {
-                        isCreating = false
-                    }
-                )
-                .id(editorInstanceID)
+                if isCreating {
+                    ConfigurationEditorSheet(
+                        model: model,
+                        section: .proxyGroups,
+                        id: selectedID,
+                        isNew: true,
+                        isEmbedded: true,
+                        onSaved: { isCreating = false }
+                    )
+                    .id(editorInstanceID)
+                } else if let group = model.configurationDocument.proxyGroups.first(where: {
+                    $0.id.rawValue == selectedID
+                }) {
+                    runtimeGroupDetail(group)
+                }
             } else {
                 ContentUnavailableView(
                     AppLocalization.string("Select an item"),
@@ -460,6 +639,59 @@ struct ConfigurationProxyGroupsView: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.32))
+    }
+
+    @ViewBuilder
+    private func runtimeGroupDetail(_ group: ProxyGroup) -> some View {
+        if model.isConnected,
+           model.controllerIsReady,
+           let runtime = model.proxiesByName[group.name] {
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(configurationDisplayName(group.name))
+                            .font(.title3.weight(.semibold))
+                        Text(runtimeGroupSubtitle(runtime))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Button(AppLocalization.string("Edit…")) {
+                        editRequest = ConfigurationEditRequest(section: .proxyGroups, itemID: group.id.rawValue)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, MClashLayout.compactPagePadding)
+                RuntimeGroupMemberList(model: model, group: group, runtime: runtime)
+                    .padding(.horizontal, MClashLayout.pagePadding)
+                    .padding(.bottom, MClashLayout.pagePadding)
+            }
+        } else {
+            VStack(spacing: MClashLayout.controlSpacing) {
+                ContentUnavailableView(
+                    AppLocalization.string("Configuration unavailable"),
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    description: Text(AppLocalization.string("Connect to inspect traffic"))
+                )
+                Button(AppLocalization.string("Edit…")) {
+                    editRequest = ConfigurationEditRequest(section: .proxyGroups, itemID: group.id.rawValue)
+                }
+                .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func runtimeGroupSubtitle(_ runtime: MihomoProxy) -> String {
+        let behavior = runtime.groupBehavior?.rawValue ?? runtime.type
+        if runtime.fixedOverride != nil {
+            return AppLocalization.format("%@ · %@", behavior, AppLocalization.string("Pinned"))
+        }
+        if runtime.now != nil {
+            return AppLocalization.format("%@ · %@", behavior, AppLocalization.string("Active"))
+        }
+        return AppLocalization.format("%@ · %@", behavior, AppLocalization.string("Route unavailable"))
     }
 
     private var editorInstanceID: String {
@@ -536,9 +768,7 @@ struct ConfigurationProxyGroupsView: View {
     }
 
     private var commonPresetInstalled: Bool {
-        model.configurationDocument.proxyGroups.contains {
-            $0.name == ConfigurationProxyGroupPreset.mainGroupName
-        }
+        ConfigurationStarterGroups.isInstalled(in: model.configurationDocument)
     }
 
     private var commonStrategyGroups: some View {
@@ -550,20 +780,10 @@ struct ConfigurationProxyGroupsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(AppLocalization.string("Node Selection setup"))
                     .font(.headline)
-                Text(AppLocalization.string("One stable parent for rules, with regional and automatic child groups that refresh with your sources."))
+                Text(AppLocalization.string("Add common selection methods for any node source. Groups include new nodes when your sources refresh."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(
-                    [
-                        AppLocalization.string("Rules"),
-                        configurationDisplayName(ConfigurationProxyGroupPreset.mainGroupName),
-                        AppLocalization.string("US / United States"),
-                        AppLocalization.string("Nodes"),
-                    ].joined(separator: " → ")
-                )
-                .font(.caption2.monospaced())
-                .foregroundStyle(.tertiary)
             }
             Spacer(minLength: MClashLayout.compactSpacing)
             if commonPresetInstalled {
@@ -597,6 +817,9 @@ struct ConfigurationRulesView: View {
             .padding(.horizontal, MClashLayout.pagePadding)
             .padding(.vertical, MClashLayout.compactSpacing)
             .accessibilityLabel(AppLocalization.string("Rules surface"))
+            ConfigurationRuleTrafficStrategyPicker(model: model)
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.bottom, MClashLayout.compactPagePadding)
             Divider()
             if tab == .rules {
                 ConfigurationWorkbench(
@@ -619,6 +842,21 @@ struct ConfigurationRulesView: View {
                     }
                 )
             } else {
+                HStack(spacing: 10) {
+                    if model.ruleSetRefreshInProgress {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(model.ruleSetRefreshMessage ?? AppLocalization.string("Online rule sets update automatically every six hours."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(AppLocalization.string("Update rule sets"), systemImage: "arrow.clockwise") {
+                        Task { _ = await model.refreshConfigurationRuleSets() }
+                    }
+                    .disabled(model.ruleSetRefreshInProgress || !model.canPerform(.changeRuntimeSettings))
+                }
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, MClashLayout.compactSpacing)
                 ConfigurationWorkbench(
                     title: AppLocalization.string("Rule Sets"),
                     sections: [.ruleSets],
@@ -1345,7 +1583,7 @@ private extension ConfigurationWorkbenchItem {
                 ),
                 symbol: source.kind == .subscription ? "link" : "folder",
                 detail: AppLocalization.string(
-                    "Imported source. MClash uses it for node data only; source strategy sections are ignored."
+                    "This source provides node connection data. Routing choices stay in MClash."
                 ),
                 metadata: [
                     (AppLocalization.string("Kind"), source.kind.localizedTitle),
@@ -1367,7 +1605,7 @@ private extension ConfigurationWorkbenchItem {
                 subtitle: "\(node.proto.rawValue) · \(node.host):\(node.port)",
                 symbol: "point.3.filled.connected.trianglepath.dotted",
                 detail: AppLocalization.string(
-                    "A strategy-owned node. Refreshing a source updates its connection data without changing group membership."
+                    "Refreshing a source updates this node's connection details without changing your group choices."
                 ),
                 metadata: [
                     (
@@ -1377,10 +1615,6 @@ private extension ConfigurationWorkbenchItem {
                     (
                         AppLocalization.string("Availability"),
                         node.health.availability.localizedTitle
-                    ),
-                    (
-                        AppLocalization.string("Fingerprint"),
-                        String(node.fingerprint.prefix(12))
                     ),
                 ] + (node.region.map { [(AppLocalization.string("Region"), $0)] } ?? [])
                     + (!node.tags.isEmpty

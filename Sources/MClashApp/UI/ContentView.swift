@@ -14,7 +14,7 @@ struct ContentView: View {
             List(selection: $model.selection) {
                 Section(AppLocalization.string("Everyday")) {
                     destinationRow(.overview, title: "Status")
-                    destinationRow(.sources, title: "Subscriptions")
+                    destinationRow(.sources, title: "Node Sources")
                     destinationRow(.proxyGroups, title: "Nodes")
                     destinationRow(.entrances, title: "How to Connect")
                 }
@@ -30,8 +30,10 @@ struct ContentView: View {
                         destinationRow(.workspaces, title: "Routing Mode")
                         destinationRow(.dns)
                         destinationRow(.nodes, title: "Node List")
-                        destinationRow(.profiles, title: "Config Files")
-                        destinationRow(.providers, title: "Rule Sets")
+                        if model.runtimeBackend != .xray {
+                            destinationRow(.profiles, title: "Config Files")
+                            destinationRow(.providers, title: "Rule Sets")
+                        }
                         destinationRow(.logs)
                     }
                 }
@@ -54,6 +56,28 @@ struct ContentView: View {
                 destinationView
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .safeAreaInset(edge: .top, spacing: 0) {
+                        if model.runtimeBackend == .xray, model.isConnected,
+                           model.configurationHasUnappliedChanges,
+                           let workspace = model.configurationDocument.currentWorkspace {
+                            HStack(spacing: 12) {
+                                Label(AppLocalization.string("Saved changes are not active yet."), systemImage: "slider.horizontal.3")
+                                    .font(.callout)
+                                Spacer()
+                                Button(AppLocalization.string("Apply changes")) {
+                                    Task {
+                                        do { try await model.activateConfigurationWorkspace(workspace.id) }
+                                        catch { model.errorMessage = error.localizedDescription }
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!model.canPerform(.changeRuntimeSettings))
+                                .accessibilityIdentifier("configuration.apply-saved")
+                            }
+                            .padding(.horizontal, MClashLayout.pagePadding)
+                            .padding(.vertical, 10)
+                            .background(.bar)
+                            .accessibilityIdentifier("configuration.pending-changes")
+                        }
                         if let errorMessage = activeErrorMessage {
                             ErrorBanner(
                                 message: errorMessage,
@@ -184,7 +208,9 @@ struct ContentView: View {
     }
 
     private var advancedDestinations: Set<AppModel.Destination> {
-        [.workspaces, .dns, .nodes, .profiles, .providers, .logs]
+        model.runtimeBackend == .xray
+            ? [.workspaces, .dns, .nodes, .logs]
+            : [.workspaces, .dns, .nodes, .profiles, .providers, .logs]
     }
 
     @ViewBuilder
@@ -211,11 +237,19 @@ struct ContentView: View {
         case .appRouting:
             ConfigurationEntrancesView(model: model)
         case .profiles:
-            ProfilesView(model: model)
+            if model.runtimeBackend == .xray {
+                ConfigurationSourcesView(model: model)
+            } else {
+                ProfilesView(model: model)
+            }
         case .rules:
             ConfigurationRulesView(model: model)
         case .providers:
-            ProvidersView(model: model)
+            if model.runtimeBackend == .xray {
+                ConfigurationRulesView(model: model)
+            } else {
+                ProvidersView(model: model)
+            }
         case .connections:
             ConnectionsView(model: model)
         case .attention:
@@ -257,17 +291,20 @@ struct ContentView: View {
     }
 
     private var sidebarConnectionValue: String {
-        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
-        case .live: AppLocalization.number(model.connections?.connections.count ?? 0)
+        switch model.liveStreamHealth[model.connectionRecordStream]?.phase ?? .inactive {
+        case .live: AppLocalization.number(model.connectionRecordCount)
         case .connecting: "…"
         case .reconnecting, .stale, .inactive: "—"
         }
     }
 
     private var sidebarConnectionAccessibilityLabel: String {
-        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
+        switch model.liveStreamHealth[model.connectionRecordStream]?.phase ?? .inactive {
         case .live:
-            let count = model.connections?.connections.count ?? 0
+            let count = model.connectionRecordCount
+            if model.runtimeBackend == .xray {
+                return AppLocalization.format("%@ records", AppLocalization.number(count))
+            }
             return AppLocalization.format(
                 count == 1 ? "%@ active connection" : "%@ active connections",
                 AppLocalization.number(count)

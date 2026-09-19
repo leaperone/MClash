@@ -29,7 +29,7 @@ public struct NodeIdentity: Hashable, Codable, Sendable {
     /// providers are not consistent about spelling/casing.
     public static let credentialParameterKeys: Set<String> = [
         "uuid", "password", "passwd", "username", "user", "token", "secret",
-        "psk", "private-key", "private_key", "privatekey", "client-private-key",
+        "psk", "pre-shared-key", "presharedkey", "private-key", "private_key", "privatekey", "secret-key", "client-private-key",
         "client_private_key", "auth", "authentication", "credential"
     ]
 

@@ -526,7 +526,7 @@ struct CaptureRuleEditorSheet: View {
                 if draft.routingProfileID != nil {
                     Text(
                         AppLocalization.string(
-                            "Policy-group routing is currently available only for the default profile. Other profiles support Profile Rules and GLOBAL."
+                            "Policy-group routing is currently available only for the default profile. Other profiles support Profile Rules and all traffic."
                         )
                     )
                         .font(.caption)
@@ -890,7 +890,7 @@ struct CaptureRuleEditorSheet: View {
             )
         case .mihomoGlobal:
             AppLocalization.format(
-                "Send matching traffic to %@'s GLOBAL target through a dedicated private listener.",
+                "Send matching traffic to %@'s all traffic target through a dedicated private listener.",
                 profileName
             )
         case .mihomoGroup:
@@ -1018,7 +1018,7 @@ struct CaptureRuleEditorSheet: View {
         let action = draft.action == .mihomoGroup
             && !draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? AppLocalization.format(
-                "Mihomo · %@",
+                "proxy core · %@",
                 draft.mihomoGroup.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             : AppLocalization.string(draft.action.title)

@@ -102,6 +102,7 @@ private struct OverviewRoutingModeCard: View {
                     .frame(maxWidth: 360, alignment: .leading)
                     .disabled(model.pendingMode != nil || !model.canPerform(.changeRuntimeSettings))
                 }
+                ConfigurationRuleTrafficStrategyPicker(model: model)
             }
         }
     }
@@ -422,7 +423,7 @@ private struct OverviewMetricsCard: View {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
                 metric("Download", value: trafficValue(model.traffic.download), symbol: "arrow.down", color: .blue)
                 metric("Upload", value: trafficValue(model.traffic.upload), symbol: "arrow.up", color: .orange)
-                metric("Connections", value: connectionCount, symbol: "arrow.left.arrow.right", color: .primary)
+                metric(model.connectionCountPresentationTitle, value: connectionCount, symbol: "arrow.left.arrow.right", color: .primary)
             }
 
             if model.liveMetricsAreDegraded {
@@ -476,8 +477,8 @@ private struct OverviewMetricsCard: View {
     }
 
     private var connectionCount: String {
-        model.liveStreamHealth[.connections]?.hasCurrentData == true
-            ? AppLocalization.number(model.connections?.connections.count ?? 0)
+        model.connectionRecordDataIsCurrent
+            ? AppLocalization.number(model.connectionRecordCount)
             : "—"
     }
 }

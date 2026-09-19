@@ -31,7 +31,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var applicationPreparationHandler: (@MainActor () async -> Void)?
     private var applicationPreparationTask: Task<Void, Never>?
     private var skipNextQuitConfirmation = false
-    private var lightweightModeEnabled = UserDefaults.standard.bool(
+    private var lightweightModeEnabled = ApplicationDelegate.launchDefaults().bool(
         forKey: AppModel.lightweightModeKey
     )
     private var shouldPresentInitialMainWindow = ApplicationDelegate.initialWindowShouldPresent(
@@ -62,13 +62,26 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     static func initialWindowShouldPresent(
         arguments: [String],
         event: NSAppleEventDescriptor? = nil,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults? = nil
     ) -> Bool {
-        launchRequestsPresentation(
+        let defaults = defaults ?? launchDefaults(arguments: arguments)
+        return launchRequestsPresentation(
             arguments: arguments,
             event: event,
             defaults: defaults
         ) && !defaults.bool(forKey: AppModel.lightweightModeKey)
+    }
+
+    static func launchDefaults(
+        arguments: [String] = CommandLine.arguments,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> UserDefaults {
+        guard environment["MCLASH_TEST_MODE"] == "1"
+                || arguments.contains("--mclash-test-instance") else {
+            return .standard
+        }
+        let namespace = environment["MCLASH_INSTANCE_NAMESPACE"] ?? "isolated"
+        return UserDefaults(suiteName: "one.leaper.mclash.\(namespace)") ?? .standard
     }
 
     private static func launchRequestsPresentation(

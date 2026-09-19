@@ -30,13 +30,40 @@ enum FlowLedgerAssociationPresentation {
                 connectionID
             )
         case .some(.none), nil:
-            return AppLocalization.string("No Mihomo connection association")
+            return AppLocalization.string("No runtime flow association")
         }
     }
 }
 
 enum FlowLedgerTrafficPresentation {
+    static func historySummary(_ totals: TrafficHistoryTotals, lastUpdatedAt: Date?) -> String {
+        let records = formattedCount(Int(clamping: totals.recordedFlowCount))
+        if totals.coverage.exactDirectionCount == 0, totals.coverage.unmeasuredDirectionCount > 0 {
+            return AppLocalization.format("%@ records · byte totals unavailable", records)
+        }
+        let bytes = formattedLedgerTraffic(totals.exactTotalBytes)
+        if let lastUpdatedAt {
+            return AppLocalization.format("%@ measured · %@ records · updated %@", bytes, records,
+                                          AppLocalization.relativeDate(lastUpdatedAt))
+        }
+        return AppLocalization.format("%@ measured · %@ records", bytes, records)
+    }
+
+    static func totalTitle(_ traffic: FlowLedgerTrafficAggregate) -> String {
+        if traffic.exactTotalBytes == 0,
+           traffic.notAvailableCount > 0 || traffic.notMeasuredAfterHandoffCount > 0 {
+            return AppLocalization.string("Not measured")
+        }
+        return formattedLedgerTraffic(traffic.exactTotalBytes)
+    }
+
     static func directRouteDetail(_ traffic: FlowLedgerTrafficAggregate) -> String {
+        if traffic.notAvailableCount > 0 {
+            return AppLocalization.format(
+                "%@ connection events have no byte totals",
+                formattedCount(traffic.notAvailableCount)
+            )
+        }
         let unmeasuredCount = traffic.notMeasuredAfterHandoffCount
         guard unmeasuredCount > 0 else {
             return AppLocalization.string("Relayed locally; payload measured")
@@ -56,6 +83,18 @@ enum FlowLedgerTrafficPresentation {
     }
 
     static func coverageHelp(_ traffic: FlowLedgerTrafficAggregate) -> String {
+        if traffic.notAvailableCount > 0 {
+            let events = AppLocalization.format(
+                "%@ connection events have no byte totals from the backend.",
+                formattedCount(traffic.notAvailableCount)
+            )
+            if traffic.exactTotalBytes == 0 { return events }
+            return AppLocalization.format(
+                "%@ was measured separately. %@",
+                formattedLedgerTraffic(traffic.exactTotalBytes),
+                events
+            )
+        }
         let unmeasuredCount = traffic.notMeasuredAfterHandoffCount
         guard unmeasuredCount > 0 else {
             if traffic.notApplicableCount > 0, traffic.exactTotalBytes == 0 {
@@ -64,7 +103,7 @@ enum FlowLedgerTrafficPresentation {
                 )
             }
             return AppLocalization.string(
-                "All displayed bytes were measured by Mihomo or the App Routing relay."
+                "All displayed bytes were measured by MClash or the App Routing relay."
             )
         }
 
@@ -76,7 +115,7 @@ enum FlowLedgerTrafficPresentation {
         guard traffic.exactTotalBytes > 0 else { return limitation }
 
         return AppLocalization.format(
-            "%@ was measured by Mihomo or the App Routing relay. %@",
+            "%@ was measured by MClash or the App Routing relay. %@",
             formattedLedgerTraffic(traffic.exactTotalBytes),
             limitation
         )

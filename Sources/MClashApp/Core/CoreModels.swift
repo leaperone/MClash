@@ -14,6 +14,12 @@ struct CoreSession: Equatable, Sendable {
     let secret: String
     let version: String
     let startedAt: Date
+    var backend: CoreBackend = .mihomo
+}
+
+enum CoreBackend: Equatable, Sendable {
+    case mihomo
+    case xray(apiSocketPath: String, version: String)
 }
 
 struct CoreLogLine: Identifiable, Equatable, Sendable {
@@ -52,9 +58,34 @@ struct CoreLaunchConfiguration: Equatable, Sendable {
     let configURL: URL
     let controllerPort: UInt16
     let secret: String
+    var backend: CoreBackend = .mihomo
 
     var controllerEndpoint: URL {
-        URL(string: "http://127.0.0.1:\(controllerPort)")!
+        switch backend {
+        case .mihomo:
+            URL(string: "http://127.0.0.1:\(controllerPort)")!
+        case let .xray(apiSocketPath, _):
+            URL(fileURLWithPath: apiSocketPath)
+        }
+    }
+
+    var launchArguments: [String] {
+        switch backend {
+        case .mihomo:
+            ["-d", homeDirectory.path, "-f", configURL.path,
+             "-ext-ctl", "127.0.0.1:\(controllerPort)", "-secret", secret]
+        case .xray:
+            ["run", "-config", configURL.path]
+        }
+    }
+
+    var validationArguments: [String] {
+        switch backend {
+        case .mihomo:
+            ["-t", "-d", homeDirectory.path, "-f", configURL.path]
+        case .xray:
+            ["run", "-test", "-config", configURL.path]
+        }
     }
 }
 

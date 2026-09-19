@@ -140,7 +140,30 @@ enum ConfigurationProxyGroupPreset {
             "🇺🇸 美国|us|9929|ws|warp",
             "🇯🇵 日本", "🇯🇵 日本 2", "🇯🇵 日本 3", "🇯🇵 日本 4",
         ]
-        let pinnedNodes = cunoeNodes.filter { originalPlanNames.contains($0.displayName) }
+        // Keep the historical CUNOE layout intact when that source is present,
+        // but make the user-facing preset useful for every other source too.
+        // Generic sources use all enabled, supported nodes and derive regional
+        // pools from explicit region/tags or a conservative display-name hint.
+        let genericNodes = document.nodes.filter {
+            $0.enabled && $0.health.availability != .sourceRemoved
+                && $0.health.availability != .unsupported
+        }
+        let useCUNOEPlan = !cunoeSourceIDs.isEmpty
+        let pinnedNodes = useCUNOEPlan
+            ? cunoeNodes.filter { originalPlanNames.contains($0.displayName) }
+            : genericNodes
+
+        func genericRegionMembers(_ region: String, hints: [String]) -> [ProxyGroupMember] {
+            guard !useCUNOEPlan else { return [] }
+            return genericNodes.filter { node in
+                let values = [node.region].compactMap { $0 } + Array(node.tags)
+                    + [node.displayName]
+                return values.contains { value in
+                    value.localizedCaseInsensitiveCompare(region) == .orderedSame
+                        || hints.contains { value.localizedCaseInsensitiveContains($0) }
+                }
+            }.map { .node($0.id) }
+        }
 
         func fixedMembers(named names: [String]) -> [ProxyGroupMember] {
             // Preserve the order from the original CUNOE profile.  This is
@@ -151,32 +174,32 @@ enum ConfigurationProxyGroupPreset {
                 pinnedNodes.first { $0.displayName == name }.map { .node($0.id) }
             }
         }
-        let hongKongMembers = fixedMembers(named: [
+        let hongKongMembers = useCUNOEPlan ? fixedMembers(named: [
             "🇭🇰 香港|juhost|ws", "🇭🇰 香港|ws|private", "🇯🇵 日本",
             "🇺🇸 美国|us|9929|ws|private",
-        ])
-        let unitedStatesMembers = fixedMembers(named: [
+        ]) : genericRegionMembers("Hong Kong", hints: ["香港", "hongkong", "hong-kong", "hk"])
+        let unitedStatesMembers = useCUNOEPlan ? fixedMembers(named: [
             "🇺🇸 美国|us|9929|ws|private", "🇭🇰 香港|juhost|ws",
             "🇭🇰 香港|ws|private", "🇯🇵 日本",
-        ])
-        let japanMembers = fixedMembers(named: [
+        ]) : genericRegionMembers("United States", hints: ["美国", "united states", "usa", "us"])
+        let japanMembers = useCUNOEPlan ? fixedMembers(named: [
             "🇯🇵 日本", "🇭🇰 香港|juhost|ws", "🇭🇰 香港|ws|private",
             "🇺🇸 美国|us|9929|ws|private",
-        ])
-        let residentialMembers = fixedMembers(named: [
+        ]) : genericRegionMembers("Japan", hints: ["日本", "japan", "jp"])
+        let residentialMembers = useCUNOEPlan ? fixedMembers(named: [
             "🇺🇸 美国|us|9929|ws|private|10001VIRCS",
             "🇺🇸 美国|us|9929|ws|private|10002VIRCS",
             "🇺🇸 美国|us|9929|ws|private|10003VIRCS",
             "🇯🇵 日本 2", "🇯🇵 日本 3", "🇯🇵 日本 4",
-        ])
+        ]) : []
         let manualMembers = pinnedNodes.map { ProxyGroupMember.node($0.id) }
         let automaticMembers = manualMembers
-        let highPriorityMembers = fixedMembers(named: [
+        let highPriorityMembers = useCUNOEPlan ? fixedMembers(named: [
             "🇺🇸 美国|us|9929|ws|private", "🇭🇰 香港|ws|private",
-        ])
-        let mediumPriorityMembers = fixedMembers(named: [
+        ]) : []
+        let mediumPriorityMembers = useCUNOEPlan ? fixedMembers(named: [
             "🇭🇰 香港|juhost|ws", "🇺🇸 美国|us|9929|ws|warp",
-        ])
+        ]) : []
 
         // Keep a real DIRECT group available as a safe terminal member for
         // fixed groups whose named CUNOE nodes are temporarily absent. This

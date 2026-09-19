@@ -10,7 +10,7 @@ enum ConfigurationWorkbenchSection: String, CaseIterable, Identifiable, Sendable
     var title: String {
         switch self {
         case .workspaces: "Configuration"
-        case .sources: "Sources"
+        case .sources: "Node Sources"
         case .nodes: "Nodes"
         case .proxyGroups: "Node Groups"
         case .rules: "Rules"

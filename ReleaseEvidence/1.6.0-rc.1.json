@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "release_version": "1.6.0-rc.1",
+  "commit": "338b10516d524912cf100c167628e77896edaf2c",
+  "status": "passed",
+  "backend": "xray",
+  "verification_scope": "Source and isolated runtime acceptance before release signing",
+  "generated_at": "2026-09-15T05:08:36.148185+00:00",
+  "xray_version": "26.9.9",
+  "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
+  "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+  "capabilities": [
+    "nodeSources",
+    "groupSelect",
+    "groupFallback",
+    "groupURLTest",
+    "groupLoadBalance",
+    "groupRelay",
+    "routingRules",
+    "httpIngress",
+    "socksIngress",
+    "dnsPolicy"
+  ],
+  "validation_commands": [
+    "./scripts/verify-xray.sh",
+    "./scripts/build-app.sh (Xray backend, version 1.6.0, build 160001)",
+    "./scripts/test-direct.sh (MCLASH_XRAY_BINARY points to the pinned binary)",
+    "./scripts/integration-test.sh",
+    "python3 scripts/test-xray-release-preflight.py",
+    "python3 scripts/smoke-test-xray-app.py .build/m16-integration-app/MClash.app --output <receipt>",
+    "python3 scripts/smoke-test-xray-app.py .build/m16-integration-app/MClash.app --profile <private source> --output <receipt>",
+    "codesign -dv .build/m16-integration-app/MClash.app/Contents/Resources/Core/mclash-xray"
+  ],
+  "test_counts": {
+    "app": 492,
+    "network_shared": 114,
+    "network_extension": 29,
+    "automation": 6,
+    "appcast_script": 3
+  },
+  "application_acceptance": {
+    "passed": true,
+    "backend": "xray",
+    "http": true,
+    "socks5": true,
+    "modeChanges": [
+      "global",
+      "direct",
+      "rule"
+    ],
+    "selectionAndClear": true,
+    "globalExitChange": true,
+    "disconnect": true,
+    "sourceActivation": true,
+    "invalidSourceRejected": true,
+    "automaticURLTest": 4.687,
+    "automaticFallback": 12.378,
+    "automaticRecovery": 11.652,
+    "expectedStatusEnforced": true,
+    "loadBalance": [
+      "NODE_A",
+      "NODE_B"
+    ],
+    "relayChain": true,
+    "publicHTTPS": [
+      {
+        "sample": 1,
+        "protocol": "vless",
+        "httpStatus": "204",
+        "seconds": 2.026473,
+        "passed": true
+      },
+      {
+        "sample": 2,
+        "protocol": "vless",
+        "httpStatus": "204",
+        "seconds": 1.830127,
+        "passed": true
+      }
+    ],
+    "dnsPolicy": {
+      "directResolution": true,
+      "socksUDPCapture": true
+    },
+    "failedActivationRollback": true,
+    "healthSettingsRoundTrip": true,
+    "signaturePreserved": false,
+    "resources": {
+      "coreProcesses": 1,
+      "coreRSSBytes": 36208640,
+      "appRSSBytes": 86786048,
+      "connectSeconds": 1.566
+    }
+  },
+  "component_signing_identifier": "mclash-xray",
+  "preserved_local_version": "1.3.7",
+  "ui": {
+    "surface": "Node group workbench",
+    "observed": true,
+    "screenshot_sha256": "d2310e6b49e23d6fbb9e0058c4d0654004c75cd8120c8b2a9c148815367df79d"
+  },
+  "limits": [
+    "App traffic acceptance used an isolated ad-hoc bundle clone. Developer ID signing and notarization are release workflow gates.",
+    "Production Network Extension and system proxy were not changed. Actual signed-provider activation and live Fake-IP remain unverified.",
+    "VLESS samples completed public HTTPS. Earlier samples also timed out; no claim is made that every source node is available.",
+    "Hysteria2 was checked against the pinned core schema, without a live Hysteria2 endpoint.",
+    "Rule sets require inline text entries; automatic remote rule-set refresh, MRS, DNS-over-TLS and process-name-only rules are unsupported."
+  ],
+  "post_publish_checks": [
+    "Download published ZIP and verify SHA256SUMS",
+    "Verify Developer ID signatures and core identifier",
+    "Validate notarization ticket and Gatekeeper assessment",
+    "Exercise downloaded application in isolated storage"
+  ]
+}

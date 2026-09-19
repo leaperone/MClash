@@ -10,7 +10,8 @@ struct MClashApp: App {
     @State private var mainWindowContentIsActive = ApplicationDelegate
         .initialWindowShouldPresent(
             arguments: CommandLine.arguments,
-            event: NSAppleEventManager.shared().currentAppleEvent
+            event: NSAppleEventManager.shared().currentAppleEvent,
+            defaults: ApplicationDelegate.launchDefaults()
         )
 
     var body: some Scene {

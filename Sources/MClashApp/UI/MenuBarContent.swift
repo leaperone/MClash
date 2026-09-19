@@ -136,7 +136,7 @@ struct MenuBarContent: View {
                 color: .orange
             )
             metricLabel(
-                title: "Connections",
+                title: model.connectionCountPresentationTitle,
                 value: liveConnectionCount,
                 symbol: "arrow.left.arrow.right",
                 color: .secondary
@@ -739,8 +739,8 @@ struct MenuBarContent: View {
 
     private var liveConnectionCount: String {
         guard model.isConnected else { return "—" }
-        switch model.liveStreamHealth[.connections]?.phase ?? .inactive {
-        case .live: return formattedCount(model.connections?.connections.count ?? 0)
+        switch model.liveStreamHealth[model.connectionRecordStream]?.phase ?? .inactive {
+        case .live: return formattedCount(model.connectionRecordCount)
         case .connecting: return AppLocalization.string("Waiting")
         case .reconnecting, .stale: return AppLocalization.string("Stale")
         case .inactive: return AppLocalization.string("Unavailable")

@@ -563,6 +563,7 @@ private extension AppModel.LiveStream {
         switch self {
         case .traffic: "traffic"
         case .connections: "connections"
+        case .xrayAccess: "xray-access"
         case .logs: "logs"
         case .proxies: "proxies"
         case .appRouting: "app-routing"
@@ -573,6 +574,7 @@ private extension AppModel.LiveStream {
         switch self {
         case .traffic: "Traffic rate"
         case .connections: "Connection"
+        case .xrayAccess: "Connection records"
         case .logs: "Log"
         case .proxies: "Proxy state"
         case .appRouting: "App Routing activity"
@@ -585,6 +587,8 @@ private extension AppModel.LiveStream {
             "The displayed upload and download rates may be stale until the stream reconnects."
         case .connections:
             "The displayed active connection count and routes may be stale until the stream reconnects."
+        case .xrayAccess:
+            "New connection records may be missing until the access-log monitor reconnects."
         case .logs:
             "New Mihomo log entries may be missing until the stream reconnects."
         case .proxies:

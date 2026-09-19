@@ -4,7 +4,7 @@ enum AppRoutingActivityFilter: String, CaseIterable, Identifiable, Sendable {
     case focused = "Proxy & Issues"
     case all = "All"
     case active = "Active"
-    case viaMihomo = "Via Mihomo"
+    case viaMihomo = "Via proxy core"
     case direct = "Direct"
     case rejected = "Rejected"
     case failed = "Failed"

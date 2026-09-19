@@ -34,12 +34,14 @@ struct ConnectionsView: View {
 
     @ViewBuilder
     private func liveWorkspace(presentation: ConnectionPresentationSnapshot) -> some View {
-        if !model.isConnected {
+        if model.runtimeBackend == .xray {
+            xrayObservedWorkspace
+        } else if !model.isConnected {
             DisconnectedUnavailableView(
                 model: model,
                 title: "Connect to inspect traffic",
                 systemImage: "arrow.left.arrow.right",
-                description: "Live connections are streamed from the local Mihomo controller."
+                description: "Live flow records are collected by MClash when routing is enabled."
             )
         } else if !presentation.hasSnapshot,
                   let health = model.liveStreamHealth[.connections],
@@ -50,7 +52,7 @@ struct ConnectionsView: View {
                 Text(
                     liveStreamDetail(
                         health,
-                        source: AppLocalization.string("Mihomo connections")
+                        source: AppLocalization.string("MClash flow records")
                     )
                 )
             } actions: {
@@ -79,12 +81,145 @@ struct ConnectionsView: View {
     }
 
     @ViewBuilder
+    private var xrayObservedWorkspace: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Label(AppLocalization.string("Connection records"), systemImage: "waveform.path.ecg")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, 10)
+            Divider()
+            if xrayAccessLogIsUnavailable && !model.xrayAccessRecords.isEmpty {
+                Label(
+                    liveStreamDetail(model.liveStreamHealth[.xrayAccess] ?? .inactive,
+                                     source: AppLocalization.string("Connection records")),
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, MClashLayout.pagePadding)
+                .padding(.vertical, 8)
+            }
+            if !model.isConnected {
+                DisconnectedUnavailableView(
+                    model: model,
+                    title: AppLocalization.string("Connect to inspect traffic"),
+                    systemImage: "arrow.left.arrow.right",
+                    description: AppLocalization.string("Connection records are collected by MClash while routing is enabled.")
+                )
+            } else if xrayAccessLogIsUnavailable && model.xrayAccessRecords.isEmpty {
+                ContentUnavailableView {
+                    Label(AppLocalization.string("Connection records unavailable"), systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                } description: {
+                    Text(liveStreamDetail(
+                        model.liveStreamHealth[.xrayAccess] ?? .inactive,
+                        source: AppLocalization.string("Connection records")
+                    ))
+                } actions: {
+                    Button(AppLocalization.string("Reconnect MClash")) {
+                        Task { await model.restartConnection() }
+                    }
+                    .disabled(!model.canPerform(.connection))
+                }
+            } else if !model.xrayAccessRecords.isEmpty {
+                xrayAccessTable
+            } else {
+                ContentUnavailableView {
+                    Label(AppLocalization.string("Waiting for connection records"), systemImage: "point.3.connected.trianglepath.dotted")
+                } description: {
+                    Text(AppLocalization.string("MClash will show a record here after it observes a routed connection."))
+                }
+            }
+        }
+    }
+
+    private var xrayAccessLogIsUnavailable: Bool {
+        switch model.liveStreamHealth[.xrayAccess]?.phase ?? .inactive {
+        case .reconnecting, .stale:
+            true
+        case .inactive, .connecting, .live:
+            false
+        }
+    }
+
+    @ViewBuilder
+    private var xrayAccessTable: some View {
+        let records = filteredXrayAccessRecords
+        if records.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            Table(records, selection: $selectedXrayRecordID) {
+                TableColumn(AppLocalization.string("Time")) { record in
+                    Text(AppLocalization.date(record.record.timestamp, dateStyle: .omitted, timeStyle: .standard))
+                        .monospacedDigit()
+                }
+                .width(min: 82, ideal: 96, max: 110)
+                TableColumn(AppLocalization.string("Destination")) { record in
+                    Text(record.record.destination).lineLimit(1).help(record.record.destination)
+                }
+                .width(min: 180, ideal: 320, max: 480)
+                TableColumn(AppLocalization.string("Path")) { record in
+                    Text(record.pathTitle).lineLimit(1).help(record.pathHelp)
+                }
+                .width(min: 160, ideal: 280, max: 420)
+            }
+            .accessibilityIdentifier("xray.records")
+        }
+    }
+
+    private var filteredXrayAccessRecords: [XrayConnectionRecordPresentation] {
+        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let records = xrayAccessRecords
+        guard !query.isEmpty else { return records }
+        return records.filter { $0.searchableText.contains { $0.localizedCaseInsensitiveContains(query) } }
+    }
+
+    private var xrayAccessRecords: [XrayConnectionRecordPresentation] {
+        let nodeNames = xrayNodeNames
+        let groupNames = xrayGroupNames
+        let localProxyTitle = AppLocalization.string("Local Proxy")
+        let applicationRoutingTitle = AppLocalization.string("Application traffic")
+        let unknownSourceTitle = AppLocalization.string("Unknown source")
+        let missingPathTitle = AppLocalization.string("No entrance or node was reported for this connection event.")
+        return model.xrayAccessRecords.reversed().map { record in
+            XrayConnectionRecordPresentation(
+                record: record,
+                nodeNames: nodeNames,
+                groupNames: groupNames,
+                localProxyTitle: localProxyTitle,
+                applicationRoutingTitle: applicationRoutingTitle,
+                unknownSourceTitle: unknownSourceTitle,
+                missingPathTitle: missingPathTitle
+            )
+        }
+    }
+
+    private var xrayNodeNames: [String: String] {
+        var names = Dictionary(uniqueKeysWithValues: model.configurationDocument.nodes.map { node in
+            (
+                XrayRuntimePlan.nodeTag(node.id),
+                nonEmpty(node.userAlias) ?? node.displayName
+            )
+        })
+        names["direct"] = AppLocalization.string("Direct")
+        names["reject"] = AppLocalization.string("Reject")
+        names["dns-out"] = "DNS"
+        return names
+    }
+
+    private var xrayGroupNames: [String: String] {
+        Dictionary(uniqueKeysWithValues: model.configurationDocument.proxyGroups.map { group in
+            (XrayRuntimePlan.groupTag(group.id), group.name)
+        })
+    }
+
+    @ViewBuilder
     private var applicationWorkspace: some View {
         if model.flowLedger.entries.isEmpty {
             ContentUnavailableView(
                 "No observed application traffic",
                 systemImage: "square.stack.3d.up",
-                description: Text("Applications appear after Mihomo or App Routing observes a flow.")
+                description: Text("Applications appear after MClash observes a routed flow.")
             )
         } else if filteredApplications.isEmpty {
             ContentUnavailableView.search(text: searchText)
@@ -92,7 +227,7 @@ struct ConnectionsView: View {
             Table(filteredApplications, selection: $selectedApplicationID) {
                 TableColumn("Application") { aggregate in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(aggregate.application.displayName)
+                        Text(aggregate.application.isAttributed ? aggregate.application.displayName : AppLocalization.string("Unattributed"))
                             .fontWeight(.medium)
                             .lineLimit(1)
                         if let identifier = aggregate.application.bundleIdentifier {
@@ -106,17 +241,18 @@ struct ConnectionsView: View {
                 }
                 .width(min: 180, ideal: 260)
 
-                TableColumn("Active") { aggregate in
-                    Text(formattedCount(aggregate.activeCount))
+                TableColumn(AppLocalization.string("Records")) { aggregate in
+                    Text(formattedCount(aggregate.entryCount))
                         .monospacedDigit()
                 }
                 .width(70)
 
                 TableColumn("Traffic") { aggregate in
-                    Text(formattedLedgerBytes(aggregate.traffic.exactTotalBytes))
+                    Text(FlowLedgerTrafficPresentation.totalTitle(aggregate.traffic))
                         .monospacedDigit()
                         .foregroundStyle(
                             aggregate.traffic.notMeasuredAfterHandoffCount > 0
+                                || aggregate.traffic.notAvailableCount > 0
                                 ? Color.orange
                                 : Color.primary
                         )
@@ -155,7 +291,7 @@ struct ConnectionsView: View {
             ContentUnavailableView(
                 "No observed routes",
                 systemImage: "point.3.connected.trianglepath.dotted",
-                description: Text("Routes appear as traffic decisions and Mihomo connections are observed.")
+                description: Text(AppLocalization.string("Routes appear as traffic decisions and MClash flow records are observed."))
             )
         } else if filteredRoutes.isEmpty {
             ContentUnavailableView.search(text: searchText)
@@ -175,17 +311,18 @@ struct ConnectionsView: View {
                 }
                 .width(min: 240, ideal: 380)
 
-                TableColumn("Active") { aggregate in
-                    Text(formattedCount(aggregate.activeCount))
+                TableColumn(AppLocalization.string("Records")) { aggregate in
+                    Text(formattedCount(aggregate.entryCount))
                         .monospacedDigit()
                 }
                 .width(70)
 
                 TableColumn("Traffic") { aggregate in
-                    Text(formattedLedgerBytes(aggregate.traffic.exactTotalBytes))
+                    Text(FlowLedgerTrafficPresentation.totalTitle(aggregate.traffic))
                         .monospacedDigit()
                         .foregroundStyle(
                             aggregate.traffic.notMeasuredAfterHandoffCount > 0
+                                || aggregate.traffic.notAvailableCount > 0
                                 ? Color.orange
                                 : Color.primary
                         )
@@ -206,7 +343,7 @@ struct ConnectionsView: View {
                 ContentUnavailableView(
                     "No session traffic history",
                     systemImage: "clock.arrow.circlepath",
-                    description: Text("Completed connection details appear here for this app session. Persistent totals, when enabled, remain available above without storing destinations.")
+                    description: Text("Connection events and completed flows appear here for this session. Saved totals do not include destinations.")
                 )
             } else if filteredHistory.isEmpty {
                 ContentUnavailableView.search(text: searchText)
@@ -387,7 +524,7 @@ struct ConnectionsView: View {
     }
 
     private func historyCompactDetail(_ entry: FlowLedgerEntry) -> String {
-        let ended = entry.endedAt.map {
+        let ended = (entry.state == .observed ? entry.startedAt : entry.endedAt).map {
             AppLocalization.date($0, dateStyle: .omitted, timeStyle: .shortened)
         } ?? "—"
         return "\(historyRouteTitle(entry)) · \(profileTitle(entry.trafficTarget)) · \(ended)"
@@ -400,7 +537,7 @@ struct ConnectionsView: View {
             historyRuleHelp(entry),
             historyRouteHelp(entry),
             profileTitle(entry.trafficTarget),
-            entry.endedAt.map { AppLocalization.date($0) } ?? "—"
+            entry.state == .observed ? AppLocalization.string("Connection event") : entry.endedAt.map { AppLocalization.date($0) } ?? "—"
         )
     }
 
@@ -427,6 +564,7 @@ struct ConnectionsView: View {
     @SceneStorage("mclash.connections.searchText") private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var selectedConnectionID: String?
+    @State private var selectedXrayRecordID: UUID?
     @State private var selectedApplicationID: FlowLedgerApplicationKey?
     @State private var selectedHistoryID: FlowLedgerEntryID?
     @State private var sortOrder: [KeyPathComparator<ConnectionTableRow>] = []
@@ -448,6 +586,36 @@ struct ConnectionsView: View {
     @SceneStorage("mclash.connections.liveUpdatesPaused") private var liveUpdatesPaused = false
     @State private var ruleDraftRequest: TrafficRuleDraftRequest?
     @State private var applicationCandidates: [ApplicationCaptureCandidate] = []
+
+    private var selectedXrayRecord: XrayConnectionRecordPresentation? {
+        guard let selectedXrayRecordID else { return nil }
+        return xrayAccessRecords.first { $0.id == selectedXrayRecordID }
+    }
+
+    private func handleWorkspaceChange(_ workspace: TrafficWorkspace) {
+        selectedConnectionID = nil
+        selectedXrayRecordID = nil
+        selectedApplicationID = nil
+        inspectorPresented = false
+        if workspace == .live {
+            schedulePresentationRefresh()
+        } else {
+            liveUpdatesPaused = false
+            presentationSourceSnapshot = nil
+            presentationTask?.cancel()
+            presentationTask = nil
+            presentationGeneration &+= 1
+        }
+    }
+
+    @ViewBuilder
+    private func inspectorContent(selectedConnection: MihomoConnection?) -> some View {
+        if model.runtimeBackend == .xray, let selectedXrayRecord {
+            xrayRecordInspector(selectedXrayRecord)
+        } else {
+            connectionInspector(selectedConnection)
+        }
+    }
 
     var body: some View {
         let presentation = presentation
@@ -492,7 +660,7 @@ struct ConnectionsView: View {
         .mclashPageSurface()
         .searchable(text: $searchText, prompt: "Host, process, rule, IP, or node")
         .inspector(isPresented: attachedInspectorBinding) {
-            connectionInspector(selectedConnection)
+            inspectorContent(selectedConnection: selectedConnection)
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 440)
         }
         .task(id: searchText) {
@@ -532,24 +700,14 @@ struct ConnectionsView: View {
         .onChange(of: model.isConnected) { _, isConnected in
             if !isConnected {
                 selectedConnectionID = nil
+                selectedXrayRecordID = nil
                 inspectorPresented = false
             } else if workspace == .live {
                 schedulePresentationRefresh(force: liveUpdatesPaused)
             }
         }
         .onChange(of: workspace) { _, workspace in
-            selectedConnectionID = nil
-            selectedApplicationID = nil
-            inspectorPresented = false
-            if workspace == .live {
-                schedulePresentationRefresh()
-            } else {
-                liveUpdatesPaused = false
-                presentationSourceSnapshot = nil
-                presentationTask?.cancel()
-                presentationTask = nil
-                presentationGeneration &+= 1
-            }
+            handleWorkspaceChange(workspace)
         }
         .confirmationDialog(
             AppLocalization.format(
@@ -648,7 +806,7 @@ struct ConnectionsView: View {
 
             Spacer(minLength: 12)
 
-            if workspace == .live {
+            if workspace == .live, model.runtimeBackend != .xray {
                 liveSnapshotControls(presentation: presentation, compact: false)
             }
 
@@ -673,6 +831,10 @@ struct ConnectionsView: View {
 
             if workspace == .live, selectedConnection != nil {
                 inspectorButton(selectedConnection: selectedConnection)
+            }
+
+            if workspace == .live, model.runtimeBackend == .xray, selectedXrayRecord != nil {
+                xrayRecordInspectorButton
             }
 
             trafficMoreMenu(presentation: presentation)
@@ -701,6 +863,9 @@ struct ConnectionsView: View {
                     presentation: presentation,
                     selectedConnection: selectedConnection
                 )
+                if workspace == .live, model.runtimeBackend == .xray, selectedXrayRecord != nil {
+                    xrayRecordInspectorButton.labelStyle(.iconOnly)
+                }
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -716,7 +881,7 @@ struct ConnectionsView: View {
                 .help(trafficDataNotice ?? trafficHeaderSummary(presentation: presentation))
                 .accessibilityLabel(trafficHeaderSummary(presentation: presentation))
 
-                if workspace == .live {
+                if workspace == .live, model.runtimeBackend != .xray {
                     liveSnapshotControls(presentation: presentation, compact: true)
                         Text(defaultLiveWorkspaceTitle)
                         .font(.caption)
@@ -889,15 +1054,16 @@ struct ConnectionsView: View {
                     }
                     .disabled(selectedConnection == nil)
 
-                    Divider()
-
-                    Button("Close All", role: .destructive) {
-                        confirmingCloseAll = true
+                    if model.runtimeBackend != .xray {
+                        Divider()
+                        Button("Close All", role: .destructive) {
+                            confirmingCloseAll = true
+                        }
+                        .disabled(
+                            !presentation.hasConnections
+                                || !model.canPerform(.closeAllConnections)
+                        )
                     }
-                    .disabled(
-                        !presentation.hasConnections
-                            || !model.canPerform(.closeAllConnections)
-                    )
                 } else {
                     Button("Clear History", role: .destructive) {
                         confirmingClearTrafficHistory = true
@@ -946,7 +1112,11 @@ struct ConnectionsView: View {
         if trafficDataNotice != nil {
             return AppLocalization.string("Traffic data reconnecting")
         }
-        if workspace == .live { return presentation.connectionCountLabel }
+        if workspace == .live {
+            return model.runtimeBackend == .xray
+                ? xrayRecordHeaderSummary
+                : presentation.connectionCountLabel
+        }
         return workspaceSummary
     }
 
@@ -957,6 +1127,7 @@ struct ConnectionsView: View {
             return AppLocalization.string("Live data reconnecting · last-known rows shown")
         }
         if workspace == .live {
+            if model.runtimeBackend == .xray { return xrayRecordHeaderSummary }
             var parts = [presentation.connectionCountLabel]
             if liveUpdatesPaused {
                 parts.insert(AppLocalization.string("Paused snapshot"), at: 0)
@@ -981,6 +1152,16 @@ struct ConnectionsView: View {
             )
         }
         return workspaceSummary
+    }
+
+    private var xrayRecordHeaderSummary: String {
+        guard model.connectionRecordDataIsCurrent else {
+            return AppLocalization.string("Waiting for traffic")
+        }
+        return AppLocalization.format(
+            "%@ records",
+            formattedCount(model.connectionRecordCount)
+        )
     }
 
     @ViewBuilder
@@ -1053,6 +1234,7 @@ struct ConnectionsView: View {
                 .frame(width: 190)
 
                 Text(persistentHistoryCompactSummary(lastUpdatedAt: lastUpdatedAt))
+                    .accessibilityIdentifier("traffic.history.summary")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -1186,6 +1368,7 @@ struct ConnectionsView: View {
                     .fixedSize()
                 }
                 Text(persistentHistoryCompactSummary(lastUpdatedAt: lastUpdatedAt))
+                    .accessibilityIdentifier("traffic.history.summary")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1201,17 +1384,7 @@ struct ConnectionsView: View {
         guard let snapshot = persistentTrafficHistorySnapshot else {
             return AppLocalization.string("Preparing aggregate totals…")
         }
-        let bytes = persistentByteCount(snapshot.totals.exactTotalBytes)
-        let completed = formattedCount(Int(clamping: snapshot.totals.completedFlowCount))
-        if let lastUpdatedAt {
-            return AppLocalization.format(
-                "%@ measured · %@ completed · updated %@",
-                bytes,
-                completed,
-                AppLocalization.relativeDate(lastUpdatedAt)
-            )
-        }
-        return AppLocalization.format("%@ measured · %@ completed", bytes, completed)
+        return FlowLedgerTrafficPresentation.historySummary(snapshot.totals, lastUpdatedAt: lastUpdatedAt)
     }
 
     private var persistentTrafficHistorySnapshot: TrafficHistorySnapshot? {
@@ -1223,12 +1396,8 @@ struct ConnectionsView: View {
 
     private var hasTrafficHistoryToClear: Bool {
         !historicalEntries.isEmpty
-            || (model.trafficHistoryTodaySnapshot?.totals.completedFlowCount ?? 0) > 0
-            || (model.trafficHistoryWeekSnapshot?.totals.completedFlowCount ?? 0) > 0
-    }
-
-    private func persistentByteCount(_ bytes: UInt64) -> String {
-        formattedByteCount(Int64(clamping: bytes))
+            || (model.trafficHistoryTodaySnapshot?.totals.recordedFlowCount ?? 0) > 0
+            || (model.trafficHistoryWeekSnapshot?.totals.recordedFlowCount ?? 0) > 0
     }
 
     private func retentionTitle(_ retention: TrafficHistoryRetention) -> String {
@@ -1238,19 +1407,20 @@ struct ConnectionsView: View {
     private var trafficDataNotice: String? {
         switch workspace {
         case .live:
+            if model.runtimeBackend == .xray { return nil }
             guard model.isConnected,
                   model.liveStreamHealth[.connections]?.hasCurrentData != true else {
                 return nil
             }
             return liveStreamDetail(
                 model.liveStreamHealth[.connections] ?? .inactive,
-                source: AppLocalization.string("Mihomo connections")
+                source: AppLocalization.string("MClash flow records")
             )
         case .apps, .routes, .history:
             var staleSources: [String] = []
-            if model.isConnected,
+            if model.runtimeBackend != .xray, model.isConnected,
                model.liveStreamHealth[.connections]?.hasCurrentData != true {
-                staleSources.append(AppLocalization.string("Mihomo connections"))
+                staleSources.append(AppLocalization.string("MClash flow records"))
             }
             if appRoutingIsActive,
                model.liveStreamHealth[.appRouting]?.hasCurrentData != true {
@@ -1262,7 +1432,7 @@ struct ConnectionsView: View {
                     ? model.liveStreamHealth[.connections].map {
                         liveStreamDetail(
                             $0,
-                            source: AppLocalization.string("Mihomo connections")
+                            source: AppLocalization.string("MClash flow records")
                         )
                     }
                     : nil,
@@ -1339,6 +1509,58 @@ struct ConnectionsView: View {
             connectionInspector(selectedConnection)
                 .frame(width: 360, height: 520)
         }
+    }
+
+    private var xrayRecordInspectorButton: some View {
+        Button {
+            inspectorPresented.toggle()
+        } label: {
+            Label(AppLocalization.string("Connection Inspector"), systemImage: "sidebar.right")
+        }
+        .accessibilityIdentifier("xray.record.details")
+        .help(AppLocalization.string("Show Connection Inspector"))
+        .accessibilityHint(AppLocalization.string("Shows route, process, address, and traffic details for the selected connection"))
+        .popover(isPresented: popoverInspectorBinding, arrowEdge: .top) {
+            if let selectedXrayRecord {
+                xrayRecordInspector(selectedXrayRecord)
+                    .frame(width: 360, height: 420)
+            }
+        }
+    }
+
+    private func xrayRecordInspector(_ record: XrayConnectionRecordPresentation) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Label(
+                    AppLocalization.format("Connection details for %@", record.record.destination),
+                    systemImage: "waveform.path.ecg"
+                )
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+
+                LabeledContent(
+                    AppLocalization.string("Time"),
+                    value: AppLocalization.date(record.record.timestamp, dateStyle: .abbreviated, timeStyle: .standard)
+                )
+                LabeledContent(AppLocalization.string("Source"), value: record.sourceTitle)
+                LabeledContent(AppLocalization.string("Transport"), value: record.record.transport.uppercased())
+                LabeledContent(AppLocalization.string("Path"), value: record.pathTitle)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(AppLocalization.string("Evidence"))
+                        .font(.subheadline.weight(.medium))
+                    Text(AppLocalization.string("Observed by MClash from the Xray access log. This is a connection event, not an application-level byte total."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(record.pathHelp)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(18)
+        }
+        .accessibilityIdentifier("xray.record.inspector")
     }
 
     private var attachedInspectorBinding: Binding<Bool> {
@@ -2361,10 +2583,12 @@ private func trafficCoverageHelp(_ traffic: FlowLedgerTrafficAggregate) -> Strin
 private func routeTitle(_ route: FlowLedgerRouteKey) -> String {
     switch route {
     case let .mihomo(rule, _, chain):
-        return chain.last ?? rule ?? "Mihomo"
+        return chain.last ?? rule ?? "Runtime"
+    case let .xray(chain):
+        return chain.last ?? "Xray"
     case let .unresolvedMihomo(rule):
-        return rule.map { AppLocalization.format("Mihomo · %@", $0) }
-            ?? AppLocalization.string("Mihomo · resolving")
+        return rule.map { AppLocalization.format("Runtime · %@", $0) }
+            ?? AppLocalization.string("Runtime · resolving")
     case .direct:
         return AppLocalization.string("Direct")
     case .rejected:
@@ -2386,14 +2610,16 @@ private func routeSubtitle(
         let path = chain.joined(separator: " → ")
         return nonEmpty(decision)
             ?? nonEmpty(path)
-            ?? AppLocalization.string("Mihomo route")
+            ?? AppLocalization.string("Runtime route")
+    case let .xray(chain):
+        return chain.joined(separator: " → ")
     case let .unresolvedMihomo(rule):
         return rule.map {
             AppLocalization.format(
-                "App rule %@ · awaiting Mihomo correlation",
+                "App rule %@ · awaiting runtime flow evidence",
                 $0
             )
-        } ?? AppLocalization.string("Awaiting Mihomo correlation")
+        } ?? AppLocalization.string("Awaiting runtime flow evidence")
     case .direct:
         return FlowLedgerTrafficPresentation.directRouteDetail(traffic)
     case .rejected:
@@ -2417,6 +2643,8 @@ private func routeHelp(
             ? AppLocalization.string("No proxy chain reported")
             : chain.joined(separator: " → ")
         return [nonEmpty(decision), path].compactMap { $0 }.joined(separator: "\n")
+    case let .xray(chain):
+        return chain.joined(separator: " → ")
     default:
         return "\(routeTitle(route))\n\(routeSubtitle(route, traffic: traffic))"
     }
@@ -2450,7 +2678,8 @@ private func captureOriginTitle(_ origin: FlowLedgerCaptureOrigin) -> String {
 
 private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
     switch outcome {
-    case .viaMihomo: AppLocalization.string("Via Mihomo")
+    case .viaMihomo: AppLocalization.string("Via MClash")
+    case .viaXray: AppLocalization.string("Via Xray")
     case .direct: AppLocalization.string("Direct")
     case .rejected: AppLocalization.string("Rejected")
     case .failOpen: AppLocalization.string("Fail Open")
@@ -2461,6 +2690,7 @@ private func outcomeTitle(_ outcome: FlowLedgerOutcome) -> String {
 private func outcomeColor(_ outcome: FlowLedgerOutcome) -> Color {
     switch outcome {
     case .viaMihomo: .green
+    case .viaXray: .green
     case .direct: .secondary
     case .rejected, .relayFailed: .red
     case .failOpen: .orange
@@ -2468,6 +2698,9 @@ private func outcomeColor(_ outcome: FlowLedgerOutcome) -> Color {
 }
 
 private func ledgerTrafficTitle(_ entry: FlowLedgerEntry) -> String {
+    if entry.upload == .notAvailable || entry.download == .notAvailable {
+        return AppLocalization.string("Byte totals unavailable")
+    }
     if entry.upload == .notMeasuredAfterHandoff
         || entry.download == .notMeasuredAfterHandoff {
         return AppLocalization.string("Not measured")
@@ -2482,6 +2715,11 @@ private func ledgerTrafficTitle(_ entry: FlowLedgerEntry) -> String {
 }
 
 private func ledgerTrafficHelp(_ entry: FlowLedgerEntry) -> String {
+    if entry.upload == .notAvailable || entry.download == .notAvailable {
+        return AppLocalization.string(
+            "This Xray connection event does not include per-connection byte totals."
+        )
+    }
     if entry.upload == .notMeasuredAfterHandoff
         || entry.download == .notMeasuredAfterHandoff {
         return AppLocalization.string(

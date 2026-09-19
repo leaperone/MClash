@@ -182,6 +182,7 @@ final class AutomationCommandGateway {
         case "system.capabilities":
             return try encode(Self.capabilitiesForClients)
         case "system.snapshot":
+            await model.refreshRoutingForAutomation()
             return snapshot()
         case "auth.clients.list":
             return try encode(authorizationStore.list())
@@ -335,6 +336,12 @@ final class AutomationCommandGateway {
             } catch {
                 throw configurationGatewayError(error)
             }
+        case "configuration.ruleSets.refresh":
+            let succeeded = await model.refreshConfigurationRuleSets()
+            return .object([
+                "updated": .bool(succeeded),
+                "message": model.ruleSetRefreshMessage.map(AutomationJSONValue.string) ?? .null,
+            ])
         case "configuration.delete":
             do {
                 guard let kind = ConfigurationAutomationObjectKind(
@@ -397,22 +404,22 @@ final class AutomationCommandGateway {
             let shouldConnect = !model.isConnected && !model.isBusy
             await model.toggleConnection()
             if shouldConnect {
-                try require(model.isConnected, "The Mihomo core did not connect")
+                try require(model.isConnected, "The proxy core did not connect")
             } else {
-                try require(!model.isConnected && !model.isBusy, "The Mihomo core did not stop")
+                try require(!model.isConnected && !model.isBusy, "The proxy engine did not stop")
             }
             return coreStatus()
         case "core.connect":
             await model.connect()
-            try require(model.isConnected, "The Mihomo core did not connect")
+            try require(model.isConnected, "The proxy core did not connect")
             return coreStatus()
         case "core.disconnect":
             await model.disconnect()
-            try require(!model.isConnected && !model.isBusy, "The Mihomo core did not stop")
+            try require(!model.isConnected && !model.isBusy, "The proxy engine did not stop")
             return coreStatus()
         case "core.restart":
             await model.restartConnection()
-            try require(model.isConnected, "The Mihomo core did not restart")
+            try require(model.isConnected, "The proxy engine did not restart")
             return coreStatus()
         case "profiles.list":
             return try profiles(request: request)
@@ -567,6 +574,7 @@ final class AutomationCommandGateway {
             let outcome = try await model.resetRuntimeOverrides()
             return .object(["outcome": .string(String(describing: outcome))])
         case "routing.status":
+            await model.refreshRoutingForAutomation()
             return routingStatus()
         case "routing.mode.set":
             let mode = try request.string("mode").lowercased()
@@ -583,8 +591,10 @@ final class AutomationCommandGateway {
                 "mode": .string(mode),
             ])
         case "routing.groups.list":
+            await model.refreshRoutingForAutomation()
             return try routingGroups(request: request)
         case "routing.group.choices.list":
+            await model.refreshRoutingForAutomation()
             let groupName = try request.string("group")
             guard let group = model.proxyGroups.first(where: { $0.name == groupName }) else {
                 throw GatewayError.invalidParameters("Unknown proxy group")
@@ -621,7 +631,7 @@ final class AutomationCommandGateway {
         case "mihomo.rules.list":
             return try paged(model.rules, request: request, maximumLimit: 500)
         case "mihomo.rules.refresh":
-            try require(await model.refreshRules(), "Mihomo rules could not be refreshed")
+            try require(await model.refreshRules(), "Routing rules could not be refreshed")
             return .object([
                 "accepted": .bool(true),
                 "ruleCount": .integer(Int64(model.rules.count)),
@@ -866,18 +876,48 @@ final class AutomationCommandGateway {
         case "traffic.snapshot":
             return trafficSnapshot()
         case "traffic.connections.list":
+            if model.runtimeBackend == .xray {
+                return try paged(
+                    model.xrayAccessRecords,
+                    request: request,
+                    maximumLimit: 200
+                ).mergingObject([
+                    "freshness": freshness(.xrayAccess),
+                    "evidence": .string("mclash-xray-access-log"),
+                    "note": .string("MClash reads these connection events from the Xray access log. They do not include per-connection byte totals."),
+                ])
+            }
             return try paged(
                 model.connections?.connections ?? [],
                 request: request,
                 maximumLimit: 100
             ).mergingObject(["freshness": freshness(.connections)])
+        case "traffic.flows.list":
+            if model.runtimeBackend == .xray {
+                return try paged(model.xrayAccessRecords, request: request, maximumLimit: 200)
+                    .mergingObject(["freshness": freshness(.xrayAccess), "evidence": .string("mclash-xray-access-log")])
+            }
+            return try paged(model.appRoutingActivities, request: request, maximumLimit: 200)
+                .mergingObject(["freshness": freshness(.appRouting), "evidence": .string("mclash-flow-records")])
         case "traffic.connections.close":
+            if model.runtimeBackend == .xray {
+                throw GatewayError.operationFailed(
+                    "Xray connection records are historical events and cannot be closed from MClash.",
+                    false
+                )
+            }
             try require(
                 await model.closeConnection(try request.string("id")),
                 "The connection could not be closed"
             )
             return accepted()
         case "traffic.connections.closeAll":
+            if model.runtimeBackend == .xray {
+                throw GatewayError.operationFailed(
+                    "Xray connection records are historical events and cannot be closed from MClash.",
+                    false
+                )
+            }
             try require(
                 await model.closeAllConnections(),
                 "Connections could not be closed"
@@ -1489,6 +1529,7 @@ final class AutomationCommandGateway {
             "workspaceName": workspace.map { .string($0.name) } ?? .null,
             "routingMode": workspace.map { .string($0.routingMode.rawValue) } ?? .null,
             "sourcePolicy": .string("nodes-only"),
+            "hasUnappliedChanges": .bool(model.configurationHasUnappliedChanges),
             "nodeCount": .integer(Int64(model.configurationDocument.nodes.count)),
             "groupCount": .integer(Int64(model.configurationDocument.proxyGroups.count)),
             "ruleCount": .integer(Int64(model.configurationDocument.rules.count)),
@@ -1614,6 +1655,8 @@ final class AutomationCommandGateway {
                 "kind": .string("imported"),
                 "originalFileName": .string(fileName),
             ])
+        case .pastedLinks:
+            origin = .object(["kind": .string("pastedLinks")])
         case let .remote(metadata):
             origin = .object([
                 "kind": .string("remote"),
@@ -1741,8 +1784,13 @@ final class AutomationCommandGateway {
             "downloadBytesPerSecond": .integer(model.traffic.download),
             "uploadTotal": .integer(model.traffic.uploadTotal),
             "downloadTotal": .integer(model.traffic.downloadTotal),
-            "connectionCount": .integer(Int64(model.connections?.connections.count ?? 0)),
-            "memoryBytes": model.connections?.memory.map {
+            "connectionCount": .integer(Int64(model.runtimeBackend == .xray
+                ? model.xrayAccessRecords.count
+                : model.connections?.connections.count ?? 0)),
+            "connectionCountMeaning": .string(model.runtimeBackend == .xray
+                ? "recordedEvents"
+                : "activeConnections"),
+            "memoryBytes": model.runtimeBackend == .xray ? .null : model.connections?.memory.map {
                 .unsignedInteger($0)
             } ?? .null,
             "freshness": freshness(.traffic),
@@ -1973,6 +2021,9 @@ final class AutomationCommandGateway {
             "totals": trafficHistoryTotals(snapshot.totals),
             "applicationCount": .integer(Int64(snapshot.applications.count)),
             "routeCount": .integer(Int64(snapshot.routes.count)),
+            "byteTotalsUnavailable": .bool(
+                snapshot.totals.coverage.unmeasuredDirectionCount > 0
+            ),
         ])
     }
 
@@ -1980,7 +2031,8 @@ final class AutomationCommandGateway {
         _ totals: TrafficHistoryTotals
     ) -> AutomationJSONValue {
         .object([
-            "completedFlowCount": .unsignedInteger(totals.completedFlowCount),
+            "recordedFlowCount": .unsignedInteger(totals.recordedFlowCount),
+            "completedFlowCount": .unsignedInteger(totals.recordedFlowCount),
             "exactUploadBytes": .unsignedInteger(totals.exactUploadBytes),
             "exactDownloadBytes": .unsignedInteger(totals.exactDownloadBytes),
             "exactTotalBytes": .unsignedInteger(totals.exactTotalBytes),
@@ -1990,6 +2042,9 @@ final class AutomationCommandGateway {
                 ),
                 "notMeasuredDirectionCount": .unsignedInteger(
                     totals.coverage.notMeasuredDirectionCount
+                ),
+                "notAvailableDirectionCount": .unsignedInteger(
+                    totals.coverage.notAvailableDirectionCount
                 ),
                 "notApplicableDirectionCount": .unsignedInteger(
                     totals.coverage.notApplicableDirectionCount
@@ -2044,6 +2099,7 @@ final class AutomationCommandGateway {
             "notMeasuredAfterHandoffCount": .integer(
                 Int64(traffic.notMeasuredAfterHandoffCount)
             ),
+            "notAvailableCount": .integer(Int64(traffic.notAvailableCount)),
             "notApplicableCount": .integer(Int64(traffic.notApplicableCount)),
         ])
     }
@@ -2115,6 +2171,11 @@ final class AutomationCommandGateway {
                 } ?? .null,
                 "chain": .array(chain.map(AutomationJSONValue.string)),
             ])
+        case let .xray(chain):
+            return .object([
+                "kind": .string("xray"),
+                "chain": .array(chain.map(AutomationJSONValue.string)),
+            ])
         case let .unresolvedMihomo(rule):
             return .object([
                 "kind": .string("unresolvedMihomo"),
@@ -2135,9 +2196,11 @@ final class AutomationCommandGateway {
         let identifier: String = switch entry.id {
         case let .appRouting(id): "app:\(id.uuidString.lowercased())"
         case let .mihomo(id): "mihomo:\(id)"
+        case let .xray(id): "xray:\(id.uuidString.lowercased())"
         }
         let state: String = switch entry.state {
         case .active: "active"
+        case .observed: "observed"
         case .completed: "completed"
         case .rejected: "rejected"
         case .failed: "failed"
@@ -2181,6 +2244,8 @@ final class AutomationCommandGateway {
             .object(["kind": .string("exact"), "bytes": .unsignedInteger(bytes)])
         case .notMeasuredAfterHandoff:
             .object(["kind": .string("notMeasuredAfterHandoff")])
+        case .notAvailable:
+            .object(["kind": .string("notAvailable")])
         case .notApplicable:
             .object(["kind": .string("notApplicable")])
         }
@@ -2190,6 +2255,7 @@ final class AutomationCommandGateway {
         .object([
             "connections": freshness(.connections),
             "appRouting": freshness(.appRouting),
+            "xrayAccess": freshness(.xrayAccess),
         ])
     }
 
@@ -2380,15 +2446,16 @@ final class AutomationCommandGateway {
             "id": "object UUID",
             "expectedRevision": configurationRevisionHint,
         ]),
+        capability("configuration.ruleSets.refresh", "Update MClash rule sets while preserving the last working rules on failure", .write),
         capability("configuration.workspace.activate", "Compile and activate one Configuration workspace", .destructive, [
             "id": "workspace UUID",
             "expectedRevision": configurationRevisionHint,
         ]),
         capability("core.status", "Read core status", .read),
-        capability("core.toggle", "Toggle the Mihomo core", .write),
-        capability("core.connect", "Start the Mihomo core", .write),
-        capability("core.disconnect", "Stop the Mihomo core safely", .write),
-        capability("core.restart", "Restart the Mihomo core", .write),
+        capability("core.toggle", "Toggle the proxy engine", .write),
+        capability("core.connect", "Start the proxy engine", .write),
+        capability("core.disconnect", "Stop the proxy engine safely", .write),
+        capability("core.restart", "Restart the proxy engine", .write),
         capability("profiles.list", "List profiles without subscription secrets (maximum page 100)", .read),
         capability("profiles.importInteractive", "Open the profile import panel", .write),
         capability("profiles.import", "Import profile YAML supplied as base64", .write),
@@ -2414,8 +2481,8 @@ final class AutomationCommandGateway {
         capability("routing.proxy.clearOverride", "Restore automatic group selection", .write),
         capability("routing.proxy.test", "Measure one proxy latency", .write),
         capability("routing.group.test", "Measure proxy group latency", .write),
-        capability("mihomo.rules.list", "List loaded Mihomo rules", .read),
-        capability("mihomo.rules.refresh", "Refresh Mihomo rules", .write),
+        capability("mihomo.rules.list", "List loaded routing rules", .read),
+        capability("mihomo.rules.refresh", "Refresh routing rules", .write),
         capability("providers.list", "List proxy and rule provider summaries", .read),
         capability("providers.refresh", "Refresh providers", .write),
         capability("providers.proxy.update", "Update a proxy provider", .write),
@@ -2440,7 +2507,8 @@ final class AutomationCommandGateway {
         capability("appRouting.activities.clear", "Clear App Routing activities", .destructive),
         capability("appRouting.activities.list", "List cached App Routing activities", .read),
         capability("traffic.snapshot", "Read cached traffic statistics", .read),
-        capability("traffic.connections.list", "List cached live connections", .read),
+        capability("traffic.connections.list", "List cached live connections or MClash flow records", .read),
+        capability("traffic.flows.list", "List MClash flow records with rule and destination evidence", .read),
         capability("traffic.connections.close", "Close one connection", .write),
         capability("traffic.connections.closeAll", "Close all connections", .destructive),
         capability("traffic.closed.clear", "Clear the closed-connection session list", .destructive),
@@ -2565,6 +2633,7 @@ final class AutomationCommandGateway {
             "id": .required(.string, maximumStringBytes: 36),
             "expectedRevision": .required(.string, maximumStringBytes: 36),
         ],
+        "configuration.ruleSets.refresh": [:],
         "configuration.workspace.activate": [
             "id": .required(.string, maximumStringBytes: 36),
             "expectedRevision": .required(.string, maximumStringBytes: 36),
@@ -2627,6 +2696,7 @@ final class AutomationCommandGateway {
         ],
         "appRouting.activities.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
         "traffic.connections.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
+        "traffic.flows.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
         "traffic.connections.close": ["id": .required(.string)],
         "traffic.closed.list": ["offset": .optional(.integer), "limit": .optional(.integer)],
         "traffic.history.setPersistent": ["enabled": .required(.bool)],
@@ -2763,8 +2833,15 @@ final class AutomationCommandGateway {
             let object = try configurationObject(value, path: "document.proxyGroups[\(index)]")
             try rejectUnknownConfigurationKeys(object, allowed: [
                 "id", "name", "type", "membersUpdate", "memberCount",
-                "memberSelectors", "selectorCount", "enabled",
+                "memberSelectors", "selectorCount", "healthCheck", "enabled",
             ], path: "document.proxyGroups[\(index)]")
+            if let health = object["healthCheck"], health != .null {
+                let path = "document.proxyGroups[\(index)].healthCheck"
+                try rejectUnknownConfigurationKeys(try configurationObject(health, path: path), allowed: [
+                    "testURL", "expectedStatus", "probeInterval", "probeTimeout", "selectionCooldown",
+                    "latencyToleranceMilliseconds", "latencyToleranceRatio", "failureThreshold", "recoveryThreshold",
+                ], path: path)
+            }
             if let members = object["membersUpdate"] {
                 for (memberIndex, member) in try configurationArray(members, path: "document.proxyGroups[\(index)].membersUpdate").enumerated() {
                     try rejectUnknownConfigurationKeys(
@@ -2918,6 +2995,7 @@ final class AutomationCommandGateway {
         "appRouting.candidates.list",
         "appRouting.activities.list",
         "traffic.connections.list",
+        "traffic.flows.list",
         "traffic.closed.list",
         "traffic.history.summary",
         "traffic.history.applications.list",

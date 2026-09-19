@@ -9,7 +9,7 @@ on:
       version:
         description: "Semantic version without the v prefix"
         required: true
-        default: "1.3.5"
+        default: "1.6.0"
         type: string
       build_number:
         description: "Optional monotonically increasing CFBundleVersion"
@@ -19,6 +19,11 @@ on:
         description: "Publish as a GitHub prerelease"
         required: true
         default: false
+        type: boolean
+      candidate_only:
+        description: "Build signed artifacts from this ref without creating or publishing a release"
+        required: true
+        default: true
         type: boolean
 
 permissions:
@@ -39,6 +44,8 @@ jobs:
       tag: ${{ steps.metadata.outputs.tag }}
       build_number: ${{ steps.metadata.outputs.build_number }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
+      candidate_only: ${{ steps.metadata.outputs.candidate_only }}
+      source_ref: ${{ steps.metadata.outputs.source_ref }}
     steps:
       - name: Resolve release metadata
         id: metadata
@@ -48,6 +55,7 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
           INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_CANDIDATE_ONLY: ${{ inputs.candidate_only }}
           RUN_NUMBER: ${{ github.run_number }}
         shell: bash
         run: |
@@ -83,12 +91,20 @@ jobs:
             echo "Invalid build number: ${build_number}" >&2
             exit 2
           fi
+          candidate_only=false
+          source_ref="${tag}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${INPUT_CANDIDATE_ONLY}" == "true" ]]; then
+            candidate_only=true
+            source_ref="${GITHUB_SHA}"
+          fi
           {
             echo "version=${version}"
             echo "bundle_version=${bundle_version}"
             echo "tag=${tag}"
             echo "build_number=${build_number}"
             echo "prerelease=${prerelease}"
+            echo "candidate_only=${candidate_only}"
+            echo "source_ref=${source_ref}"
           } >> "${GITHUB_OUTPUT}"
 
   verify:
@@ -106,7 +122,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -114,6 +130,16 @@ jobs:
         shell: zsh {0}
         run: ./scripts/typecheck.sh
 
+      - name: Prepare pinned Xray and verify release gates
+        if: startsWith(needs.prepare.outputs.version, '1.6.')
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          ./scripts/fetch-xray.sh
+          ./scripts/verify-xray.sh
+          python3 scripts/test-xray-release-preflight.py
+          python3 scripts/smoke-test-xray-routing.py --xray Sources/MClashApp/Resources/Core/xray-darwin-arm64 --output .build/xray-routing-ci.json
+          print "MCLASH_XRAY_BINARY=${GITHUB_WORKSPACE}/Sources/MClashApp/Resources/Core/xray-darwin-arm64" >> "$GITHUB_ENV"
       - name: Run unit tests
         shell: zsh {0}
         run: ./scripts/test-direct.sh
@@ -121,12 +147,32 @@ jobs:
       - name: Test Sparkle delta metadata
         run: python3 scripts/test-attach-appcast-deltas.py
 
+      - name: Test candidate source and publication gates
+        run: python3 scripts/test-release-candidate-mode.py
+
       - name: Run integration tests
+        if: ${{ !startsWith(needs.prepare.outputs.version, '1.6.') }}
         shell: zsh {0}
         run: ./scripts/integration-test.sh
 
+      - name: Exercise the Xray application
+        if: startsWith(needs.prepare.outputs.version, '1.6.')
+        env:
+          CONFIGURATION: xray-smoke
+          MCLASH_VERSION: ${{ needs.prepare.outputs.version }}
+          MCLASH_BUNDLE_VERSION: ${{ needs.prepare.outputs.bundle_version }}
+          MCLASH_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+          MCLASH_RUNTIME_BACKEND: xray
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          ./scripts/build-app.sh
+          python3 scripts/test-xray-package-layout.py .build/xray-smoke/MClash.app
+          python3 scripts/smoke-test-xray-app.py .build/xray-smoke/MClash.app --output .build/xray-app-ci.json --exercise-recovery --exercise-log-retention
+          python3 scripts/smoke-test-xray-app.py .build/xray-smoke/MClash.app --output .build/xray-first-use-ci.json --first-use-only
+
   release:
-    name: Sign, notarize, and publish
+    name: Sign and notarize
     needs: [prepare, verify]
     runs-on: macos-15
     timeout-minutes: 60
@@ -150,11 +196,12 @@ jobs:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Verify release tag
+        if: needs.prepare.outputs.candidate_only != 'true'
         shell: zsh {0}
         run: |
           set -euo pipefail
@@ -170,6 +217,16 @@ jobs:
             print -u2 "Checked-out commit ${checked_out_commit} does not match ${MCLASH_RELEASE_TAG} (${tag_commit})."
             exit 1
           fi
+
+      - name: Verify candidate source
+        if: needs.prepare.outputs.candidate_only == 'true'
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${GITHUB_SHA}" ]] || {
+            print -u2 "Candidate source does not match the requested commit."
+            exit 1
+          }
 
       - name: Verify Apple Silicon runner
         shell: zsh {0}
@@ -455,21 +512,32 @@ jobs:
 
       - name: Publish GitHub Release
         id: publish
+        if: needs.prepare.outputs.candidate_only != 'true'
         env:
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         shell: zsh {0}
         run: |
           set -euo pipefail
-          source Support/mihomo-alpha.env
           release_dir=".build/releases/${MCLASH_VERSION}-${MCLASH_BUILD_NUMBER}"
           assets=(
             "${release_dir}/MClash-${MCLASH_VERSION}-macos-arm64.dmg"
             "${release_dir}/MClash-${MCLASH_VERSION}-macos-arm64.zip"
             "${release_dir}/appcast.xml"
-            "${release_dir}/mihomo-${MIHOMO_ALPHA_REVISION}-source.tar.gz"
             "${release_dir}/Sparkle-2.9.4-LICENSE.txt"
             "${release_dir}/SHA256SUMS"
           )
+          if [[ "${MCLASH_VERSION}" != 1.6.* ]]; then
+            source Support/mihomo-alpha.env
+            assets+=("${release_dir}/mihomo-${MIHOMO_ALPHA_REVISION}-source.tar.gz")
+          fi
+          for asset in "${assets[@]}"; do
+            [[ -f "${asset}" ]] || { print -u2 "Release asset is missing: ${asset}"; exit 1; }
+          done
+          if [[ "${MCLASH_VERSION}" == 1.6.* ]]; then
+            if grep -q 'mihomo-' "${release_dir}/SHA256SUMS"; then
+              print -u2 "1.6 Xray checksums must not contain legacy core source."; exit 1
+            fi
+          fi
           for delta in "${release_dir}"/MClash-${MCLASH_VERSION}-from-*-macos-arm64.delta(N); do
             assets+=("${delta}")
           done
@@ -478,17 +546,13 @@ jobs:
             prerelease_args+=(--prerelease)
           fi
           if gh release view "${MCLASH_RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${MCLASH_RELEASE_TAG}" "${assets[@]}" --clobber
-            gh release edit "${MCLASH_RELEASE_TAG}" \
-              --title "MClash ${MCLASH_VERSION}" \
-              --notes-file "${MCLASH_RELEASE_NOTES}" \
-              "${prerelease_args[@]}"
-          else
-            gh release create "${MCLASH_RELEASE_TAG}" "${assets[@]}" \
-              --title "MClash ${MCLASH_VERSION}" \
-              --notes-file "${MCLASH_RELEASE_NOTES}" \
-              "${prerelease_args[@]}"
+            print -u2 "Release ${MCLASH_RELEASE_TAG} already exists. Publish a new version instead of replacing its assets."
+            exit 1
           fi
+          gh release create "${MCLASH_RELEASE_TAG}" "${assets[@]}" \
+            --title "MClash ${MCLASH_VERSION}" \
+            --notes-file "${MCLASH_RELEASE_NOTES}" \
+            "${prerelease_args[@]}"
           release_url="$(gh release view "${MCLASH_RELEASE_TAG}" --json url --jq .url)"
           print "release_url=${release_url}" >> "${GITHUB_OUTPUT}"
 

@@ -49,8 +49,20 @@ if [[ ! -s "${output}" ]]; then
   print -u2 "Disk image creation produced no output: ${output}"
   exit 1
 fi
-if ! hdiutil verify "${output}" >/dev/null; then
-  print -u2 "Disk image verification failed: ${output}"
+verify_output=""
+verified=0
+for attempt in {1..5}; do
+  if verify_output="$(hdiutil verify "${output}" 2>&1)"; then
+    verified=1
+    break
+  fi
+  if (( attempt < 5 )); then
+    sleep 2
+  fi
+done
+if (( ! verified )); then
+  print -u2 "Disk image verification failed after ${attempt} attempts: ${output}"
+  print -u2 -r -- "${verify_output}"
   exit 1
 fi
 

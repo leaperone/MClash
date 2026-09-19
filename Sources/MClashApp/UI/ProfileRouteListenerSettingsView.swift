@@ -13,7 +13,7 @@ private enum RouteListenerTargetKind: String, CaseIterable, Identifiable {
         switch self {
         case .profileRules: AppLocalization.string("Follow Profile Rules")
         case .subRule: AppLocalization.string("Named Sub-rule")
-        case .global: AppLocalization.string("Mihomo GLOBAL")
+        case .global: AppLocalization.string("All traffic")
         case .policyGroup: AppLocalization.string("Policy Group")
         case .proxyNode: AppLocalization.string("Proxy Node")
         }
@@ -319,7 +319,7 @@ struct ProfileRouteListenerSettingsEditor: View {
                 )
             )
         case .global:
-            Text(AppLocalization.string("Connections use Mihomo's GLOBAL policy selection."))
+            Text(AppLocalization.string("Connections follow the global routing policy."))
         case let .policyGroup(name):
             Text(
                 AppLocalization.format(

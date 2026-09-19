@@ -11,16 +11,19 @@ enum TrafficHistoryRetention: Int, CaseIterable, Sendable {
 enum TrafficHistoryMeasurement: Hashable, Sendable {
     case exact(UInt64)
     case notMeasuredAfterHandoff
+    case notAvailable
     case notApplicable
 }
 
 enum TrafficHistorySource: String, CaseIterable, Sendable {
     case mihomo
+    case xray
     case appRouting
 }
 
 enum TrafficHistoryOutcome: String, CaseIterable, Sendable {
     case viaMihomo
+    case viaXray
     case direct
     case rejected
     case failOpen
@@ -86,6 +89,7 @@ private extension TrafficHistoryApplication.Identity {
 
 enum TrafficHistoryRouteKind: String, CaseIterable, Sendable {
     case mihomo
+    case xray
     case direct
     case rejected
     case failOpen
@@ -131,6 +135,7 @@ private extension TrafficHistoryRouteKind {
     var defaultLabel: String {
         switch self {
         case .mihomo: "Mihomo"
+        case .xray: "Xray"
         case .direct: "Direct"
         case .rejected: "Rejected"
         case .failOpen: "Fail-open"
@@ -196,14 +201,20 @@ enum TrafficHistoryPeriod: Equatable, Sendable {
 struct TrafficHistoryCoverage: Equatable, Sendable {
     let exactDirectionCount: UInt64
     let notMeasuredDirectionCount: UInt64
+    let notAvailableDirectionCount: UInt64
     let notApplicableDirectionCount: UInt64
 
     var measurableDirectionCount: UInt64 {
-        trafficHistorySaturatingAdd(exactDirectionCount, notMeasuredDirectionCount)
+        trafficHistorySaturatingAdd(exactDirectionCount, unmeasuredDirectionCount)
+    }
+
+    var unmeasuredDirectionCount: UInt64 {
+        trafficHistorySaturatingAdd(notMeasuredDirectionCount, notAvailableDirectionCount)
     }
 
     /// Coverage excludes directions where payload bytes do not apply, such as
-    /// rejected flows. `nil` means there was no measurable traffic.
+    /// rejected flows. Missing counters remain in the denominator; `nil`
+    /// means no recorded direction could carry payload.
     var measuredFraction: Double? {
         let denominator = measurableDirectionCount
         guard denominator > 0 else { return nil }
@@ -212,7 +223,7 @@ struct TrafficHistoryCoverage: Equatable, Sendable {
 }
 
 struct TrafficHistoryTotals: Equatable, Sendable {
-    let completedFlowCount: UInt64
+    let recordedFlowCount: UInt64
     let exactUploadBytes: UInt64
     let exactDownloadBytes: UInt64
     let coverage: TrafficHistoryCoverage

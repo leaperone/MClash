@@ -1,0 +1,4 @@
+Source: https://github.com/XTLS/Xray-core
+Release: v26.9.9 (pre-release)
+Commit: 52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120
+Archive: Xray-macos-arm64-v8a.zip

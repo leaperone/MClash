@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "release_version": "1.6.0-rc.13",
+  "commit": "c628b7bd777fbe0c1ad43806d25626c95cf10d6e",
+  "status": "passed",
+  "backend": "xray",
+  "verification_scope": "Source, Xray GEO upgrade migration, Xray-only package layout, and isolated runtime acceptance before release signing",
+  "generated_at": "2026-09-17T04:00:00Z",
+  "xray_version": "26.9.9",
+  "xray_revision": "52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120",
+  "xray_raw_sha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+  "capabilities": [
+    "nodeSources",
+    "pastedNodeLinks",
+    "pastedSourcePersistence",
+    "groupSelect",
+    "groupFallback",
+    "groupURLTest",
+    "groupLoadBalance",
+    "groupRelay",
+    "routingRules",
+    "geoIPRules",
+    "geoSiteRules",
+    "geoDataUpgradeMigration",
+    "httpIngress",
+    "socksIngress",
+    "dnsPolicy",
+    "mclashFlowRecords",
+    "xrayAccessRecords",
+    "xrayOnlyPackageLayout"
+  ],
+  "validation_commands": [
+    "./scripts/fetch-xray.sh",
+    "./scripts/typecheck.sh",
+    "./scripts/test-direct.sh",
+    "MCLASH_XRAY_BINARY=... SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 .build/direct-tests/MClashPackageTests",
+    "BundledGeoDataInstallerTests including stale capitalized database replacement",
+    "python3 scripts/test-xray-package-layout.py .build/xray-smoke/MClash.app",
+    "Xray 26.9.9 run -test with geoip:cn and geosite:cn using XRAY_LOCATION_ASSET",
+    "python3 scripts/smoke-test-xray-app.py .build/xray-smoke/MClash.app --output .planning/m16/rc13-local-smoke.json"
+  ],
+  "test_counts": {
+    "app": 517,
+    "network_shared": 114,
+    "network_extension": 29,
+    "automation": 6,
+    "appcast_script": 3
+  },
+  "application_acceptance": {
+    "passed": true,
+    "backend": "xray",
+    "http": true,
+    "socks5": true,
+    "modeChanges": ["global", "direct", "rule"],
+    "selectionAndClear": true,
+    "globalExitChange": true,
+    "disconnect": true,
+    "sourceActivation": true,
+    "invalidSourceRejected": true,
+    "automaticURLTest": 2.6,
+    "automaticFallback": 11.776,
+    "automaticRecovery": 12.072,
+    "expectedStatusEnforced": true,
+    "loadBalance": ["NODE_A", "NODE_B"],
+    "relayChain": true,
+    "dnsPolicy": {
+      "directResolution": true,
+      "socksUDPCapture": true
+    },
+    "failedActivationRollback": true,
+    "healthSettingsRoundTrip": true,
+    "encodedSourceImport": true,
+    "signaturePreserved": false,
+    "resources": {
+      "coreProcesses": 1,
+      "coreRSSBytes": 38223872,
+      "appRSSBytes": 95469568,
+      "connectSeconds": 1.493
+    },
+    "xrayAccessRecords": 6,
+    "xrayConnectionRecordCount": 6,
+    "xrayConnectionRecordEvidence": "mclash-xray-access-log",
+    "xrayCloseRejected": true,
+    "xrayOnlyPackageLayout": true,
+    "xrayGeoRulesValidated": true,
+    "staleGeoDataReplaced": true
+  },
+  "package_evidence": {
+    "runtimeBackend": "xray",
+    "coreDirectoryEntries": ["mclash-xray"],
+    "geoDataDirectoryEntries": ["LICENSE.txt", "XRAY-SHA256SUMS", "geoip.dat", "geosite.dat"],
+    "legacyCoreBundled": false,
+    "xraySha256": "7616e4d8d5b8bedaee14ebe167954e24f35ccea58cdb941600e2ff76509fc31c",
+    "geoipSha256": "4149e607530f91da697bad4696f8c59f0a475af38e69405e4124438c9886c721",
+    "geositeSha256": "2064a1a4074e145d5022ac49f2c30341e7b7cb6c7948da4fdca973b3fa8411b2"
+  },
+  "limits": [
+    "Evidence uses an isolated ad-hoc application bundle. Developer ID signing and notarization are release workflow gates.",
+    "Production Network Extension and system proxy were not changed. Actual signed-provider activation and live Fake-IP remain unverified.",
+    "Public endpoint availability varies by node; no claim is made that every imported source node is reachable.",
+    "Rule sets require inline text entries; remote rule-set refresh, MRS, DNS-over-TLS and process-name-only rules remain unsupported."
+  ],
+  "post_publish_checks": [
+    "Download published ZIP and verify SHA256SUMS",
+    "Verify Developer ID signatures and core identifier",
+    "Validate notarization ticket and Gatekeeper assessment",
+    "Verify the downloaded app contains only mclash-xray and lowercase Xray GEO databases",
+    "Exercise downloaded application in isolated storage without changing its signature"
+  ]
+}
